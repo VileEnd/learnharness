@@ -62,7 +62,7 @@ def test_vision_retries_with_reasoning_off_when_content_empty():
 
     c = OpenRouter("k", "https://x/api/v1", transport=httpx.MockTransport(handler))
     out = c.vision(b"png", "p", "vm", reasoning={"effort": "low"})
-    assert out == {"text": "figure", "cost": 0.002}
+    assert out["text"] == "figure" and out["cost"] == 0.002
     assert bodies[0]["reasoning"] == {"effort": "low"} and bodies[1]["reasoning"] == {"enabled": False}
 
 

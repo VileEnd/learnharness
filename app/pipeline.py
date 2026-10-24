@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import pymupdf
 
 from .assemble import build_markdown, clean_ocr
-from .render import page_kind, page_kinds, page_pdf, render_png
+from .render import PDF_LOCK, page_kind, page_kinds, page_pdf, render_png
 
 PROMPT_VERSION = "v4"
 NO_FIGURES = "NO_FIGURES"
@@ -26,6 +27,7 @@ Transcribe EVERYTHING on the page faithfully, in reading order, in the page's ow
 - Hand-drawn diagrams: a ```mermaid block if they are a clean flowchart/state machine/block diagram, otherwise a short italic description *[Diagram: ...]* that mentions every label and arrow.
 Do not invent content and do not turn plain text into diagrams. Mark unreadable parts as [unreadable]."""
 PROMPTS = {"figures": FIGURES_PROMPT, "scan": SCAN_PROMPT}
+PREVIEW_CHARS = 2000
 
 
 def safe_name(name):
@@ -41,17 +43,23 @@ def estimate(pdf_bytes, cfg):
             "usd": round(ocr * p["ocr_price_per_page"] + vision * p["vision_price_per_page"], 4)}
 
 
-def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, progress=lambda msg: None):
-    """Convert one PDF into out_dir/<title>.md + images/ + manifest.json. Failed pages are marked, not fatal."""
+def _preview(res):
+    text = res["text"] if "text" in res else "\n\n".join(clean_ocr(t) for t in res["texts"])
+    return text[:PREVIEW_CHARS]
+
+
+def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event: None, executor=None):
+    """Convert one PDF into out_dir/<title>.md + images/ + manifest.json. Failed pages are marked, not fatal.
+    Pass a shared executor to run several PDFs' API calls in one pool; emit receives file and request events."""
     o, p = cfg["openrouter"], cfg["pipeline"]
     engine, vmodel, reasoning = o["pdf_engine"], o["vision_model"], o.get("vision_reasoning")
     title, out_dir = safe_name(name), Path(out_dir)
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     src = hashlib.sha256(pdf_bytes).hexdigest()
 
-    # PyMuPDF is not thread-safe: do all PDF work here, only API calls go to the thread pool.
+    # All PDF work happens under the lock; only API calls go to the thread pool.
     tasks = []  # (page, step, cache key, payload or None when cached)
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+    with PDF_LOCK, pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         kinds = [page_kind(page) for page in doc]
         for i, kind in enumerate(kinds):
             if kind != "scan":
@@ -66,19 +74,37 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, progress=lambda ms
 
     def run(task):
         i, step, key, payload = task
+        req = {"type": "req", "id": f"{out_dir.name}:{i + 1}:{step}", "file": out_dir.name, "page": i + 1,
+               "step": step, "kind": kinds[i] or "text", "model": engine if step == "text" else vmodel,
+               "image": f"{out_dir.name}/images/p{i + 1:03d}.png" if step == "vision" else None}
         if payload is None:
-            return cache.get(*key), 0.0
-        if step == "text":
-            res = client.ocr_pdf(payload, f"{title}-p{i + 1}.pdf", engine)
-        else:
-            res = client.vision(payload.read_bytes(), PROMPTS[kinds[i]], vmodel, reasoning)
+            res = cache.get(*key)
+            emit({**req, "state": "cached", "preview": _preview(res)})
+            return res, 0.0
+        emit({**req, "state": "running"})
+        on_retry = lambda note: emit({**req, "state": "retry", "note": note})  # noqa: E731
+        started = time.monotonic()
+        try:
+            if step == "text":
+                res = client.ocr_pdf(payload, f"{title}-p{i + 1}.pdf", engine, on_retry=on_retry)
+            else:
+                res = client.vision(payload.read_bytes(), PROMPTS[kinds[i]], vmodel, reasoning, on_retry=on_retry)
+        except Exception as e:
+            emit({**req, "state": "error", "ms": round((time.monotonic() - started) * 1000), "error": str(e)})
+            raise
         cache.put(res, *key)
+        emit({**req, "state": "ok", "ms": round((time.monotonic() - started) * 1000), "cost": res["cost"],
+              "usage": res.get("usage"), "preview": _preview(res)})
         return res, res["cost"]
 
     pages = [{"text": "", "image": f"images/p{i + 1:03d}.png", "vision": None, "errors": []} for i in range(len(kinds))]
     spent, calls, done = 0.0, 0, 0
-    with ThreadPoolExecutor(p.get("workers", 8)) as ex:
-        futures = {ex.submit(run, t): t for t in tasks}
+    progress = {"type": "file", "file": out_dir.name, "name": name, "total": len(tasks)}
+    emit({**progress, "done": 0, "failed": 0, "kinds": kinds})
+    own_pool = executor is None
+    pool = executor or ThreadPoolExecutor(p.get("workers", 16))
+    try:
+        futures = {pool.submit(run, t): t for t in tasks}
         for fut in as_completed(futures):
             i, step, _, payload = futures[fut]
             done += 1
@@ -86,15 +112,17 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, progress=lambda ms
                 res, cost = fut.result()
             except Exception as e:  # one bad page must not sink a 300-page PDF; it is not cached, so a re-run retries it
                 pages[i]["errors"].append(f"{step}: {e}")
-                progress(f"{title}: page {i + 1} {step} FAILED: {e}")
-                continue
-            spent += cost
-            calls += payload is not None
-            if step == "text":
-                pages[i]["text"] = "\n\n".join(clean_ocr(t) for t in res["texts"]).strip()
-            elif res["text"].strip() != NO_FIGURES:
-                pages[i]["vision"] = res["text"]
-            progress(f"{title}: {done}/{len(tasks)} steps")
+            else:
+                spent += cost
+                calls += payload is not None
+                if step == "text":
+                    pages[i]["text"] = "\n\n".join(clean_ocr(t) for t in res["texts"]).strip()
+                elif res["text"].strip() != NO_FIGURES:
+                    pages[i]["vision"] = res["text"]
+            emit({**progress, "done": done, "failed": sum(1 for pg in pages if pg["errors"])})
+    finally:
+        if own_pool:
+            pool.shutdown()
 
     failed = [i + 1 for i, pg in enumerate(pages) if pg["errors"]]
     meta = {"title": title, "source": name, "pages": len(pages), "sha256": src, "converted": date.today().isoformat(),
