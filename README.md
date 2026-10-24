@@ -11,7 +11,9 @@ echo 'OPENROUTER_API_KEY=sk-or-...' > .env && chmod 600 .env   # once
 
 From WSL, the Windows browser reaches `http://localhost:8000` directly. Results land in `out/<job>/` and can also be downloaded as a zip.
 
-The right side of the page shows every API request live: page, step (OCR or vision), model, state, duration, tokens and cost. Click a row (or a page cell on the left) to see the page image that was sent and the model's answer. All PDFs in a run share one pool of `workers` parallel requests.
+You can drop more PDFs while a run is going: each Convert starts a run of its own that goes on alongside the others, with its own progress, results and downloads. All runs share one limit of `workers` parallel requests, of which at most `ocr_workers` go to Mistral OCR, which rate-limits early. Rate-limited requests are retried with growing waits; a page that still fails is marked, and the run's "Retry failed pages" button redoes only those pages (finished pages come from the cache).
+
+The right side of the page shows every API request live: page, step (OCR or vision), model, state, duration, tokens and cost. Click a row (or a page cell on the left) to see the page image that was sent and the model's answer.
 
 The Batch API is deliberately not used: it does not accept base64 images (the pages would have to be uploaded to a public URL), its discount does not apply to the per-page OCR fee, the `-1017` DeepSeek snapshot has no batch variant, and results can take up to 24 hours.
 

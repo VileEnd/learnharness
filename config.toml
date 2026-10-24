@@ -9,7 +9,8 @@ naming_model = "deepseek/deepseek-v4.1-flash-1017"     # names each markdown fil
 [pipeline]
 strategy = "ocr+vision"         # default choice on the page; "vision": the vision model reads every page (~$0.0006/page)
                                 # "ocr+vision": Mistral OCR for printed text + vision for figures/handwriting (~$0.003/page), best quality
-workers = 16                    # parallel API calls, shared by all PDFs in a run
+workers = 16                    # parallel API calls, shared by all runs on the server
+ocr_workers = 6                 # at most this many Mistral OCR requests at once (it rate-limits early)
 dpi = 150                       # page render resolution for the vision model and the linked images
 keep_all_page_images = false    # true keeps a PNG of every page, not only pages with figures or handwriting
 ocr_price_per_page = 0.0021             # measured: Mistral OCR + carrier model

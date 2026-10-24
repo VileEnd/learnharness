@@ -11,7 +11,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -29,8 +29,13 @@ if (ROOT / ".env").exists():
 CFG = tomllib.loads((ROOT / "config.toml").read_text())
 OUT = ROOT / "out"
 cache = Cache(ROOT / ".cache")
+# Shared by every run on this server, so starting a second run does not double the load on the providers.
+POOL = ThreadPoolExecutor(CFG["pipeline"].get("workers", 16))
+OCR_GATE = threading.BoundedSemaphore(CFG["pipeline"].get("ocr_workers", 6))  # Mistral OCR rate-limits early
 app = FastAPI()
-jobs = {}  # id -> {"events": [dict], "dir": Path}; events are kept so a reconnecting browser replays them
+# id -> {"events": [dict], "dir": Path, "uploads": [(name, bytes, folder)], "cfg", "running", "usd"};
+# events are kept so a reconnecting browser can resume where it left off
+jobs = {}
 
 
 def make_client():
@@ -58,12 +63,23 @@ def windows_path(path):
         return str(path)
 
 
+def run_summary(run_dir):
+    """What a run produced, read from its manifests: one entry per converted PDF."""
+    files = []
+    for path in sorted(Path(run_dir).glob("*/manifest.json")):
+        m = json.loads(path.read_text())
+        files.append({"file": m.get("markdown") or f"{path.parent.name}/{path.parent.name}.md",
+                      "title": m["title"], "source": m["source"], "pages": m["pages"], "failed": len(m["failed_pages"])})
+    return {"dir": str(run_dir), "windows_dir": windows_path(run_dir), "markdown": files}
+
+
 def get_job(job_id):
     """A job from this server's memory, or a finished run still on disk (e.g. from before a restart)."""
     if job_id in jobs:
         return jobs[job_id]
     if re.fullmatch(r"[\w-]+", job_id) and (OUT / job_id).is_dir():
-        return {"events": [], "dir": OUT / job_id}
+        return {"dir": OUT / job_id, "running": False,
+                "events": [{"type": "gone", **run_summary(OUT / job_id)}]}
     raise HTTPException(404, "unknown job")
 
 
@@ -85,70 +101,87 @@ async def api_estimate(files: list[UploadFile]):
             "ocr_engine": CFG["openrouter"]["pdf_engine"], "vision_model": CFG["openrouter"]["vision_model"]}
 
 
-@app.post("/api/run")
-async def api_run(files: list[UploadFile], strategy: str = Form(None)):
-    client = make_client()
-    cfg = with_strategy(strategy or CFG["pipeline"].get("strategy", "ocr+vision"))
-    uploads = [(f.filename, await f.read()) for f in files]
-    job_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
-    job = jobs[job_id] = {"events": [], "dir": OUT / job_id}
-
+def launch(job, items, client):
+    """Convert items [(name, bytes, folder, markdown name to overwrite or None)] in the background."""
     def emit(event):
         job["events"].append({**event, "t": time.time()})  # list.append is atomic; no lock needed
 
-    folders = []
-    for name, _ in uploads:
-        folder = safe_name(name)
-        while folder in folders:  # two uploads with the same file name must not overwrite each other
-            folder += "_"
-        folders.append(folder)
+    def one(name, data, folder, markdown_name):
+        try:
+            m = process_pdf(data, name, client, cache, job["dir"] / folder, job["cfg"], emit, POOL, OCR_GATE,
+                            markdown_name)
+        except Exception as e:  # a broken PDF must not stop the rest of the batch
+            emit({"type": "log", "msg": f"{name}: FAILED: {e}", "level": "error"})
+            return
+        job["usd"] += m["cost_usd"]
+        note = f", {len(m['failed_pages'])} pages failed" if m["failed_pages"] else ""
+        emit({"type": "log", "msg": f"done {name} -> {m['markdown']}: {m['pages']} pages, ${m['cost_usd']}{note}",
+              "level": "warn" if note else "ok"})
 
     def work():
-        pool = ThreadPoolExecutor(CFG["pipeline"].get("workers", 16))
-        results = {}
-
-        def one(name, data, folder):
-            try:
-                results[name] = process_pdf(data, name, client, cache, job["dir"] / folder, cfg, emit, pool)
-            except Exception as e:  # a broken PDF must not stop the rest of the batch
-                results[name] = None
-                emit({"type": "log", "msg": f"{name}: FAILED: {e}", "level": "error"})
-                return
-            m = results[name]
-            note = f", failed pages {m['failed_pages']}" if m["failed_pages"] else ""
-            emit({"type": "log", "msg": f"done {name} -> {m['markdown']}: {m['pages']} pages, ${m['cost_usd']}{note}",
-                  "level": "warn" if note else "ok"})
-
-        # every PDF feeds the same pool, so a run is as parallel as `workers` allows, not one PDF at a time
-        threads = [threading.Thread(target=one, args=(n, d, f)) for (n, d), f in zip(uploads, folders)]
+        threads = [threading.Thread(target=one, args=item) for item in items]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        pool.shutdown()
-        emit({"type": "done", "usd": round(sum(m["cost_usd"] for m in results.values() if m), 4),
-              "failed_files": [n for n, m in results.items() if m is None], "dir": str(job["dir"]),
-              "windows_dir": windows_path(job["dir"]),
-              "markdown": [{"file": m["markdown"], "title": m["title"], "source": n, "pages": m["pages"]}
-                           for n, m in results.items() if m]})
+        job["running"] = False
+        emit({"type": "done", "usd": round(job["usd"], 4), **run_summary(job["dir"])})
 
-    emit({"type": "start", "files": [{"file": f, "name": n} for (n, _), f in zip(uploads, folders)],
-          "workers": CFG["pipeline"].get("workers", 16), "strategy": cfg["pipeline"]["strategy"]})
+    job["running"] = True
+    emit({"type": "start", "files": [{"file": f, "name": n} for n, _, f, _ in items],
+          "strategy": job["cfg"]["pipeline"]["strategy"]})
     threading.Thread(target=work, daemon=True).start()
+
+
+@app.post("/api/run")
+async def api_run(files: list[UploadFile], strategy: str = Form(None)):
+    client = make_client()
+    cfg = with_strategy(strategy or CFG["pipeline"].get("strategy", "ocr+vision"))
+    uploads, folders = [], []
+    for f in files:
+        folder = safe_name(f.filename)
+        while folder in folders:  # two uploads with the same file name must not overwrite each other
+            folder += "_"
+        folders.append(folder)
+        uploads.append((f.filename, await f.read(), folder))
+    job_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
+    job = jobs[job_id] = {"events": [], "dir": OUT / job_id, "uploads": uploads, "cfg": cfg, "usd": 0.0}
+    launch(job, [(n, d, f, None) for n, d, f in uploads], client)
     return {"job": job_id}
 
 
+@app.post("/api/jobs/{job_id}/retry")
+def retry(job_id: str):
+    """Convert again only the PDFs of a run that have failed pages; finished pages come from the cache."""
+    job = get_job(job_id)
+    if "uploads" not in job:
+        raise HTTPException(409, "This run started before the server restarted, so its PDFs are no longer loaded. "
+                                 "Drop the same PDFs again: pages that already worked come from the cache for free.")
+    if job["running"]:
+        raise HTTPException(409, "This run is still going; retry when it has finished.")
+    todo = []
+    for name, data, folder in job["uploads"]:
+        manifest = job["dir"] / folder / "manifest.json"
+        m = json.loads(manifest.read_text()) if manifest.exists() else None
+        if m is None or m["failed_pages"]:
+            todo.append((name, data, folder, m and m["markdown"]))
+    start = len(job["events"])
+    if todo:
+        launch(job, todo, make_client())
+    return {"from": start, "files": len(todo)}
+
+
 @app.get("/api/jobs/{job_id}/events")
-def events(job_id: str):
+def events(job_id: str, start: int = Query(0, alias="from")):
     job = get_job(job_id)
 
     def stream():
-        sent = 0
+        sent = start
         while True:
             for e in job["events"][sent:]:
                 sent += 1
                 yield f"data: {json.dumps(e)}\n\n"
-                if e.get("type") == "done":
+                if e.get("type") in ("done", "gone"):
                     return
             time.sleep(0.3)
 

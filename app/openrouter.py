@@ -1,9 +1,21 @@
 import base64
+import random
 import time
 
 import httpx
 
 RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+MAX_BACKOFF = 60
+
+
+def _backoff(attempt):
+    """Exponential, capped, with jitter so parallel requests do not all retry at the same moment."""
+    return min(MAX_BACKOFF, 2 ** (attempt + 1)) * (0.5 + random.random())
+
+
+def _rate_limited(message):
+    # OpenRouter also reports an upstream rate limit (e.g. Mistral's OCR engine) as HTTP 400
+    return "rate limit" in (message or "").lower()
 
 
 class OpenRouterError(RuntimeError):
@@ -38,7 +50,7 @@ def _usage(resp):
 
 class OpenRouter:
     def __init__(self, api_key, base_url="https://openrouter.ai/api/v1", ocr_model="google/gemini-2.5-flash-lite",
-                 transport=None, sleep=time.sleep, retries=5):
+                 transport=None, sleep=time.sleep, retries=8):
         self.ocr_model = ocr_model
         self.sleep = sleep
         self.retries = retries
@@ -57,7 +69,7 @@ class OpenRouter:
                     raise
                 if on_retry:
                     on_retry(f"{type(e).__name__}, retry {attempt + 1}")
-                self.sleep(2 ** attempt)
+                self.sleep(_backoff(attempt))
                 continue
             try:
                 data = r.json()
@@ -67,12 +79,13 @@ class OpenRouter:
             status = r.status_code if r.status_code != 200 or "choices" in data else int(error.get("code") or 502)
             if status == 200 or extract_file_annotations(data):
                 return data
-            if status in RETRY_STATUS and not last:
+            message = error.get("message") or r.text[:300]
+            if (status in RETRY_STATUS or _rate_limited(message)) and not last:
                 if on_retry:
-                    on_retry(f"HTTP {status}, retry {attempt + 1}")
-                self.sleep(2 ** attempt)
+                    on_retry(f"HTTP {status}{' rate limited' if _rate_limited(message) else ''}, retry {attempt + 1}")
+                self.sleep(_backoff(attempt))
                 continue
-            raise OpenRouterError(f"HTTP {status}: {error.get('message') or r.text[:300]}")
+            raise OpenRouterError(f"HTTP {status}: {message}")
 
     def ocr_pdf(self, pdf_bytes, name, engine="mistral-ocr", on_retry=None):
         """Parse a PDF with OpenRouter's file-parser plugin; returns the parsed text parts."""
