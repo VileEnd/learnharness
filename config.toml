@@ -1,0 +1,12 @@
+[openrouter]
+base_url = "https://openrouter.ai/api/v1"
+ocr_model = "google/gemini-2.5-flash-lite"            # cheap carrier model for the file-parser plugin
+pdf_engine = "mistral-ocr"                             # or "cloudflare-ai" (free, weaker on math)
+vision_model = "deepseek/deepseek-v4.1-flash-1017"     # must accept images
+vision_reasoning = { effort = "low" }                  # unbounded thinking can return empty content
+
+[pipeline]
+workers = 8                     # parallel API calls
+dpi = 150                       # page render resolution for the vision model and the linked images
+ocr_price_per_page = 0.0021     # measured: Mistral OCR + carrier model
+vision_price_per_page = 0.003   # measured average for deepseek-v4.1-flash with low reasoning
