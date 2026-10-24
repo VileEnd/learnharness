@@ -1,17 +1,19 @@
-import io
 import json
 import os
+import re
 import subprocess
+import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 import tomllib
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from .cache import Cache
@@ -57,9 +59,12 @@ def windows_path(path):
 
 
 def get_job(job_id):
-    if job_id not in jobs:
-        raise HTTPException(404, "unknown job")
-    return jobs[job_id]
+    """A job from this server's memory, or a finished run still on disk (e.g. from before a restart)."""
+    if job_id in jobs:
+        return jobs[job_id]
+    if re.fullmatch(r"[\w-]+", job_id) and (OUT / job_id).is_dir():
+        return {"events": [], "dir": OUT / job_id}
+    raise HTTPException(404, "unknown job")
 
 
 @app.get("/")
@@ -161,15 +166,24 @@ def job_file(job_id: str, path: str):
 
 @app.get("/api/jobs/{job_id}/zip")
 def zip_job(job_id: str, only: str = "all"):
-    """only=markdown: just the .md files (diagrams stay readable as Mermaid; image links point nowhere)."""
+    """only=markdown: just the .md files, flat (diagrams stay readable as Mermaid; image links point nowhere).
+    Built in a temp file, not in memory: a run with images can be hundreds of MB."""
     job = get_job(job_id)
-    files = sorted(job["dir"].glob("*.md")) if only == "markdown" else sorted(job["dir"].rglob("*"))
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in files:
-            if p.is_file():
-                z.write(p, p.relative_to(job["dir"]))
-    buf.seek(0)
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    with tmp, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        if only == "markdown":  # flat, also for older runs that kept each .md inside its PDF's folder
+            used = set()
+            for p in sorted(job["dir"].rglob("*.md")):
+                name = p.name
+                while name in used:
+                    name = name[:-3] + "_.md"
+                used.add(name)
+                z.write(p, name)
+        else:
+            for p in sorted(job["dir"].rglob("*")):
+                if p.is_file():  # PNGs are already compressed; deflating them again only costs time
+                    z.write(p, p.relative_to(job["dir"]),
+                            zipfile.ZIP_STORED if p.suffix == ".png" else zipfile.ZIP_DEFLATED)
     suffix = "-markdown" if only == "markdown" else ""
-    return StreamingResponse(buf, media_type="application/zip",
-                             headers={"Content-Disposition": f"attachment; filename=pdf2md-{job_id}{suffix}.zip"})
+    return FileResponse(tmp.name, media_type="application/zip", filename=f"pdf2md-{job_id}{suffix}.zip",
+                        background=BackgroundTask(os.unlink, tmp.name))
