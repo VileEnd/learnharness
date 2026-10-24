@@ -67,6 +67,13 @@ legend{font-weight:700;margin-bottom:4px}
 .run-state{font-size:.85rem;color:var(--muted)}.run-state.live{color:var(--text);font-weight:700}
 .run-summary{margin:0;font-weight:700}
 .run-results{display:grid;gap:6px}
+#history{display:grid;gap:0}
+#history h2{margin:4px 0 6px}
+.past{border-top:1px solid var(--rule);padding:8px 0}
+.past>summary{cursor:pointer;display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 8px}
+.past>summary small{color:var(--muted)}
+.past[open]>summary{margin-bottom:8px}
+.note{color:var(--muted);font-size:.85rem;margin:0}
 .result{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;border-top:1px solid var(--rule);padding-top:6px}
 .result .fname{font-weight:700;word-break:break-all}.result small{color:var(--muted);grid-column:1}
 .result button{grid-row:1/3;grid-column:2;padding:.25rem .7rem;font-weight:400;background:transparent;color:var(--ink)}
@@ -125,6 +132,7 @@ tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transpa
   <div class="legend" aria-hidden="true"><span><i style="background:var(--rule)"></i>waiting</span><span><i style="background:var(--marker)"></i>in progress</span><span><i style="background:var(--ink)"></i>done</span><span><i style="background:var(--cache)"></i>from cache</span><span><i style="background:var(--red)"></i>failed</span><span>• has figures or handwriting</span></div>
   <div id="pending"></div>
   <div id="runs" aria-live="polite"></div>
+  <div id="history"></div>
 </section>
 <section id="right" aria-label="Live requests">
   <div id="stats">
@@ -147,7 +155,7 @@ tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transpa
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let files=[],t0=null,timer=null,filter="all",selected=null,runCount=0;
+let files=[],t0=null,timer=null,filter="all",selected=null;
 const reqs=new Map(),rows=new Map(),runs=new Map();  // requests and rows are keyed "job|request id"
 const STEPS={null:["text"],text:["text"],figures:["text","vision"],scan:["vision"]};
 const wantSteps=(s,i)=>s.strategy==="vision"?["vision"]:STEPS[s.kinds[i]];
@@ -183,11 +191,11 @@ $("drop").ondragleave=()=>$("drop").classList.remove("over");
 $("drop").ondrop=e=>{e.preventDefault();$("drop").classList.remove("over");choose(e.dataTransfer.files)};
 
 /* one section per run; runs go on in parallel and keep their own page grids, log and results */
+const runLabel=job=>{const m=job.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);return m?`${m[3]}.${m[2]}.${m[1]}, ${m[4]}:${m[5]}`:job};
 function makeRun(job){
-  runCount++;
-  const box=el("section","run");box.setAttribute("aria-label",`Run ${runCount}`);
+  const box=el("section","run");box.setAttribute("aria-label",`Run of ${runLabel(job)}`);
   const head=el("div","run-head"),state=el("span","run-state live","starting");
-  head.append(el("h2",null,`Run ${runCount}, started ${new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`),state);
+  head.append(el("h2",null,`Run of ${runLabel(job)}`),state);
   const filesEl=el("div"),summary=el("p","run-summary"),results=el("div","run-results"),logEl=el("div","run-log");
   results.hidden=true;box.append(head,filesEl,summary,results,logEl);$("runs").prepend(box);
   const R={job,state,filesEl,summary,results,logEl,sheets:new Map(),received:0,active:true,errors:0};
@@ -255,7 +263,7 @@ function select(key){
     u?`${u.prompt} tokens in, ${u.completion} out`+(u.reasoning?` (${u.reasoning} of them thinking)`:""):null,r.note?`Last retry: ${r.note}`:null].filter(Boolean);
   d.append(el("p","dmeta",bits.join(", ")));
   const row=el("div","row");
-  if(r.image){const img=el("img");img.alt=`Page ${r.page} as sent to the vision model`;img.src=`/api/jobs/${r.job}/files/${r.image}`;img.loading="lazy";row.append(img)}
+  if(r.image){const img=el("img");img.alt=`Page ${r.page} as sent to the vision model`;img.src=`/api/jobs/${r.job}/files/${r.image}`;img.loading="lazy";img.onerror=()=>img.remove();row.append(img)}
   row.append(el("pre",null,r.error?`Error: ${r.error}`:r.preview||(r.state==="running"?"Waiting for the response…":"")));
   d.append(row);
 }
@@ -319,20 +327,41 @@ function showResults(R,e,failed){
       const res=await fetch(`/api/jobs/${R.job}/retry`,{method:"POST"});const body=await res.json();
       if(!res.ok){R.summary.textContent=body.detail;b.disabled=false;return}
       R.summary.textContent=`Retrying ${body.files} file${body.files==1?"":"s"}; pages that already worked come from the cache.`;
-      R.active=true;subscribe(R,body.from)};
+      const live=R.state?R:makeRun(R.job);  // a run from the history list gets a live section for the retry
+      live.active=true;subscribe(live,body.from)};
     box.append(b);
   }
+  else if(failed)box.append(el("p","note","To redo the failed pages, drop the same PDFs again: pages that already worked come from the cache for free."));
   box.append(pathRow("Folder in Windows Explorer:",e.windows_dir));
   const dl=el("div","actions");
-  const md=el("a","btn","Download markdown only (.zip)");md.href=`/api/jobs/${R.job}/zip?only=markdown`;
-  const all=el("a","btn secondary","Download with images (.zip)");all.href=`/api/jobs/${R.job}/zip`;
-  dl.append(md,all);box.append(dl);
+  const md=el("a","btn","Download markdown (.zip)");md.href=`/api/jobs/${R.job}/zip?only=markdown`;dl.append(md);
+  if(e.has_images){const all=el("a","btn secondary","Download with page images (.zip)");all.href=`/api/jobs/${R.job}/zip`;dl.append(all)}
+  box.append(dl);
   for(const m of e.markdown){
     const r=el("div","result");const b=el("button",null,"Copy");b.setAttribute("aria-label",`Copy ${m.file}`);
     b.onclick=async()=>copy(await(await fetch(`/api/jobs/${R.job}/files/${encodeURIComponent(m.file).replaceAll("%2F","/")}`)).text(),b);
     r.append(el("span","fname",m.file),b,el("small",null,`${m.title}, ${m.pages} pages, from ${m.source}`+(m.failed?`, ${m.failed} pages failed`:"")));box.append(r)}
   box.hidden=false;
 }
+/* earlier runs, read from the out/ folder; a run that is still going is followed live again */
+async function loadHistory(){
+  const list=await(await fetch("/api/runs")).json();
+  for(const r of list.filter(r=>r.running&&!runs.has(r.job)).reverse())subscribe(makeRun(r.job),0);
+  const past=list.filter(r=>!r.running&&!runs.has(r.job));
+  const box=$("history");box.replaceChildren();
+  if(past.length)box.append(el("h2",null,"Earlier runs"));
+  for(const r of past){
+    const d=el("details","past"),sum=el("summary");
+    sum.append(el("span","fname",runLabel(r.job)),el("small",null,
+      `${r.markdown.length} file${r.markdown.length==1?"":"s"}, ${r.pages} pages, $${r.spent_usd.toFixed(r.spent_usd<0.1?3:2)}`+(r.failed_pages?`, ${r.failed_pages} pages failed`:"")));
+    const R={job:r.job,summary:el("p","run-summary"),results:el("div","run-results")};
+    d.append(sum,R.summary,R.results);
+    d.ontoggle=()=>{if(d.open&&!R.loaded){R.loaded=true;showResults(R,{...r,type:r.can_retry?"done":"gone"},r.failed_pages)}};
+    box.append(d);
+  }
+}
+loadHistory();
+
 $("run").onclick=async()=>{
   $("run").disabled=true;
   const res=await fetch("/api/run",{method:"POST",body:form()});

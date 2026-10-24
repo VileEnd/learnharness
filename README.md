@@ -38,11 +38,14 @@ Crossed-out content is kept as ~~strikethrough~~; on messy corrections treat tha
 out/<job>/
   <Course_Type-NN_Topic>.md   one per PDF, named after its content; YAML front matter (title, summary,
                               topics, source, ...), then <!-- page N --> markers per page
-  <pdf-name>/images/pNNN.png  renders of pages with figures or handwriting, linked from the markdown
   <pdf-name>/manifest.json    page kinds, failed pages, API calls, cost
 ```
 
-All markdown files of a run sit side by side in the job folder, so they can be copied in one go. The page shows that folder's Windows path, a Copy button per file, and zips with or without images.
+Page images are only rendered to send pages to the vision model and are deleted after the run; diagrams and handwriting live in the markdown as Mermaid, descriptions and transcriptions. Set `keep_page_images = true` to keep the images of pages with figures or handwriting and link them from the markdown.
+
+The page lists all earlier runs from `out/` with their files, Copy buttons and downloads; reloading the page during a run reconnects to it.
+
+All markdown files of a run sit side by side in the job folder, so they can be copied in one go. The page shows that folder's Windows path, a Copy button per file, and a zip of all markdown files.
 
 Diagrams are drawn as Mermaid with quoted labels plus a one- or two-sentence explanation in the document's language. Common Mermaid syntax slips (empty or unquoted edge labels) are repaired automatically; on the test material 111 of 112 diagrams parse.
 

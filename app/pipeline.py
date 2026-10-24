@@ -2,6 +2,7 @@ import hashlib
 import itertools
 import json
 import re
+import shutil
 import time
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -145,8 +146,10 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event:
               "usage": res.get("usage"), "preview": _preview(res)})
         return res, res["cost"]
 
-    # page images are linked (and kept) only where there is something to look at: figures or handwriting
-    pages = [{"text": "", "image": f"images/p{i + 1:03d}.png" if k else None, "vision": None, "errors": []}
+    # page images are only needed to send pages to the vision model; with keep_page_images they are kept and
+    # linked where there is something to look at (figures or handwriting), otherwise deleted after the run
+    keep = p.get("keep_page_images", False)
+    pages = [{"text": "", "image": f"images/p{i + 1:03d}.png" if k and keep else None, "vision": None, "errors": []}
              for i, k in enumerate(kinds)]
     spent, calls, done = 0.0, 0, 0
     progress = {"type": "file", "file": out_dir.name, "name": name, "total": len(tasks), "strategy": strategy}
@@ -176,7 +179,9 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event:
         if own_pool:
             pool.shutdown()
 
-    if not p.get("keep_all_page_images"):
+    if not keep:
+        shutil.rmtree(out_dir / "images", ignore_errors=True)
+    else:
         for i, k in enumerate(kinds):
             if not k:
                 (out_dir / f"images/p{i + 1:03d}.png").unlink(missing_ok=True)
