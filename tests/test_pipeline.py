@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 
 from app.cache import Cache
-from app.pipeline import NO_FIGURES, SCAN_PROMPT, estimate, process_pdf
+from app.pipeline import NO_FIGURES, PAGE_PROMPT, SCAN_PROMPT, estimate, process_pdf
 
 CFG = tomllib.loads(Path(__file__).parent.parent.joinpath("config.toml").read_text())
+CFG["pipeline"]["strategy"] = "ocr+vision"
+VISION_CFG = {**CFG, "pipeline": {**CFG["pipeline"], "strategy": "vision"}}
 
 
 class FakeClient:
@@ -55,7 +57,18 @@ def test_no_figures_answer_drops_the_section(tmp_path, run):
 
 
 def test_estimate(pdf_bytes):
-    assert estimate(pdf_bytes, CFG) == {"pages": 5, "ocr_pages": 4, "vision_pages": 2, "usd": 0.0144}
+    assert estimate(pdf_bytes, CFG)["usd"] == round(4 * 0.0021 + 2 * 0.0006, 4)
+    assert estimate(pdf_bytes, VISION_CFG) == {"pages": 5, "ocr_pages": 0, "vision_pages": 5, "handwritten_pages": 1,
+                                               "figure_pages": 1, "usd": 0.003}
+
+
+def test_vision_strategy_reads_every_page_once(tmp_path, pdf_bytes):
+    client = FakeClient()
+    m = process_pdf(pdf_bytes, "My Lecture.pdf", client, Cache(tmp_path / "cache"), tmp_path / "out", VISION_CFG)
+    md = (tmp_path / "out/My_Lecture.md").read_text()
+    assert client.ocr_pages == [] and client.prompts == [PAGE_PROMPT] * 5 and m["failed_pages"] == []
+    assert sorted(p.name for p in (tmp_path / "out/images").iterdir()) == ["p002.png", "p003.png"]
+    assert "![page 1]" not in md and "![page 2](images/p002.png)" in md
 
 
 def test_emits_live_request_events(tmp_path, pdf_bytes):
