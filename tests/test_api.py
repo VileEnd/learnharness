@@ -31,3 +31,22 @@ def test_event_stream_ends_only_on_the_done_event():
                       "dir": None}
     body = TestClient(app).get("/api/jobs/s/events").text
     assert body.count("data: ") == 3
+
+
+def test_zip_of_a_run_on_disk_after_restart(tmp_path, monkeypatch):
+    import io
+    import zipfile
+    from app import main
+    run = tmp_path / "20260101-000000-abcd"
+    (run / "lecture/images").mkdir(parents=True)
+    (run / "Course_Slides-01.md").write_text("# x")
+    (run / "lecture/images/p001.png").write_bytes(b"png")
+    (run / "old-layout").mkdir()
+    (run / "old-layout/old-layout.md").write_text("# y")
+    monkeypatch.setattr(main, "OUT", tmp_path)
+    client = TestClient(app)
+    names = lambda r: sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())  # noqa: E731
+    assert names(client.get(f"/api/jobs/{run.name}/zip?only=markdown")) == ["Course_Slides-01.md", "old-layout.md"]
+    assert names(client.get(f"/api/jobs/{run.name}/zip")) == ["Course_Slides-01.md", "lecture/images/p001.png",
+                                                              "old-layout/old-layout.md"]
+    assert client.get("/api/jobs/..%2F..%2Fetc/zip").status_code == 404
