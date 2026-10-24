@@ -17,28 +17,29 @@ The Batch API is deliberately not used: it does not accept base64 images (the pa
 
 ## How each page is handled
 
-Every page is classified locally (free) before anything is sent:
+Every page is classified locally (free): plain text, text with figures, or handwritten/scanned. What happens next depends on `strategy` in `config.toml`:
 
-| Page | Mistral OCR (`pdf_engine`) | Vision model (`vision_model`) |
+| `strategy` | What is sent | Measured cost |
 |---|---|---|
-| Printed text only | text, tables, LaTeX | – |
-| Printed + figures / graphs / pictures / digital ink | printed text | figures as Mermaid or descriptions, handwritten notes transcribed |
-| Scanned or handwritten (no embedded text) | skipped | transcribes the whole page |
+| `"vision"` (default) | every page as an image to the vision model, which transcribes text, LaTeX, tables, diagrams (Mermaid) and handwriting in one call | ~$0.0006 / page |
+| `"ocr+vision"` | printed text to Mistral OCR; figure pages also to the vision model for figures and handwriting; handwritten pages only to the vision model | ~$0.003 / page |
 
-Logos and icons (images under 3% of the page) do not count as figures. OCR runs one page per request, so page boundaries are exact.
+On the test PDFs both strategies produced equally complete text, with LaTeX intact; `"vision"` was 6x cheaper and 4x faster. Switch to `"ocr+vision"` if printed math ever comes out wrong. Thinking is off by default (`vision_reasoning`); `{ effort = "low" }` costs about 4x more and did not read handwriting better in tests.
+
+Crossed-out content is kept as ~~strikethrough~~; on messy corrections treat that as a hint. Logos and icons (images under 3% of the page) do not count as figures.
 
 ## Output
 
 ```
 out/<job>/<pdf-name>/
   <pdf-name>.md      YAML front matter, then <!-- page N --> markers per page
-  images/pNNN.png    page renders, linked above each figure section
+  images/pNNN.png    renders of pages with figures or handwriting, linked in the markdown
   manifest.json      page kinds, failed pages, API calls, cost
 ```
 
 ## Cost and re-runs
 
-The page shows an estimate before converting (measured: ~$0.0021 per OCR page, ~$0.003 per vision page). Every API result is cached in `.cache/`, so re-running the same PDF is free. A page that fails (rate limit, provider error, out of credits) is marked in the markdown and in `manifest.failed_pages`; it is not cached, so re-running the PDF retries only the failed pages.
+The page shows an estimate before converting. Every API result is cached in `.cache/`, so re-running the same PDF is free. A page that fails (rate limit, provider error, out of credits) is marked in the markdown and in `manifest.failed_pages`; it is not cached, so re-running the PDF retries only the failed pages.
 
 ## Configure
 

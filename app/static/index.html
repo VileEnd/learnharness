@@ -99,7 +99,7 @@ tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transpa
   <label id="drop">Drop PDFs here or choose files<small>Lecture slides, exams, scripts, handwritten notes</small>
     <input type="file" id="pick" accept="application/pdf" multiple hidden></label>
   <div class="actions"><button id="run" disabled>Convert</button><a id="dl" class="btn secondary" hidden>Download all as .zip</a><span id="total"></span></div>
-  <div class="legend" aria-hidden="true"><span><i style="background:var(--rule)"></i>waiting</span><span><i style="background:var(--marker)"></i>in progress</span><span><i style="background:var(--ink)"></i>done</span><span><i style="background:var(--cache)"></i>from cache</span><span><i style="background:var(--red)"></i>failed</span><span>• gets a vision pass</span></div>
+  <div class="legend" aria-hidden="true"><span><i style="background:var(--rule)"></i>waiting</span><span><i style="background:var(--marker)"></i>in progress</span><span><i style="background:var(--ink)"></i>done</span><span><i style="background:var(--cache)"></i>from cache</span><span><i style="background:var(--red)"></i>failed</span><span>• has figures or handwriting</span></div>
   <div id="files"></div>
   <p id="summary"></p>
   <div id="log" aria-live="polite"></div>
@@ -128,7 +128,8 @@ const $=id=>document.getElementById(id);
 let files=[],job=null,t0=null,timer=null,filter="all",selected=null;
 const reqs=new Map(),rows=new Map(),sheets=new Map();
 const STEPS={null:["text"],text:["text"],figures:["text","vision"],scan:["vision"]};
-const stepLabel=r=>r.step==="text"?"OCR":r.kind==="scan"?"Vision (full page)":"Vision (figures)";
+const wantSteps=(s,i)=>s.strategy==="vision"?["vision"]:STEPS[s.kinds[i]];
+const stepLabel=r=>r.step==="text"?"OCR":r.kind==="figures"?"Vision (figures)":"Vision (full page)";
 const shortModel=m=>m.split("/").pop();
 const fmtTime=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 const form=()=>{const f=new FormData();files.forEach(x=>f.append("files",x));return f};
@@ -145,7 +146,7 @@ async function choose(list){
   $("total").textContent=`${files.length} file${files.length>1?"s":""}, ${pages} pages, about $${r.usd.toFixed(2)}`;
   $("files").replaceChildren(...r.files.map(f=>{
     const d=el("div","file");const h=el("div","file-head");
-    h.append(el("span","file-name",f.name),el("span","file-meta",`${f.pages} pages, ${f.vision_pages} with vision, ~$${f.usd.toFixed(3)}`));
+    h.append(el("span","file-name",f.name),el("span","file-meta",`${f.pages} pages, ${f.figure_pages} with figures, ${f.handwritten_pages} handwritten, ~$${f.usd.toFixed(3)}`));
     d.append(h);return d}));
   $("run").disabled=false;
 }
@@ -162,11 +163,11 @@ function makeSheet(e){
   const cells=e.kinds.map((k,i)=>{const c=el("button","cell"+(k?" k-"+k:""));c.title=`Page ${i+1}`;c.setAttribute("aria-label",`Page ${i+1}`);
     c.onclick=()=>{const s=sheets.get(e.file).steps[i];const id=s.vision?.id||s.text?.id;if(id)select(id)};grid.append(c);return c});
   d.append(h,grid);
-  return {el:d,meta,cells,kinds:e.kinds,steps:e.kinds.map(()=>({}))};
+  return {el:d,meta,cells,kinds:e.kinds,strategy:e.strategy,steps:e.kinds.map(()=>({}))};
 }
 function paintCell(file,page){
   const s=sheets.get(file);if(!s)return;
-  const i=page-1,want=STEPS[s.kinds[i]],got=want.map(k=>s.steps[i][k]?.state);
+  const i=page-1,want=wantSteps(s,i),got=want.map(k=>s.steps[i][k]?.state);
   let cls="queued";
   if(got.includes("error"))cls="error";
   else if(got.some(x=>x==="running"||x==="retry"))cls="running";
