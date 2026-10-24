@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF to Markdown</title>
+<style>
+:root{color-scheme:light dark;--line:#8886;--ok:#2a7d46;--warn:#a66a00;--err:#c0392b}
+body{font:16px/1.5 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 16px}
+h1{font-size:1.5rem;margin:0 0 .25rem}.sub{opacity:.7;margin:0 0 1.25rem;font-size:.9rem}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:2rem 1rem;text-align:center;cursor:pointer}
+#drop.over{border-color:currentColor;background:#8881}
+table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.9rem}
+td,th{padding:.3rem .5rem;border-bottom:1px solid var(--line);text-align:right}td:first-child,th:first-child{text-align:left;word-break:break-all}
+button{font:inherit;padding:.5rem 1.1rem;border-radius:6px;border:1px solid var(--line);cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+#log{background:#8881;padding:.75rem 1rem;border-radius:8px;max-height:22rem;overflow:auto;font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.error{color:var(--err)}
+</style></head><body>
+<h1>PDF to Markdown</h1><p class="sub" id="models">OCR + vision via OpenRouter</p>
+<label id="drop">Drop PDFs here, or click to choose<input type="file" id="pick" accept="application/pdf" multiple hidden></label>
+<div id="est"></div>
+<button id="run" disabled>Convert</button> <a id="dl" hidden><button>Download .zip</button></a>
+<p id="summary"></p>
+<div id="log" hidden></div>
+<script>
+let files=[];const $=id=>document.getElementById(id);
+const form=()=>{const f=new FormData();files.forEach(x=>f.append("files",x));return f};
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function log(msg,level){const d=document.createElement("div");d.className=level||"";d.textContent=msg;$("log").append(d);$("log").scrollTop=1e9}
+async function set(list){
+  files=[...list].filter(f=>f.name.toLowerCase().endsWith(".pdf"));
+  if(!files.length)return;
+  $("run").disabled=true;$("est").textContent="Analysing pages...";
+  const r=await(await fetch("/api/estimate",{method:"POST",body:form()})).json();
+  $("models").textContent=`OCR: ${r.ocr_engine} · Vision: ${r.vision_model}`;
+  $("est").innerHTML=`<table><tr><th>File</th><th>Pages</th><th>Handwritten/scanned</th><th>Figure pages</th><th>Est. cost</th></tr>`+
+    r.files.map(f=>`<tr><td>${esc(f.name)}</td><td>${f.pages}</td><td>${f.pages-f.ocr_pages}</td><td>${f.vision_pages-(f.pages-f.ocr_pages)}</td><td>$${f.usd.toFixed(3)}</td></tr>`).join("")+
+    `<tr><th>Total</th><th>${r.files.reduce((a,b)=>a+b.pages,0)}</th><th></th><th></th><th>$${r.usd.toFixed(2)}</th></tr></table>`;
+  $("run").disabled=false;
+}
+$("pick").onchange=e=>set(e.target.files);
+$("drop").ondragover=e=>{e.preventDefault();$("drop").classList.add("over")};
+$("drop").ondragleave=()=>$("drop").classList.remove("over");
+$("drop").ondrop=e=>{e.preventDefault();$("drop").classList.remove("over");set(e.dataTransfer.files)};
+$("run").onclick=async()=>{
+  $("run").disabled=true;$("log").innerHTML="";$("log").hidden=false;$("dl").hidden=true;$("summary").textContent="";
+  const res=await fetch("/api/run",{method:"POST",body:form()});
+  if(!res.ok){log((await res.json()).detail,"error");$("run").disabled=false;return}
+  const {job}=await res.json();
+  const es=new EventSource(`/api/jobs/${job}/events`);
+  es.onmessage=m=>{const e=JSON.parse(m.data);
+    if(e.msg)log(e.msg,e.level);
+    if(e.done){es.close();$("run").disabled=false;
+      $("summary").textContent=`Finished. Spent $${e.usd}. Files are in ${e.dir}`+(e.failed_files.length?` — failed: ${e.failed_files.join(", ")}`:"");
+      $("dl").href=`/api/jobs/${job}/zip`;$("dl").hidden=false}};
+};
+</script></body></html>
