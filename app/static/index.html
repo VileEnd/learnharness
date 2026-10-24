@@ -14,6 +14,7 @@
   --paper:#11161D;--sheet:#18202A;--ink:#8FA8F0;--text:#E3E8EE;--muted:#93A0AE;--rule:#2A3542;
   --marker:#E7C14B;--red:#F07167;--green:#5CC39A;--cache:#3A4E86;--grid:#1D2733;color-scheme:dark}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%}
 body{margin:0;background:var(--paper);color:var(--text);font:15px/1.5 "Atkinson Hyperlegible",system-ui,sans-serif;font-variant-numeric:tabular-nums}
 header{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;padding:1rem 20px .75rem}
@@ -60,17 +61,20 @@ legend{font-weight:700;margin-bottom:4px}
 .choice:has(input:checked){border-color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent)}
 .choice b{color:var(--text)}.choice .price{font-weight:700;color:var(--ink)}
 .choice small{grid-column:2/4;color:var(--muted)}
-#results{display:grid;gap:6px}
-#results h2{margin-top:4px}
+#runs{display:grid;gap:18px}
+.run{display:grid;gap:8px;border-top:2px solid var(--ink);padding-top:10px}
+.run-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.run-state{font-size:.85rem;color:var(--muted)}.run-state.live{color:var(--text);font-weight:700}
+.run-summary{margin:0;font-weight:700}
+.run-results{display:grid;gap:6px}
 .result{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;border-top:1px solid var(--rule);padding-top:6px}
 .result .fname{font-weight:700;word-break:break-all}.result small{color:var(--muted);grid-column:1}
 .result button{grid-row:1/3;grid-column:2;padding:.25rem .7rem;font-weight:400;background:transparent;color:var(--ink)}
 .path{display:flex;gap:6px;align-items:center;font-size:.85rem;word-break:break-all;background:var(--paper);padding:6px 8px;border-radius:6px}
 .path button{padding:.15rem .6rem;font-weight:400;background:transparent;color:var(--ink);flex:none}
-#log{font-size:.85rem;color:var(--muted)}
-#log div{padding:2px 0}
+.run-log{font-size:.85rem;color:var(--muted);max-height:12rem;overflow:auto}
+.run-log div{padding:2px 0}
 .ok{color:var(--green)}.warn{color:var(--text)}.error{color:var(--red)}
-#summary{font-weight:700}
 
 /* right: live requests */
 #stats{display:flex;flex-wrap:wrap;gap:4px 22px;padding:12px 14px;border-bottom:1px solid var(--rule);align-items:baseline}
@@ -119,10 +123,8 @@ tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transpa
   </fieldset>
   <div class="actions"><button id="run" disabled>Convert</button><span id="total"></span></div>
   <div class="legend" aria-hidden="true"><span><i style="background:var(--rule)"></i>waiting</span><span><i style="background:var(--marker)"></i>in progress</span><span><i style="background:var(--ink)"></i>done</span><span><i style="background:var(--cache)"></i>from cache</span><span><i style="background:var(--red)"></i>failed</span><span>• has figures or handwriting</span></div>
-  <div id="files"></div>
-  <p id="summary"></p>
-  <div id="results" hidden></div>
-  <div id="log" aria-live="polite"></div>
+  <div id="pending"></div>
+  <div id="runs" aria-live="polite"></div>
 </section>
 <section id="right" aria-label="Live requests">
   <div id="stats">
@@ -145,8 +147,8 @@ tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transpa
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let files=[],job=null,t0=null,timer=null,filter="all",selected=null;
-const reqs=new Map(),rows=new Map(),sheets=new Map();
+let files=[],t0=null,timer=null,filter="all",selected=null,runCount=0;
+const reqs=new Map(),rows=new Map(),runs=new Map();  // requests and rows are keyed "job|request id"
 const STEPS={null:["text"],text:["text"],figures:["text","vision"],scan:["vision"]};
 const wantSteps=(s,i)=>s.strategy==="vision"?["vision"]:STEPS[s.kinds[i]];
 const stepLabel=r=>r.step==="text"?"OCR":r.step==="name"?"File name":r.kind==="figures"?"Vision (figures)":"Vision (full page)";
@@ -155,8 +157,8 @@ const fmtTime=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")
 const chosen=()=>document.querySelector("input[name=strategy]:checked")?.value;
 const form=()=>{const f=new FormData();files.forEach(x=>f.append("files",x));if(chosen())f.append("strategy",chosen());return f};
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
-function log(msg,level){const d=el("div",level,msg);$("log").prepend(d)}
 
+/* choosing files: only a preview until Convert, so a running conversion is never touched */
 async function choose(list){
   files=[...list].filter(f=>f.name.toLowerCase().endsWith(".pdf"));
   if(!files.length){$("total").textContent="Only PDF files can be converted.";return}
@@ -165,10 +167,11 @@ async function choose(list){
   $("models").textContent=`OCR with ${r.ocr_engine}, vision with ${r.vision_model}`;
   const pages=r.files.reduce((a,b)=>a+b.pages,0);
   $("total").textContent=`${files.length} file${files.length>1?"s":""}, ${pages} pages`;
-  document.querySelectorAll("[data-price]").forEach(x=>x.textContent=`about $${r.usd[x.dataset.price].toFixed(2)}`);
+  const usd=v=>`about $${v.toFixed(v<0.1?3:2)}`;
+  document.querySelectorAll("[data-price]").forEach(x=>x.textContent=usd(r.usd[x.dataset.price]));
   const pick=document.querySelector(`input[name=strategy][value="${chosen()||r.default_strategy}"]`);if(pick)pick.checked=true;
   $("strategy").hidden=false;
-  $("files").replaceChildren(...r.files.map(f=>{
+  $("pending").replaceChildren(...r.files.map(f=>{
     const d=el("div","file");const h=el("div","file-head");
     h.append(el("span","file-name",f.name),el("span","file-meta",`${f.pages} pages, ${f.figure_pages} with figures, ${f.handwritten_pages} handwritten`));
     d.append(h);return d}));
@@ -179,30 +182,49 @@ $("drop").ondragover=e=>{e.preventDefault();$("drop").classList.add("over")};
 $("drop").ondragleave=()=>$("drop").classList.remove("over");
 $("drop").ondrop=e=>{e.preventDefault();$("drop").classList.remove("over");choose(e.dataTransfer.files)};
 
+/* one section per run; runs go on in parallel and keep their own page grids, log and results */
+function makeRun(job){
+  runCount++;
+  const box=el("section","run");box.setAttribute("aria-label",`Run ${runCount}`);
+  const head=el("div","run-head"),state=el("span","run-state live","starting");
+  head.append(el("h2",null,`Run ${runCount}, started ${new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`),state);
+  const filesEl=el("div"),summary=el("p","run-summary"),results=el("div","run-results"),logEl=el("div","run-log");
+  results.hidden=true;box.append(head,filesEl,summary,results,logEl);$("runs").prepend(box);
+  const R={job,state,filesEl,summary,results,logEl,sheets:new Map(),received:0,active:true,errors:0};
+  runs.set(job,R);return R;
+}
+function subscribe(R,from){
+  R.received=from;
+  const es=new EventSource(`/api/jobs/${R.job}/events?from=${from}`);
+  es.onmessage=m=>{R.received++;R.errors=0;const e=JSON.parse(m.data);handle(R,e);if(e.type==="done"||e.type==="gone")es.close()};
+  es.onerror=()=>{es.close();  // resume where we were instead of replaying everything
+    if(R.active&&++R.errors<20)setTimeout(()=>subscribe(R,R.received),2000);
+    else if(R.active){R.state.textContent="lost connection to the server";R.active=false;tick()}};
+}
+
 /* contact sheet per file */
-function makeSheet(e){
+function makeSheet(R,e){
   const d=el("div","file");const h=el("div","file-head");const meta=el("span","file-meta","");
   h.append(el("span","file-name",e.name),meta);
   const grid=el("div","pages");
-  const cells=e.kinds.map((k,i)=>{const c=el("button","cell"+(k?" k-"+k:""));c.title=`Page ${i+1}`;c.setAttribute("aria-label",`Page ${i+1}`);
-    c.onclick=()=>{const s=sheets.get(e.file).steps[i];const id=s.vision?.id||s.text?.id;if(id)select(id)};grid.append(c);return c});
-  d.append(h,grid);
-  return {el:d,meta,cells,kinds:e.kinds,strategy:e.strategy,steps:e.kinds.map(()=>({}))};
+  const sheet={el:d,meta,kinds:e.kinds,strategy:e.strategy,steps:e.kinds.map(()=>({}))};
+  sheet.cells=e.kinds.map((k,i)=>{const c=el("button","cell"+(k?" k-"+k:""));c.title=`Page ${i+1}`;c.setAttribute("aria-label",`Page ${i+1}`);
+    c.onclick=()=>{const st=sheet.steps[i];const key=st.vision?.key||st.text?.key;if(key)select(key)};grid.append(c);return c});
+  d.append(h,grid);return sheet;
 }
-function paintCell(file,page){
-  const s=sheets.get(file);if(!s)return;
-  const i=page-1,want=wantSteps(s,i),got=want.map(k=>s.steps[i][k]?.state);
+function paintCell(sheet,page){
+  const i=page-1,got=wantSteps(sheet,i).map(k=>sheet.steps[i][k]?.state);
   let cls="queued";
   if(got.includes("error"))cls="error";
   else if(got.some(x=>x==="running"||x==="retry"))cls="running";
   else if(got.every(x=>x==="cached"))cls="cached";
   else if(got.every(x=>x==="ok"||x==="cached"))cls="done";
   else if(got.some(Boolean))cls="partial";
-  const c=s.cells[i];c.className="cell"+(s.kinds[i]?" k-"+s.kinds[i]:"")+" "+cls;
-  c.title=`Page ${i+1}: ${s.kinds[i]==="scan"?"handwritten/scanned":s.kinds[i]==="figures"?"text + figures":"text"}, ${cls}`;
+  const k=sheet.kinds[i],c=sheet.cells[i];c.className="cell"+(k?" k-"+k:"")+" "+cls;
+  c.title=`Page ${i+1}: ${k==="scan"?"handwritten/scanned":k==="figures"?"text + figures":"text"}, ${cls}`;
 }
 
-/* request table */
+/* request table, shared by all runs */
 function visible(r){
   if(filter==="active")return r.state==="running"||r.state==="retry";
   if(filter==="error")return r.state==="error";
@@ -210,8 +232,8 @@ function visible(r){
   return true;
 }
 function renderRow(r){
-  let tr=rows.get(r.id);
-  if(!tr){tr=el("tr");tr.tabIndex=0;tr.onclick=()=>select(r.id);tr.onkeydown=e=>{if(e.key==="Enter")select(r.id)};rows.set(r.id,tr);$("reqs").prepend(tr);$("empty").hidden=true}
+  let tr=rows.get(r.key);
+  if(!tr){tr=el("tr");tr.tabIndex=0;tr.onclick=()=>select(r.key);tr.onkeydown=e=>{if(e.key==="Enter")select(r.key)};rows.set(r.key,tr);$("reqs").prepend(tr);$("empty").hidden=true}
   const u=r.usage;
   const cells=[fmtTime(Math.max(0,r.first-t0)),r.page?`${r.file} p.${r.page}`:r.file,stepLabel(r),shortModel(r.model),null,
     r.ms!=null?(r.ms/1000).toFixed(1)+" s":r.state==="running"||r.state==="retry"?"…":"",
@@ -219,11 +241,11 @@ function renderRow(r){
     r.cost!=null?"$"+r.cost.toFixed(4):""];
   tr.replaceChildren(...cells.map((c,i)=>{const td=el("td",i>=5?"num":"");
     if(i===4){const st=el("span","state s-"+r.state,r.state==="retry"?"retrying":r.state==="ok"?"done":r.state);td.append(st)}else td.textContent=c;return td}));
-  tr.hidden=!visible(r);tr.setAttribute("aria-selected",selected===r.id);
+  tr.hidden=!visible(r);tr.setAttribute("aria-selected",selected===r.key);
 }
-function select(id){
-  selected=id;rows.forEach((tr,k)=>tr.setAttribute("aria-selected",k===id));
-  const r=reqs.get(id),d=$("detail");if(!r)return;
+function select(key){
+  selected=key;rows.forEach((tr,k)=>tr.setAttribute("aria-selected",k===key));
+  const r=reqs.get(key),d=$("detail");if(!r)return;
   d.replaceChildren();d.classList.add("open");
   const head=el("div","head");const title=el("h2",null,r.page?`${r.file}, page ${r.page}: ${stepLabel(r)}`:`${r.file}: ${stepLabel(r)}`);
   const close=el("button","close","Close");close.onclick=()=>{d.classList.remove("open");selected=null;rows.forEach(tr=>tr.setAttribute("aria-selected",false))};
@@ -233,44 +255,54 @@ function select(id){
     u?`${u.prompt} tokens in, ${u.completion} out`+(u.reasoning?` (${u.reasoning} of them thinking)`:""):null,r.note?`Last retry: ${r.note}`:null].filter(Boolean);
   d.append(el("p","dmeta",bits.join(", ")));
   const row=el("div","row");
-  if(r.image&&job){const img=el("img");img.alt=`Page ${r.page} as sent to the vision model`;img.src=`/api/jobs/${job}/files/${r.image}`;img.loading="lazy";row.append(img)}
+  if(r.image){const img=el("img");img.alt=`Page ${r.page} as sent to the vision model`;img.src=`/api/jobs/${r.job}/files/${r.image}`;img.loading="lazy";row.append(img)}
   row.append(el("pre",null,r.error?`Error: ${r.error}`:r.preview||(r.state==="running"?"Waiting for the response…":"")));
   d.append(row);
 }
 document.querySelectorAll("#filters button").forEach(b=>b.onclick=()=>{
   filter=b.dataset.f;document.querySelectorAll("#filters button").forEach(x=>x.setAttribute("aria-pressed",x===b));
-  reqs.forEach(r=>{rows.get(r.id).hidden=!visible(r)})});
+  reqs.forEach(r=>{rows.get(r.key).hidden=!visible(r)})});
 
 function stats(){
-  let flight=0,done=0,err=0,cost=0;
+  let flight=0,done=0,err=0,cost=0,pagesDone=0;
   reqs.forEach(r=>{if(r.state==="running"||r.state==="retry")flight++;else if(r.state==="error")err++;else done++;cost+=r.cost||0});
-  let pagesDone=0;sheets.forEach(s=>s.cells.forEach(c=>{if(c.classList.contains("done"))pagesDone++}));
-  const el_=(Date.now()/1000)-t0;
+  runs.forEach(R=>R.sheets.forEach(s=>s.cells.forEach(c=>{if(c.classList.contains("done"))pagesDone++})));
+  const secs=(Date.now()/1000)-t0;
   $("st-flight").textContent=flight;$("st-done").textContent=done;$("st-err").textContent=err;
-  $("st-cost").textContent="$"+cost.toFixed(3);$("st-time").textContent=fmtTime(el_);
-  $("st-rate").textContent=el_>5&&pagesDone?Math.round(pagesDone/(el_/60)):"–";
+  $("st-cost").textContent="$"+cost.toFixed(3);$("st-time").textContent=fmtTime(secs);
+  $("st-rate").textContent=secs>5&&pagesDone?Math.round(pagesDone/(secs/60)):"–";
+}
+function tick(){  // the stats clock runs while any run is active
+  const active=[...runs.values()].some(R=>R.active);
+  if(active&&!timer)timer=setInterval(stats,1000);
+  if(!active&&timer){clearInterval(timer);timer=null}
+  stats();
 }
 
-function handle(e){
-  if(e.type==="start"){t0=e.t;sheets.clear();$("files").replaceChildren();timer=setInterval(stats,1000)}
+function handle(R,e){
+  if(e.type==="start"){if(t0==null)t0=e.t;R.active=true;R.state.className="run-state live";R.state.textContent="running";tick()}
   else if(e.type==="file"){
-    if(e.kinds&&!sheets.has(e.file)){const s=makeSheet(e);sheets.set(e.file,s);$("files").append(s.el)}
-    const s=sheets.get(e.file);
+    if(e.kinds&&!R.sheets.has(e.file)){const s=makeSheet(R,e);R.sheets.set(e.file,s);R.filesEl.append(s.el)}
+    const s=R.sheets.get(e.file);
     if(s&&e.finished)s.meta.textContent=`→ ${e.markdown}`;
     else if(s)s.meta.textContent=`${e.done}/${e.total} steps`+(e.failed?`, ${e.failed} pages failed`:"");
   }
   else if(e.type==="req"){
-    const prev=reqs.get(e.id)||{first:e.t};const r={...prev,...e};
+    const key=`${R.job}|${e.id}`,prev=reqs.get(key)||{first:e.t};const r={...prev,...e,key,job:R.job};
     if(e.state==="running"){delete r.ms;delete r.error}
-    reqs.set(e.id,r);renderRow(r);
-    const s=sheets.get(e.file);if(s&&e.page){s.steps[e.page-1][e.step]=r;paintCell(e.file,e.page)}
-    if(selected===e.id)select(e.id);
+    reqs.set(key,r);renderRow(r);
+    const s=R.sheets.get(e.file);if(s&&e.page){s.steps[e.page-1][e.step]=r;paintCell(s,e.page)}
+    if(selected===key)select(key);
   }
-  else if(e.type==="log")log(e.msg,e.level);
-  else if(e.type==="done"){
-    clearInterval(timer);stats();$("run").disabled=false;
-    $("summary").textContent=`Finished: $${e.usd} spent.`+(e.failed_files.length?` Failed files: ${e.failed_files.join(", ")}`:"");
-    showResults(e);
+  else if(e.type==="log")R.logEl.prepend(el("div",e.level,e.msg));
+  else if(e.type==="done"||e.type==="gone"){
+    R.active=false;tick();
+    const failed=e.markdown.reduce((a,m)=>a+m.failed,0);
+    R.state.className="run-state";R.state.textContent=e.type==="gone"?"server restarted":failed?`${failed} pages failed`:"finished";
+    R.summary.textContent=e.type==="gone"
+      ?"The server restarted during this run. What finished is below; drop the same PDFs again to finish the rest. Pages that already worked come from the cache for free."
+      :`Finished: $${e.usd} spent.`;
+    showResults(R,e,failed);
   }
 }
 async function copy(text,btn){
@@ -279,26 +311,35 @@ async function copy(text,btn){
 function pathRow(label,path){
   const d=el("div","path");const b=el("button",null,"Copy");b.onclick=()=>copy(path,b);
   d.append(el("span",null,`${label} ${path}`),b);return d}
-function showResults(e){
-  const box=$("results");box.replaceChildren(el("h2",null,`${e.markdown.length} markdown file${e.markdown.length==1?"":"s"}`));
+function showResults(R,e,failed){
+  const box=R.results;box.replaceChildren(el("h2",null,`${e.markdown.length} markdown file${e.markdown.length==1?"":"s"}`));
+  if(failed&&e.type==="done"){
+    const b=el("button",null,`Retry ${failed} failed page${failed==1?"":"s"}`);
+    b.onclick=async()=>{b.disabled=true;
+      const res=await fetch(`/api/jobs/${R.job}/retry`,{method:"POST"});const body=await res.json();
+      if(!res.ok){R.summary.textContent=body.detail;b.disabled=false;return}
+      R.summary.textContent=`Retrying ${body.files} file${body.files==1?"":"s"}; pages that already worked come from the cache.`;
+      R.active=true;subscribe(R,body.from)};
+    box.append(b);
+  }
   box.append(pathRow("Folder in Windows Explorer:",e.windows_dir));
   const dl=el("div","actions");
-  const md=el("a","btn",`Download markdown only (.zip)`);md.href=`/api/jobs/${job}/zip?only=markdown`;
-  const all=el("a","btn secondary","Download with images (.zip)");all.href=`/api/jobs/${job}/zip`;
+  const md=el("a","btn","Download markdown only (.zip)");md.href=`/api/jobs/${R.job}/zip?only=markdown`;
+  const all=el("a","btn secondary","Download with images (.zip)");all.href=`/api/jobs/${R.job}/zip`;
   dl.append(md,all);box.append(dl);
   for(const m of e.markdown){
     const r=el("div","result");const b=el("button",null,"Copy");b.setAttribute("aria-label",`Copy ${m.file}`);
-    b.onclick=async()=>copy(await(await fetch(`/api/jobs/${job}/files/${encodeURIComponent(m.file)}`)).text(),b);
-    r.append(el("span","fname",m.file),b,el("small",null,`${m.title}, ${m.pages} pages, from ${m.source}`));box.append(r)}
+    b.onclick=async()=>copy(await(await fetch(`/api/jobs/${R.job}/files/${encodeURIComponent(m.file).replaceAll("%2F","/")}`)).text(),b);
+    r.append(el("span","fname",m.file),b,el("small",null,`${m.title}, ${m.pages} pages, from ${m.source}`+(m.failed?`, ${m.failed} pages failed`:"")));box.append(r)}
   box.hidden=false;
 }
 $("run").onclick=async()=>{
-  $("run").disabled=true;$("log").replaceChildren();$("results").hidden=true;$("summary").textContent="";
-  reqs.clear();rows.clear();sheets.clear();$("reqs").replaceChildren();$("empty").hidden=false;$("detail").classList.remove("open");selected=null;
+  $("run").disabled=true;
   const res=await fetch("/api/run",{method:"POST",body:form()});
-  if(!res.ok){log((await res.json()).detail,"error");$("run").disabled=false;return}
-  job=(await res.json()).job;
-  const es=new EventSource(`/api/jobs/${job}/events`);
-  es.onmessage=m=>{const e=JSON.parse(m.data);handle(e);if(e.type==="done")es.close()};
+  if(!res.ok){$("total").textContent=(await res.json()).detail;$("run").disabled=false;return}
+  const {job}=await res.json();
+  subscribe(makeRun(job),0);
+  files=[];$("pick").value="";$("pending").replaceChildren();$("strategy").hidden=true;
+  $("total").textContent="Started. You can drop more PDFs now; they run alongside.";
 };
 </script></body></html>

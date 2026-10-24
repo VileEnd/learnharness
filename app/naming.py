@@ -25,7 +25,12 @@ def slugify(name, limit=80):
     name = re.sub(r"\s+", "-", name.strip())
     name = re.sub(r"[^A-Za-z0-9._-]+", "", name)
     name = re.sub(r"([-_.])[-_.]+", r"\1", name).strip("-_.")
-    return name[:limit].rstrip("-_.")
+    if len(name) > limit:  # cut at a part boundary (_), else a word boundary (-), never mid-word
+        cut = name[:limit + 1]
+        part, word = cut.rfind("_"), cut.rfind("-")
+        pos = part if part >= limit * 0.6 else word
+        name = cut[:pos] if pos > 0 else name[:limit]
+    return name.rstrip("-_.")
 
 
 def excerpt(markdown):
@@ -41,9 +46,12 @@ def parse_name(text):
         data = json.loads(match.group(0)) if match else None
     except json.JSONDecodeError:
         return None
-    if not isinstance(data, dict) or not isinstance(data.get("title"), str) or not slugify(str(data.get("filename", ""))):
+    if not isinstance(data, dict) or not isinstance(data.get("title"), str) or not data["title"].strip():
+        return None
+    filename = slugify(str(data.get("filename") or "")) or slugify(data["title"])  # models sometimes skip it
+    if not filename:
         return None
     topics = data.get("topics")
-    return {"title": data["title"].strip(), "filename": slugify(data["filename"]),
+    return {"title": data["title"].strip(), "filename": filename,
             "summary": str(data.get("summary", "")).strip(),
             "topics": [str(t) for t in topics] if isinstance(topics, list) else []}

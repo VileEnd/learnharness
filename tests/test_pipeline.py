@@ -95,3 +95,11 @@ def test_emits_live_request_events(tmp_path, pdf_bytes):
     events.clear()
     process_pdf(pdf_bytes, "a.pdf", FakeClient(), cache, tmp_path / "job/a", CFG, events.append)
     assert {e["state"] for e in events if e["type"] == "req"} == {"cached"}
+
+
+def test_markdown_name_overwrites_the_same_file(tmp_path, pdf_bytes):
+    cache, out = Cache(tmp_path / "cache"), tmp_path / "job/My_Lecture"
+    first = process_pdf(pdf_bytes, "My Lecture.pdf", FakeClient(fail_vision=True), cache, out, CFG)
+    again = process_pdf(pdf_bytes, "My Lecture.pdf", FakeClient(), cache, out, CFG, markdown_name=first["markdown"])
+    assert again["markdown"] == first["markdown"] and again["failed_pages"] == []
+    assert len(list((tmp_path / "job").glob("*.md"))) == 1

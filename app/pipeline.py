@@ -3,6 +3,7 @@ import itertools
 import json
 import re
 import time
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
@@ -88,10 +89,13 @@ def write_unique(folder, stem, text):
             continue
 
 
-def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event: None, executor=None):
+def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event: None, executor=None,
+                ocr_gate=None, markdown_name=None):
     """Convert one PDF: page images and manifest.json go to out_dir, the markdown goes next to out_dir under a
     name that sums up its content. Failed pages are marked, not fatal. Pass a shared executor to run several
-    PDFs' API calls in one pool; emit receives file and request events."""
+    PDFs' API calls in one pool, and ocr_gate (e.g. a semaphore) to cap concurrent OCR requests across runs;
+    emit receives file and request events. markdown_name overwrites that file instead of picking a new name."""
+    ocr_gate = ocr_gate or nullcontext()
     o, p = cfg["openrouter"], cfg["pipeline"]
     engine, vmodel, reasoning = o["pdf_engine"], o["vision_model"], o.get("vision_reasoning")
     strategy = p.get("strategy", "vision")
@@ -129,7 +133,8 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event:
         started = time.monotonic()
         try:
             if step == "text":
-                res = client.ocr_pdf(payload, f"{title}-p{i + 1}.pdf", engine, on_retry=on_retry)
+                with ocr_gate:
+                    res = client.ocr_pdf(payload, f"{title}-p{i + 1}.pdf", engine, on_retry=on_retry)
             else:
                 res = client.vision(payload.read_bytes(), PROMPTS[prompt], vmodel, reasoning, on_retry=on_retry)
         except Exception as e:
@@ -188,7 +193,11 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event:
             "source": name, "pages": len(pages), "sha256": src, "converted": date.today().isoformat(),
             "strategy": strategy, "ocr_engine": engine if strategy != "vision" else None, "vision_model": vmodel}
     stem = (naming and naming["filename"]) or slugify(Path(name).stem) or "document"
-    md_path = write_unique(out_dir.parent, stem, build_markdown(meta, pages))
+    if markdown_name:
+        md_path = out_dir.parent / markdown_name
+        md_path.write_text(build_markdown(meta, pages), encoding="utf-8")
+    else:
+        md_path = write_unique(out_dir.parent, stem, build_markdown(meta, pages))
     manifest = {**meta, "markdown": md_path.name, "scan_pages": [i + 1 for i, k in enumerate(kinds) if k == "scan"],
                 "figure_pages": [i + 1 for i, k in enumerate(kinds) if k == "figures"],
                 "failed_pages": failed, "api_calls": calls, "cost_usd": round(spent, 4)}

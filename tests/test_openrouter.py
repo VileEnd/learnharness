@@ -113,3 +113,17 @@ def test_ocr_keeps_annotations_from_error_response():
 
     c = OpenRouter("k", "https://x/api/v1", sleep=lambda s: None, transport=httpx.MockTransport(handler))
     assert c.ocr_pdf(b"%PDF", "d.pdf")["texts"] == ["parsed"]
+
+
+def test_rate_limit_reported_as_400_is_retried():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx.Response(400, json={"error": {"code": 400, "message": "Failed to parse the file: The document "
+                                                       "parsing engine is currently rate limited. Please retry shortly."}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok", "annotations": [ann("h", "text")]}}]})
+
+    c = OpenRouter("k", "https://x/api/v1", sleep=lambda s: None, transport=httpx.MockTransport(handler))
+    assert c.ocr_pdf(b"%PDF", "d.pdf")["texts"] == ["text"] and len(calls) == 3

@@ -50,3 +50,37 @@ def test_zip_of_a_run_on_disk_after_restart(tmp_path, monkeypatch):
     assert names(client.get(f"/api/jobs/{run.name}/zip")) == ["Course_Slides-01.md", "lecture/images/p001.png",
                                                               "old-layout/old-layout.md"]
     assert client.get("/api/jobs/..%2F..%2Fetc/zip").status_code == 404
+
+
+def test_events_resume_from_an_offset_and_old_runs_report_gone(tmp_path, monkeypatch):
+    from app import main
+    main.jobs["r"] = {"events": [{"type": "start"}, {"type": "log", "msg": "a"}, {"type": "done", "usd": 0}],
+                      "dir": None}
+    assert TestClient(app).get("/api/jobs/r/events?from=1").text.count("data: ") == 2
+    (tmp_path / "20260101-000000-abcd").mkdir()
+    monkeypatch.setattr(main, "OUT", tmp_path)
+    body = TestClient(app).get("/api/jobs/20260101-000000-abcd/events").text
+    assert '"type": "gone"' in body
+
+
+def test_retry_runs_only_pdfs_with_failed_pages(tmp_path, monkeypatch):
+    import json
+    from app import main
+    for folder, failed in (("ok", []), ("bad", [3])):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "manifest.json").write_text(json.dumps({"markdown": f"{folder}.md", "failed_pages": failed}))
+    launched = []
+    monkeypatch.setattr(main, "launch", lambda job, items, client: launched.extend(items))
+    monkeypatch.setattr(main, "make_client", lambda: None)
+    main.jobs["t"] = {"events": [], "dir": tmp_path, "running": False, "cfg": {},
+                      "uploads": [("ok.pdf", b"1", "ok"), ("bad.pdf", b"2", "bad")]}
+    assert TestClient(app).post("/api/jobs/t/retry").json() == {"from": 0, "files": 1}
+    assert launched == [("bad.pdf", b"2", "bad", "bad.md")]
+
+
+def test_retry_of_a_run_from_before_a_restart_explains_what_to_do(tmp_path, monkeypatch):
+    from app import main
+    (tmp_path / "20260101-000000-abcd").mkdir()
+    monkeypatch.setattr(main, "OUT", tmp_path)
+    r = TestClient(app).post("/api/jobs/20260101-000000-abcd/retry")
+    assert r.status_code == 409 and "Drop the same PDFs again" in r.json()["detail"]
