@@ -8,7 +8,7 @@ from app.pipeline import NO_FIGURES, PAGE_PROMPT, SCAN_PROMPT, estimate, process
 
 CFG = tomllib.loads(Path(__file__).parent.parent.joinpath("config.toml").read_text())
 CFG["pipeline"]["strategy"] = "ocr+vision"
-VISION_CFG = {**CFG, "pipeline": {**CFG["pipeline"], "strategy": "vision"}}
+VISION_CFG = {**CFG, "pipeline": {**CFG["pipeline"], "strategy": "vision", "keep_page_images": True}}
 
 
 class FakeClient:
@@ -40,7 +40,7 @@ def test_converts_and_rerun_is_free(tmp_path, run):
     m = run(client)
     md = (tmp_path / "job/Rechnerarchitektur_Folien-02.md").read_text()
     assert m["markdown"] == "Rechnerarchitektur_Folien-02.md" and 'title: "Rechnerarchitektur, Folien 2"' in md
-    assert "![page 2](My_Lecture/images/p002.png)" in md
+    assert "![page" not in md and not (tmp_path / "job/My_Lecture/images").exists()  # markdown only by default
     assert len(client.ocr_pages) == 4                       # scanned page 3 skips the paid OCR
     assert len(client.prompts) == 2 and SCAN_PROMPT in client.prompts
     assert "ocr My_Lecture-p1.pdf" in md and "<file" not in md and "```mermaid" in md and "*[Diagram" in md
@@ -69,7 +69,7 @@ def test_estimate(pdf_bytes):
                                                "figure_pages": 1, "usd": 0.003}
 
 
-def test_vision_strategy_reads_every_page_once(tmp_path, pdf_bytes):
+def test_vision_strategy_reads_every_page_once_and_can_keep_images(tmp_path, pdf_bytes):
     client = FakeClient()
     m = process_pdf(pdf_bytes, "My Lecture.pdf", client, Cache(tmp_path / "cache"), tmp_path / "job/My_Lecture", VISION_CFG)
     md = (tmp_path / "job" / m["markdown"]).read_text()

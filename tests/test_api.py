@@ -84,3 +84,18 @@ def test_retry_of_a_run_from_before_a_restart_explains_what_to_do(tmp_path, monk
     monkeypatch.setattr(main, "OUT", tmp_path)
     r = TestClient(app).post("/api/jobs/20260101-000000-abcd/retry")
     assert r.status_code == 409 and "Drop the same PDFs again" in r.json()["detail"]
+
+
+def test_runs_lists_past_runs_newest_first_with_totals(tmp_path, monkeypatch):
+    import json
+    from app import main
+    for run, pages, failed in (("20260101-000000-aaaa", 3, []), ("20260102-000000-bbbb", 5, [2])):
+        (tmp_path / run / "doc").mkdir(parents=True)
+        (tmp_path / run / "doc/manifest.json").write_text(json.dumps(
+            {"markdown": "Doc.md", "title": "Doc", "source": "doc.pdf", "pages": pages, "failed_pages": failed,
+             "cost_usd": 0.01}))
+    monkeypatch.setattr(main, "OUT", tmp_path)
+    runs = TestClient(app).get("/api/runs").json()
+    assert [r["job"] for r in runs] == ["20260102-000000-bbbb", "20260101-000000-aaaa"]
+    assert runs[0]["pages"] == 5 and runs[0]["failed_pages"] == 1 and runs[0]["running"] is False
+    assert runs[0]["markdown"][0]["file"] == "Doc.md" and runs[0]["has_images"] is False

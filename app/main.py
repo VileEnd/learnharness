@@ -64,13 +64,16 @@ def windows_path(path):
 
 
 def run_summary(run_dir):
-    """What a run produced, read from its manifests: one entry per converted PDF."""
-    files = []
+    """What a run produced, read from its manifests: one entry per converted PDF, plus totals."""
+    files, usd = [], 0.0
     for path in sorted(Path(run_dir).glob("*/manifest.json")):
         m = json.loads(path.read_text())
+        usd += m.get("cost_usd", 0)
         files.append({"file": m.get("markdown") or f"{path.parent.name}/{path.parent.name}.md",
                       "title": m["title"], "source": m["source"], "pages": m["pages"], "failed": len(m["failed_pages"])})
-    return {"dir": str(run_dir), "windows_dir": windows_path(run_dir), "markdown": files}
+    return {"dir": str(run_dir), "windows_dir": windows_path(run_dir), "markdown": files,
+            "pages": sum(f["pages"] for f in files), "failed_pages": sum(f["failed"] for f in files),
+            "spent_usd": round(usd, 4), "has_images": next(Path(run_dir).glob("*/images/*.png"), None) is not None}
 
 
 def get_job(job_id):
@@ -169,6 +172,17 @@ def retry(job_id: str):
     if todo:
         launch(job, todo, make_client())
     return {"from": start, "files": len(todo)}
+
+
+@app.get("/api/runs")
+def list_runs():
+    """Every run in out/, newest first. Running ones can be followed again (e.g. after reloading the page)."""
+    runs = []
+    for d in sorted((p for p in OUT.glob("*") if p.is_dir()), reverse=True):
+        job = jobs.get(d.name)
+        runs.append({"job": d.name, "running": bool(job and job.get("running")),
+                     "can_retry": bool(job and "uploads" in job), **run_summary(d)})
+    return runs
 
 
 @app.get("/api/jobs/{job_id}/events")

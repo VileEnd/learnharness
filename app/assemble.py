@@ -31,7 +31,8 @@ def build_markdown(meta, pages):
         if p.get("text"):
             out.append(repair_mermaid(p["text"]) + "\n")
         if p.get("vision"):
-            out.append(f"![page {i}]({p['image']})\n")
+            if p.get("image"):
+                out.append(f"![page {i}]({p['image']})\n")
             out.append(repair_mermaid(p["vision"].strip()) + "\n")
         for err in p.get("errors", []):
             out.append(f"> **Conversion failed on page {i}:** {err} (re-run to retry)\n")
