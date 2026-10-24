@@ -1,4 +1,4 @@
-from app.assemble import build_markdown, clean_ocr
+from app.assemble import build_markdown, clean_ocr, repair_mermaid
 
 
 def test_clean_ocr_strips_wrapper_and_dangling_image_links():
@@ -13,3 +13,9 @@ def test_build_markdown():
     assert "images/p001.png" not in md                       # no figure output -> no image link
     assert md.index("T2") < md.index("![page 2](images/p002.png)") < md.index("```mermaid")
     assert "Conversion failed on page 2:** vision: boom" in md
+
+
+def test_repair_mermaid_fixes_common_slips_only_inside_blocks():
+    md = 'A -->|f(x)| B\n```mermaid\nflowchart LR\n  A -- "" --> B\n  B -->|f(x) = {y}| C\n  C -->|"ok"| D\n```\n'
+    assert repair_mermaid(md) == ('A -->|f(x)| B\n```mermaid\nflowchart LR\n  A --> B\n  B -->|"f(x) = {y}"| C\n'
+                                  '  C -->|"ok"| D\n```\n')

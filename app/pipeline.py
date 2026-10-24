@@ -1,4 +1,5 @@
 import hashlib
+import itertools
 import json
 import re
 import time
@@ -9,30 +10,33 @@ from pathlib import Path
 import pymupdf
 
 from .assemble import build_markdown, clean_ocr
+from .naming import NAME_PROMPT, NAME_PROMPT_VERSION, excerpt, parse_name, slugify
 from .render import PDF_LOCK, page_kind, page_kinds, page_pdf, render_png
 
-PROMPT_VERSION = "v5"
+PROMPT_VERSION = "v8"
 NO_FIGURES = "NO_FIGURES"
+DIAGRAMS = """Diagrams (flowcharts, state machines, automata, block diagrams, circuits, trees, graphs, network or processor topologies): draw them as a ```mermaid block whenever the structure can be reproduced faithfully, quoting every node label (A["label"]) and edge label (A -- "label" --> B). Draw automata and state machines as flowchart LR too, never stateDiagram. Directly below each diagram, add one or two sentences in italics, in the document's language, explaining what it shows. If a diagram cannot be drawn faithfully, describe it instead as *[Diagram: ...]*, naming every label and arrow."""
 FIGURES_PROMPT = f"""You are converting one PDF page image into markdown for a study database.
 The page's printed text, printed tables and printed formulas are already extracted separately. Output ONLY, in reading order:
-- Figures, diagrams, block diagrams, flowcharts, state machines, network/processor topologies: a ```mermaid block when it can be expressed faithfully, otherwise a short italic description *[Diagram: ...]* that mentions every label and arrow.
+- {DIAGRAMS}
 - Plots and photos: a short prose description (axes, curves, labels, what it shows).
 - Tables or formulas that are part of an image or drawn by hand: markdown tables / LaTeX ($...$, $$...$$).
 - Handwritten notes, annotations and hand-solved calculations: transcribe them fully (math as LaTeX). Start each handwritten block once with **Handwritten:**, never per line or table cell.
 - Crossed-out content: keep it, wrapped in ~~strikethrough~~, so it is clear it was struck out.
 Never repeat printed text. If the page has none of these, output exactly {NO_FIGURES}."""
-SCAN_PROMPT = """You are converting one scanned or handwritten PDF page image into markdown for a study database.
+SCAN_PROMPT = f"""You are converting one scanned or handwritten PDF page image into markdown for a study database.
 Transcribe EVERYTHING on the page faithfully, in reading order, in the page's own language:
 - Text and lists as markdown; math as LaTeX ($...$ inline, $$...$$ display); tables as markdown tables.
 - Code, assembly, register/memory contents: fenced code blocks, keeping the layout.
-- Hand-drawn diagrams: a ```mermaid block if they are a clean flowchart/state machine/block diagram, otherwise a short italic description *[Diagram: ...]* that mentions every label and arrow.
+- Hand-drawn {DIAGRAMS}
 - Crossed-out content: keep it, wrapped in ~~strikethrough~~, so it is clear it was struck out.
 Do not invent content and do not turn plain text into diagrams. Mark unreadable parts as [unreadable]."""
-PAGE_PROMPT = """You are converting one PDF page image into markdown for a study database.
+PAGE_PROMPT = f"""You are converting one PDF page image into markdown for a study database.
 Transcribe EVERYTHING on the page faithfully, in reading order, in the page's own language:
 - Headings, text and lists as markdown; math as LaTeX ($...$ inline, $$...$$ display); tables as markdown tables.
 - Code, assembly, register/memory contents: fenced code blocks, keeping the layout.
-- Diagrams and figures: a ```mermaid block if they are a clean flowchart/state machine/block diagram, otherwise a short italic description *[Diagram: ...]* that mentions every label and arrow. Plots and photos: a short description of axes, curves, labels and what they show.
+- {DIAGRAMS}
+- Plots and photos: a short description of axes, curves, labels and what they show.
 - Handwriting on a printed page: transcribe it too. Start each handwritten block once with **Handwritten:**, never per line or table cell.
 - Crossed-out content: keep it, wrapped in ~~strikethrough~~, so it is clear it was struck out.
 Do not invent content and do not turn plain text into diagrams. Mark unreadable parts as [unreadable]. Output only the markdown."""
@@ -72,13 +76,26 @@ def _preview(res):
     return text[:PREVIEW_CHARS]
 
 
+def write_unique(folder, stem, text):
+    """Write <stem>.md, or <stem>-2.md etc. if another PDF in the run got the same name. Safe across threads."""
+    for n in itertools.count(1):
+        path = Path(folder) / (f"{stem}.md" if n == 1 else f"{stem}-{n}.md")
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(text)
+            return path
+        except FileExistsError:
+            continue
+
+
 def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event: None, executor=None):
-    """Convert one PDF into out_dir/<title>.md + images/ + manifest.json. Failed pages are marked, not fatal.
-    Pass a shared executor to run several PDFs' API calls in one pool; emit receives file and request events."""
+    """Convert one PDF: page images and manifest.json go to out_dir, the markdown goes next to out_dir under a
+    name that sums up its content. Failed pages are marked, not fatal. Pass a shared executor to run several
+    PDFs' API calls in one pool; emit receives file and request events."""
     o, p = cfg["openrouter"], cfg["pipeline"]
     engine, vmodel, reasoning = o["pdf_engine"], o["vision_model"], o.get("vision_reasoning")
     strategy = p.get("strategy", "vision")
-    title, out_dir = safe_name(name), Path(out_dir)
+    title, out_dir = safe_name(name), Path(out_dir)  # title only labels OCR uploads
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     src = hashlib.sha256(pdf_bytes).hexdigest()
 
@@ -159,12 +176,52 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event:
             if not k:
                 (out_dir / f"images/p{i + 1:03d}.png").unlink(missing_ok=True)
 
+    naming, cost = name_document(client, cache, cfg, name, src, out_dir.name, pages, emit)
+    spent, calls = spent + cost, calls + (cost > 0)
+    for pg in pages:
+        if pg["image"]:
+            pg["image"] = f"{out_dir.name}/{pg['image']}"  # the markdown sits next to this PDF's folder
+
     failed = [i + 1 for i, pg in enumerate(pages) if pg["errors"]]
-    meta = {"title": title, "source": name, "pages": len(pages), "sha256": src, "converted": date.today().isoformat(),
+    meta = {"title": naming["title"] if naming else Path(name).stem,
+            "summary": naming["summary"] if naming else "", "topics": naming["topics"] if naming else [],
+            "source": name, "pages": len(pages), "sha256": src, "converted": date.today().isoformat(),
             "strategy": strategy, "ocr_engine": engine if strategy != "vision" else None, "vision_model": vmodel}
-    (out_dir / f"{title}.md").write_text(build_markdown(meta, pages), encoding="utf-8")
-    manifest = {**meta, "scan_pages": [i + 1 for i, k in enumerate(kinds) if k == "scan"],
+    stem = (naming and naming["filename"]) or slugify(Path(name).stem) or "document"
+    md_path = write_unique(out_dir.parent, stem, build_markdown(meta, pages))
+    manifest = {**meta, "markdown": md_path.name, "scan_pages": [i + 1 for i, k in enumerate(kinds) if k == "scan"],
                 "figure_pages": [i + 1 for i, k in enumerate(kinds) if k == "figures"],
                 "failed_pages": failed, "api_calls": calls, "cost_usd": round(spent, 4)}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    emit({"type": "file", "file": out_dir.name, "name": name, "markdown": md_path.name, "title": meta["title"],
+          "finished": True})
     return manifest
+
+
+def name_document(client, cache, cfg, source, src_hash, folder, pages, emit):
+    """Ask a text model for a title, file name, summary and topics. Returns (naming or None, cost); never fatal."""
+    model = cfg["openrouter"].get("naming_model") or cfg["openrouter"]["vision_model"]
+    content = "\n\n".join(x for pg in pages for x in (pg["text"], pg["vision"]) if x)
+    if not content.strip():
+        return None, 0.0
+    key = ("name", model, NAME_PROMPT_VERSION, src_hash)
+    req = {"type": "req", "id": f"{folder}:name", "file": folder, "page": None, "step": "name", "kind": "name",
+           "model": model, "image": None}
+    res = cache.get(*key)
+    if res:
+        emit({**req, "state": "cached", "preview": res["text"]})
+        return parse_name(res["text"]), 0.0
+    emit({**req, "state": "running"})
+    started = time.monotonic()
+    try:
+        res = client.text(NAME_PROMPT.format(source=source, excerpt=excerpt(content)), model)
+    except Exception as e:  # the original file name is a fine fallback
+        emit({**req, "state": "error", "ms": round((time.monotonic() - started) * 1000), "error": str(e)})
+        return None, 0.0
+    naming = parse_name(res["text"])
+    if naming:
+        cache.put(res, *key)
+    emit({**req, "state": "ok" if naming else "error", "ms": round((time.monotonic() - started) * 1000),
+          "cost": res["cost"], "usage": res.get("usage"), "preview": res["text"],
+          "error": None if naming else "reply was not the expected JSON; kept the original file name"})
+    return naming, res["cost"]
