@@ -4,10 +4,11 @@ ocr_model = "google/gemini-2.5-flash-lite"            # cheap carrier model for 
 pdf_engine = "mistral-ocr"                             # used by strategy "ocr+vision"; "cloudflare-ai" is free but breaks math
 vision_model = "deepseek/deepseek-v4.1-flash-1017"     # must accept images
 vision_reasoning = { enabled = false }                 # thinking off: ~4x cheaper, same quality in tests; { effort = "low" } for very hard handwriting
+naming_model = "deepseek/deepseek-v4.1-flash-1017"     # names each markdown file after its content (~$0.0005 per PDF)
 
 [pipeline]
-strategy = "vision"             # "vision": the vision model reads every page (~$0.0006/page)
-                                # "ocr+vision": Mistral OCR for printed text + vision for figures/handwriting (~$0.003/page)
+strategy = "ocr+vision"         # default choice on the page; "vision": the vision model reads every page (~$0.0006/page)
+                                # "ocr+vision": Mistral OCR for printed text + vision for figures/handwriting (~$0.003/page), best quality
 workers = 16                    # parallel API calls, shared by all PDFs in a run
 dpi = 150                       # page render resolution for the vision model and the linked images
 keep_all_page_images = false    # true keeps a PNG of every page, not only pages with figures or handwriting

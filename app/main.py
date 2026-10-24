@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +10,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -38,6 +39,23 @@ def make_client():
     return OpenRouter(key, o["base_url"], o["ocr_model"])
 
 
+STRATEGIES = ("ocr+vision", "vision")
+
+
+def with_strategy(strategy):
+    if strategy not in STRATEGIES:
+        raise HTTPException(400, f"strategy must be one of {STRATEGIES}")
+    return {**CFG, "pipeline": {**CFG["pipeline"], "strategy": strategy}}
+
+
+def windows_path(path):
+    """Path for Windows Explorer (\\\\wsl.localhost\\...) when running in WSL; the plain path elsewhere."""
+    try:
+        return subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return str(path)
+
+
 def get_job(job_id):
     if job_id not in jobs:
         raise HTTPException(404, "unknown job")
@@ -52,14 +70,20 @@ def index():
 @app.post("/api/estimate")
 async def api_estimate(files: list[UploadFile]):
     # estimate takes the PDF lock, which a running job may hold; keep it off the event loop
-    items = [{"name": f.filename, **await run_in_threadpool(estimate, await f.read(), CFG)} for f in files]
-    return {"files": items, "usd": round(sum(i["usd"] for i in items), 4),
+    items = []
+    for f in files:
+        data = await f.read()
+        per = {st: await run_in_threadpool(estimate, data, with_strategy(st)) for st in STRATEGIES}
+        items.append({"name": f.filename, **per["vision"], "usd": {st: e["usd"] for st, e in per.items()}})
+    return {"files": items, "usd": {st: round(sum(i["usd"][st] for i in items), 4) for st in STRATEGIES},
+            "default_strategy": CFG["pipeline"].get("strategy", "ocr+vision"),
             "ocr_engine": CFG["openrouter"]["pdf_engine"], "vision_model": CFG["openrouter"]["vision_model"]}
 
 
 @app.post("/api/run")
-async def api_run(files: list[UploadFile]):
+async def api_run(files: list[UploadFile], strategy: str = Form(None)):
     client = make_client()
+    cfg = with_strategy(strategy or CFG["pipeline"].get("strategy", "ocr+vision"))
     uploads = [(f.filename, await f.read()) for f in files]
     job_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     job = jobs[job_id] = {"events": [], "dir": OUT / job_id}
@@ -80,14 +104,14 @@ async def api_run(files: list[UploadFile]):
 
         def one(name, data, folder):
             try:
-                results[name] = process_pdf(data, name, client, cache, job["dir"] / folder, CFG, emit, pool)
+                results[name] = process_pdf(data, name, client, cache, job["dir"] / folder, cfg, emit, pool)
             except Exception as e:  # a broken PDF must not stop the rest of the batch
                 results[name] = None
                 emit({"type": "log", "msg": f"{name}: FAILED: {e}", "level": "error"})
                 return
             m = results[name]
             note = f", failed pages {m['failed_pages']}" if m["failed_pages"] else ""
-            emit({"type": "log", "msg": f"done {name}: {m['pages']} pages, ${m['cost_usd']}{note}",
+            emit({"type": "log", "msg": f"done {name} -> {m['markdown']}: {m['pages']} pages, ${m['cost_usd']}{note}",
                   "level": "warn" if note else "ok"})
 
         # every PDF feeds the same pool, so a run is as parallel as `workers` allows, not one PDF at a time
@@ -98,10 +122,13 @@ async def api_run(files: list[UploadFile]):
             t.join()
         pool.shutdown()
         emit({"type": "done", "usd": round(sum(m["cost_usd"] for m in results.values() if m), 4),
-              "failed_files": [n for n, m in results.items() if m is None], "dir": str(job["dir"])})
+              "failed_files": [n for n, m in results.items() if m is None], "dir": str(job["dir"]),
+              "windows_dir": windows_path(job["dir"]),
+              "markdown": [{"file": m["markdown"], "title": m["title"], "source": n, "pages": m["pages"]}
+                           for n, m in results.items() if m]})
 
     emit({"type": "start", "files": [{"file": f, "name": n} for (n, _), f in zip(uploads, folders)],
-          "workers": CFG["pipeline"].get("workers", 16)})
+          "workers": CFG["pipeline"].get("workers", 16), "strategy": cfg["pipeline"]["strategy"]})
     threading.Thread(target=work, daemon=True).start()
     return {"job": job_id}
 
@@ -133,13 +160,16 @@ def job_file(job_id: str, path: str):
 
 
 @app.get("/api/jobs/{job_id}/zip")
-def zip_job(job_id: str):
+def zip_job(job_id: str, only: str = "all"):
+    """only=markdown: just the .md files (diagrams stay readable as Mermaid; image links point nowhere)."""
     job = get_job(job_id)
+    files = sorted(job["dir"].glob("*.md")) if only == "markdown" else sorted(job["dir"].rglob("*"))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in sorted(job["dir"].rglob("*")):
+        for p in files:
             if p.is_file():
                 z.write(p, p.relative_to(job["dir"]))
     buf.seek(0)
+    suffix = "-markdown" if only == "markdown" else ""
     return StreamingResponse(buf, media_type="application/zip",
-                             headers={"Content-Disposition": f"attachment; filename=markdown-{job_id}.zip"})
+                             headers={"Content-Disposition": f"attachment; filename=pdf2md-{job_id}{suffix}.zip"})

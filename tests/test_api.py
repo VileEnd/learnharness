@@ -5,7 +5,9 @@ from app.main import app
 
 def test_estimate_endpoint(pdf_bytes):
     r = TestClient(app).post("/api/estimate", files=[("files", ("a.pdf", pdf_bytes, "application/pdf"))])
-    assert r.status_code == 200 and r.json()["files"][0]["pages"] == 5
+    body = r.json()
+    assert r.status_code == 200 and body["files"][0]["pages"] == 5
+    assert body["usd"]["vision"] < body["usd"]["ocr+vision"]
 
 
 def test_run_requires_key(pdf_bytes, monkeypatch):

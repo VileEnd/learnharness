@@ -39,9 +39,9 @@ button:disabled{opacity:.45;cursor:default}
 
 /* one file = one contact sheet of its pages */
 .file{border-top:1px solid var(--rule);padding-top:10px}
-.file-head{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.file-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 8px;align-items:baseline}
 .file-name{font-weight:700;word-break:break-all}
-.file-meta{color:var(--muted);font-size:.85rem;white-space:nowrap}
+.file-meta{color:var(--muted);font-size:.85rem;word-break:break-all}
 .pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(13px,1fr));gap:3px;margin-top:8px}
 .cell{aspect-ratio:3/4;border-radius:2px;background:var(--rule);border:0;padding:0;cursor:pointer;position:relative}
 .cell.k-scan::after,.cell.k-figures::after{content:"";position:absolute;right:1px;top:1px;width:4px;height:4px;border-radius:50%;background:var(--muted)}
@@ -54,6 +54,19 @@ button:disabled{opacity:.45;cursor:default}
 @keyframes pulse{50%{opacity:.55}}
 .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.8rem;color:var(--muted)}
 .legend i{display:inline-block;width:9px;height:12px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+fieldset{border:0;margin:0;padding:0;display:grid;gap:6px}
+legend{font-weight:700;margin-bottom:4px}
+.choice{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;align-items:baseline;border:1.5px solid var(--rule);border-radius:8px;padding:8px 10px;cursor:pointer}
+.choice:has(input:checked){border-color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent)}
+.choice b{color:var(--text)}.choice .price{font-weight:700;color:var(--ink)}
+.choice small{grid-column:2/4;color:var(--muted)}
+#results{display:grid;gap:6px}
+#results h2{margin-top:4px}
+.result{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;border-top:1px solid var(--rule);padding-top:6px}
+.result .fname{font-weight:700;word-break:break-all}.result small{color:var(--muted);grid-column:1}
+.result button{grid-row:1/3;grid-column:2;padding:.25rem .7rem;font-weight:400;background:transparent;color:var(--ink)}
+.path{display:flex;gap:6px;align-items:center;font-size:.85rem;word-break:break-all;background:var(--paper);padding:6px 8px;border-radius:6px}
+.path button{padding:.15rem .6rem;font-weight:400;background:transparent;color:var(--ink);flex:none}
 #log{font-size:.85rem;color:var(--muted)}
 #log div{padding:2px 0}
 .ok{color:var(--green)}.warn{color:var(--text)}.error{color:var(--red)}
@@ -98,10 +111,17 @@ tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transpa
 <section id="left" aria-label="Files">
   <label id="drop">Drop PDFs here or choose files<small>Lecture slides, exams, scripts, handwritten notes</small>
     <input type="file" id="pick" accept="application/pdf" multiple hidden></label>
-  <div class="actions"><button id="run" disabled>Convert</button><a id="dl" class="btn secondary" hidden>Download all as .zip</a><span id="total"></span></div>
+  <fieldset id="strategy" hidden><legend>How to read the pages</legend>
+    <label class="choice"><input type="radio" name="strategy" value="ocr+vision"><b>Best quality</b><span class="price" data-price="ocr+vision"></span>
+      <small>Mistral OCR reads printed text and formulas; DeepSeek draws the diagrams and transcribes handwriting.</small></label>
+    <label class="choice"><input type="radio" name="strategy" value="vision"><b>Cheapest</b><span class="price" data-price="vision"></span>
+      <small>DeepSeek reads every page, including diagrams and handwriting. About 5x cheaper; check printed math.</small></label>
+  </fieldset>
+  <div class="actions"><button id="run" disabled>Convert</button><span id="total"></span></div>
   <div class="legend" aria-hidden="true"><span><i style="background:var(--rule)"></i>waiting</span><span><i style="background:var(--marker)"></i>in progress</span><span><i style="background:var(--ink)"></i>done</span><span><i style="background:var(--cache)"></i>from cache</span><span><i style="background:var(--red)"></i>failed</span><span>• has figures or handwriting</span></div>
   <div id="files"></div>
   <p id="summary"></p>
+  <div id="results" hidden></div>
   <div id="log" aria-live="polite"></div>
 </section>
 <section id="right" aria-label="Live requests">
@@ -129,10 +149,11 @@ let files=[],job=null,t0=null,timer=null,filter="all",selected=null;
 const reqs=new Map(),rows=new Map(),sheets=new Map();
 const STEPS={null:["text"],text:["text"],figures:["text","vision"],scan:["vision"]};
 const wantSteps=(s,i)=>s.strategy==="vision"?["vision"]:STEPS[s.kinds[i]];
-const stepLabel=r=>r.step==="text"?"OCR":r.kind==="figures"?"Vision (figures)":"Vision (full page)";
+const stepLabel=r=>r.step==="text"?"OCR":r.step==="name"?"File name":r.kind==="figures"?"Vision (figures)":"Vision (full page)";
 const shortModel=m=>m.split("/").pop();
 const fmtTime=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
-const form=()=>{const f=new FormData();files.forEach(x=>f.append("files",x));return f};
+const chosen=()=>document.querySelector("input[name=strategy]:checked")?.value;
+const form=()=>{const f=new FormData();files.forEach(x=>f.append("files",x));if(chosen())f.append("strategy",chosen());return f};
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
 function log(msg,level){const d=el("div",level,msg);$("log").prepend(d)}
 
@@ -143,10 +164,13 @@ async function choose(list){
   const r=await(await fetch("/api/estimate",{method:"POST",body:form()})).json();
   $("models").textContent=`OCR with ${r.ocr_engine}, vision with ${r.vision_model}`;
   const pages=r.files.reduce((a,b)=>a+b.pages,0);
-  $("total").textContent=`${files.length} file${files.length>1?"s":""}, ${pages} pages, about $${r.usd.toFixed(2)}`;
+  $("total").textContent=`${files.length} file${files.length>1?"s":""}, ${pages} pages`;
+  document.querySelectorAll("[data-price]").forEach(x=>x.textContent=`about $${r.usd[x.dataset.price].toFixed(2)}`);
+  const pick=document.querySelector(`input[name=strategy][value="${chosen()||r.default_strategy}"]`);if(pick)pick.checked=true;
+  $("strategy").hidden=false;
   $("files").replaceChildren(...r.files.map(f=>{
     const d=el("div","file");const h=el("div","file-head");
-    h.append(el("span","file-name",f.name),el("span","file-meta",`${f.pages} pages, ${f.figure_pages} with figures, ${f.handwritten_pages} handwritten, ~$${f.usd.toFixed(3)}`));
+    h.append(el("span","file-name",f.name),el("span","file-meta",`${f.pages} pages, ${f.figure_pages} with figures, ${f.handwritten_pages} handwritten`));
     d.append(h);return d}));
   $("run").disabled=false;
 }
@@ -189,7 +213,7 @@ function renderRow(r){
   let tr=rows.get(r.id);
   if(!tr){tr=el("tr");tr.tabIndex=0;tr.onclick=()=>select(r.id);tr.onkeydown=e=>{if(e.key==="Enter")select(r.id)};rows.set(r.id,tr);$("reqs").prepend(tr);$("empty").hidden=true}
   const u=r.usage;
-  const cells=[fmtTime(Math.max(0,r.first-t0)),`${r.file} p.${r.page}`,stepLabel(r),shortModel(r.model),null,
+  const cells=[fmtTime(Math.max(0,r.first-t0)),r.page?`${r.file} p.${r.page}`:r.file,stepLabel(r),shortModel(r.model),null,
     r.ms!=null?(r.ms/1000).toFixed(1)+" s":r.state==="running"||r.state==="retry"?"…":"",
     u?`${u.prompt} / ${u.completion}`:"",
     r.cost!=null?"$"+r.cost.toFixed(4):""];
@@ -201,7 +225,7 @@ function select(id){
   selected=id;rows.forEach((tr,k)=>tr.setAttribute("aria-selected",k===id));
   const r=reqs.get(id),d=$("detail");if(!r)return;
   d.replaceChildren();d.classList.add("open");
-  const head=el("div","head");const title=el("h2",null,`${r.file}, page ${r.page}: ${stepLabel(r)}`);
+  const head=el("div","head");const title=el("h2",null,r.page?`${r.file}, page ${r.page}: ${stepLabel(r)}`:`${r.file}: ${stepLabel(r)}`);
   const close=el("button","close","Close");close.onclick=()=>{d.classList.remove("open");selected=null;rows.forEach(tr=>tr.setAttribute("aria-selected",false))};
   head.append(title,close);d.append(head);
   const u=r.usage;
@@ -231,24 +255,45 @@ function handle(e){
   if(e.type==="start"){t0=e.t;sheets.clear();$("files").replaceChildren();timer=setInterval(stats,1000)}
   else if(e.type==="file"){
     if(e.kinds&&!sheets.has(e.file)){const s=makeSheet(e);sheets.set(e.file,s);$("files").append(s.el)}
-    const s=sheets.get(e.file);if(s)s.meta.textContent=`${e.done}/${e.total} steps`+(e.failed?`, ${e.failed} pages failed`:"");
+    const s=sheets.get(e.file);
+    if(s&&e.finished)s.meta.textContent=`→ ${e.markdown}`;
+    else if(s)s.meta.textContent=`${e.done}/${e.total} steps`+(e.failed?`, ${e.failed} pages failed`:"");
   }
   else if(e.type==="req"){
     const prev=reqs.get(e.id)||{first:e.t};const r={...prev,...e};
     if(e.state==="running"){delete r.ms;delete r.error}
     reqs.set(e.id,r);renderRow(r);
-    const s=sheets.get(e.file);if(s){s.steps[e.page-1][e.step]=r;paintCell(e.file,e.page)}
+    const s=sheets.get(e.file);if(s&&e.page){s.steps[e.page-1][e.step]=r;paintCell(e.file,e.page)}
     if(selected===e.id)select(e.id);
   }
   else if(e.type==="log")log(e.msg,e.level);
   else if(e.type==="done"){
     clearInterval(timer);stats();$("run").disabled=false;
-    $("summary").textContent=`Finished: $${e.usd} spent. Files are in ${e.dir}`+(e.failed_files.length?`. Failed files: ${e.failed_files.join(", ")}`:"");
-    $("dl").href=`/api/jobs/${job}/zip`;$("dl").hidden=false;
+    $("summary").textContent=`Finished: $${e.usd} spent.`+(e.failed_files.length?` Failed files: ${e.failed_files.join(", ")}`:"");
+    showResults(e);
   }
 }
+async function copy(text,btn){
+  try{await navigator.clipboard.writeText(text);btn.textContent="Copied"}catch{btn.textContent="Copy failed"}
+  setTimeout(()=>btn.textContent="Copy",1500)}
+function pathRow(label,path){
+  const d=el("div","path");const b=el("button",null,"Copy");b.onclick=()=>copy(path,b);
+  d.append(el("span",null,`${label} ${path}`),b);return d}
+function showResults(e){
+  const box=$("results");box.replaceChildren(el("h2",null,`${e.markdown.length} markdown file${e.markdown.length==1?"":"s"}`));
+  box.append(pathRow("Folder in Windows Explorer:",e.windows_dir));
+  const dl=el("div","actions");
+  const md=el("a","btn",`Download markdown only (.zip)`);md.href=`/api/jobs/${job}/zip?only=markdown`;
+  const all=el("a","btn secondary","Download with images (.zip)");all.href=`/api/jobs/${job}/zip`;
+  dl.append(md,all);box.append(dl);
+  for(const m of e.markdown){
+    const r=el("div","result");const b=el("button",null,"Copy");b.setAttribute("aria-label",`Copy ${m.file}`);
+    b.onclick=async()=>copy(await(await fetch(`/api/jobs/${job}/files/${encodeURIComponent(m.file)}`)).text(),b);
+    r.append(el("span","fname",m.file),b,el("small",null,`${m.title}, ${m.pages} pages, from ${m.source}`));box.append(r)}
+  box.hidden=false;
+}
 $("run").onclick=async()=>{
-  $("run").disabled=true;$("log").replaceChildren();$("dl").hidden=true;$("summary").textContent="";
+  $("run").disabled=true;$("log").replaceChildren();$("results").hidden=true;$("summary").textContent="";
   reqs.clear();rows.clear();sheets.clear();$("reqs").replaceChildren();$("empty").hidden=false;$("detail").classList.remove("open");selected=null;
   const res=await fetch("/api/run",{method:"POST",body:form()});
   if(!res.ok){log((await res.json()).detail,"error");$("run").disabled=false;return}

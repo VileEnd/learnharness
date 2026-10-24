@@ -109,3 +109,12 @@ class OpenRouter:
             if text:
                 return {"text": text, "cost": cost, "usage": _usage(resp)}
         raise OpenRouterError(f"{model} returned empty content")
+
+    def text(self, prompt, model, on_retry=None):
+        """Plain text prompt -> text, with thinking off (used for short jobs like naming a document)."""
+        resp = self._post({"model": model, "reasoning": {"enabled": False},
+                           "messages": [{"role": "user", "content": prompt}]}, on_retry)
+        text = (resp["choices"][0]["message"].get("content") or "").strip()
+        if not text:
+            raise OpenRouterError(f"{model} returned empty content")
+        return {"text": text, "cost": _cost(resp), "usage": _usage(resp)}
