@@ -6,7 +6,7 @@ vision_model = "deepseek/deepseek-v4.1-flash-1017"     # must accept images
 vision_reasoning = { effort = "low" }                  # unbounded thinking can return empty content
 
 [pipeline]
-workers = 8                     # parallel API calls
+workers = 16                    # parallel API calls, shared by all PDFs in a run
 dpi = 150                       # page render resolution for the vision model and the linked images
 ocr_price_per_page = 0.0021     # measured: Mistral OCR + carrier model
 vision_price_per_page = 0.003   # measured average for deepseek-v4.1-flash with low reasoning

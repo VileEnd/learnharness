@@ -1,4 +1,8 @@
+import threading
+
 import pymupdf
+
+PDF_LOCK = threading.Lock()  # PyMuPDF is not thread-safe, not even across separate documents
 
 SPARSE_TEXT_CHARS = 40   # less embedded text than this = scanned or handwritten page
 MIN_IMAGE_AREA = 0.03    # images under 3% of the page (logos, icons) are not figures
@@ -20,7 +24,7 @@ def page_kind(page):
 
 
 def page_kinds(pdf_bytes):
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+    with PDF_LOCK, pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         return [page_kind(p) for p in doc]
 
 

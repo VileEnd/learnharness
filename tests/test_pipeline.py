@@ -13,11 +13,11 @@ class FakeClient:
     def __init__(self, fail_vision=False):
         self.ocr_pages, self.prompts, self.fail_vision = [], [], fail_vision
 
-    def ocr_pdf(self, pdf_bytes, name, engine):
+    def ocr_pdf(self, pdf_bytes, name, engine, on_retry=None):
         self.ocr_pages.append(name)
         return {"texts": [f'<file name="{name}">\n\nocr {name}\n\n</file>'], "cost": 0.002}
 
-    def vision(self, png, prompt, model, reasoning=None):
+    def vision(self, png, prompt, model, reasoning=None, on_retry=None):
         self.prompts.append(prompt)
         if self.fail_vision:
             raise RuntimeError("HTTP 402: out of credits")
@@ -56,3 +56,15 @@ def test_no_figures_answer_drops_the_section(tmp_path, run):
 
 def test_estimate(pdf_bytes):
     assert estimate(pdf_bytes, CFG) == {"pages": 5, "ocr_pages": 4, "vision_pages": 2, "usd": 0.0144}
+
+
+def test_emits_live_request_events(tmp_path, pdf_bytes):
+    events = []
+    cache = Cache(tmp_path / "cache")
+    process_pdf(pdf_bytes, "a.pdf", FakeClient(), cache, tmp_path / "out", CFG, events.append)
+    reqs = [e for e in events if e["type"] == "req"]
+    assert [e["state"] for e in reqs].count("running") == 6 and [e["state"] for e in reqs].count("ok") == 6
+    assert events[0]["kinds"] == [None, "figures", "scan", None, None] and events[-1]["done"] == 6
+    events.clear()
+    process_pdf(pdf_bytes, "a.pdf", FakeClient(), cache, tmp_path / "out", CFG, events.append)
+    assert {e["state"] for e in events if e["type"] == "req"} == {"cached"}

@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import tomllib
 import uuid
 import zipfile
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from .cache import Cache
 from .openrouter import OpenRouter
@@ -49,7 +51,8 @@ def index():
 
 @app.post("/api/estimate")
 async def api_estimate(files: list[UploadFile]):
-    items = [{"name": f.filename, **estimate(await f.read(), CFG)} for f in files]
+    # estimate takes the PDF lock, which a running job may hold; keep it off the event loop
+    items = [{"name": f.filename, **await run_in_threadpool(estimate, await f.read(), CFG)} for f in files]
     return {"files": items, "usd": round(sum(i["usd"] for i in items), 4),
             "ocr_engine": CFG["openrouter"]["pdf_engine"], "vision_model": CFG["openrouter"]["vision_model"]}
 
@@ -61,27 +64,44 @@ async def api_run(files: list[UploadFile]):
     job_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     job = jobs[job_id] = {"events": [], "dir": OUT / job_id}
 
-    def work():
-        emit = job["events"].append
-        total, failed_files = 0.0, []
-        used = set()
-        for name, data in uploads:
-            folder = safe_name(name)
-            while folder in used:  # two uploads with the same file name must not overwrite each other
-                folder += "_"
-            used.add(folder)
-            try:
-                m = process_pdf(data, name, client, cache, job["dir"] / folder, CFG, lambda msg: emit({"msg": msg}))
-            except Exception as e:  # a broken PDF must not stop the rest of the batch
-                failed_files.append(name)
-                emit({"msg": f"{name}: FAILED: {e}", "level": "error"})
-                continue
-            total += m["cost_usd"]
-            note = f", failed pages {m['failed_pages']}" if m["failed_pages"] else ""
-            emit({"msg": f"done {name}: {m['pages']} pages, ${m['cost_usd']}{note}",
-                  "level": "warn" if note else "ok"})
-        emit({"done": True, "usd": round(total, 4), "failed_files": failed_files, "dir": str(job["dir"])})
+    def emit(event):
+        job["events"].append({**event, "t": time.time()})  # list.append is atomic; no lock needed
 
+    folders = []
+    for name, _ in uploads:
+        folder = safe_name(name)
+        while folder in folders:  # two uploads with the same file name must not overwrite each other
+            folder += "_"
+        folders.append(folder)
+
+    def work():
+        pool = ThreadPoolExecutor(CFG["pipeline"].get("workers", 16))
+        results = {}
+
+        def one(name, data, folder):
+            try:
+                results[name] = process_pdf(data, name, client, cache, job["dir"] / folder, CFG, emit, pool)
+            except Exception as e:  # a broken PDF must not stop the rest of the batch
+                results[name] = None
+                emit({"type": "log", "msg": f"{name}: FAILED: {e}", "level": "error"})
+                return
+            m = results[name]
+            note = f", failed pages {m['failed_pages']}" if m["failed_pages"] else ""
+            emit({"type": "log", "msg": f"done {name}: {m['pages']} pages, ${m['cost_usd']}{note}",
+                  "level": "warn" if note else "ok"})
+
+        # every PDF feeds the same pool, so a run is as parallel as `workers` allows, not one PDF at a time
+        threads = [threading.Thread(target=one, args=(n, d, f)) for (n, d), f in zip(uploads, folders)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        pool.shutdown()
+        emit({"type": "done", "usd": round(sum(m["cost_usd"] for m in results.values() if m), 4),
+              "failed_files": [n for n, m in results.items() if m is None], "dir": str(job["dir"])})
+
+    emit({"type": "start", "files": [{"file": f, "name": n} for (n, _), f in zip(uploads, folders)],
+          "workers": CFG["pipeline"].get("workers", 16)})
     threading.Thread(target=work, daemon=True).start()
     return {"job": job_id}
 
@@ -96,11 +116,20 @@ def events(job_id: str):
             for e in job["events"][sent:]:
                 sent += 1
                 yield f"data: {json.dumps(e)}\n\n"
-                if e.get("done"):
+                if e.get("type") == "done":
                     return
             time.sleep(0.3)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.get("/api/jobs/{job_id}/files/{path:path}")
+def job_file(job_id: str, path: str):
+    root = get_job(job_id)["dir"].resolve()
+    target = (root / path).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(target)
 
 
 @app.get("/api/jobs/{job_id}/zip")

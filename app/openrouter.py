@@ -30,6 +30,12 @@ def _cost(resp):
     return (resp.get("usage") or {}).get("cost", 0) or 0
 
 
+def _usage(resp):
+    u = resp.get("usage") or {}
+    return {"prompt": u.get("prompt_tokens", 0), "completion": u.get("completion_tokens", 0),
+            "reasoning": (u.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)}
+
+
 class OpenRouter:
     def __init__(self, api_key, base_url="https://openrouter.ai/api/v1", ocr_model="google/gemini-2.5-flash-lite",
                  transport=None, sleep=time.sleep, retries=5):
@@ -39,16 +45,18 @@ class OpenRouter:
         self.http = httpx.Client(base_url=base_url, timeout=300, transport=transport,
                                  headers={"Authorization": f"Bearer {api_key}"})
 
-    def _post(self, body):
+    def _post(self, body, on_retry=None):
         """POST with backoff on rate limits, 5xx and network errors. OpenRouter can also report errors inside
         a 200 body. A response that failed after the PDF was parsed still carries the annotations, so keep it."""
         for attempt in range(self.retries):
             last = attempt == self.retries - 1
             try:
                 r = self.http.post("/chat/completions", json=body)
-            except httpx.TransportError:
+            except httpx.TransportError as e:
                 if last:
                     raise
+                if on_retry:
+                    on_retry(f"{type(e).__name__}, retry {attempt + 1}")
                 self.sleep(2 ** attempt)
                 continue
             try:
@@ -60,11 +68,13 @@ class OpenRouter:
             if status == 200 or extract_file_annotations(data):
                 return data
             if status in RETRY_STATUS and not last:
+                if on_retry:
+                    on_retry(f"HTTP {status}, retry {attempt + 1}")
                 self.sleep(2 ** attempt)
                 continue
             raise OpenRouterError(f"HTTP {status}: {error.get('message') or r.text[:300]}")
 
-    def ocr_pdf(self, pdf_bytes, name, engine="mistral-ocr"):
+    def ocr_pdf(self, pdf_bytes, name, engine="mistral-ocr", on_retry=None):
         """Parse a PDF with OpenRouter's file-parser plugin; returns the parsed text parts."""
         data_url = "data:application/pdf;base64," + base64.b64encode(pdf_bytes).decode()
         resp = self._post({
@@ -74,14 +84,14 @@ class OpenRouter:
                 {"type": "file", "file": {"filename": name, "file_data": data_url}}]}],
             "max_tokens": 5,
             "plugins": [{"id": "file-parser", "pdf": {"engine": engine}}],
-        })
+        }, on_retry)
         texts = [p["text"] for a in extract_file_annotations(resp)
                  for p in a["file"]["content"] if p.get("type") == "text"]
         if not texts:
             raise OpenRouterError("no parsed text in the response")
-        return {"texts": texts, "cost": _cost(resp)}
+        return {"texts": texts, "cost": _cost(resp), "usage": _usage(resp)}
 
-    def vision(self, png_bytes, prompt, model, reasoning=None):
+    def vision(self, png_bytes, prompt, model, reasoning=None, on_retry=None):
         """Image + prompt -> text. Reasoning models can burn every token thinking and return null content;
         retry once with reasoning off, and fail loudly rather than return (and cache) nothing."""
         url = "data:image/png;base64," + base64.b64encode(png_bytes).decode()
@@ -91,9 +101,11 @@ class OpenRouter:
         for effort in (reasoning, {"enabled": False}):
             if effort:
                 body["reasoning"] = effort
-            resp = self._post(body)
+            resp = self._post(body, on_retry)
             cost += _cost(resp)
             text = (resp["choices"][0]["message"].get("content") or "").strip()
+            if not text and on_retry:
+                on_retry("empty content (reasoning used every token)")
             if text:
-                return {"text": text, "cost": cost}
+                return {"text": text, "cost": cost, "usage": _usage(resp)}
         raise OpenRouterError(f"{model} returned empty content")
