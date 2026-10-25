@@ -25,6 +25,7 @@ import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { GraphCostControl } from "@/components/graph-view.tsx";
 import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import { Hint } from "@/components/ui/hint";
+import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
 import type { ChatSummary, GraphCostSummary, GraphSnapshot } from "@/src/core";
 
 /** The quiet centered summary — a pure body (props in, markup out) so
@@ -98,6 +99,8 @@ export function MinimalHome({
 	const [costs, setCosts] = useState<GraphCostSummary | null>(null);
 	const [chats, setChats] = useState<ChatSummary[]>([]);
 	const [chainsOpen, setChainsOpen] = useState(false);
+	// The picker's "Suggested: shaky and due" group (fetched while it is open).
+	const learner = useLearnerSnapshot(chainsOpen && chainSelectOpen);
 
 	const readState = useCallback(() => {
 		fetch("/api/graph")
@@ -208,6 +211,7 @@ export function MinimalHome({
 					onChainSelectClose?.();
 				}}
 				selectMode={chainSelectOpen}
+				learner={learner}
 				controlledSelection={practiceSelection}
 				onSelectionChange={(ids) => {
 					// Resolve ids → nodes against the live snapshot; the

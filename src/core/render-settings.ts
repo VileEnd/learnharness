@@ -72,6 +72,10 @@ export interface GraphRenderSettings {
 	 *  the fallback). Hulls, region labels and the chain table follow it;
 	 *  layout positions stay source-based either way. */
 	groupBy: GraphGroupBy;
+	/** "Show my knowledge": colour nodes by the learner's state (shaky /
+	 *  learning / solid / not yet checked, a ring when due). Off = the
+	 *  neutral rendering. Default on. */
+	showKnowledge: boolean;
 }
 
 
@@ -116,6 +120,8 @@ export function sanitizeRenderSettings(raw: unknown): GraphRenderSettings {
 			: sanitizeRegionTuning(r.regions),
 		physics: sanitizePhysicsTuning(r.physics),
 		groupBy: r.groupBy === "topic" ? "topic" : "source",
+		// Only an explicit false turns it off; anything else (absent, "no") is the default, on.
+		showKnowledge: r.showKnowledge !== false,
 	};
 }
 
@@ -278,6 +284,7 @@ export const DEFAULT_RENDER_SETTINGS: GraphRenderSettings = {
 	regions: DEFAULT_REGION_TUNING,
 	physics: DEFAULT_PHYSICS_TUNING,
 	groupBy: "source",
+	showKnowledge: true,
 };
 
 // ─── The slider ladders (2026-09-17) ─────────────────────────────────────────
