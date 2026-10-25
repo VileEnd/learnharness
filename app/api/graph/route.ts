@@ -8,6 +8,9 @@ import { graphView } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-	return Response.json(graphView());
+export async function GET(request: Request) {
+	// ?groupBy=source|topic - the client's current grouping (a render
+	// setting); absent = the saved setting.
+	const raw = new URL(request.url).searchParams.get("groupBy");
+	return Response.json(graphView(raw === "topic" || raw === "source" ? raw : undefined));
 }

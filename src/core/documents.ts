@@ -16,6 +16,7 @@
 
 import { createHash } from "node:crypto";
 import type { DocumentMeta, DocumentSection, DuplicateVerdict } from "./contracts/documents.ts";
+import { topicKey } from "./topic-key.ts";
 
 /** Similarity at or above this counts as "very similar" (the plan's bar). */
 export const SIMILAR_THRESHOLD = 0.85;
@@ -166,12 +167,20 @@ export function jaccardEstimate(a: readonly number[], b: readonly number[]): num
 	return same / n;
 }
 
+// ─── adopting old imports ────────────────────────────────────────────────────
+
+/** The source id the pre-library importer minted for an uploaded file name:
+ *  "src_" + the first 12 hex of sha256(filename) (extraction.ts importNotes,
+ *  git history 543cf33). Unicode normalisation varies by platform, so the
+ *  composed and decomposed spellings are both candidates. */
+export function legacySourceIds(filename: string): string[] {
+	const base = filename.replace(/^.*[\\/]/, "");
+	return [...new Set([base, base.normalize("NFC"), base.normalize("NFD")])].map((f) => `src_${sha256Hex(f).slice(0, 12)}`);
+}
+
 // ─── topics ──────────────────────────────────────────────────────────────────
 
-/** The matching key of a topic: trimmed, whitespace-collapsed, NFKC, case-folded. */
-export function topicKey(topic: string): string {
-	return topic.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
-}
+export { topicKey };
 
 /** Trim and dedupe by topicKey, keeping the first display casing. */
 export function normalizeTopics(topics: readonly string[]): string[] {

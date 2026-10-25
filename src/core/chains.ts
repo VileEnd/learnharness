@@ -1,4 +1,5 @@
-import type { GraphNode } from "./contracts/graph.ts";
+import type { GraphGroupBy, GraphNode, ProvenancePoint, SnapshotDocument } from "./contracts/graph.ts";
+import { topicKey } from "./topic-key.ts";
 import { stripModelValueDebris } from "./value-debris.ts";
 
 /**
@@ -90,4 +91,129 @@ export function formatChainLine(
 	return premises !== ""
 		? `${premises} → ${nameOf(chain.conclusion)}`
 		: `${nameOf(chain.conclusion)} (no premises)`;
+}
+
+// ─── the chain table's grouping (PR H) ───────────────────────────────────────
+
+/** One folder of the chain table. Leaf chains hang off `chains`; deeper
+ *  levels (document -> section in source mode for documents; topic ->
+ *  document -> section in topic mode) hang off `children`. `nodeIds` is the
+ *  union over the whole subtree - what the folder's checkbox selects. */
+export interface ChainGroup {
+	/** Unique across the tree (a path of ids). Top-level source groups keep
+	 *  the plain birth-source id, like before. */
+	key: string;
+	label: string | null;
+	kind: "chat" | "notes" | "document" | "topic" | "section" | null;
+	chains: ReasoningChain[];
+	children: ChainGroup[];
+	nodeIds: string[];
+	newestCreatedAt: string;
+}
+
+/**
+ * Group the visible chains for the chain table. A chain lives where its
+ * CONCLUSION was born (owner ruling) - its birth source, and for a document
+ * the section recorded on that provenance point.
+ *
+ *   source mode   chat / notes  -> chains
+ *                 document      -> section -> chains
+ *   topic mode    topic         -> document -> section -> chains
+ *                 (a conclusion with no topic falls back to its source group)
+ *
+ * The topic is the conclusion's FIRST topic - the same home topic the
+ * snapshot's clusters use.
+ */
+export function groupChains(args: {
+	chains: readonly ReasoningChain[];
+	nodes: ReadonlyMap<string, GraphNode>;
+	groupBy: GraphGroupBy;
+	sessions: Readonly<Record<string, string>>;
+	fileSources: Readonly<Record<string, string>>;
+	nodeTopics: Readonly<Record<string, string[]>>;
+	documents: Readonly<Record<string, SnapshotDocument>>;
+}): ChainGroup[] {
+	const { nodes, groupBy, sessions, fileSources, nodeTopics, documents } = args;
+	const top = new Map<string, ChainGroup>();
+	const make = (key: string, label: string | null, kind: ChainGroup["kind"]): ChainGroup => ({
+		key,
+		label,
+		kind,
+		chains: [],
+		children: [],
+		nodeIds: [],
+		newestCreatedAt: "",
+	});
+	const child = (parent: ChainGroup, key: string, label: string | null, kind: ChainGroup["kind"]): ChainGroup => {
+		let found = parent.children.find((c) => c.key === key);
+		if (!found) {
+			found = make(key, label, kind);
+			parent.children.push(found);
+		}
+		return found;
+	};
+	for (const chain of args.chains) {
+		const conclusion = nodes.get(chain.conclusion);
+		const point = conclusion?.provenance[0];
+		const birth = point?.chatId ?? null;
+		const topic = groupBy === "topic" ? nodeTopics[chain.conclusion]?.[0] : undefined;
+		const doc = birth === null ? undefined : documents[birth];
+		const sourceLabel = birth === null ? null : (sessions[birth] ?? fileSources[birth] ?? null);
+		const sourceKind: ChainGroup["kind"] =
+			birth === null ? null : doc ? "document" : sessions[birth] !== undefined ? "chat" : fileSources[birth] !== undefined ? "notes" : null;
+
+		// The path of folders from the top down to the leaf that holds the chain.
+		const path: ChainGroup[] = [];
+		let root: ChainGroup;
+		if (topic !== undefined) {
+			const tkey = `topic:${topicKey(topic)}`;
+			root = top.get(tkey) ?? make(tkey, topic, "topic");
+			top.set(tkey, root);
+			path.push(root);
+			path.push(child(root, `${tkey}/${birth ?? "\0unlabeled"}`, sourceLabel, sourceKind));
+		} else {
+			const skey = birth ?? "\0unlabeled";
+			root = top.get(skey) ?? make(skey, sourceLabel, sourceKind);
+			top.set(skey, root);
+			path.push(root);
+		}
+		const sourceGroup = path[path.length - 1]!;
+		const section = doc && point?.section !== undefined ? doc.sections[point.section] : undefined;
+		if (doc && section && point?.section !== undefined) {
+			const pages =
+				section.pageFrom === undefined
+					? ""
+					: section.pageTo === undefined || section.pageTo === section.pageFrom
+						? ` · p.${section.pageFrom}`
+						: ` · pp.${section.pageFrom}–${section.pageTo}`;
+			path.push(
+				child(sourceGroup, `${sourceGroup.key}/${point.section}`, `§ ${section.headingPath.join(" › ") || "(preamble)"}${pages}`, "section"),
+			);
+		}
+		path[path.length - 1]!.chains.push(chain);
+		for (const group of path) {
+			for (const id of [...chain.premises, chain.conclusion]) {
+				if (!group.nodeIds.includes(id)) group.nodeIds.push(id);
+				const createdAt = nodes.get(id)?.createdAt ?? "";
+				if (createdAt > group.newestCreatedAt) group.newestCreatedAt = createdAt;
+			}
+		}
+	}
+	return [...top.values()];
+}
+
+/** The detail card's line for a node that came from a stored document:
+ *  "<title> · §<section heading> · p.N", plus the page to deep-link to
+ *  (/documents/<id>#p-N). The section and page parts are simply absent for
+ *  provenance that predates them (an adopted old import). */
+export function documentCitation(doc: SnapshotDocument, point: Pick<ProvenancePoint, "section" | "pageFrom">): { label: string; page?: number } {
+	const section = point.section === undefined ? undefined : doc.sections[point.section];
+	const heading = section?.headingPath[section.headingPath.length - 1];
+	const page = point.pageFrom ?? section?.pageFrom;
+	return {
+		label: [doc.title, heading !== undefined ? `§${heading}` : null, page !== undefined ? `p.${page}` : null]
+			.filter((part): part is string => part !== null)
+			.join(" · "),
+		...(page !== undefined ? { page } : {}),
+	};
 }

@@ -131,6 +131,10 @@ export interface CanvasData {
 	 *  the premises/conclusion midpoint (owner, 2026-09-30). */
 	impLinks?: ReadonlyArray<{ id: string; premises: ReadonlyArray<string>; conclusion: string }>;
 	clusters: CanvasCluster[];
+	/** The clusters the live sim pulls toward, when they differ from the
+	 *  drawn ones (topic grouping draws topic hulls but layout stays
+	 *  source-based, so nothing moves when the grouping toggles). */
+	pullClusters?: CanvasCluster[];
 	colors: CanvasColors;
 	/** Body font family (labels must match the app typography). */
 	fontFamily: string;
@@ -1519,8 +1523,10 @@ export class GraphCanvasRenderer {
 			chargeStrength: t.chargeStrength,
 			linkStrength: t.linkStrength,
 			linkDistance: t.linkDistance,
-			clusterPull:
-				data.clusters.length > 0 ? { clusters: data.clusters, strength: t.clusterPull } : undefined,
+			clusterPull: (() => {
+				const pull = data.pullClusters ?? data.clusters;
+				return pull.length > 0 ? { clusters: pull, strength: t.clusterPull } : undefined;
+			})(),
 			depthAnchor:
 				t.depthMode === "off"
 					? undefined

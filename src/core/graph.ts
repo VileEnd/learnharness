@@ -53,6 +53,9 @@ import { randomBytes } from "node:crypto";
 import type { CoverageEntry,
 } from "./contracts/graph.ts";
 import type {
+	GraphGroupBy,
+	SnapshotDocument,
+	TopicRow,
 	AuditVerdicts,
 	ExtractedChain,
 	GraphChain,
@@ -67,7 +70,9 @@ import type {
 import { MIN_CLUSTER_SIZE } from "./clusters.ts";
 import { formatChainLine } from "./chains.ts";
 import { attachImpToCommunities, birthSessionOf, birthSessionPartition } from "./session-clusters.ts";
-import type { ChatStore, GraphStore } from "./ports.ts";
+import type { ChatStore, DocumentStore, GraphStore } from "./ports.ts";
+import { topicKey } from "./documents.ts";
+import { MAX_TOPICS_PER_PROPOSITION, canonicalTopic, topicsByNode } from "./topics.ts";
 
 /** The storage ports every graph operation needs, passed explicitly. */
 export interface GraphDeps {
@@ -117,12 +122,74 @@ export interface MergeSource {
  *  message id — the extractor-copied messageId, validated at the submit
  *  seam against the current batch. Chains, notes imports, and
  *  legacy/core callers lacking an anchor keep "" (chat-level). */
-function pointOf(chatId: string, messageId?: string): ProvenancePoint[] {
-	return [{ chatId, messageId: messageId ?? "" }];
+function pointOf(
+	chatId: string,
+	messageId?: string,
+	where?: { section?: string; pageFrom?: number; pageTo?: number },
+): ProvenancePoint[] {
+	// A document proposition also records WHERE in the document it came from
+	// (PR H, additive fields); everything else keeps the bare two-field point.
+	return [
+		{
+			chatId,
+			messageId: messageId ?? "",
+			...(where?.section ? { section: where.section } : {}),
+			...(where?.section && where.pageFrom !== undefined ? { pageFrom: where.pageFrom } : {}),
+			...(where?.section && where.pageTo !== undefined ? { pageTo: where.pageTo } : {}),
+		},
+	];
 }
 
 const samePoint = (a: ProvenancePoint, b: ProvenancePoint): boolean =>
-	a.chatId === b.chatId && a.messageId === b.messageId;
+	a.chatId === b.chatId && a.messageId === b.messageId && a.section === b.section;
+
+/** Append topic rows for one node - the merger's topic writer (only ever
+ *  called inside the audit-locked critical section). Topics map through the
+ *  alias table (canonical label), a (node, topic) pair is never written
+ *  twice, and at most MAX_TOPICS_PER_PROPOSITION are taken per call. Returns
+ *  the rows appended. */
+function appendTopicRows(
+	ledgers: Pick<GraphStore, "appendTopic">,
+	have: Set<string>,
+	aliases: Readonly<Record<string, string>>,
+	nodeId: string,
+	topics: readonly string[],
+	sourceId: string,
+	at: string,
+): number {
+	let appended = 0;
+	for (const raw of topics.slice(0, MAX_TOPICS_PER_PROPOSITION)) {
+		const topic = canonicalTopic(raw, aliases);
+		const key = topicKey(topic);
+		if (key === "" || have.has(`${nodeId}\0${key}`)) continue;
+		have.add(`${nodeId}\0${key}`);
+		ledgers.appendTopic({ nodeId, topic, sourceId, at });
+		appended++;
+	}
+	return appended;
+}
+
+/** The merger's second entry point: topic rows for EXISTING nodes (the
+ *  tagging pass that adopts an old import). Same sole-writer discipline as
+ *  mergeFindings - the caller holds the audit lock - and the same alias
+ *  mapping; unknown node ids are skipped. Returns rows appended. */
+export function mergeTopicRows(
+	sourceId: string,
+	assignments: ReadonlyArray<{ nodeId: string; topics: readonly string[] }>,
+	deps: GraphDeps,
+	at: string = new Date().toISOString(),
+): number {
+	const { graphStore: ledgers } = deps;
+	const existing = new Set(ledgers.readNodes().map((n) => n.id));
+	const aliases = ledgers.readTopicAliases();
+	const have = new Set(ledgers.readTopics().map((r) => `${r.nodeId}\0${topicKey(r.topic)}`));
+	let appended = 0;
+	for (const a of assignments) {
+		if (!existing.has(a.nodeId)) continue;
+		appended += appendTopicRows(ledgers, have, aliases, a.nodeId, a.topics, sourceId, at);
+	}
+	return appended;
+}
 
 // ─── the merger (extraction pipeline stage 3 — deterministic) ────────────────
 
@@ -166,6 +233,10 @@ export function mergeFindings(
 	const mapping = new Map<string, string>();
 	const now = new Date().toISOString();
 	const linkOf = new Map(verdicts.links.map((l) => [l.id, l.linkTo]));
+	// Topic bookkeeping (PR H): the alias table is read once per merge and
+	// applied deterministically; `haveTopic` keeps (node, topic) rows unique.
+	const aliases = ledgers.readTopicAliases();
+	const haveTopic = new Set(ledgers.readTopics().map((r) => `${r.nodeId}\0${topicKey(r.topic)}`));
 
 	// VERDICTS-ONLY (owner, 2026-09-28): the propositions come from the
 	// extractor's findings verbatim; the auditor's links join here by id.
@@ -175,7 +246,7 @@ export function mergeFindings(
 		// passage's messageId — it rides BOTH the create and the link-append
 		// line (each re-encounter anchors to ITS passage); absent (notes,
 		// legacy/core callers) → "", chat-level as before.
-		const points = pointOf(chatId, p.messageId);
+		const points = pointOf(chatId, p.messageId, p);
 		const linkTo = linkOf.get(p.id);
 		let graphNodeId: string;
 		if (linkTo !== undefined && existingIds.has(linkTo)) {
@@ -208,6 +279,9 @@ export function mergeFindings(
 			existingIds.add(graphNodeId);
 		}
 		mapping.set(p.id, graphNodeId);
+		if (p.topics && p.topics.length > 0) {
+			appendTopicRows(ledgers, haveTopic, aliases, graphNodeId, p.topics, chatId, now);
+		}
 	}
 
 	// 2. Chains — the extractor's alone since the digest-aware redesign
@@ -506,7 +580,11 @@ export function deriveView(graph: DerivedGraph): {
 // ─── the /api/graph payload ──────────────────────────────────────────────────
 
 /** Everything the home graph view needs, in one fetch (shape: contracts). */
-export function graphSnapshot(deps: GraphDeps): GraphSnapshot {
+export function graphSnapshot(
+	deps: GraphDeps,
+	opts: { groupBy?: GraphGroupBy; documents?: Pick<DocumentStore, "listMetas"> } = {},
+): GraphSnapshot {
+	const groupBy: GraphGroupBy = opts.groupBy ?? "source";
 	const graph = getGraph(deps.graphStore);
 	// The canvas-facing lossy image: propositions + derived implication
 	// nodes, untyped arrows. `chains` (the stored truth) ride along for
@@ -536,14 +614,40 @@ export function graphSnapshot(deps: GraphDeps): GraphSnapshot {
 	}
 	const sessions: Record<string, string> = {};
 	const fileSources: Record<string, string> = {};
+	// A stored document behind a source id (PR H): its TITLE is the source's
+	// label (derived on read, never dual-tracked with the source record).
+	const docBySource = new Map((opts.documents?.listMetas() ?? []).map((m) => [m.sourceId, m]));
+	const sourceRecords = deps.graphStore.readSources();
 	for (const id of sourceIds) {
 		const chat = deps.chatStore.getChat(id);
 		if (chat) {
 			sessions[id] = chat.title;
 			continue;
 		}
-		const source = deps.graphStore.readSources().find((s) => s.id === id);
+		const doc = docBySource.get(id);
+		if (doc) {
+			fileSources[id] = doc.title;
+			continue;
+		}
+		const source = sourceRecords.find((s) => s.id === id);
 		if (source) fileSources[id] = source.filePath;
+	}
+	// The documents the provenance points at, with just the sections they name.
+	const documents: Record<string, SnapshotDocument> = {};
+	for (const node of graph.nodes) {
+		for (const pt of node.provenance) {
+			const doc = docBySource.get(pt.chatId);
+			if (!doc) continue;
+			const entry = (documents[pt.chatId] ??= { id: doc.id, title: doc.title, sections: {} });
+			const section = pt.section === undefined ? undefined : doc.sections.find((sec) => sec.id === pt.section);
+			if (section && !entry.sections[section.id]) {
+				entry.sections[section.id] = {
+					headingPath: section.headingPath,
+					...(section.pageFrom !== undefined ? { pageFrom: section.pageFrom } : {}),
+					...(section.pageTo !== undefined ? { pageTo: section.pageTo } : {}),
+				};
+			}
+		}
 	}
 
 	const nodeSessions: Record<string, string[]> = {};
@@ -562,21 +666,64 @@ export function graphSnapshot(deps: GraphDeps): GraphSnapshot {
 	// but renders unlabeled — honest, never guessed.
 	// PROPOSITIONS ONLY (owner, 2026-09-30): derived implication nodes
 	// never partition — the stored world clusters, its image follows.
-	const communities = birthSessionPartition(graph.nodes);
-	const clusters: Cluster[] = communities
-		.filter((community) => community.members.length >= MIN_CLUSTER_SIZE)
-		.map((community) => ({
-			id: community.id,
-			label: sessions[community.id] ?? fileSources[community.id] ?? null,
-			members: community.members,
-		}));
-	// IMP-NODE CLUSTER ASSIGNMENT (owner, 2026-09-30): majority among the
-	// premises' birth sessions, ties to the chain's own birth — attached
-	// AFTER the hull filter so a two-proposition community + its bundle
-	// never resurrects a hull (the filter counts propositions). Both
-	// cluster-membership consumers — the sim's centroid pull and the
-	// canvas's region rasterization — read it through this one list.
-	attachImpToCommunities(clusters, graph.nodes, graph.chains);
+	const sourceLabel = (id: string): string | null => sessions[id] ?? fileSources[id] ?? null;
+	const buildClusters = (
+		communities: ReadonlyArray<{ id: string; members: string[] }>,
+		labelOf: (id: string) => string | null,
+		keyOf?: (node: Pick<GraphNode, "id" | "provenance">) => string | null,
+	): Cluster[] => {
+		const built: Cluster[] = communities
+			.filter((community) => community.members.length >= MIN_CLUSTER_SIZE)
+			.map((community) => ({ id: community.id, label: labelOf(community.id), members: community.members }));
+		// IMP-NODE CLUSTER ASSIGNMENT (owner, 2026-09-30): majority among the
+		// premises' clusters, ties to the chain's own birth - attached AFTER
+		// the hull filter so a two-proposition community + its bundle never
+		// resurrects a hull. Every cluster-membership consumer (the sim's
+		// centroid pull, the canvas's region rasterization) reads it through
+		// this one list.
+		attachImpToCommunities(built, graph.nodes, graph.chains, keyOf);
+		return built;
+	};
+	const sourceClusters = buildClusters(birthSessionPartition(graph.nodes), sourceLabel);
+
+	// TOPIC GROUPING (PR H): a node joins the cluster of its FIRST topic;
+	// a node with no topic falls back to its source cluster (so a graph
+	// that was never tagged looks exactly like source mode). Derived on
+	// every read from the topics ledger - nothing persisted per mode.
+	const topicRows = deps.graphStore.readTopics();
+	const topicsOf = topicsByNode(topicRows);
+	const nodeTopics: Record<string, string[]> = {};
+	for (const node of graph.nodes) {
+		const list = topicsOf.get(node.id);
+		if (list) nodeTopics[node.id] = list;
+	}
+	let clusters = sourceClusters;
+	let layoutClusters: Cluster[] | undefined;
+	if (groupBy === "topic") {
+		const display = new Map<string, string>();
+		for (const row of topicRows) if (!display.has(topicKey(row.topic))) display.set(topicKey(row.topic), row.topic);
+		const clusterKeyOf = (node: Pick<GraphNode, "id" | "provenance">): string | null => {
+			const first = nodeTopics[node.id]?.[0];
+			return first !== undefined ? `topic:${topicKey(first)}` : birthSessionOf(node);
+		};
+		const buckets = new Map<string, string[]>();
+		for (const node of graph.nodes) {
+			const key = clusterKeyOf(node);
+			if (key === null) continue;
+			const list = buckets.get(key);
+			if (list) list.push(node.id);
+			else buckets.set(key, [node.id]);
+		}
+		const communities = [...buckets.entries()]
+			.map(([id, members]) => ({ id, members: [...members].sort() }))
+			.sort((a, b) => b.members.length - a.members.length || (a.id < b.id ? -1 : 1));
+		clusters = buildClusters(
+			communities,
+			(id) => (id.startsWith("topic:") ? (display.get(id.slice("topic:".length)) ?? null) : sourceLabel(id)),
+			clusterKeyOf,
+		);
+		layoutClusters = sourceClusters; // layout stays source-based
+	}
 
 	// Resting layout (Option A): the positions ledger, when the settle has
 	// ever run. Absent on a fresh graph — the view falls back to its own
@@ -594,6 +741,10 @@ export function graphSnapshot(deps: GraphDeps): GraphSnapshot {
 		fileSources,
 		nodeSessions,
 		clusters,
+		groupBy,
+		...(layoutClusters ? { layoutClusters } : {}),
+		nodeTopics,
+		documents,
 		...(Object.keys(positions).length > 0 ? { positions } : {}),
 	};
 }

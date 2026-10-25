@@ -80,6 +80,14 @@ export interface ProvenancePoint {
 	 *  recorded through the mapping line + the source record). */
 	chatId: string;
 	messageId: string;
+	/** PR H, additive and optional (graph format stays v1): for a stored
+	 *  DOCUMENT source, the section id ("s3") of the document the
+	 *  proposition came from and that section's page range. The detail card
+	 *  links title + section + page to the document reader. Old points
+	 *  simply lack them. */
+	section?: string;
+	pageFrom?: number;
+	pageTo?: number;
 }
 
 /** One imported notes file — the format-agnostic front door's bookkeeping
@@ -243,6 +251,15 @@ export interface ExtractedProposition {
 	 *  undefined → messageId "" (chat-level), so NO persisted shape or
 	 *  format version changes (GraphNode / ProvenancePoint untouched). */
 	messageId?: string;
+	/** DOCUMENT PATH ONLY (PR H): the topics this proposition belongs to
+	 *  (the document's own topics preferred) and the id of the document
+	 *  section it came from. The merger maps topics through the alias table
+	 *  into the topics ledger; section (+ the pages the pipeline looked up
+	 *  from it) rides the provenance point. */
+	topics?: string[];
+	section?: string;
+	pageFrom?: number;
+	pageTo?: number;
 }
 
 /** One proposed argument (extractor redesign, 2026-09-30). Endpoints are
@@ -286,6 +303,30 @@ export interface AuditVerdicts {
 }
 
 /** The GET /api/graph payload — everything the home view's PURE renderer needs. */
+
+/** topics.jsonl line (PR H): one node belongs to one topic. APPEND-ONLY and
+ *  written only by the merger (inside its audit-locked critical section).
+ *  `topic` is the CANONICAL display label (alias table applied); a node's
+ *  FIRST row is its home topic in the graph's "Group by topic" mode. */
+export interface TopicRow {
+	nodeId: string;
+	topic: string;
+	/** The graph source (document) whose extraction or tagging assigned it. */
+	sourceId: string;
+	at: string;
+}
+
+/** How the graph clusters its nodes (render setting, PR H). */
+export type GraphGroupBy = "source" | "topic";
+
+/** What the snapshot knows about a stored document that a source id
+ *  points at: its title, id (the reader link) and the sections that
+ *  provenance points reference. */
+export interface SnapshotDocument {
+	id: string;
+	title: string;
+	sections: Record<string, { headingPath: string[]; pageFrom?: number; pageTo?: number }>;
+}
 
 /** One rendered cluster in the snapshot payload (vision §1). Members are
  * node ids; the renderer draws the hull from member positions at draw
@@ -340,6 +381,16 @@ export interface GraphSnapshot {
 	 * nodes are never partitioned. Purely provenance-derived — never
 	 * depends on layout. */
 	clusters: Cluster[];
+	/** The grouping `clusters` follows (PR H): "source" = birth session /
+	 *  document, "topic" = a node's first topic (source fallback). */
+	groupBy: GraphGroupBy;
+	/** Topic mode only: the SOURCE clusters, which keep driving layout (the
+	 *  live sim's cluster pull) so toggling the grouping never moves nodes. */
+	layoutClusters?: Cluster[];
+	/** nodeId → canonical topics, ledger order (the first is the home topic). */
+	nodeTopics: Record<string, string[]>;
+	/** sourceId → the stored document behind it (titles, section headings). */
+	documents: Record<string, SnapshotDocument>;
 	/** Resting layout positions per node id, when a positions ledger
 	 *  exists (core/layout.ts settle writes it). Absent on a fresh graph —
 	 *  the view then falls back to its own one-shot forceAtlas2 pass. */

@@ -133,6 +133,10 @@ The desktop app stored everything in `%APPDATA%\LearnHarness` (`C:\Users\<you>\A
    ```
 5. Check that your chats, graph, and keys are there. Once you're happy, uninstall the desktop app. `%APPDATA%\LearnHarness` stays behind as a fallback copy.
 
+### Bringing over imports from the old app
+
+The graph you migrated already holds the nodes the old app extracted from your notes, but the browser version has no stored documents for them yet. **Re-upload the original files once** (Add documents on the graph page). A file whose name matches an old import shows as "Already in your graph · imported <date> · N nodes — add to library (no re-extraction)", and Import attaches the file to the existing graph source: no model extraction runs, the document appears in the library, and a cheap model pass files the source's existing nodes under the document's topics so the graph's Topic grouping covers them too. Choose "Re-extract" for a file you want read again from scratch, or "Skip". Old imports of PDFs that were stored as raw text and produced no nodes are not adopted: upload the PDF again and it is scanned and extracted as a new document.
+
 ## PDF scanning service
 
 The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdown through OpenRouter. It has no published port and no Caddy route: only the app reaches it at `http://ocr:8000`, and every call carries the shared secret `OCR_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env`). The OpenRouter key is the one in the app's Settings, sent per job. Results and cache live in `volumes/ocr/`, which belongs in the backups.

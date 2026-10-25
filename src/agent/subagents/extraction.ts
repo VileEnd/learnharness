@@ -24,7 +24,10 @@ import type {
 	ExtractionStageUsage,
 	SessionFindings,
 } from "../../core/contracts.ts";
-import { getGraph, mergeFindings, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
+import { getGraph, mergeFindings, mergeTopicRows, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
+import type { DocumentSection } from "../../core/contracts/documents.ts";
+import { MAX_TOPICS_PER_PROPOSITION } from "../../core/topics.ts";
+import { chunkDocument, documentChunkView, type DocumentChunk } from "./section-chunks.ts";
 import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
 import { settleGraphLayout } from "../../core/layout-settle.ts";
@@ -227,6 +230,29 @@ const sessionFindingsSchema = Type.Object({
 	}),
 });
 
+// THE DOCUMENT EXTENSION (PR H): a stored document is read in section-aware
+// stretches, and each proposition names the topics it belongs to and the
+// section it came from. Only the document door demands these; plain notes
+// keep the base shape above, prompt and wire unchanged.
+const documentPropositionProps = {
+	...propositionProps,
+	topics: Type.Array(Type.String(), {
+		description:
+			`One to ${MAX_TOPICS_PER_PROPOSITION} topics this idea belongs to - copy them verbatim from THE DOCUMENT'S TOPICS in the prompt whenever one fits.`,
+	}),
+	section: Type.String({
+		description:
+			'The id of the section this idea comes from - copy it EXACTLY from SECTIONS IN THIS STRETCH in the prompt ("s3").',
+	}),
+};
+
+const documentFindingsSchema = Type.Object({
+	propositions: Type.Array(Type.Object(documentPropositionProps), { description: propositionsDescription }),
+	chains: Type.Array(chainSchema, { description: chainsDescription }),
+});
+
+type DocumentFindingsSubmit = Static<typeof documentFindingsSchema>;
+
 /** What the extractor SUBMITS (the redesign's wire shape) — propositions
  *  + chains. fillFindings normalizes it; validateFindingsChains checks
  *  the chain laws; asSessionFindings lifts it straight into
@@ -344,6 +370,32 @@ function validateSessionAnchors(value: SessionFindingsSubmit, batchIds: Readonly
 	return null;
 }
 
+/** The DOCUMENT submit law (PR H), the validateSessionAnchors pattern: every
+ *  proposition names a section of THIS stretch and (when the document has
+ *  topics to choose from) at least one topic, at most MAX_TOPICS. Refusals
+ *  ride the error-back channel: nothing merges until a valid submit lands. */
+function validateDocumentFields(
+	value: DocumentFindingsSubmit,
+	sectionIds: ReadonlySet<string>,
+	documentHasTopics: boolean,
+): string | null {
+	for (const p of value.propositions) {
+		if (p.section.trim().length === 0) {
+			return `propositions: "${p.id}" is missing its section - copy the id of the section it comes from out of SECTIONS IN THIS STRETCH.`;
+		}
+		if (!sectionIds.has(p.section)) {
+			return `propositions: "${p.id}" names section "${p.section}", which is not in THIS stretch - use one of: ${[...sectionIds].join(", ")}.`;
+		}
+		if (documentHasTopics && p.topics.length === 0) {
+			return `propositions: "${p.id}" has no topics - give it one to ${MAX_TOPICS_PER_PROPOSITION} from THE DOCUMENT'S TOPICS.`;
+		}
+		if (p.topics.length > MAX_TOPICS_PER_PROPOSITION) {
+			return `propositions: "${p.id}" has ${p.topics.length} topics - at most ${MAX_TOPICS_PER_PROPOSITION}.`;
+		}
+	}
+	return null;
+}
+
 /** (chains-primary, owner 2026-09-30) the wire IS the pipeline shape
  *  now: propositions + chains, no translation — the stores keep the
  *  chains and the derived edge view is recomputed on read. The fill
@@ -352,7 +404,7 @@ function validateSessionAnchors(value: SessionFindingsSubmit, batchIds: Readonly
  *  anchor, 2026-10-13 — both doors lift through here). */
 const asSessionFindings = (
 	raw: {
-		propositions: Array<{ id: string; name: string; statement: string; aliases?: string[]; messageId?: string }>;
+		propositions: Array<{ id: string; name: string; statement: string; aliases?: string[]; messageId?: string; topics?: string[]; section?: string; pageFrom?: number; pageTo?: number }>;
 		chains: Array<{ premises: string[]; conclusion: string }>;
 	},
 ): SessionFindings => ({
@@ -429,8 +481,22 @@ reappear, by id, as a premise of later chains. A bare idea that no argument uses
 propositions list alone. Include every field even when empty — "chains": [] when the source makes no
 arguments. The tool's field descriptions carry the details.`;
 
+/** A stored document (PR H): read in section-aware stretches, every idea
+ *  placed in a section and under topics. The core is shared; only the
+ *  contextualization and the two field names differ. */
+export const DOCUMENT_PREAMBLE =
+	"You are the extraction stage of a learning application. You read one stretch of a source — a document " +
+	"the learner studies (lecture notes, a script, a scanned sheet), cut along its own sections and rendered " +
+	"in reading order — and report what it teaches as findings for the learner's global knowledge graph, " +
+	"building on everything already extracted from this source.";
+
+export const DOCUMENT_FIELDS_RULE =
+	"For each new proposition, copy the id of the section it comes from into section (the ids under SECTIONS IN " +
+	"THIS STRETCH), and name the topics it belongs to in topics (from THE DOCUMENT'S TOPICS whenever one fits).";
+
 export const EXTRACTOR_INSTRUCTIONS = `${SESSION_PREAMBLE}\n\n${EXTRACTION_CORE}\n\n${SESSION_MESSAGE_ID_RULE}`;
 export const NOTES_EXTRACTOR_INSTRUCTIONS = `${NOTES_PREAMBLE}\n\n${EXTRACTION_CORE}`;
+export const DOCUMENT_EXTRACTOR_INSTRUCTIONS = `${DOCUMENT_PREAMBLE}\n\n${EXTRACTION_CORE}\n\n${DOCUMENT_FIELDS_RULE}`;
 
 // ── the same-source digest (owner, 2026-09-30 evening) ──
 //
@@ -526,6 +592,66 @@ function runNotesExtractor(
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
 	}).then(asSessionFindings);
+}
+
+/** The extractor over ONE chunk of a stored document (PR H): the notes
+ *  shape plus per-proposition `topics` and `section`, validated at the
+ *  submit seam against THIS chunk's section ids. Pages are looked up from
+ *  the section afterwards - deterministic, never the model's. */
+function runDocumentExtractor(
+	engine: PiEngine | undefined,
+	sourceId: string,
+	prompt: string,
+	existingIds: ReadonlySet<string>,
+	chunk: DocumentChunk,
+	documentHasTopics: boolean,
+	signal: AbortSignal | undefined,
+	onStep: (usage: Usage, model: string, step: number, finishReason: string, tools: string) => void,
+): Promise<NotesFindings> {
+	const sectionIds = new Set(chunk.sections.map((sec) => sec.id));
+	return runSubmitAgent<DocumentFindingsSubmit>({
+		role: "extractor",
+		chatId: sourceId,
+		toolName: "submit_findings",
+		toolDescription: "Submit the document findings.",
+		parameters: documentFindingsSchema,
+		fill: (raw: DocumentFindingsSubmit): DocumentFindingsSubmit => {
+			const filled = fillFindings(raw);
+			return {
+				...filled,
+				propositions: filled.propositions.map((p) => {
+					const stripped = { ...p } as typeof p & { messageId?: unknown };
+					delete stripped.messageId; // documents have no passages: the section is the anchor
+					return { ...stripped, topics: (p.topics ?? []).map((t) => String(t).trim()).filter((t) => t !== "") };
+				}),
+			};
+		},
+		validate: (value) =>
+			validateDocumentFields(value, sectionIds, documentHasTopics) ?? validateFindingsChains(value, existingIds),
+		systemPrompt: DOCUMENT_EXTRACTOR_INSTRUCTIONS,
+		prompt,
+		engine,
+		signal,
+		onStep,
+		neverSubmitted: "the extractor never submitted findings",
+		prepareArguments: healStringifiedArrays,
+	}).then((raw) => {
+		const pagesOf = new Map(chunk.sections.map((sec) => [sec.id, sec]));
+		const findings = asSessionFindings(raw);
+		return {
+			...findings,
+			propositions: findings.propositions.map((p) => {
+				const sec = p.section === undefined ? undefined : pagesOf.get(p.section);
+				return sec
+					? {
+							...p,
+							...(sec.pageFrom !== undefined ? { pageFrom: sec.pageFrom } : {}),
+							...(sec.pageTo !== undefined || sec.pageFrom !== undefined ? { pageTo: sec.pageTo ?? sec.pageFrom } : {}),
+						}
+					: p;
+			}),
+		};
+	});
 }
 
 // ─── the auditor ───────────────────────────────────────────────────────────
@@ -755,6 +881,11 @@ export interface NotesImportInput {
 	 *  the filename never reaches the model. `filePath` is then only the
 	 *  caller's alias. */
 	title?: string;
+	/** A stored document's parsed sections (char offsets INTO `text`) and
+	 *  topics (PR H): present -> section-aware chunking, per-proposition
+	 *  topics + section. Absent -> the plain notes door, unchanged. */
+	sections?: DocumentSection[];
+	topics?: string[];
 }
 
 /** A notes import did not finish. Earlier graph writes and billed usage are
@@ -780,6 +911,15 @@ export interface ExtractionPipeline {
 	 *  path, so re-importing the same file re-runs extraction against the
 	 *  same source identity (mappings dedupe by it). */
 	importNotes(input: NotesImportInput): Promise<EmissionStats>;
+	/** Topic rows for EXISTING nodes of a source (PR H: the tagging pass that
+	 *  adopts an old import). Goes through the merger's topic entry point
+	 *  inside the same audit-locked critical section as every graph write -
+	 *  the pipeline stays the sole writer. Resolves to the rows appended. */
+	applyTopicRows(input: {
+		sourceId: string;
+		label: string;
+		assignments: ReadonlyArray<{ nodeId: string; topics: readonly string[] }>;
+	}): Promise<number>;
 }
 
 /** pi's per-step usage, flattened to the persisted CallUsage fields
@@ -1292,14 +1432,18 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 
 	async function notesExtract(
 		jobKey: string,
-		input: { id: string; filePath: string; text: string; part?: { i: number; n: number } },
+		input: { id: string; filePath: string; text: string; part?: { i: number; n: number }; doc?: DocumentChunk; topics?: string[] },
 	): Promise<NotesFindings> {
 		// jobKey (per-chunk jobs, owner 2026-09-28): the registry key —
 		// "src#i" for chunk jobs — so the abort signal reaches the call.
 		// input.id stays the SOURCE id for the view and store ledgers.
 		const signal = runningExtractions.get(jobKey)?.controller.signal;
 		signal?.throwIfAborted(); // an abort during a sync gap ends the job here
-		const view = notesView(input);
+		// A document chunk is introduced by its own header (title, section
+		// path, pages, topics, citable section ids) - never the filename.
+		const view = input.doc
+			? documentChunkView({ title: input.filePath, topics: input.topics ?? [] }, input.doc, input.part)
+			: notesView(input);
 		// Same digest law as the chat door (owner, 2026-09-30 evening): the
 		// chunk extractor continues its own source, ids verbatim.
 		const graph = getGraph(graphStore);
@@ -1310,17 +1454,23 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				`${digest === "" ? "" : `, digest ${digest.split("\n").length} lines`})`,
 		);
 		const t0 = performance.now();
-		const findings = await runNotesExtractor(
-			stageEngine("extractor", deps.extractor),
-			input.id,
-			prompt,
-			new Set(graph.nodes.map((n) => n.id)),
-			signal,
-			(usage, model, step, finishReason, tools) => {
-				recordStep(jobKey, "extractor", callUsage(usage), model);
-				console.info(`[extraction] extractor step ${step}: ${finishReason}, tools: ${tools}`);
-			},
-		);
+		const onStep = (usage: Usage, model: string, step: number, finishReason: string, tools: string) => {
+			recordStep(jobKey, "extractor", callUsage(usage), model);
+			console.info(`[extraction] extractor step ${step}: ${finishReason}, tools: ${tools}`);
+		};
+		const existingIds = new Set(graph.nodes.map((n) => n.id));
+		const findings = input.doc
+			? await runDocumentExtractor(
+					stageEngine("extractor", deps.extractor),
+					input.id,
+					prompt,
+					existingIds,
+					input.doc,
+					(input.topics ?? []).length > 0,
+					signal,
+					onStep,
+				)
+			: await runNotesExtractor(stageEngine("extractor", deps.extractor), input.id, prompt, existingIds, signal, onStep);
 		console.info(`[extraction ${jobKey}] notes extractor done in ${Math.round(performance.now() - t0)}ms`);
 		return findings;
 	}
@@ -1328,7 +1478,15 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	// The notes auditor is the SAME identity-linker as the chat one (one
 	// schema now that attribution is gone) — audit() above, verbatim.
 
-	async function runNotesExtraction(input: { id: string; filePath: string; reportAs: string; text: string; importedAt: string }): Promise<EmissionStats> {
+	async function runNotesExtraction(input: {
+		id: string;
+		filePath: string;
+		reportAs: string;
+		text: string;
+		importedAt: string;
+		sections?: DocumentSection[];
+		topics?: string[];
+	}): Promise<EmissionStats> {
 		const { id } = input;
 		// importNotes owns the source exclusion, including metadata and cleanup.
 		const t0 = performance.now();
@@ -1343,7 +1501,12 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			// whole large file. Abort mid-run keeps earlier chunks merged
 			// (same doctrine as chat batches).
 			const chunkTokens = deps.getChunkTokens?.() ?? FACTORY_SETTINGS.graph.extractionChunkTokens;
-			const chunks = chunkNotes(input.text, chunkTokens);
+			// A stored document is cut along its own sections (PR H); anything
+			// else keeps the line-greedy notes chunking.
+			const chunks: Array<{ text: string; doc?: DocumentChunk }> =
+				input.sections && input.sections.length > 0
+					? chunkDocument(input.text, input.sections, chunkTokens).map((doc) => ({ text: doc.body, doc }))
+					: chunkNotes(input.text, chunkTokens).map((text) => ({ text }));
 			console.info(
 				`[extraction ${id}] notes pipeline start (${input.filePath}) — ${chunks.length} chunk(s) of ≤${chunkTokens} tok`,
 			);
@@ -1369,7 +1532,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 							chunkSignal = runningExtractions.get(jobKey)?.controller.signal;
 							const findings = await withExtractSlot(jobKey, async () => {
 								setPhase(jobKey, "extracting", "notes", input.filePath, part);
-								return notesExtract(jobKey, { ...input, text: chunk, part });
+								return notesExtract(jobKey, { ...input, text: chunk.text, part, doc: chunk.doc, topics: input.topics });
 							});
 							// SERIALIZED AUDIT (owner, 2026-09-28): audit + merge one
 							// at a time, process-wide — the auditor explores the graph
@@ -1463,6 +1626,8 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				reportAs: input.title ?? path.basename(input.filePath),
 				text: input.text,
 				importedAt,
+				...(input.sections ? { sections: input.sections } : {}),
+				...(input.topics ? { topics: input.topics } : {}),
 			});
 		} catch (err) {
 			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
@@ -1472,6 +1637,26 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		}
 	}
 
-	return { runExtraction, importNotes };
+	/** The tagging pass's merge: serialized with every other graph write by
+	 *  the audit lock, shown as one short "merging" row in the dock. */
+	async function applyTopicRows(input: {
+		sourceId: string;
+		label: string;
+		assignments: ReadonlyArray<{ nodeId: string; topics: readonly string[] }>;
+	}): Promise<number> {
+		const jobKey = `${input.sourceId}#topics`;
+		try {
+			return await withAuditLock(jobKey, "notes", input.label, async () => {
+				setPhase(jobKey, "merging", "notes", input.label);
+				const rows = mergeTopicRows(input.sourceId, input.assignments, { chatStore, graphStore });
+				console.info(`[extraction ${jobKey}] topic tagging merged: ${rows} rows`);
+				return rows;
+			});
+		} finally {
+			finishExtraction(jobKey);
+		}
+	}
+
+	return { runExtraction, importNotes, applyTopicRows };
 }
 
