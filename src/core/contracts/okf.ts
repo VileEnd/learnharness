@@ -6,6 +6,9 @@
 
 import type { DocumentMeta } from "./documents.ts";
 import type { GraphChain, GraphNode, TopicRow } from "./graph.ts";
+import type { LearnerSnapshot } from "./learner.ts";
+
+export type { LearnerSnapshot };
 
 /** One file of the bundle: a POSIX path relative to the bundle root + its text. */
 export interface OkfFile {
@@ -32,13 +35,6 @@ export interface OkfChatInput {
 	createdAt: string;
 }
 
-/** PLACEHOLDER (the learner model lands in a later task, which replaces this
- *  with the real snapshot). The renderer ignores it today: no me/ directory. */
-export interface LearnerSnapshot {
-	asOf: string;
-	states: Record<string, unknown>;
-}
-
 export interface OkfInput {
 	nodes: GraphNode[];
 	chains: GraphChain[];
@@ -51,6 +47,6 @@ export interface OkfInput {
 	/** Absent = no me/ directory. */
 	learner?: LearnerSnapshot;
 	gates: OkfGates;
-	/** ISO instant; drives log.md and (later) me/ as-of. */
+	/** ISO instant; drives log.md and the me/ as-of line. */
 	now: string;
 }

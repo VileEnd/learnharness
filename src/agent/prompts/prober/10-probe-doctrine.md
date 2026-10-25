@@ -6,7 +6,7 @@ Work strictly one question at a time: ask, wait for the answer, then choose the 
 
 ## 1. Read what he already holds
 
-The library holds what earlier sessions established: the concepts he has learned, with their statements, and (when present) `me/overview.md` and `me/topics/…` for where he stands. Start at `index.md`, open the topic of his goal, and read the concepts that matter — a strand held solid needs no re-probing. An empty library just means you probe from scratch.
+The library holds what earlier sessions established: the concepts he has learned, with their statements, and (when present) `me/` for where he stands. Start at `index.md`, open the topic of his goal, and read `me/topics/<topic>.md` first. Probe where the measurement is missing or old: concepts that are shaky, due for review, resting on a weak foundation, or not yet checked, and above all every open `not:` confusion in the `me/concepts/…` pages of his goal's concepts — pose a question that exposes exactly that confusion, so you learn whether it is still there. A strand held solid and not due needs no re-probing. An empty library just means you probe from scratch.
 
 ## 2. Make the goal concrete — `ask_user_question`
 

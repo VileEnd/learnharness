@@ -19,10 +19,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { LEDGER_FILES, PATHS, SETTINGS_FILE, SOURCES_FILE, TOPIC_ALIASES_FILE } from "../../config.ts";
 import type { LearnerSnapshot, OkfFile } from "../core/contracts/okf.ts";
+import { deriveEvidence, deriveLearnerState } from "../core/learner.ts";
 import { getGraph } from "../core/graph.ts";
 import { OKF_RENDER_REV, renderOkfBundle } from "../core/okf.ts";
 import { renderOkfViewer } from "../core/okf-viz.ts";
-import type { ChatStore, DocumentStore, GraphStore, OkfBundleStore } from "../core/ports.ts";
+import type { ChatStore, DocumentStore, GraphStore, LearnerStore, OkfBundleStore } from "../core/ports.ts";
 import type { UserSettings } from "../core/settings.ts";
 import { documentToolsEnabled, graphToolsEnabled, resolveSettings } from "../core/settings-resolution.ts";
 
@@ -30,10 +31,10 @@ export interface LibraryDeps {
 	okfStore: OkfBundleStore;
 	graphStore: GraphStore;
 	documentStore: DocumentStore;
-	chatStore: Pick<ChatStore, "listChats">;
+	chatStore: Pick<ChatStore, "listChats" | "getChat">;
 	settings: () => UserSettings | null;
-	/** The learner model's snapshot (later PR); absent = no me/ directory. */
-	learner?: () => LearnerSnapshot | undefined;
+	/** The attribution ledger the learner model reads; absent = no me/ directory. */
+	learnerStore?: Pick<LearnerStore, "readAttributions">;
 	now?: () => Date;
 	/** Rebuild even under NODE_ENV=test (suites that exercise the service). */
 	force?: boolean;
@@ -96,6 +97,16 @@ export function createLibrary(deps: LibraryDeps): Library {
 		return createHash("sha256").update(lines.join("\n")).digest("hex");
 	}
 
+	/** The learner model at this instant: evidence from every chat + the attribution ledger, then the state per concept.
+	 *  Parsing the chats is the cost of a rebuild (rebuilds are rare: stamp-gated, at most daily without new data). */
+	function learnerSnapshot(graph: ReturnType<typeof getGraph>): LearnerSnapshot | undefined {
+		if (!deps.learnerStore) return undefined;
+		const nodeIds = [...new Set(graph.nodes.map((n) => n.id))];
+		const chats = deps.chatStore.listChats().flatMap((c) => deps.chatStore.getChat(c.id) ?? []);
+		const events = deriveEvidence(chats, deps.learnerStore.readAttributions(), new Set(nodeIds));
+		return deriveLearnerState(events, graph.chains, nodeIds, now());
+	}
+
 	function buildInput(gates: { documents: boolean; graph: boolean }) {
 		const graph = getGraph(deps.graphStore);
 		const documents = deps.documentStore.listMetas().flatMap((meta) => {
@@ -110,7 +121,7 @@ export function createLibrary(deps: LibraryDeps): Library {
 			documents,
 			noteSources: deps.graphStore.readSources().map((s) => s.id),
 			chats: deps.chatStore.listChats().map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt })),
-			...(deps.learner ? { learner: deps.learner() } : {}),
+			...(gates.graph && deps.learnerStore ? { learner: learnerSnapshot(graph) } : {}),
 			gates,
 			now: now().toISOString(),
 		};
