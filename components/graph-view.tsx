@@ -269,7 +269,7 @@ function SettingSlider({
 				value={value}
 				disabled={disabled}
 				onChange={(e) => onChange(Number(e.target.value))}
-				className="h-1.5 w-full accent-primary"
+				className="h-1.5 w-full accent-primary pointer-coarse:h-6"
 			/>
 		</label>
 	);
@@ -617,7 +617,7 @@ function GraphSettingsControl({
 								<span>Bitmap resolution</span>
 								<select
 									disabled={!regionTuning.enabled}
-									className="rounded-md border bg-background px-1.5 py-0.5 text-xs tabular-nums text-foreground"
+									className="rounded-md border bg-background px-1.5 py-0.5 text-xs tabular-nums text-foreground pointer-coarse:py-2"
 									value={regionTuning.bitmap}
 									onChange={(e) =>
 										changeSettings((cur) => ({
@@ -761,7 +761,7 @@ function GraphSettingsControl({
 							<label className="flex items-center justify-between gap-2 text-xs">
 								Depth anchor
 								<select
-									className="rounded border bg-background px-1 py-0.5 text-xs"
+									className="rounded border bg-background px-1 py-0.5 text-xs pointer-coarse:py-2"
 									value={physicsTuning.depthMode}
 									onChange={(e) =>
 										changeSettings((cur) => ({
@@ -899,10 +899,11 @@ export function GraphChromeRow({
 							type="button"
 							onClick={onOpenChains}
 							data-testid="open-chain-table"
-							className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
+							aria-label="Chains"
+							className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent sm:w-auto sm:justify-start sm:px-2.5"
 						>
 							<ListTreeIcon className="size-3" />
-							Chains
+							<span className="hidden sm:inline">Chains</span>
 						</button>
 					</Hint>
 				</div>
@@ -914,7 +915,7 @@ export function GraphChromeRow({
 					ref={fileInputRef}
 					type="file"
 					multiple
-					accept=".md,.markdown,.txt"
+					accept=".md,.markdown,.txt,text/markdown,text/x-markdown,text/plain"
 					className="hidden"
 					onChange={(e) => {
 						onImportFiles(e.target.files);
@@ -933,10 +934,11 @@ export function GraphChromeRow({
 						disabled={importing}
 						onClick={() => fileInputRef.current?.click()}
 						data-testid="import-notes"
-					className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
-				>
+						aria-label="Import notes"
+						className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50 sm:w-auto sm:justify-start sm:px-2.5"
+					>
 						<UploadIcon className="size-3" />
-						{importing ? "Importing…" : "Import notes…"}
+						<span className="hidden sm:inline">{importing ? "Importing…" : "Import notes…"}</span>
 					</button>
 				</Hint>
 			</div>
@@ -1463,6 +1465,12 @@ export function GraphView({
 		rendererRef.current?.setPhysicsTuning(physicsTuning);
 	}, [physicsTuning, isEmpty]);
 
+	// The open detail card's node keeps a persistent glow on the canvas
+	// (touch has no hover to show what was tapped).
+	useEffect(() => {
+		rendererRef.current?.setSelected(selected?.node.id ?? null);
+	}, [selected, isEmpty]);
+
 	// Position the detail card: below the clicked node, flipped above near
 	// the bottom edge, clamped horizontally. Imperative (ref + layout effect,
 	// before paint) because the flip needs the card's measured height.
@@ -1635,7 +1643,7 @@ export function GraphView({
 					// Positioned imperatively in the layout effect above; hidden
 					// until placed so the flip never flashes in the wrong spot.
 					style={{ visibility: "hidden", left: 0, top: 0 }}
-					className="absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
+					className="absolute z-10 max-h-[min(60dvh,28rem)] w-80 max-w-[calc(100%-1rem)] overflow-y-auto rounded-xl border bg-card p-4 text-left shadow-lg"
 				>
 					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
 					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
@@ -1672,6 +1680,16 @@ export function GraphView({
 					) : (
 						<div className="mt-3 text-xs text-muted-foreground">No sessions recorded.</div>
 					)}
+					{/* The touch path to node delete (iOS never fires contextmenu):
+					    the same DeleteNodeDialog flow as the context menu's Delete. */}
+					<button
+						type="button"
+						data-testid="card-node-delete"
+						onClick={() => setDeletingNode({ id: selected.node.id, name: selected.node.name })}
+						className="mt-3 flex w-full items-center rounded-lg border px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground pointer-coarse:py-2.5"
+					>
+						Delete
+					</button>
 				</div>
 			)}
 			{/* The chain table overlay (chains-overlay plan, 2026-09-29):

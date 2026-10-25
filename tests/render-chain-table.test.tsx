@@ -144,7 +144,7 @@ describe("ChainTableBody — THE shared TopBar + the lines law (owner, round 2)"
 		// chain rows themselves carry NO border — their entire class list is
 		// the staircase law (pl-12 = aligned with the cluster's FOLDER icon);
 		// the chip outlines' border-border/70 is an outline, not a row line
-		assert.ok(html.includes('class="flex items-center gap-1 py-1 pl-12 pr-3"'), "the chain row: staircase indent, no border");
+		assert.ok(html.includes('class="flex items-center gap-1 py-1 pl-8 pr-3 sm:pl-12"'), "the chain row: staircase indent, no border");
 	});
 
 	it("TREE THREADS: open folders/chains drop a vertical guide from their expander arrow down the children's edge (owner round 5)", () => {
@@ -155,7 +155,7 @@ describe("ChainTableBody — THE shared TopBar + the lines law (owner, round 2)"
 		assert.ok(open.includes('data-testid="chain-thread-c1"'), "the chain thread");
 		// the columns: the cluster arrow sits at 37px, the chain arrow at 73px
 		assert.ok(open.includes("left-[37px]"), "thread at the cluster arrow's column");
-		assert.ok(open.includes("left-[73px]"), "thread at the chain arrow's column");
+		assert.ok(open.includes("sm:left-[73px]"), "thread at the chain arrow's column");
 		// the BRACKET LAW (owner round 6): each thread runs from its parent
 		// row's checkbox bottom edge (a visible gap below the arrow's stroke)
 		// to the LAST child row's checkbox bottom edge — live-measured anchors
@@ -218,8 +218,8 @@ describe("ChainTableBody — chain rows (chips + connectors)", () => {
 		// slot, TWO columns (36px) past its own. Every column is 18px:
 		// clusters pl-3 (12) → chains pl-12 (48 = the folder icon) →
 		// statements pl-21 (84 = where a chain icon WOULD sit)
-		assert.ok(html.includes("pl-21"), "statements at the would-be chain-icon column");
-		assert.ok(html.includes("pl-12"), "chains aligned with the folder icon");
+		assert.ok(html.includes("sm:pl-21"), "statements at the would-be chain-icon column");
+		assert.ok(html.includes("sm:pl-12"), "chains aligned with the folder icon");
 		assert.ok(html.includes("h-5 w-3.5"), "the expander shares the checkbox's 14px width");
 	});
 });

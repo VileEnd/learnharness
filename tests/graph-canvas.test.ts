@@ -16,7 +16,13 @@ import {
 	arrowGeometry,
 	isImpNodeId,
 	boxBlurRound,
+	cameraMovedPastSlop,
+	cappedDpr,
 	fitTransform,
+	labelSizeAlpha,
+	pickPad,
+	regionLabelMaxWidth,
+	tapSlop,
 	labelAlpha,
 	pickNearest,
 	wrapRegionLabel,
@@ -114,6 +120,49 @@ describe("fitTransform", () => {
 	test("never returns a non-positive scale for degenerate bboxes", () => {
 		const t = fitTransform({ minX: 5, maxX: 5, minY: 5, maxY: 5 }, 100, 100, 10);
 		assert.ok(t.k > 0 && Number.isFinite(t.k));
+	});
+});
+
+describe("fitTransform insets", () => {
+	test("insets push the frame clear of the overlaid chrome", () => {
+		const bbox = { minX: -50, maxX: 50, minY: -25, maxY: 25 };
+		const t = fitTransform(bbox, 400, 800, 40, { top: 56, bottom: 140 });
+		// the bbox center lands mid-way between the top and bottom insets
+		assert.ok(Math.abs(t.y - (56 + (800 - 196) / 2)) < 1e-9, `y=${t.y}`);
+		assert.equal(fitTransform(bbox, 400, 800, 40).y, fitTransform(bbox, 400, 800, 40, { top: 0, bottom: 0 }).y);
+	});
+});
+
+describe("touch tuning", () => {
+	test("fingers get the wide slop and pick pad, mouse and pen keep the desktop numbers", () => {
+		assert.ok(tapSlop("touch") > tapSlop("mouse"));
+		assert.equal(tapSlop("pen"), tapSlop("mouse"));
+		assert.ok(pickPad("touch") > pickPad("mouse"));
+	});
+
+	test("DPR caps at 2 on coarse pointers only", () => {
+		assert.equal(cappedDpr(3, true), 2);
+		assert.equal(cappedDpr(3, false), 3);
+		assert.equal(cappedDpr(1.5, true), 1.5);
+	});
+
+	test("region labels clamp to ~40% of a narrow view, never past the desktop 220", () => {
+		assert.equal(regionLabelMaxWidth(1280), 220);
+		assert.equal(regionLabelMaxWidth(390), 156);
+	});
+
+	test("node labels fade out below legible on-screen size", () => {
+		assert.equal(labelSizeAlpha(12, 0.2), 0); // 2.4px
+		assert.equal(labelSizeAlpha(12, 1), 1); // 12px
+		const mid = labelSizeAlpha(12, 7 / 12);
+		assert.ok(mid > 0 && mid < 1);
+	});
+
+	test("tap jitter is not a camera move; a real pan or pinch is", () => {
+		const from = { k: 1, x: 0, y: 0 };
+		assert.equal(cameraMovedPastSlop(from, { k: 1, x: 2, y: 1 }, 10), false);
+		assert.equal(cameraMovedPastSlop(from, { k: 1, x: 12, y: 0 }, 10), true);
+		assert.equal(cameraMovedPastSlop(from, { k: 1.2, x: 0, y: 0 }, 10), true);
 	});
 });
 
