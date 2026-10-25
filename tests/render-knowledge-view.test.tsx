@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BottomTabsBar } from "../components/bottom-tabs.tsx";
+import { alwaysLabelIds, shortLabel } from "../components/knowledge-graph.tsx";
 import { KnowledgeBody, KnowledgeTabSwitch, parseKnowledgeTab } from "../components/knowledge-view.tsx";
 import { KNOWLEDGE_EMPTY_TEXT, KnowledgeOverviewBody } from "../components/knowledge-overview.tsx";
 import { SidebarLibraryLinks } from "../components/sidebar.tsx";
@@ -142,7 +143,25 @@ describe("knowledgeSubgraph", () => {
 	});
 });
 
-const emptyView = (): KnowledgeView => ({
+describe("graph labels", () => {
+	it("cuts long names at 28 characters with an ellipsis", () => {
+		assert.equal(shortLabel("Mutex"), "Mutex");
+		const cut = shortLabel("A very long concept name that keeps going and going");
+		assert.equal(cut.length, 28);
+		assert.ok(cut.endsWith("…"));
+	});
+
+	it("shows every name up to 80 concepts, then only solid, shaky and due ones", () => {
+		const ids = Array.from({ length: 81 }, (_, i) => `n${i}`);
+		const states = { n0: { state: "solid", due: false }, n1: { state: "shaky", due: false }, n2: { state: "learning", due: true }, n3: { state: "learning", due: false } };
+		assert.equal(alwaysLabelIds(ids.slice(0, 80), states), "all");
+		assert.equal(alwaysLabelIds([...ids.slice(0, 20), "arg_1"], states), "all");
+		const some = alwaysLabelIds(ids, states);
+		assert.deepEqual([...(some as Set<string>)].sort(), ["n0", "n1", "n2"]);
+	});
+});
+
+const emptyView =(): KnowledgeView => ({
 	learner: { asOf: "2026-10-25T00:00:00.000Z", states: {}, sessions: {} },
 	overview: { checkedCount: 0, due: [], confusions: [], topics: [] },
 	graph: { nodes: [], edges: [], logicalEdges: [], impLinks: [], sessions: {}, fileSources: {}, nodeSessions: {}, documents: {} },
