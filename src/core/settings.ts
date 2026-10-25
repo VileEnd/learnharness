@@ -65,7 +65,7 @@ export interface RoleModelOverride {
 /** The capability tiers a user can pin models into (owner-settled mapping):
  *  strong = prober + teacher (also the per-session default-teacher
  *  starting point); cheap = researcher, demo-builder, extractor, auditor,
-; vision = visual-maker + pdf-reader. Resolution per role:
+; vision = visual-maker. Resolution per role:
  *  ROLE OVERRIDE → slot → factory pin. */
 export const MODEL_SLOTS = ["strong", "cheap", "vision"] as const;
 export type ModelSlotName = (typeof MODEL_SLOTS)[number];
@@ -216,7 +216,7 @@ export function slotsConfigured(models: ModelsSettings | undefined): boolean {
 }
 
 /** Which slot a role draws from (model slots wave, 2026-09-20). Includes the
- *  conversation pair and pdfReader (not BackgroundModelRoles — the slot
+ *  conversation pair (not BackgroundModelRoles — the slot
  *  tier spans every role; only background roles surface per-role overrides). */
 export const ROLE_SLOT: Readonly<Record<ModelRole, ModelSlotName>> = {
 	prober: "strong",
@@ -227,7 +227,6 @@ export const ROLE_SLOT: Readonly<Record<ModelRole, ModelSlotName>> = {
 	auditor: "cheap",
 	describer: "cheap",
 	visualMaker: "vision",
-	pdfReader: "vision",
 };
 
 /** General settings — app-level behavior. Version DISPLAY and plans login
@@ -537,7 +536,13 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 		if (Object.keys(models).length) out.models = models;
 	}
 	const tools = sanitizeBooleanMap(raw.tools);
-	if (tools) out.tools = tools;
+	if (tools) {
+		// "pdf" was a toggleable job tool until the library rooted the file tools;
+		// old records may still carry it. Drop it so a settings round trip
+		// never trips the write side's key validation.
+		delete tools.pdf;
+		if (Object.keys(tools).length) out.tools = tools;
+	}
 	const prompts = sanitizeBooleanMap(raw.prompts);
 	if (prompts) out.prompts = prompts;
 	// Search preference: lenient read side (an unknown engine id drops;

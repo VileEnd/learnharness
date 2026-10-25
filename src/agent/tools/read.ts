@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute, type ImageFileResult } from "../tool-execute.ts";
-import { resolveSourcePath } from "./fs-shared.ts";
+import { requireLibraryPath, type LibraryToolOptions } from "./fs-shared.ts";
 
 /**
  * The read tool — sources v0 (2026-09): a Node port of pi's read semantics
@@ -43,7 +43,7 @@ const IMAGE_MIME: Record<string, string> = {
 };
 
 const readInput = Type.Object({
-	path: Type.String({ minLength: 1, description: "Path to the file to read (relative or absolute)" }),
+	path: Type.String({ minLength: 1, description: "Path to the file to read, relative to the library root (e.g. index.md)" }),
 	offset: Type.Optional(Type.Integer({ minimum: 1, description: "Line number to start reading from (1-indexed)" })),
 	limit: Type.Optional(Type.Integer({ minimum: 1, description: "Maximum number of lines to read" })),
 });
@@ -89,32 +89,39 @@ function readTextSlice(text: string, offset: number | undefined, limit: number |
 }
 
 /**
- * The read tool, shared verbatim by the prober and the teacher. Sources v1
- * (2026-09-19): the description is pi-verbatim (user: copy tool usage
- * guidance exactly) — the teaching doctrine moved to the shared prompt
- * fragment (prompts/shared/). Relative paths resolve against the
- * learner's home (fs-shared.ts), the harness's anchor.
+ * The read tool, rooted at the library. The description is pi-verbatim apart
+ * from saying paths are relative to the library; a path outside the root is
+ * refused (fs-shared.ts resolveLibraryPath).
  */
-export const readTool: AgentTool<typeof readInput> = {
-	name: "read",
-	label: "read",
-	description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50.0KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
-	parameters: readInput,
-	execute: serverExecute("read", readInput, async ({ path: rawPath, offset, limit }): Promise<string | ImageFileResult> => {
-		const absolute = resolveSourcePath(rawPath);
-		const ext = path.extname(absolute).toLowerCase();
-		const mime = IMAGE_MIME[ext];
-		const buffer = await fs.readFile(absolute); // ENOENT/EACCES → error result the model sees
-		if (mime) {
-			// NOTE v0: no resize — raw bytes as base64. Learner files are study
-			// material (screenshots, figures), not adversarial payloads; a resize
-			// step (sharp) can land later if large images prove wasteful.
-			return {
-				text: `Read image file [${mime}] — ${path.basename(absolute)} (${formatSize(buffer.byteLength)}), attached as an image.`,
-				images: [{ data: buffer.toString("base64"), mimeType: mime }],
-			};
-		}
-		const text = buffer.toString("utf-8");
-		return readTextSlice(text, offset, limit);
-	}),
-};
+export function readToolFor(root: string, opts: LibraryToolOptions = {}): AgentTool<typeof readInput> {
+	return {
+		name: "read",
+		label: "read",
+		description: `Read the contents of a file in the library (paths are relative to the library root). Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50.0KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		parameters: readInput,
+		execute: serverExecute("read", readInput, async ({ path: rawPath, offset, limit }): Promise<string | ImageFileResult> => {
+			await opts.beforeAccess?.();
+			const absolute = await requireLibraryPath(root, rawPath);
+			const ext = path.extname(absolute).toLowerCase();
+			const mime = IMAGE_MIME[ext];
+			let buffer: Buffer;
+			try {
+				buffer = await fs.readFile(absolute);
+			} catch {
+				throw new Error(`File not found: ${rawPath}`);
+			}
+			if (mime) {
+				// NOTE v0: no resize — raw bytes as base64. Learner files are study
+				// material (screenshots, figures), not adversarial payloads; a resize
+				// step (sharp) can land later if large images prove wasteful.
+				return {
+					text: `Read image file [${mime}] — ${path.basename(absolute)} (${formatSize(buffer.byteLength)}), attached as an image.`,
+					images: [{ data: buffer.toString("base64"), mimeType: mime }],
+				};
+			}
+			const text = buffer.toString("utf-8");
+			return readTextSlice(text, offset, limit);
+		}),
+
+	};
+}

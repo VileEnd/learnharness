@@ -11,14 +11,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { readTool } from "../src/agent/tools/read.ts";
+import { readToolFor } from "../src/agent/tools/read.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lh-read-test-"));
+const readTool = readToolFor(tmp);
 
 function write(name: string, content: string): string {
-	const file = path.join(tmp, name);
-	fs.writeFileSync(file, content, "utf-8");
-	return file;
+	fs.writeFileSync(path.join(tmp, name), content, "utf-8");
+	return name;
 }
 
 /** Native execute → the raw string body (text reads ride details verbatim). */
@@ -38,18 +38,14 @@ describe("read tool — text semantics", () => {
 		assert.equal(details, "hello\nworld", "the record part output carries the string verbatim");
 	});
 
-	it("resolves relative paths against the learner's home (sources v1 anchoring)", async () => {
-		// sources v1: the harness has no meaningful cwd — "find my notes" must
-		// work from a bare relative path, so the home directory is the anchor
-		// (fs-shared resolveSourcePath). Scratch file in home, cleaned up.
-		const rel = `lh-read-rel-test-${process.pid}.txt`;
-		const homeFile = path.join(os.homedir(), rel);
-		fs.writeFileSync(homeFile, "rel", "utf-8");
-		try {
-			assert.equal((await run({ path: rel })).text, "rel");
-		} finally {
-			fs.unlinkSync(homeFile);
-		}
+	it("resolves relative paths against the library root", async () => {
+		write("rel.txt", "rel");
+		assert.equal((await run({ path: "rel.txt" })).text, "rel");
+	});
+
+	it("refuses an absolute path, even one that exists", async () => {
+		const abs = path.join(tmp, "rel.txt");
+		await assert.rejects(() => run({ path: abs }), /Paths are relative to the library root/);
 	});
 
 	it("honors offset (1-indexed) and limit", async () => {
@@ -66,7 +62,7 @@ describe("read tool — text semantics", () => {
 	});
 
 	it("a missing file throws (pi's error-result semantics)", async () => {
-		await assert.rejects(() => run({ path: path.join(tmp, "nope.txt") }), /ENOENT/);
+		await assert.rejects(() => run({ path: "nope.txt" }), /File not found: nope\.txt/);
 	});
 
 	it("truncates at 2000 lines with a use-offset continuation notice", async () => {
@@ -99,9 +95,9 @@ describe("read tool — text semantics", () => {
 
 describe("read tool — image semantics (native content parts)", () => {
 	it("returns native text + image parts for image files, details null (output-less part)", async () => {
-		const file = path.join(tmp, "dot.png");
+		const file = "dot.png";
 		// minimal valid PNG header bytes are enough — detection is by extension
-		fs.writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+		fs.writeFileSync(path.join(tmp, file), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 		const result = await readTool.execute!("test", { path: file });
 		assert.equal(result.content.length, 2);
 		const parts = result.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
