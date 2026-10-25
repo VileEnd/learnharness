@@ -42,23 +42,26 @@ import {
 	documentMatches,
 	indexText,
 	rrf,
-	sliceDocument,
 	snippetAround,
 	tokenize,
 	topicMatches,
 	type ChunkUnit,
 } from "../core/doc-search.ts";
 import type {
-	DocListEntry,
-	DocReadQuery,
-	DocReadResult,
 	DocSearchHit,
 	DocSearchQuery,
 	DocSearchResult,
 } from "../core/doc-search.ts";
 import type { DocumentMeta, PendingBatch } from "../core/contracts/documents.ts";
-import type { DocumentStore } from "../core/ports.ts";
+import type { GraphNode } from "../core/contracts/graph.ts";
+import { canonicalTopics, topicsByNode } from "../core/topics.ts";
+import { conceptPaths, documentPaths, sectionPath } from "../core/okf.ts";
+import type { ConceptVectorStore, DocumentStore, GraphStore } from "../core/ports.ts";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import { LEDGER_FILES } from "../../config.ts";
 import { keyValue } from "./keys.ts";
+import { graphToolsEnabled } from "../core/settings-resolution.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 
 // ─── the embedding seam ──────────────────────────────────────────────────────
@@ -329,6 +332,39 @@ export interface DocIndexDeps {
 	/** Pause after a failed backfill before the next attempt. */
 	backoffMs?: number;
 	now?: () => number;
+	/** The graph, for concepts as search units. Absent = documents only. */
+	graphStore?: Pick<GraphStore, "readNodes" | "readTopics" | "readTopicAliases">;
+	/** Where concept embeddings persist (data/graph/concept-vectors.*). Absent = in memory only. */
+	conceptVectors?: ConceptVectorStore;
+	/** The graph gate (graph.enabled / agent.graphTools): off = no concept hits. Default on. */
+	conceptsEnabled?(): boolean;
+	/** A cheap change stamp of nodes.jsonl (default: its mtime and size). */
+	graphStamp?(): string;
+}
+
+/** The synthetic index id of a concept: `cpt_<nodeId>`; also its batch id (`cpt_<nodeId>~0`). */
+export const CONCEPT_PREFIX = "cpt_";
+
+interface IndexedConcept {
+	/** `cpt_<nodeId>`. */
+	id: string;
+	node: GraphNode;
+	/** name + "\n" + statement: what is embedded and keyword-indexed. */
+	text: string;
+	/** sha256(name + statement). */
+	contentHash: string;
+	vector?: Float32Array;
+}
+
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+
+function nodesStamp(): string {
+	try {
+		const st = fs.statSync(LEDGER_FILES.nodes);
+		return `${st.mtimeMs}:${st.size}`;
+	} catch {
+		return "-";
+	}
 }
 
 interface IndexedChunk {
@@ -340,6 +376,8 @@ interface IndexedChunk {
 
 interface IndexedDoc {
 	id: string;
+	/** The graph source the document's extraction wrote under (provenance chatId). */
+	sourceId: string;
 	title: string;
 	topics: string[];
 	contentHash: string;
@@ -357,6 +395,12 @@ export function createDocIndex(deps: DocIndexDeps) {
 	const docs = new Map<string, IndexedDoc>();
 	const bm25 = new Bm25();
 	const chunkById = new Map<string, IndexedChunk>();
+	const concepts = new Map<string, IndexedConcept>();
+	// The model all concept vectors in memory were computed with (absent = none),
+	// the last nodes stamp seen, and whether the persisted vectors were read yet.
+	let conceptModel: string | undefined;
+	let conceptStamp: string | null = null;
+	let conceptVectorsRead = false;
 	let built = false;
 	let running: Promise<void> | null = null;
 	let again = false;
@@ -393,7 +437,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 			docId: meta.id,
 			unit: u,
 		}));
-		const doc: IndexedDoc = { id: meta.id, title: meta.title, topics: meta.topics, contentHash: meta.contentHash, chunks };
+		const doc: IndexedDoc = { id: meta.id, sourceId: meta.sourceId, title: meta.title, topics: meta.topics, contentHash: meta.contentHash, chunks };
 		// Persisted vectors count only when they describe exactly these units.
 		const stored = store.readVectors(meta.id);
 		if (
@@ -411,6 +455,55 @@ export function createDocIndex(deps: DocIndexDeps) {
 		docs.set(meta.id, doc);
 	}
 
+	/** Bring the concept units up to date with nodes.jsonl (a stat check; the
+	 *  ledger is only read when it changed). New or edited concepts are
+	 *  keyword-indexed at once and embedded in the background; vectors persisted
+	 *  for the same text and model are reused. */
+	function refreshConcepts(): void {
+		const graph = deps.graphStore;
+		if (!graph) return;
+		const enabled = deps.conceptsEnabled?.() ?? true;
+		const stamp = enabled ? (deps.graphStamp?.() ?? nodesStamp()) : "off";
+		if (stamp === conceptStamp) return;
+		try {
+			const nodes = new Map<string, GraphNode>();
+			if (enabled) for (const n of graph.readNodes()) if (!nodes.has(n.id)) nodes.set(n.id, n);
+			let stored: ReturnType<ConceptVectorStore["read"]> = null;
+			if (enabled && !conceptVectorsRead) {
+				conceptVectorsRead = true;
+				stored = deps.conceptVectors?.read() ?? null;
+				if (stored) conceptModel = stored.model;
+			}
+			let changed = false;
+			for (const [id, c] of [...concepts]) {
+				if (nodes.has(c.node.id)) continue;
+				bm25.remove(id);
+				concepts.delete(id);
+				changed = true;
+			}
+			for (const n of nodes.values()) {
+				const id = `${CONCEPT_PREFIX}${n.id}`;
+				const hash = sha256(n.name + n.statement);
+				const have = concepts.get(id);
+				if (have && have.contentHash === hash) {
+					have.node = n;
+					continue;
+				}
+				const text = `${n.name}\n${n.statement}`;
+				const c: IndexedConcept = { id, node: n, text, contentHash: hash };
+				const e = stored?.entries[id];
+				if (e && e.contentHash === hash) c.vector = stored!.vectors.slice(e.offset * stored!.dims, (e.offset + 1) * stored!.dims);
+				concepts.set(id, c);
+				bm25.add(id, tokenize(text));
+				changed = true;
+			}
+			conceptStamp = stamp;
+			if (changed) lastChangeAt = now();
+		} catch (err) {
+			console.warn(`[doc-index] could not read the graph for concept search: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
 	function ensureBuilt(): void {
 		if (built) return;
 		built = true;
@@ -423,6 +516,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 				console.warn(`[doc-index] skipped ${meta.id}: ${err instanceof Error ? err.message : err}`);
 			}
 		}
+		refreshConcepts();
 		kickBackfill();
 	}
 
@@ -451,6 +545,14 @@ export function createDocIndex(deps: DocIndexDeps) {
 		return doc.chunks.length > 0 && doc.vectorModel !== model;
 	}
 
+	function needsConceptVector(c: IndexedConcept, model: string): boolean {
+		return !c.vector || conceptModel !== model;
+	}
+
+	function conceptsNeeding(model: string): IndexedConcept[] {
+		return [...concepts.values()].filter((c) => needsConceptVector(c, model));
+	}
+
 	/** Embed every document lacking vectors for the live model. One run at a
 	 *  time; a trigger during a run asks for one more pass. */
 	function kickBackfill(): void {
@@ -462,7 +564,8 @@ export function createDocIndex(deps: DocIndexDeps) {
 		}
 		const embedder = deps.embedder();
 		if (!embedder || now() < backoffUntil) return;
-		if (![...docs.values()].some((d) => needsVectors(d, embedder.model))) return;
+		refreshConcepts();
+		if (![...docs.values()].some((d) => needsVectors(d, embedder.model)) && conceptsNeeding(embedder.model).length === 0) return;
 		running = backfill()
 			.catch((err) => console.warn(`[doc-index] backfill stopped: ${err instanceof Error ? err.message : err}`))
 			.finally(() => {
@@ -485,7 +588,19 @@ export function createDocIndex(deps: DocIndexDeps) {
 				if (!embedder) return;
 				const todo = [...docs.values()].filter((d) => needsVectors(d, embedder.model));
 				const doc = todo[0];
-				if (!doc) return;
+				if (!doc) {
+					const cs = conceptsNeeding(embedder.model);
+					if (cs.length === 0) return;
+					row.title = `Indexing ${cs.length} concept${cs.length === 1 ? "" : "s"}`;
+					emit("activity-changed", {});
+					try {
+						await embedConcepts(cs, embedder, controller.signal);
+					} catch (err) {
+						backoffUntil = now() + (deps.backoffMs ?? 10 * 60_000);
+						console.warn(`[doc-index] embedding concepts failed (keyword search only until retry): ${err instanceof Error ? err.message : err}`);
+					}
+					return;
+				}
 				row.title = `Indexing ${doc.title}${todo.length > 1 ? ` · ${todo.length} left` : ""}`;
 				emit("activity-changed", {});
 				try {
@@ -519,6 +634,50 @@ export function createDocIndex(deps: DocIndexDeps) {
 		const current = docs.get(doc.id);
 		if (!current || current.contentHash !== doc.contentHash) return;
 		commitVectors(doc, vectors, embedder.model);
+	}
+
+	async function embedConcepts(list: IndexedConcept[], embedder: Embedder, signal: AbortSignal): Promise<void> {
+		signal.throwIfAborted();
+		const size = deps.batchSize ?? 48;
+		const vectors: Float32Array[] = [];
+		for (let i = 0; i < list.length; i += size) {
+			if (i > 0) await new Promise((r) => setTimeout(r, deps.batchPauseMs ?? 250));
+			vectors.push(...(await embedder.embed(list.slice(i, i + size).map((c) => c.text), { signal })).map(normalize));
+		}
+		if (vectors.length !== list.length || vectors.some((v) => v.length === 0)) throw new Error("embedder returned no usable concept vectors");
+		commitConcepts(new Map(list.map((c, i) => [c.id, { hash: c.contentHash, vector: vectors[i]! }])), embedder.model);
+	}
+
+	/** Make fresh concept vectors live and persist the lot. A vector counts only
+	 *  if its concept still has the text it was computed from; a different
+	 *  model (or width) replaces what was there. */
+	function commitConcepts(fresh: Map<string, { hash: string; vector: Float32Array }>, model: string): number {
+		const dims = [...fresh.values()][0]?.vector.length ?? 0;
+		if (dims === 0) return 0;
+		const heldDims = [...concepts.values()].find((c) => c.vector)?.vector?.length;
+		const keep = conceptModel === model && (heldDims === undefined || heldDims === dims);
+		if (!keep) for (const c of concepts.values()) c.vector = undefined;
+		let written = 0;
+		for (const [id, f] of fresh) {
+			const c = concepts.get(id);
+			if (!c || c.contentHash !== f.hash || f.vector.length !== dims) continue;
+			c.vector = f.vector;
+			written++;
+		}
+		conceptModel = model;
+		const withVectors = [...concepts.values()].filter((c) => c.vector);
+		const flat = new Float32Array(withVectors.length * dims);
+		const entries: Record<string, { contentHash: string; offset: number }> = {};
+		withVectors.forEach((c, i) => {
+			flat.set(c.vector!, i * dims);
+			entries[c.id] = { contentHash: c.contentHash, offset: i };
+		});
+		try {
+			deps.conceptVectors?.write({ model, dims, entries, vectors: flat });
+		} catch (err) {
+			console.warn(`[doc-index] could not save concept vectors: ${err instanceof Error ? err.message : err}`);
+		}
+		return written;
 	}
 
 	/** Persist a document's (normalised) vectors under `model` and make them
@@ -582,6 +741,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 	async function runTick(): Promise<void> {
 		try {
 			ensureBuilt();
+			refreshConcepts();
 			const batcher = deps.batcher?.() ?? null;
 			if (batcher) {
 				const pollMs = deps.pollIntervalMs ?? 60_000;
@@ -610,10 +770,22 @@ export function createDocIndex(deps: DocIndexDeps) {
 		scheduleTick(todo && !waiting ? Math.min(pollMs, Math.max(1000, dueIn)) : pollMs);
 	}
 
-	/** Documents that need vectors and are not already out in a batch. */
-	function batchTodo(batcher: BatchClient): IndexedDoc[] {
+	/** Documents and concepts that need vectors and are not already out in a batch. */
+	function batchTodo(batcher: BatchClient): BatchDoc[] {
 		const inFlight = new Set([...pending.values()].flatMap((p) => Object.keys(p.docs)));
-		return [...docs.values()].filter((d) => needsVectors(d, batcher.model) && !inFlight.has(d.id));
+		const todo: BatchDoc[] = [...docs.values()]
+			.filter((d) => needsVectors(d, batcher.model) && !inFlight.has(d.id))
+			.map((d) => ({
+				id: d.id,
+				contentHash: d.contentHash,
+				units: d.chunks.length,
+				requests: buildBatchRequests(d.id, d.chunks.map((c) => indexText(c.unit))),
+			}));
+		for (const c of conceptsNeeding(batcher.model)) {
+			if (inFlight.has(c.id)) continue;
+			todo.push({ id: c.id, contentHash: c.contentHash, units: 1, requests: buildBatchRequests(c.id, [c.text]) });
+		}
+		return todo;
 	}
 
 	async function pollOne(batcher: BatchClient, p: PendingBatch): Promise<void> {
@@ -637,7 +809,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 			if (!state.results) return; // terminal but results not attached yet: next poll
 			const written = applyResults(p, batcher.model, state.results);
 			console.info(
-				`[doc-index] batch ${p.batchId} completed: ${written}/${Object.keys(p.docs).length} documents embedded` +
+				`[doc-index] batch ${p.batchId} completed: ${written}/${Object.keys(p.docs).length} entries embedded` +
 					(state.usage?.cost !== undefined ? `, cost $${state.usage.cost}` : ""),
 			);
 		} else if (state.status === "failed" || state.status === "expired" || state.status === "cancelled") {
@@ -672,7 +844,19 @@ export function createDocIndex(deps: DocIndexDeps) {
 		}
 		if (p.model !== model) return 0; // the embedding model changed while the batch was out
 		let written = 0;
+		const freshConcepts = new Map<string, { hash: string; vector: Float32Array }>();
 		for (const [docId, sent] of Object.entries(p.docs)) {
+			if (docId.startsWith(CONCEPT_PREFIX)) {
+				const c = concepts.get(docId);
+				const part = parts.get(docId)?.get(0);
+				if (!c || c.contentHash !== sent.contentHash || sent.units !== 1) continue; // edited or removed while pending
+				if (!part || part.length !== 1) {
+					console.warn(`[doc-index] batch ${p.batchId}: ${docId} failed; it goes into the next batch`);
+					continue;
+				}
+				freshConcepts.set(docId, { hash: sent.contentHash, vector: part[0]! });
+				continue;
+			}
 			const doc = docs.get(docId);
 			if (!doc || doc.contentHash !== sent.contentHash || doc.chunks.length !== sent.units) continue; // replaced or removed while pending
 			const byOffset = parts.get(docId);
@@ -690,6 +874,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 			commitVectors(doc, vectors, model);
 			written++;
 		}
+		if (freshConcepts.size > 0) written += commitConcepts(freshConcepts, model);
 		return written;
 	}
 
@@ -697,11 +882,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		if (now() < backoffUntil) return;
 		note = null;
 		if (now() - lastChangeAt < (deps.debounceMs ?? 120_000)) return;
-		const todo = batchTodo(batcher).map((d): BatchDoc => {
-			const requests = buildBatchRequests(d.id, d.chunks.map((c) => indexText(c.unit)));
-			return { id: d.id, contentHash: d.contentHash, units: d.chunks.length, requests };
-		});
-		for (const group of packBatches(todo)) if (!(await submitGroup(batcher, group))) return;
+		for (const group of packBatches(batchTodo(batcher))) if (!(await submitGroup(batcher, group))) return;
 	}
 
 	/** Submit one batch; false = stop for now (the reason is logged and shown). */
@@ -774,13 +955,15 @@ export function createDocIndex(deps: DocIndexDeps) {
 	}
 
 	/** Re-embed the whole library with the current model (settings action). */
-	function reindex(): { documents: number } {
+	function reindex(): { documents: number; concepts: number } {
 		ensureBuilt();
 		for (const d of docs.values()) d.vectorModel = undefined;
+		conceptModel = undefined;
+		for (const c of concepts.values()) c.vector = undefined;
 		backoffUntil = 0;
 		lastChangeAt = Number.NEGATIVE_INFINITY; // asked for: no debounce
 		kickBackfill();
-		return { documents: docs.size };
+		return { documents: docs.size, concepts: concepts.size };
 	}
 
 	// ── search ────────────────────────────────────────────────────────────────
@@ -791,30 +974,62 @@ export function createDocIndex(deps: DocIndexDeps) {
 		);
 	}
 
+	/** Concepts the filters let through. A topic filter matches the concept's
+	 *  canonical topics (topics.jsonl + the alias table). A document filter keeps
+	 *  only concepts whose provenance points at a matching document: a concept
+	 *  that came from a chat, or from another document, is not "in" it. */
+	function candidateConcepts(q: DocSearchQuery): IndexedConcept[] {
+		if (q.includeConcepts === false) return [];
+		let list = [...concepts.values()];
+		if (q.document) {
+			const wanted = new Set([...docs.values()].filter((d) => documentMatches(d, q.document!)).map((d) => d.sourceId));
+			list = list.filter((c) => c.node.provenance.some((p) => wanted.has(p.chatId)));
+		}
+		if (q.topic && list.length > 0) {
+			const byNode = new Map<string, string[]>();
+			try {
+				const aliases = deps.graphStore?.readTopicAliases() ?? {};
+				for (const [id, topics] of topicsByNode(deps.graphStore?.readTopics() ?? [])) byNode.set(id, canonicalTopics(topics, aliases));
+			} catch {
+				// unreadable topics: nothing matches the topic filter
+			}
+			list = list.filter((c) => topicMatches(byNode.get(c.node.id) ?? [], q.topic!));
+		}
+		return list;
+	}
+
 	async function search(input: DocSearchQuery & { query: string }): Promise<DocSearchResult> {
 		ensureBuilt();
+		refreshConcepts();
 		kickBackfill(); // a model change or a new key is noticed here, never waited for
 		const query = input.query.trim();
 		const limit = Math.min(SEARCH_LIMIT.max, Math.max(1, Math.floor(input.limit ?? SEARCH_LIMIT.default)));
 		const candidates = candidateDocs(input);
+		const conceptCandidates = candidateConcepts(input);
 		const empty = (note: string): DocSearchResult => ({ mode: "keyword", query, hits: [], note });
 		if (query === "") return empty("Empty query.");
-		if (docs.size === 0) return empty("The library has no documents yet.");
-		if (candidates.length === 0) return empty("No document matches that topic or document filter. Call list_documents for what exists.");
+		if (docs.size === 0 && concepts.size === 0) return empty("The library has no documents yet.");
+		if (candidates.length === 0 && conceptCandidates.length === 0) {
+			return empty("Nothing matches that topic or document filter. Browse documents/ and topics/ in the library for what exists.");
+		}
 
 		const allowed = new Set(candidates.map((d) => d.id));
+		const allowedConcepts = new Set(conceptCandidates.map((c) => c.id));
 		const tokens = tokenize(query);
-		const keyword = bm25.search(tokens, (id) => allowed.has(chunkById.get(id)!.docId)).slice(0, CANDIDATES);
+		const keyword = bm25
+			.search(tokens, (id) => (id.startsWith(CONCEPT_PREFIX) ? allowedConcepts.has(id) : allowed.has(chunkById.get(id)!.docId)))
+			.slice(0, CANDIDATES);
 
-		// The vector leg: only documents embedded with the live model take part.
+		// The vector leg: only entries embedded with the live model take part.
 		let mode: DocSearchResult["mode"] = "keyword";
 		let note: string | undefined;
 		let semantic: string[] = [];
 		const embedder = deps.embedder();
 		const embedded = embedder ? candidates.filter((d) => d.vectorModel === embedder.model) : [];
+		const embeddedConcepts = embedder && conceptModel === embedder.model ? conceptCandidates.filter((c) => c.vector) : [];
 		if (!embedder) {
 			note = "Keyword search only: no OpenRouter key is set, so documents are not embedded.";
-		} else if (embedded.length === 0) {
+		} else if (embedded.length === 0 && embeddedConcepts.length === 0) {
 			note = "Keyword search only: the documents are not embedded yet (indexing runs in the background).";
 		} else {
 			try {
@@ -824,34 +1039,63 @@ export function createDocIndex(deps: DocIndexDeps) {
 				const [qv] = await withTimeout(embedder.embed([query], { timeoutMs: budget }), budget);
 				if (!qv) throw new Error("no query vector");
 				const q = normalize(qv);
-				semantic = embedded
-					.flatMap((d) => d.chunks)
-					.flatMap((c) => (c.vector && c.vector.length === q.length ? [{ id: c.id, sim: cosine(q, c.vector) }] : []))
+				const scored = [
+					...embedded
+						.flatMap((d) => d.chunks)
+						.flatMap((c) => (c.vector && c.vector.length === q.length ? [{ id: c.id, sim: cosine(q, c.vector) }] : [])),
+					...embeddedConcepts.flatMap((c) => (c.vector && c.vector.length === q.length ? [{ id: c.id, sim: cosine(q, c.vector) }] : [])),
+				];
+				semantic = scored
 					.filter((x) => x.sim > 0)
 					.sort((a, b) => b.sim - a.sim || (a.id < b.id ? -1 : 1))
 					.slice(0, CANDIDATES)
 					.map((x) => x.id);
 				mode = "hybrid";
-				const pending = candidates.length - embedded.length;
-				if (pending > 0) note = `${pending} of ${candidates.length} documents are not embedded yet and matched by keywords only.`;
+				const parts: string[] = [];
+				if (candidates.length > embedded.length) parts.push(`${candidates.length - embedded.length} of ${candidates.length} documents`);
+				if (conceptCandidates.length > embeddedConcepts.length) {
+					parts.push(`${conceptCandidates.length - embeddedConcepts.length} of ${conceptCandidates.length} concepts`);
+				}
+				if (parts.length > 0) note = `${parts.join(" and ")} are not embedded yet and matched by keywords only.`;
 			} catch (err) {
 				note = `Keyword search only: the query could not be embedded (${err instanceof Error ? err.message : err}).`;
 			}
 		}
 
+		// Bundle paths come from the helpers the bundle renderer uses (same
+		// collision rule), over the same documents and concepts.
+		const docPaths = documentPaths([...docs.values()]);
+		const conceptPathOf = conceptPaths([...concepts.values()].map((c) => c.node));
+
 		// One hit per section: its best-ranked unit (a hit names a section to read).
 		const seen = new Set<string>();
 		const hits: DocSearchHit[] = rrf([keyword.map((k) => k.id), semantic])
 			.filter(({ id }) => {
-				const c = chunkById.get(id)!;
-				const key = `${c.docId}/${c.unit.sectionId}`;
+				const chunk = chunkById.get(id);
+				const key = chunk ? `${chunk.docId}/${chunk.unit.sectionId}` : id;
 				return !seen.has(key) && !!seen.add(key);
 			})
 			.slice(0, limit)
-			.map(({ id, score }) => {
+			.map(({ id, score }): DocSearchHit => {
+				const concept = concepts.get(id);
+				if (concept) {
+					return {
+						kind: "concept",
+						path: conceptPathOf.get(concept.node.id) ?? "",
+						docId: "",
+						conceptId: concept.node.id,
+						title: concept.node.name,
+						sectionId: "",
+						headingPath: [],
+						snippet: snippetAround(concept.node.statement, tokens),
+						score,
+					};
+				}
 				const c = chunkById.get(id)!;
 				const d = docs.get(c.docId)!;
 				return {
+					kind: "section",
+					path: sectionPath(docPaths.get(d.id) ?? "", { id: c.unit.sectionId, headingPath: c.unit.headingPath }),
 					docId: d.id,
 					title: d.title,
 					sectionId: c.unit.sectionId,
@@ -864,33 +1108,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		return { mode, query, hits, ...(note ? { note } : {}) };
 	}
 
-	// ── list / read ───────────────────────────────────────────────────────────
-
-	function list(input: { topic?: string } = {}): DocListEntry[] {
-		return store
-			.listMetas()
-			.filter((m) => !input.topic || topicMatches(m.topics, input.topic))
-			.map((m) => ({ docId: m.id, title: m.title, topics: m.topics, ...(m.pages !== undefined ? { pages: m.pages } : {}) }));
-	}
-
-	function read(input: { document: string } & DocReadQuery): DocReadResult {
-		const metas = store.listMetas();
-		const exact = metas.filter((m) => m.id === input.document.trim());
-		const found = exact.length > 0 ? exact : metas.filter((m) => documentMatches(m, input.document));
-		if (found.length === 0) return { ok: false, error: `No document matches "${input.document}". Call list_documents for the ids.` };
-		if (found.length > 1) {
-			return {
-				ok: false,
-				error: `"${input.document}" matches ${found.length} documents; pass the docId:\n${found.map((m) => `- ${m.id} · ${m.title}`).join("\n")}`,
-			};
-		}
-		const meta = found[0]!;
-		const markdown = store.readMarkdown(meta.id);
-		if (markdown === null) return { ok: false, error: `Document ${meta.id} could not be read.` };
-		return sliceDocument(meta, markdown, input);
-	}
-
-	return { search, list, read, indexDocument, removeDocument, reindex, kickBackfill, tick };
+	return { search, indexDocument, removeDocument, reindex, kickBackfill, tick };
 }
 
 export type DocIndex = ReturnType<typeof createDocIndex>;
@@ -916,6 +1134,9 @@ interface IndexGlobal {
 }
 export const docIndex: DocIndex = ((globalThis as IndexGlobal).__lhDocIndex ??= createDocIndex({
 	store: stores.documentStore,
+	graphStore: stores.graphStore,
+	conceptVectors: stores.conceptVectorStore,
+	conceptsEnabled: () => graphToolsEnabled(effectiveSettings()),
 	embedder: liveEmbedder,
 	batcher: liveBatcher,
 	batchMode: () => effectiveSettings().documents.embeddingBatch,

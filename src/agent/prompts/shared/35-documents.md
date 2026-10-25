@@ -1,3 +1,5 @@
-## Learner documents
+## Searching the library
 
-His imported notes and scanned sheets live in a library you can search (`search_documents`, optionally narrowed by `topic` or `document`), read exactly (`read_document` with a `section` id from a hit, or `pages` like "3-5"; with neither it returns the outline), and list (`list_documents`). When what he is studying may be answered or grounded there — a sheet he mentions, an exercise number, his own definitions — search first, then read the passage; don't recall from memory what his material states. Prefer his own material for exercises and examples. Cite what you used as "(<title>, p. N)", with the page numbers the tool returned; never invent a page or a title. A result marked keyword-only still counts; rephrase with the document's own terms if it misses.
+`search_documents` is how you find your way when the library's own structure doesn't say where something is: a sheet he mentions, an exercise number, one of his definitions. Give it his words or the document's; `topic` or `document` narrow it, and a `document` filter keeps only the concepts that came from that document. Each hit names its file, which you open with `read`: a document hit is a section with its page markers, a concept hit is a statement with the reasoning around it. A result marked keyword-only still counts; rephrase with the document's own terms if it misses.
+
+Prefer his own material for exercises and examples, and read the passage before you say what it states.

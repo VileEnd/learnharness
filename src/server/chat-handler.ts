@@ -32,7 +32,6 @@ import { library } from "./okf-library.ts";
 import {
 	extractionEnabled,
 	documentToolsEnabled,
-	graphToolsEnabled,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -390,7 +389,6 @@ export async function handleChatInput(
 						},
 						libraryRoot: PATHS.okf,
 						libraryBeforeAccess: () => library.ensureFresh(),
-						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
@@ -425,10 +423,6 @@ export async function handleChatInput(
 						searchAvailable,
 						libraryRoot: PATHS.okf,
 						libraryBeforeAccess: () => library.ensureFresh(),
-						// The map reader (wave 7): the prober reads the learner's
-						// knowledge graph through tools when the gate opens —
-						// graph master switch AND the agent.graphTools toggle.
-						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,

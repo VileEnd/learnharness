@@ -17,6 +17,7 @@ export async function GET(req: Request) {
 		query,
 		topic: params.get("topic") || undefined,
 		document: params.get("document") || undefined,
+		includeConcepts: false, // the /documents page opens passages in the reader; a concept has none
 		...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 	});
 	return Response.json(result);

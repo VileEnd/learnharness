@@ -183,7 +183,7 @@ describe("the source-derived segment list", () => {
 				"shared/16-mental-model.md",
 				"shared/20-question-tools.md",
 				"shared/25-confidence.md",
-				"shared/30-learner-files.md",
+				"shared/30-library.md",
 				"shared/35-documents.md",
 				"shared/40-formatting.md",
 			],
@@ -198,8 +198,8 @@ describe("the source-derived segment list", () => {
 			true,
 		);
 		// the shared fragments compose for BOTH agents, same path key.
-		assert.equal(teacher.some((s) => s.path === "shared/30-learner-files.md" && s.shared), true);
-		assert.equal(prober.some((s) => s.path === "shared/30-learner-files.md" && s.shared), true);
+		assert.equal(teacher.some((s) => s.path === "shared/30-library.md" && s.shared), true);
+		assert.equal(prober.some((s) => s.path === "shared/30-library.md" && s.shared), true);
 		// Voice + accuracy moved BACK to shared/ fragments (owner round 13,
 		// 2026-10-05): one law across every agent — including practice, whose
 		// near-copy had drifted stale ("You have no research tool here").
@@ -290,18 +290,18 @@ describe("composeInstructions: override honoring + the byte-identical source pat
 	});
 
 	it("shared/ fragments are overridable — one edit swaps the doctrine in BOTH agents", () => {
-		promptOverrides.writeOverride("shared/30-learner-files.md", "MY SHARED FILES DOCTRINE");
+		promptOverrides.writeOverride("shared/30-library.md", "MY SHARED FILES DOCTRINE");
 		try {
-			const switches = { "shared/30-learner-files.md": true };
+			const switches = { "shared/30-library.md": true };
 			for (const kind of ["teacher", "prober"] as const) {
 				const composed = composeInstructions(kind, switches);
 				assert.ok(composed.includes("MY SHARED FILES DOCTRINE"), `${kind} composes the override`);
-				assert.ok(!composed.includes("## Learner files"), `${kind} source fragment is replaced`);
+				assert.ok(!composed.includes("## The library"), `${kind} source fragment is replaced`);
 			}
 			// switches-less: both keep the source fragment (the cached path)
-			assert.ok(composeInstructions("teacher").includes("## Learner files"));
+			assert.ok(composeInstructions("teacher").includes("## The library"));
 		} finally {
-			promptOverrides.deleteOverride("shared/30-learner-files.md");
+			promptOverrides.deleteOverride("shared/30-library.md");
 		}
 	});
 
