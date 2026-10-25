@@ -66,6 +66,7 @@ import {
 	type CompactionDividerData,
 } from "@/components/compaction-divider";
 import { CoverageRing } from "@/components/extraction-coverage";
+import { ChatOverflowMenu } from "@/components/chat-overflow-menu";
 import {
 	activeProblemOf,
 	dismissedAnswer,
@@ -1169,6 +1170,21 @@ export function Chat({
 		doSend();
 	};
 
+	const phaseChip =
+		kind === "practice" ? (
+			<span
+				data-testid="phase-chip"
+				data-phase="practice"
+				aria-hidden="true"
+				className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+			>
+				<DumbbellIcon className="size-3" />
+				Practice
+			</span>
+		) : (
+			<PhaseChip phase={phases.at(-1) ?? "probe"} />
+		);
+
 	return (
 		<ChatActionsContext.Provider
 			value={{
@@ -1233,7 +1249,7 @@ export function Chat({
 								spellCheck={false}
 								aria-label="Session title"
 								title="Rename this session"
-								className="min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-3xl tracking-tight caret-current outline-none [field-sizing:content]"
+								className="min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-xl tracking-tight caret-current sm:text-3xl outline-none [field-sizing:content]"
 							/>
 							{/* flex-1 spacer during rename too, so the chips stay at
 							    the right edge; clicks here commit via the header
@@ -1254,13 +1270,12 @@ export function Chat({
 								setTitleDraft(titleText);
 								setRenaming(true);
 							}}
-							className="-mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-3xl tracking-tight transition-colors hover:bg-accent"
+							className="-mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-xl tracking-tight transition-colors hover:bg-accent sm:text-3xl"
 						>
 							{titleText}
 							</button>
 						</Hint>
-							{/* flex-1 spacer: keeps the chips at the right edge AND stays a
-							    drag surface (no carve-out) — the freed bar is grippable. */}
+							{/* flex-1 spacer: keeps the chips at the right edge. */}
 							<div className="min-w-4 flex-1" aria-hidden="true" />
 					</>
 					)}
@@ -1276,7 +1291,7 @@ export function Chat({
 								blurAfterPointerClick(e);
 								setPlanOpen(true);
 							}}
-							className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+							className="hidden shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground sm:flex"
 						>
 							<WaypointsIcon className="size-3.5 text-primary" aria-hidden />
 							Plan
@@ -1290,22 +1305,21 @@ export function Chat({
 					{/* Practice (owner, 2026-10-04): the coverage ring hides —
 				    practice never extracts, so an ever-filling ring with no
 				    run behind it would lie. */}
-					{kind !== "practice" && <CoverageRing chatId={chatId} refreshKey={coverageTick} />}
+					{kind !== "practice" && (
+						<span className="hidden sm:contents">
+							<CoverageRing chatId={chatId} refreshKey={coverageTick} />
+						</span>
+					)}
 					{/* Practice sessions: no phase arc — a quiet Practice tag
 					    instead of the phase chip. */}
-					{kind === "practice" ? (
-						<span
-							data-testid="phase-chip"
-							data-phase="practice"
-							aria-hidden="true"
-							className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-						>
-							<DumbbellIcon className="size-3" />
-							Practice
-						</span>
-					) : (
-						<PhaseChip phase={phases.at(-1) ?? "probe"} />
-					)}
+					<span className="hidden sm:contents">{phaseChip}</span>
+					<ChatOverflowMenu
+						chatId={chatId}
+						hasPlan={!!planTree}
+						onOpenPlan={() => setPlanOpen(true)}
+						showCoverage={kind !== "practice"}
+						phase={phaseChip}
+					/>
 				</TopBar>
 
 				<SessionFind scopeRef={sessionFindScopeRef} scrollContextRef={scrollContextRef} />
