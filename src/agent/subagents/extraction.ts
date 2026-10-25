@@ -26,7 +26,8 @@ import type {
 } from "../../core/contracts.ts";
 import { getGraph, mergeFindings, mergeTopicRows, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
 import type { DocumentSection } from "../../core/contracts/documents.ts";
-import { MAX_TOPICS_PER_PROPOSITION } from "../../core/topics.ts";
+import { MAX_TOPICS_PER_PROPOSITION, canonicalTopics, canonicalizeAndStoreTopics } from "../../core/topics.ts";
+import { normalizeTopics } from "../../core/documents.ts";
 import { chunkDocument, documentChunkView, type DocumentChunk } from "./section-chunks.ts";
 import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
@@ -219,6 +220,15 @@ const sessionPropositionProps = {
 			"The message id of the ONE passage in this stretch that most directly states or explains this " +
 			'proposition — copy it EXACTLY from that passage\'s "TEACHER [id]" label.',
 	}),
+	// Topics (PR 4): the same field the document door has, but free-form here -
+	// a session has no topic list to choose from. Optional on the wire (weak-model
+	// tolerance, ??-filled to []); the library canonicalises the labels before the merge.
+	topics: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				`One to ${MAX_TOPICS_PER_PROPOSITION} topics this idea belongs to - short subject labels as a textbook index would print them ("Semaphoren", "Eigenwerte"), in the session's language; give the same subject the same spelling across propositions.`,
+		}),
+	),
 };
 
 const sessionFindingsSchema = Type.Object({
@@ -307,6 +317,28 @@ function fillFindings<T extends { propositions: Array<{ aliases?: string[] }>; c
 		...raw,
 		propositions: raw.propositions.map((p) => ({ ...p, aliases: p.aliases ?? [] })),
 	};
+}
+
+/** The session fill: the shared alias ??-fill plus trimmed, non-empty topics. */
+function fillSessionFindings(raw: SessionFindingsSubmit): SessionFindingsSubmit {
+	const filled = fillFindings(raw);
+	return {
+		...filled,
+		propositions: filled.propositions.map((p) => ({
+			...p,
+			topics: (p.topics ?? []).map((t) => String(t).trim()).filter((t) => t !== ""),
+		})),
+	};
+}
+
+/** Session topics law (error-back): at most MAX_TOPICS_PER_PROPOSITION per idea. */
+function validateSessionTopics(value: SessionFindingsSubmit): string | null {
+	for (const p of value.propositions) {
+		if ((p.topics?.length ?? 0) > MAX_TOPICS_PER_PROPOSITION) {
+			return `propositions: "${p.id}" has ${p.topics!.length} topics - at most ${MAX_TOPICS_PER_PROPOSITION}.`;
+		}
+	}
+	return null;
 }
 
 /** The notes fill: the shared alias ??-fill PLUS the door's boundary — a
@@ -494,7 +526,14 @@ export const DOCUMENT_FIELDS_RULE =
 	"For each new proposition, copy the id of the section it comes from into section (the ids under SECTIONS IN " +
 	"THIS STRETCH), and name the topics it belongs to in topics (from THE DOCUMENT'S TOPICS whenever one fits).";
 
-export const EXTRACTOR_INSTRUCTIONS = `${SESSION_PREAMBLE}\n\n${EXTRACTION_CORE}\n\n${SESSION_MESSAGE_ID_RULE}`;
+/** Session topics (PR 4, goal-first): the library is organised by topic, so
+ *  every idea says where it belongs. Field name verbatim. */
+export const SESSION_TOPICS_RULE =
+	"The learner's library is organised by topic, so every new proposition also says where it belongs: " +
+	"name the one to three subjects it falls under in topics - short labels a textbook index would print, " +
+	"in the session's language - and spell the same subject the same way every time.";
+
+export const EXTRACTOR_INSTRUCTIONS = `${SESSION_PREAMBLE}\n\n${EXTRACTION_CORE}\n\n${SESSION_MESSAGE_ID_RULE}\n\n${SESSION_TOPICS_RULE}`;
 export const NOTES_EXTRACTOR_INSTRUCTIONS = `${NOTES_PREAMBLE}\n\n${EXTRACTION_CORE}`;
 export const DOCUMENT_EXTRACTOR_INSTRUCTIONS = `${DOCUMENT_PREAMBLE}\n\n${EXTRACTION_CORE}\n\n${DOCUMENT_FIELDS_RULE}`;
 
@@ -551,8 +590,9 @@ function runExtractor(
 		toolName: "submit_findings",
 		toolDescription: "Submit the session findings.",
 		parameters: sessionFindingsSchema,
-		fill: fillFindings,
-		validate: (value) => validateSessionAnchors(value, batchIds) ?? validateFindingsChains(value, existingIds),
+		fill: fillSessionFindings,
+		validate: (value) =>
+			validateSessionAnchors(value, batchIds) ?? validateSessionTopics(value) ?? validateFindingsChains(value, existingIds),
 		systemPrompt: EXTRACTOR_INSTRUCTIONS,
 		prompt,
 		engine,
@@ -865,6 +905,15 @@ export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
 	 *  failed - never for aborts, refusals, or routine chat runs. A side
 	 *  channel: a throwing callback is swallowed. */
 	onRunFinished?: (run: { label: string; status: "done" | "error" }) => void;
+	/** Cheap-slot topic canonicalisation (the topicist's `canonicalize`): maps
+	 *  a session's PROPOSED topics onto the library's existing ones BEFORE the
+	 *  merge. Optional and best effort: absent or failing, the labels are only
+	 *  folded through the aliases that already exist. */
+	canonicalizeTopics?: (
+		newTopics: readonly string[],
+		existing: readonly string[],
+		signal?: AbortSignal,
+	) => Promise<Record<string, string>>;
 }
 
 export interface NotesImportInput {
@@ -1111,7 +1160,23 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			},
 		);
 		console.info(`[extraction ${jobKey}] extractor done in ${Math.round(performance.now() - t0)}ms`);
-		return findings;
+		return withCanonicalTopics(findings, signal);
+	}
+
+	/** Session topics (PR 4): the batch's proposed topics are mapped onto the
+	 *  library's existing ones and stored as aliases (under the alias lock)
+	 *  BEFORE mergeFindings, which stays pure and applies the table. */
+	async function withCanonicalTopics(findings: SessionFindings, signal?: AbortSignal): Promise<SessionFindings> {
+		const proposed = normalizeTopics(findings.propositions.flatMap((p) => p.topics ?? []));
+		if (proposed.length === 0) return findings;
+		await canonicalizeAndStoreTopics(graphStore, proposed, deps.canonicalizeTopics, [], signal);
+		const aliases = graphStore.readTopicAliases();
+		return {
+			...findings,
+			propositions: findings.propositions.map((p) =>
+				p.topics && p.topics.length > 0 ? { ...p, topics: canonicalTopics(p.topics, aliases) } : p,
+			),
+		};
 	}
 
 	async function audit(jobKey: string, sourceId: string, findings: SessionFindings): Promise<AuditVerdicts> {

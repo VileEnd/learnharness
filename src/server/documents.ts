@@ -27,7 +27,7 @@
 import type { EmissionStats } from "../core/graph.ts";
 import type { DocumentDecision, DocumentMeta, DocumentSummary, DuplicateVerdict, LegacyImport } from "../core/contracts/documents.ts";
 import type { DocumentStore, GraphStore } from "../core/ports.ts";
-import { addAliases, canonicalTopics, knownTopics } from "../core/topics.ts";
+import { canonicalizeAndStoreTopics } from "../core/topics.ts";
 import { emit } from "../core/events.ts";
 import {
 	classify,
@@ -159,6 +159,29 @@ export function scanStatuses(): { id: string; title: string; startedAt: number }
 	return [...scans().values()]
 		.map(({ id, title, startedAt }) => ({ id, title, startedAt }))
 		.sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/** Show a background job as a dock row (same registry as PDF scans, so the
+ *  dock lists it and abortScan stops it). The row ends when `run` settles. */
+export async function withActivityRow<T>(
+	id: string,
+	title: string,
+	run: (setTitle: (title: string) => void, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+	const controller = new AbortController();
+	const row: RunningScan = { id, title, startedAt: Date.now(), controller };
+	scans().set(id, row);
+	emit("activity-changed", {});
+	try {
+		return await run((next) => {
+			if (next === row.title) return;
+			row.title = next;
+			emit("activity-changed", {});
+		}, controller.signal);
+	} finally {
+		scans().delete(id);
+		emit("activity-changed", {});
+	}
 }
 
 /** The dock's abort for a scan row; idempotent (nothing running = fine). */
@@ -360,17 +383,13 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 	async function canonicalizeTopics(topics: string[], signal?: AbortSignal): Promise<string[]> {
 		const graph = deps.graph;
 		if (!graph || topics.length === 0) return topics;
-		try {
-			const existing = normalizeTopics([...store.listMetas().flatMap((m) => m.topics), ...knownTopics(graph.readTopics())]);
-			const mapping = deps.canonicalize ? await deps.canonicalize(topics, existing, signal) : {};
-			const before = graph.readTopicAliases();
-			const after = addAliases(before, mapping);
-			if (JSON.stringify(after) !== JSON.stringify(before)) graph.writeTopicAliases(after);
-			return canonicalTopics(topics, after);
-		} catch (err) {
-			console.info(`[documents] topic canonicalisation skipped: ${err instanceof Error ? err.message : err}`);
-			return canonicalTopics(topics, graph.readTopicAliases());
-		}
+		return canonicalizeAndStoreTopics(
+			graph,
+			topics,
+			deps.canonicalize,
+			store.listMetas().flatMap((m) => m.topics),
+			signal,
+		);
 	}
 
 	/** ADOPT AN OLD IMPORT (PR H): the document is stored against the legacy

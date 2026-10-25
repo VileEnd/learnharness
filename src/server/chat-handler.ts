@@ -9,6 +9,7 @@ import {
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
+import { createTopicist } from "../agent/subagents/topics.ts";
 import { PATHS, type ModelRole } from "../../config.ts";
 import {
 	deliverJobResult,
@@ -98,6 +99,14 @@ const jobRunner = createJobRunner({
 	// same signal so keyless servers never see the research tool at all.
 	searchProvider,
 });
+/** The cheap-slot topic agents (canonicalize / tagNodes / tagOpen) - ride the
+ *  describer's role; shared by session extraction (below), the document
+ *  service (library.ts) and the topic backfill. */
+export const topicist = createTopicist({
+	engineFor: (role) => resolveEngine(role),
+	providerKeyMissing: (provider, tier) =>
+		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
+});
 /** The app's ONE extraction pipeline instance — both front doors share it:
  *  quiz-triggered session runs (turn-service) and notes imports
  *  (/api/graph/import) hit the same single-flight registry. */
@@ -116,6 +125,8 @@ export const extraction = createExtractionPipeline({
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
 	// Push: notes imports that landed (or failed) and failed chat runs.
 	onRunFinished: (run) => void notify({ kind: "extraction", ...run }),
+	// Session topics: proposed labels fold onto the library's topics before the merge.
+	canonicalizeTopics: (topics, existing, signal) => topicist.canonicalize(topics, existing, signal),
 });
 
 

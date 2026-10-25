@@ -46,7 +46,7 @@ export * from "./model-catalog.ts";
 export { sessionCost } from "./pricing.ts";
 export * from "./push.ts";
 // The document library (PR G): the service, its scan registry for the dock, and the request-side types.
-export { documents } from "./library.ts";
+export { documents, topicBackfill } from "./library.ts";
 export { docIndex } from "./doc-index.ts";
 export { scanStatuses, abortScan, incomingFiles, type CheckResult, type ImportTicket, type ImportCompletion, type IncomingFile } from "./documents.ts";
 export { OcrError } from "./ocr-client.ts";
