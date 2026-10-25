@@ -6,6 +6,8 @@ import { AppShell, SidebarProvider } from "@/components/sidebar";
 import { ActivityProvider } from "@/components/activity-dock";
 import { ServerEventsProvider } from "@/components/server-events";
 import { AppearanceProvider } from "@/components/settings/appearance";
+import { PwaRuntime } from "@/components/pwa-runtime";
+import { SessionWatch } from "@/components/session-watch";
 
 // Chrome = JetBrains Mono, teaching prose = Source Sans 3, titles = CMU
 // Serif (the bundled lh-cmu @font-face in globals.css — no CDN).
@@ -16,11 +18,19 @@ export const metadata: Metadata = {
 	title: "Learning Harness",
 	description: "A teacher agent with a memory — sessions, quizzes, and a knowledge graph of what you know.",
 	// Installed to an iOS home screen (the manifest covers everyone else).
-	appleWebApp: { capable: true, title: "LearnHarness", statusBarStyle: "black" },
+	// black-translucent: the app draws under the status bar (pt-safe pads it).
+	appleWebApp: { capable: true, title: "LearnHarness", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
+	// The live value follows the appearance background (AppearanceProvider).
 	themeColor: "#141414",
+	colorScheme: "dark",
+	// Edge to edge on notched phones; layouts pad with the *-safe utilities.
+	viewportFit: "cover",
+	// Android: the on-screen keyboard shrinks the layout viewport (dvh), so
+	// bottom-docked composers stay above it. iOS ignores this (visualViewport).
+	interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -38,6 +48,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 					</SidebarProvider>
 				</AppearanceProvider>
 			</ServerEventsProvider>
+			{/* Installed-app runtime: the service worker + update toast, and the
+				 signed-out screen when the login session ends. */}
+			<PwaRuntime />
+			<SessionWatch />
 		</body>
 		</html>
 	);

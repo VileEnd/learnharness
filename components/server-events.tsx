@@ -33,10 +33,15 @@ export interface NotifySource {
 	close(): void;
 	onOpen(cb: () => void): void;
 	onEvent(name: string, cb: (data: string) => void): void;
+	/** True once the source gave up for good (EventSource CLOSED). */
+	isClosed?(): boolean;
 }
 
 export function openEventsChannel(): NotifySource {
 	const es = new EventSource("/api/events");
+	// Errors are mostly transient (EventSource retries by itself); the
+	// signed-out watch probes the login on each (components/session-watch).
+	es.onerror = () => window.dispatchEvent(new Event("lh:events-error"));
 	return {
 		close: () => es.close(),
 		onOpen: (cb) => {
@@ -45,8 +50,13 @@ export function openEventsChannel(): NotifySource {
 		onEvent: (name, cb) => {
 			es.addEventListener(name, (ev) => cb((ev as MessageEvent).data));
 		},
+		isClosed: () => es.readyState === EventSource.CLOSED,
 	};
 }
+
+/** After this long in the background, a phone has likely dropped the
+ *  connection without telling the page — reconnect on return. */
+const STALE_AFTER_HIDDEN_MS = 15_000;
 
 /** The per-window fan-out: typed subscriptions over one source. Listener
  *  errors are isolated per the bus's law (one bad consumer never breaks
@@ -118,7 +128,42 @@ const EventsContext = createContext<ReturnType<typeof createNotifyHub> | null>(n
 
 export function ServerEventsProvider({ children, connect }: { children: ReactNode; connect?: () => NotifySource }) {
 	const hub = useMemo(() => createNotifyHub(), []);
-	useEffect(() => wireSource((connect ?? openEventsChannel)(), hub), [hub, connect]);
+	useEffect(() => {
+		const open = connect ?? openEventsChannel;
+		let source = open();
+		let disconnect = wireSource(source, hub);
+		// RESUME (installed app on a phone, 2026-10-25): a backgrounded app is
+		// suspended and its connection silently dies; a CLOSED source never
+		// retries. On return, reconnect — the new source's open fires the
+		// resync, so every consumer refetches what it missed.
+		let hiddenAt = 0;
+		const reconnect = () => {
+			disconnect();
+			source = open();
+			disconnect = wireSource(source, hub);
+		};
+		const onResume = () => {
+			if (document.visibilityState === "hidden") {
+				hiddenAt = Date.now();
+				return;
+			}
+			const stale = hiddenAt > 0 && Date.now() - hiddenAt >= STALE_AFTER_HIDDEN_MS;
+			hiddenAt = 0;
+			if (stale || source.isClosed?.()) reconnect();
+		};
+		const onOnline = () => {
+			if (source.isClosed?.()) reconnect();
+		};
+		document.addEventListener("visibilitychange", onResume);
+		window.addEventListener("pageshow", onResume);
+		window.addEventListener("online", onOnline);
+		return () => {
+			document.removeEventListener("visibilitychange", onResume);
+			window.removeEventListener("pageshow", onResume);
+			window.removeEventListener("online", onOnline);
+			disconnect();
+		};
+	}, [hub, connect]);
 	return <EventsContext.Provider value={hub}>{children}</EventsContext.Provider>;
 }
 

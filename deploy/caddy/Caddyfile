@@ -18,12 +18,28 @@
 	}
 
 	# Browsers fetch the web manifest and its icons WITHOUT cookies, so the
-	# PWA install would fail behind the login. They are not sensitive.
-	@pwa path /manifest.webmanifest /icons/* /icon.svg /apple-icon.png
+	# PWA install would fail behind the login. The service worker and its
+	# offline page are public too, so app updates never depend on the login
+	# state. None of these are sensitive.
+	@pwa path /manifest.webmanifest /icons/* /icon.svg /apple-icon.png /sw.js /offline.html
 	handle @pwa {
 		reverse_proxy learnharness:3000
 	}
 
+	# The API answers 401 (no login redirect) once the session has ended: a
+	# redirect is useless to fetch()/EventSource, a 401 lets the app show its
+	# "signed out" screen (components/session-watch.tsx).
+	handle /api/* {
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			copy_headers X-Auth-Request-User X-Auth-Request-Email
+		}
+		reverse_proxy learnharness:3000 {
+			flush_interval -1
+		}
+	}
+
+	# Pages: an ended session redirects to the login.
 	handle {
 		forward_auth oauth2-proxy:4180 {
 			uri /oauth2/auth

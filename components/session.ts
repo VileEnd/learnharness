@@ -71,6 +71,20 @@ export function useChatSession({ chatId, initialMessages, initiallyInFlight }: U
 		};
 	}, [initiallyInFlight, model]);
 
+	// Back in the foreground / online again: re-attach a stream the network
+	// dropped meanwhile (a phone suspends a backgrounded app).
+	useEffect(() => {
+		const onResume = () => {
+			if (document.visibilityState === "visible") model.recoverLostStream();
+		};
+		document.addEventListener("visibilitychange", onResume);
+		window.addEventListener("online", onResume);
+		return () => {
+			document.removeEventListener("visibilitychange", onResume);
+			window.removeEventListener("online", onResume);
+		};
+	}, [model]);
+
 	// The view + state, derived per model change from the model.
 	const state = useMemo<SessionState>(() => model.getState(), [model, version] as const);
 

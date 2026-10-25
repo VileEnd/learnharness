@@ -185,6 +185,30 @@ body {
 	font-family: var(--font-ui);
 }
 
+/* App feel on phones (installed PWA, 2026-10-25): no rubber-band /
+   pull-to-refresh over the app, no grey tap flash on controls. Zoom stays
+   enabled (accessibility). */
+html,
+body {
+	overscroll-behavior: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* Safe areas (viewport-fit=cover in app/layout.tsx): the notch / status bar
+   and the home indicator. Zero on desktop and in a plain browser tab. */
+@utility pt-safe {
+	padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+	padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pl-safe {
+	padding-left: env(safe-area-inset-left);
+}
+@utility pr-safe {
+	padding-right: env(safe-area-inset-right);
+}
+
 /* Teaching prose (the markdown renderer's container gets .lh-prose):
    Source Sans 3 with the size/leading tokens; emphasis color bound to
    the settings-ready tokens. */
@@ -244,6 +268,22 @@ body {
 	font-family: var(--font-prose);
 	font-size: var(--lh-prose-size);
 	line-height: 1.25;
+}
+
+/* iOS zooms the page into any focused field under 16px (and never zooms
+   back). On touch screens every text field is at least 16px — the shadcn
+   primitives' text-base is this app's 14px step, and the prose size is a
+   user setting that can go below 16. */
+@media (pointer: coarse) {
+	input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+	textarea,
+	select,
+	.lh-input {
+		font-size: max(16px, 1em);
+	}
+	.lh-input {
+		font-size: max(16px, var(--lh-prose-size));
+	}
 }
 
 /* Thin dark native scrollbar (app-wide): dark thumb, transparent track. */
