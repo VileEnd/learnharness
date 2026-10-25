@@ -10,6 +10,7 @@ let
     LH_HOST=${cfg.host}
     AUTH_SITE=${cfg.authSite}
     AUTH_URL=${cfg.authUrl}
+    CADDY_TLS=${cfg.tls}
   '';
 in
 {
@@ -38,6 +39,15 @@ in
       type = lib.types.str;
       default = "https://learnharness.fritz.box:8443";
       description = "Keycloak's public URL (AUTH_URL, KC_HOSTNAME).";
+    };
+    tls = lib.mkOption {
+      type = lib.types.enum [ "internal" "cloudflare" ];
+      default = "internal";
+      description = ''
+        Certificate source (CADDY_TLS). "cloudflare" = Let's Encrypt via the
+        Cloudflare DNS challenge and needs CLOUDFLARE_API_TOKEN in
+        /var/lib/learnharness/secrets.env (put there by hand, never in Nix).
+      '';
     };
   };
 

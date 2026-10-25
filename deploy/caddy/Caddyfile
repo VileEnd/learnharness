@@ -1,8 +1,9 @@
 {
-	# Home network only: every certificate comes from Caddy's own local CA
-	# (volumes/caddy/data/caddy/pki/authorities/local/root.crt). Trust that
-	# root once per device (docs/self-hosting.md).
-	local_certs
+	# Where certificates come from (CADDY_TLS in .env):
+	#   cloudflare — Let's Encrypt via the Cloudflare DNS challenge: publicly
+	#                trusted on every device, nothing exposed to the internet.
+	#   internal   — Caddy's own local CA; each device trusts its root once.
+	import tls-{$CADDY_TLS:internal}.caddy
 }
 
 # The app — every request is authorized by oauth2-proxy (Keycloak login,
