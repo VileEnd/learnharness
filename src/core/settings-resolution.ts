@@ -36,6 +36,7 @@ import {
 	type FactorySettings,
 	type GeneralSettings,
 	type CompactionSettings,
+	type DocumentsSettings,
 	type GraphSettings,
 	type ModelSlot,
 	type ModelSlotName,
@@ -82,6 +83,8 @@ export interface EffectiveSettings {
 		/** Prober graph tools (wave 7): passthrough delta as stored —
 		 * absent/undefined enabled = ON; consumers use graphToolsEnabled. */
 		graphTools: { enabled?: boolean };
+		/** Document tools (PR I): absent enabled = ON; consumers use documentToolsEnabled. */
+		documentTools: { enabled?: boolean };
 	};
 	/** The resolved strong/cheap/vision slots: each tier's concrete model or
 	 *  NULL when the tier holds no model (no factory floor — BYOK all the
@@ -93,6 +96,7 @@ export interface EffectiveSettings {
 	/** Compaction (owner round 14): resolved concrete — absent record
 	 *  section resolves to the factory 150k. */
 	compaction: Required<CompactionSettings>;
+	documents: Required<DocumentsSettings>;
 }
 
 /** The conversation pair's chain (BYOK, owner 2026-09-22): the chat's own
@@ -182,6 +186,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			prompts: agent.prompts ?? {},
 			search: agent.search ?? {},
 			graphTools: agent.graphTools ?? {},
+			documentTools: agent.documentTools ?? {},
 		},
 		models: {
 			strong: resolveSlot(modelsSection.strong),
@@ -215,6 +220,9 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		},
 		compaction: {
 			thresholdTokens: record?.compaction?.thresholdTokens ?? FACTORY_SETTINGS.compaction.thresholdTokens,
+		},
+		documents: {
+			embeddingModel: record?.documents?.embeddingModel ?? FACTORY_SETTINGS.documents.embeddingModel,
 		},
 	};
 }
@@ -253,4 +261,11 @@ export function graphToolsEnabled(effective: {
 	return effective.graph.enabled && (effective.agent.graphTools.enabled ?? true);
 }
 
-
+/**
+ * The DOCUMENT TOOLS gate (PR I): search_documents / read_document /
+ * list_documents for every agent. A plain toggle - the library exists
+ * whether or not the graph runs. Default ON.
+ */
+export function documentToolsEnabled(effective: { agent: { documentTools: { enabled?: boolean } } }): boolean {
+	return effective.agent.documentTools.enabled ?? true;
+}

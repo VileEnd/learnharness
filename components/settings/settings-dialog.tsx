@@ -37,6 +37,7 @@ import {
 	type AgentSettings,
 	type AppearanceSettings,
 	type CompactionSettings,
+	type DocumentsSettings,
 	type GraphSettings,
 	type UserSettings,
 } from "@/src/core";
@@ -229,7 +230,7 @@ export function SettingsDialogBody({
 	 *  schema mistake caught by the validation surface). */
 	const write = useCallback(
 		async (
-			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction",
+			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction" | "documents",
 			body: object,
 		) => {
 			setError(null);
@@ -398,6 +399,10 @@ export function SettingsDialogBody({
 										models={record.models}
 										graph={record.graph}
 										compaction={record.compaction}
+										documents={record.documents}
+										onDocumentsChange={(next: DocumentsSettings) =>
+											void write("documents", next)
+										}
 										onModelsChange={(next: ModelsSettings) =>
 											void write("models", next)
 										}

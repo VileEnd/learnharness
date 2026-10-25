@@ -62,6 +62,7 @@ import {
 	resolveSettings,
 	type AgentSettings,
 	type CompactionSettings,
+	type DocumentsSettings,
 	type GraphSettings,
 	type ModelCatalogEntry,
 	type ModelSlotName,
@@ -129,6 +130,12 @@ export function composeQuizMechanics(agent: AgentSettings | undefined, mechanics
  *  explicit-off record stays visible as stored. Pure — exported for tests. */
 export function composeGraphTools(agent: AgentSettings | undefined, on: boolean): AgentSettings {
 	return { ...agent, graphTools: { enabled: on } };
+}
+
+/** Compose the document-tools toggle (PR I): its own agent-section key,
+ *  absent = ON, the write explicit either way. Pure - exported for tests. */
+export function composeDocumentTools(agent: AgentSettings | undefined, on: boolean): AgentSettings {
+	return { ...agent, documentTools: { enabled: on } };
 }
 
 /** Compose: one slot's model/thinking override. Empty model = absent
@@ -280,9 +287,11 @@ export function AgentSection({
 	models,
 	graph,
 	compaction,
+	documents,
 	onSectionChange,
 	onModelsChange,
 	onCompactionChange,
+	onDocumentsChange,
 }: {
 	agent: AgentSettings | undefined;
 	/** The `models` section (slot pins — engine-level, PUT /api/settings/models). */
@@ -294,6 +303,10 @@ export function AgentSection({
 	/** The `compaction` section — its own PUT (the threshold is engine
 	 *  behavior, not an agent-section key; owner round 14, Agent tab). */
 	compaction: CompactionSettings | undefined;
+	/** The `documents` section (PR I) - the embedding model behind hybrid search. */
+	documents?: DocumentsSettings;
+	/** Writes the whole documents section (replace-PUT discipline). */
+	onDocumentsChange?: (next: DocumentsSettings) => void;
 	/** Writes the composed WHOLE agent section (replace-PUT discipline). */
 	onSectionChange: (next: AgentSettings) => void;
 	/** Writes the composed models section (slots — replace-PUT discipline). */
@@ -610,6 +623,10 @@ export function AgentSection({
 		compaction === undefined ? null : { version: 1, compaction },
 	).compaction;
 
+	const resolvedDocuments = resolveSettings(
+		documents === undefined ? null : { version: 1, documents },
+	).documents;
+
 	return (
 		<>
 			<SettingsGroup label="Models" testid="group-models">
@@ -746,6 +763,19 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})()}
+				{/* The document tools (PR I): search/read/list over the learner's
+				    library for every agent. agent.documentTools, default ON. */}
+				<SettingsRow
+					label="Document tools"
+					hint="Lets the tutor search and read your imported documents"
+					testid="document-tools-row"
+				>
+					<Toggle
+						checked={agent?.documentTools?.enabled ?? true}
+						label="document tools"
+						onChange={(on) => onSectionChange(composeDocumentTools(agent, on))}
+					/>
+				</SettingsRow>
 				{/* The quizzing mechanic (owner 2026-09-27): segmented — exactly one
 				    of Multiple choice / Free recall is active; the choice swaps which
 				    quizzing tool BOTH agents carry (prober checks + teach checks).
@@ -876,6 +906,36 @@ export function AgentSection({
 							});
 						}}
 					/>
+				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsGroup label="Documents" testid="group-documents">
+				<SettingsRow
+					label="Embedding model"
+					hint={`OpenRouter · ${resolvedDocuments.embeddingModel}`}
+					testid="documents-row-embedding"
+				>
+					<CommitInput
+						value={documents?.embeddingModel ?? ""}
+						placeholder={resolvedDocuments.embeddingModel}
+						ariaLabel="embedding model"
+						testid="input-embedding-model"
+						onCommit={(v) => onDocumentsChange?.(v === "" ? {} : { ...documents, embeddingModel: v.trim() })}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label="Re-index"
+					hint="Embed every document again with this model (costs a few cents)"
+					testid="documents-row-reindex"
+				>
+					<button
+						type="button"
+						data-testid="documents-reindex"
+						onClick={() => void fetch("/api/documents/reindex", { method: "POST" }).catch(() => {})}
+						className="h-8 rounded-lg border border-border/70 bg-card/80 px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					>
+						Re-index
+					</button>
 				</SettingsRow>
 			</SettingsGroup>
 
