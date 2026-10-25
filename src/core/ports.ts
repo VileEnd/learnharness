@@ -306,12 +306,12 @@ export interface DocumentStore {
  * this port (src/server/okf.ts decides when; core/okf.ts renders what). The
  * rebuild is atomic: the files are written into a sibling temp directory and
  * renamed over the root, so a reader sees the previous complete bundle or the
- * new complete one, never a half-written tree. The stamp (`<root>/.stamp`)
+ * new complete one, never a half-written tree. The stamp (`<root>.stamp`, beside the bundle so agents never see it)
  * records which source state the bundle was built from. Reads never throw
  * and never create anything.
  */
 export interface OkfBundleStore {
-	/** Replace the whole bundle atomically (the stamp is dropped with the old tree). */
+	/** Replace the whole bundle atomically (the old stamp stays until writeStamp). */
 	replaceAll(files: OkfFile[]): void;
 	/** The stamp of the current bundle, or null when absent. */
 	readStamp(): string | null;

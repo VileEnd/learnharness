@@ -13,7 +13,8 @@ import { PATHS } from "../../config.ts";
 import type { OkfFile } from "../core/contracts/okf.ts";
 import type { OkfBundleStore } from "../core/ports.ts";
 
-const STAMP = ".stamp";
+/** The stamp lives BESIDE the bundle (`<root>.stamp`), never inside it: the agents browse the root. */
+const stampFile = () => `${path.resolve(PATHS.okf)}.stamp`;
 let counter = 0;
 
 function safeJoin(root: string, rel: string): string {
@@ -54,13 +55,14 @@ export const okfBundleStore: OkfBundleStore = {
 	},
 	readStamp() {
 		try {
-			return fs.readFileSync(path.join(PATHS.okf, STAMP), "utf-8");
+			if (!fs.existsSync(PATHS.okf)) return null; // bundle gone: a leftover stamp must not suppress the rebuild
+			return fs.readFileSync(stampFile(), "utf-8");
 		} catch {
 			return null;
 		}
 	},
 	writeStamp(stamp) {
-		const file = path.join(PATHS.okf, STAMP);
+		const file = stampFile();
 		const tmp = `${file}.tmp-${process.pid}`;
 		fs.writeFileSync(tmp, stamp);
 		fs.renameSync(tmp, file);
