@@ -66,7 +66,7 @@ import { beginTurn, endTurn } from "../src/server/turn-liveness.ts";
 import { persistTurn } from "../src/server/turn-service.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
-import { createJobRunner, pdfModelOverride, researchModelOverride } from "../src/agent/subagents/runner.ts";
+import { createJobRunner, researchModelOverride } from "../src/agent/subagents/runner.ts";
 import { providerKeyMissing, type ModelSlotName } from "../src/core/settings.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import type { SearchProvider } from "../src/core/search.ts";
@@ -499,6 +499,7 @@ describe("dispatch (async protocol §2)", () => {
 			chatStore,
 			jobStore,
 			spawn: (job, input) => void testRunner.runJob(job.id, input),
+			libraryRoot: "/nonexistent-library",
 		});
 		// The handler hands the factory the native build options — the
 		// record IS the agent state (Wave B: no adapter conversion).
@@ -714,76 +715,21 @@ describe("research runner (async protocol §3)", () => {
 // ─── the researcher agent construction (model resolution seam) ──────────────
 
 
-describe("pdf runner (sources v0)", () => {
-	const PDF_FIXTURE = path.join(import.meta.dirname, "fixtures", "sample-3page.pdf");
-	const PDF_INPUT = { path: PDF_FIXTURE, question: "What is the integral of x dx?" };
-
-	/** A pdf-reader that triages, extracts pages 1-2, then briefs. */
-	function pdfReaderModel(): PiEngine {
-		return fauxEngine([
-			fauxAssistantMessage([fauxToolCall("pdf_info", {}, { id: "i1" })], { stopReason: "toolUse" }),
-			fauxAssistantMessage([fauxToolCall("pdf_extract", { pages: "1-2" }, { id: "e1" })], { stopReason: "toolUse" }),
-			fauxAssistantMessage([fauxText("The integral rule appears on page 1 (p. 1): x dx integrates to x^2/2.")]),
-		]);
-	}
-
-	it("runJob completes a pdf job: brief + pagesConsulted land on the record, citation steer delivered", async () => {
-		const chat = chatStore.createChat("Test: pdf runner");
+describe("retired pdf kind", () => {
+	it("a leftover running pdf job errors out instead of dispatching", async () => {
+		const chat = chatStore.createChat("Test: retired pdf kind");
 		trackChat(chat.id);
-		chatStore.saveMessages(chat.id, nativeToolMessages("read this pdf", "pdf", "call-pdf1", PDF_INPUT));
-
-		const job = jobStore.createJob({ kind: "pdf", chatId: chat.id, toolCallId: "call-pdf1" });
+		const job = jobStore.createJob({ kind: "pdf", chatId: chat.id, toolCallId: "call-pdf-old" });
 		trackJob(job.id);
 
 		const delivery = fakeDeliver();
 		const runner = createJobRunner({ chatStore, jobStore, deliver: delivery.deliver });
-		pdfModelOverride.current = pdfReaderModel();
-		try {
-			await runner.runJob(job.id);
-		} finally {
-			pdfModelOverride.current = undefined;
-		}
+		await runner.runJob(job.id);
 
 		const done = jobStore.getJob(job.id)!;
-		assert.equal(done.status, "done");
-		assert.equal(done.activity, "delivered");
-		const result = done.result as PdfResult;
-		assert.equal(result.path, PDF_FIXTURE);
-		assert.match(result.brief, /integral rule/);
-		assert.deepEqual(result.pagesRead, [1, 2], "extracted pages are READ pages");
-		assert.deepEqual(result.pagesConsulted, [1, 2]);
-
-		assert.equal(delivery.steers.length, 1, "one job, one steer");
-		const steer = delivery.steers[0]!;
-		assert.equal((steer.details as { kind: string }).kind, "pdf");
-		assert.ok(steer.content.includes("integral rule"), "steer text carries the brief");
-	});
-
-	it("an unreadable source: the job lands error with the PDF failed: brief and the steer flags the gap", async () => {
-		const chat = chatStore.createChat("Test: pdf runner failure");
-		trackChat(chat.id);
-		const badPath = path.join(import.meta.dirname, "fixtures", "not-a-pdf.txt");
-		const job = jobStore.createJob({ kind: "pdf", chatId: chat.id, toolCallId: "call-pdf2" });
-		trackJob(job.id);
-
-		const delivery = fakeDeliver();
-		const runner = createJobRunner({ chatStore, jobStore, deliver: delivery.deliver });
-		pdfModelOverride.current = pdfReaderModel();
-		try {
-			await runner.runJob(job.id, { path: badPath, question: "anything" });
-		} finally {
-			pdfModelOverride.current = undefined;
-		}
-
-		const done = jobStore.getJob(job.id)!;
-		assert.equal(done.status, "error", "the failure brief is a subagent failure");
-		const result = done.result as PdfResult;
-		assert.match(result.brief, /^PDF failed:/);
-		assert.deepEqual(result.pagesRead, []);
-		assert.deepEqual(result.pagesConsulted, []);
-
-		const steer = delivery.steers[0]!;
-		assert.ok(steer.content.includes("flag the gap"), "the teacher learns to flag the gap");
+		assert.equal(done.status, "error");
+		assert.match(done.error ?? "", /unknown kind pdf/);
+		assert.equal(delivery.steers.length, 0);
 	});
 });
 
@@ -798,13 +744,6 @@ describe("researcher agent", () => {
 		researchModelOverride.current = undefined;
 	});
 
-	it("the pdf-reader declares exactly the four skill tools (sources v0)", async () => {
-		const { createPdfTools } = await import("../src/agent/subagents/pdf-reader.ts");
-		const tools = createPdfTools(path.join(import.meta.dirname, "fixtures", "sample-3page.pdf"));
-		assert.deepEqual(Object.keys(tools).sort(), ["pdf_extract", "pdf_info", "pdf_render", "pdf_search"]);
-		// reset any accidental global override
-		pdfModelOverride.current = undefined;
-	});
 });
 
 // ─── 6. the wake pipeline (server-side steer delivery) ────────────────────────
@@ -1392,10 +1331,10 @@ describe("prompt composition", () => {
 		assert.ok(!prober.includes("predict → teach → check"), "the teaching cycle stays out of the prober");
 	});
 
-	it("the sources-v0 prompt lines compose: read/pdf doctrine in the teacher, the read line in the prober", () => {
+	it("the sources-v0 prompt lines compose: source-files section in the teacher, the read line in the prober", () => {
 		const teacher = composeInstructions("teacher");
 		assert.ok(teacher.includes("Learner source files"), "the teacher carries the source-files section");
-		assert.ok(teacher.includes("brief with page citations"), "the pdf brief's citation duty is stated");
+		assert.ok(!teacher.includes("`pdf` job"), "the retired pdf job is no longer taught");
 		const prober = composeInstructions("prober");
 		assert.ok(prober.includes("the `read` tool can inspect it directly"), "the prober knows it can read learner files");
 	});

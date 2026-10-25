@@ -16,17 +16,15 @@ import {
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { APP_IDENTITY, piEngineForSpec, type PiEngine } from "../src/agent/models.ts";
 import { runVisualMaker } from "../src/agent/subagents/visual-maker.ts";
-import { runPdfReaderAgent } from "../src/agent/subagents/pdf-reader.ts";
 import type { HeadlessApi } from "../src/agent/subagents/headless.ts";
 import { AUTH_PROVIDER_KEYS } from "../src/core/auth-keys.ts";
 import { providerEventsDir } from "../src/agent/provider-events.ts";
 
 const OR_KEY = "dummy-openrouter-MUST-NOT-REACH-other-endpoints";
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><rect width="20" height="20" fill="white"/></svg>';
-const FIXTURE = path.join(import.meta.dirname, "fixtures", "sample-3page.pdf");
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==", "base64");
 const FINAL = "Verified offline output (p. 1). Pages consulted: 1";
-const LOOPS = ["visual", "pdf"] as const;
+const LOOPS = ["visual"] as const;
 type Loop = typeof LOOPS[number];
 type Call = { name: string; args: JsonObject };
 
@@ -68,12 +66,10 @@ async function isolated<T>(env: Record<string, string>, run: () => Promise<T>): 
 
 function callsFor(loop: Loop, round: number): Call[] {
 	if (round === 2) return [];
-	if (loop === "visual") return round === 0
+	void loop;
+	return round === 0
 		? [{ name: "write_svg", args: { svg: SVG } }]
 		: [{ name: "render_svg", args: {} }];
-	return round === 0
-		? [{ name: "pdf_info", args: {} }]
-		: [{ name: "pdf_extract", args: { pages: "1" } }, { name: "pdf_render", args: { pages: "1", dpi: 100 } }];
 }
 
 function fakeHeadless(renders: string[]): HeadlessApi {
@@ -86,13 +82,7 @@ function fakeHeadless(renders: string[]): HeadlessApi {
 			renders.push("svg");
 			return PNG;
 		},
-		renderPdfPages: async (file, pages, opts) => {
-			assert.equal(file, FIXTURE);
-			assert.deepEqual(pages, [1]);
-			assert.equal(opts?.dpi, 100);
-			renders.push("pdf:1");
-			return [{ page: 1, png: PNG }];
-		},
+		renderPdfPages: async () => { throw new Error("unexpected pdf render"); },
 	};
 }
 
@@ -107,26 +97,18 @@ async function runLoop(loop: Loop, engine: PiEngine, signal = new AbortControlle
 		// Direct recording cases enable the observer into an isolated temp dir.
 		chatId: "provider-neutral-offline",
 	};
-	const result = loop === "visual"
-		? await runVisualMaker({ brief: "A white square, no external resources" }, opts)
-		: await runPdfReaderAgent({ path: FIXTURE, question: "Read page 1" }, opts);
+	void loop;
+	const result = await runVisualMaker({ brief: "A white square, no external resources" }, opts);
 	return { result, renders, activities, usages };
 }
 
 function assertSuccess(loop: Loop, run: Awaited<ReturnType<typeof runLoop>>) {
-	if ("svg" in run.result) {
-		assert.equal(run.result.svg, SVG, JSON.stringify(run.result));
-		assert.equal(run.result.notes, FINAL);
-	} else {
-		assert.equal(run.result.brief, FINAL);
-		assert.equal(run.result.path, FIXTURE);
-		assert.deepEqual(run.result.pagesRead, [1]);
-		assert.deepEqual(run.result.pagesConsulted, [1]);
-	}
-	assert.deepEqual(run.renders, [loop === "visual" ? "svg" : "pdf:1"]);
+	assert.equal(run.result.svg, SVG, JSON.stringify(run.result));
+	assert.equal(run.result.notes, FINAL);
+	assert.deepEqual(run.renders, ["svg"]);
 	assert.equal(run.usages.length, 3, "one usage callback per successful stream round");
-	assert.ok(run.activities.some((line) => line.startsWith(loop === "visual" ? "write_svg:" : "pdf_info:")));
-	assert.ok(run.activities.some((line) => line.startsWith(loop === "visual" ? "render_svg:" : "pdf_render:")));
+	assert.ok(run.activities.some((line) => line.startsWith("write_svg:")));
+	assert.ok(run.activities.some((line) => line.startsWith("render_svg:")));
 }
 
 // All global/env cases in this file are deliberately serial.
@@ -183,7 +165,7 @@ describe("provider-neutral raw agent loops", { concurrency: false }, () => {
 				const controller = new AbortController();
 				controller.abort();
 				const run = await runLoop(loop, { model: faux.getModel(), streamFn: faux.streamSimple }, controller.signal);
-				const failure = "svg" in run.result ? run.result.notes : run.result.brief;
+				const failure = run.result.notes;
 				assert.match(failure ?? "", /crashed — aborted/);
 				assert.deepEqual(run.renders, []);
 				assert.equal(run.usages.length, 0);
@@ -227,7 +209,7 @@ describe("provider-neutral raw agent loops", { concurrency: false }, () => {
 						globalThis.fetch = async () => { fetches++; throw new Error("CLOSED: no fetch allowed"); };
 						const engine = piEngineForSpec({ provider: transport.provider, id: transport.id, thinkingLevel: "off" });
 						const run = await runLoop(loop, engine);
-						const failure = "svg" in run.result ? run.result.notes : run.result.brief;
+						const failure = run.result.notes;
 						assert.match(failure ?? "", new RegExp(`Provider is not configured: ${transport.provider}`));
 						assert.equal(fetches, 0, "SDK Models guard rejects missing selected-provider auth before transport");
 						assert.equal(run.usages.length, 0);
@@ -287,18 +269,18 @@ function assertPayload(transport: Transport, loop: Loop, round: number, body: Re
 	// Native Responses models may declare tools in additional_tools input
 	// items rather than top-level tools; assert the SDK's complete payload.
 	const tools = JSON.stringify(body);
-	assert.match(tools, new RegExp(loop === "visual" ? "write_svg" : "pdf_extract"));
-	assert.match(tools, new RegExp(loop === "visual" ? "render_svg" : "pdf_render"));
+	assert.match(tools, new RegExp("write_svg"));
+	assert.match(tools, new RegExp("render_svg"));
 	if (transport.api === "google-generative-ai") assert.ok(Array.isArray(body.contents));
 	else if (transport.api === "openai-responses") assert.ok(Array.isArray(body.input));
 	else assert.ok(Array.isArray(body.messages));
 	const json = JSON.stringify(body);
-	assert.match(json, new RegExp(loop === "visual" ? "white square" : "Read page 1"));
+	assert.match(json, new RegExp("white square"));
 	if (round === 2) {
 		const supportsImages = piEngineForSpec({ provider: transport.provider, id: transport.id }).model.input.includes("image");
 		assert.equal(json.includes(PNG.toString("base64")), supportsImages, "native modality filtering: only vision models receive rendered images");
 		assert.match(json, new RegExp(transport.api === "google-generative-ai" ? "functionResponse" : transport.api === "openai-responses" ? "function_call_output" : transport.api === "anthropic-messages" ? "tool_result" : '"role":"tool"'));
-		assert.match(json, new RegExp(loop === "visual" ? "Rendered" : "Page 1"));
+		assert.match(json, new RegExp("Rendered"));
 	}
 }
 

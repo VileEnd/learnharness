@@ -19,7 +19,7 @@ import {
 	resolveSettings,
 	resolveSlot,
 } from "../src/core/settings-resolution.ts";
-import { BACKGROUND_MODEL_ROLES, type UserSettings } from "../src/core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, sanitizeUserSettings, type UserSettings } from "../src/core/settings.ts";
 
 describe("resolveSettings", () => {
 	it("null record (first boot): non-model knobs land on factory defaults; every model view is EMPTY", () => {
@@ -155,7 +155,7 @@ describe("the slot tier (BYOK, owner 2026-09-22)", () => {
 		assert.deepEqual(eff.agent.models.auditor, { provider: "zai", id: "r-slot", thinkingLevel: "high" });
 	});
 
-	it("vision slot covers visualMaker AND pdfReader; level-only slots resolve as NULL", () => {
+	it("vision slot covers visualMaker; level-only slots resolve as NULL", () => {
 		const eff = resolveSettings({ version: 1, models: { vision: { model: { provider: "zai", id: "v-model" }, thinkingLevel: "max" } } });
 		assert.deepEqual(eff.agent.models.visualMaker, { provider: "zai", id: "v-model", thinkingLevel: "max" });
 		assert.deepEqual(eff.models.vision, { provider: "zai", id: "v-model", thinkingLevel: "max" });
@@ -197,12 +197,12 @@ describe("the slot tier (BYOK, owner 2026-09-22)", () => {
 			agent: { models: { researcher: { model: { provider: "groq", id: "r" } } } },
 		};
 		assert.deepEqual(resolveRoleSpec("researcher", withOverride), { provider: "groq", id: "r", thinkingLevel: undefined });
-		// pdfReader rides the vision slot (never a background override)
+		// visualMaker rides the vision slot (never a background override)
 		const visionRecord: UserSettings = {
 			version: 1,
 			models: { vision: { model: { provider: "zai", id: "v" }, thinkingLevel: "low" } },
 		};
-		assert.deepEqual(resolveRoleSpec("pdfReader", visionRecord), { provider: "zai", id: "v", thinkingLevel: "low" });
+		assert.deepEqual(resolveRoleSpec("visualMaker", visionRecord), { provider: "zai", id: "v", thinkingLevel: "low" });
 		assert.equal(resolveRoleSpec("teacher", null), undefined);
 	});
 });
@@ -266,5 +266,19 @@ describe("the graph channel gates (the wave's seam honoring)", () => {
 		assert.deepEqual(eff.agent.graphTools, {});
 		const off = resolveSettings({ version: 1, agent: { graphTools: { enabled: false } } });
 		assert.deepEqual(off.agent.graphTools, { enabled: false });
+	});
+});
+
+describe("legacy pdf settings (the pdf job was retired)", () => {
+	it("a record with a pdf toggle and a pdfReader role still loads; both are dropped", () => {
+		const loaded = sanitizeUserSettings({
+			version: 1,
+			agent: {
+				tools: { pdf: false, research: false },
+				models: { pdfReader: { model: { provider: "zai", id: "v" } } },
+			},
+		});
+		assert.deepEqual(loaded?.agent?.tools, { research: false });
+		assert.equal(loaded?.agent?.models, undefined);
 	});
 });

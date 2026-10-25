@@ -1,5 +1,4 @@
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 
 /**
@@ -9,10 +8,9 @@ import * as path from "node:path";
  * the learner references files in messages; the agent finds them).
  *
  * Safety posture (user-locked): READ-ONLY by construction — no shell-out,
- * no user-controlled process args, no mutation APIs anywhere here. The one
- * deliberate scope widening vs pi: relative paths and default roots resolve
- * against the LEARNER'S HOME, not a project cwd — the harness has no
- * meaningful working directory, and "find my notes" should just work.
+ * no user-controlled process args, no mutation APIs anywhere here. Paths
+ * resolve against the library root only (resolveLibraryPath): no absolute
+ * paths, no `..`, no symlink escapes.
  *
  * Ported behaviors (mirroring pi's dist/core/tools/{ls,find,grep}.js): the
  * schemas, descriptions, output formats, and truncation notices are copied
@@ -35,12 +33,72 @@ export const WALK_TIMEOUT_MS = 10_000;
  */
 const EXCLUDED_DIR_NAMES = new Set(["node_modules", ".git", "Library", ".Trash"]);
 
-/** Resolve a tool path argument: absolute stays, relative/absent → home.
- *  (pi resolves against the project cwd; the harness's "project" is the
- *  learner's life, so the home directory is the anchor.) */
-export function resolveSourcePath(p?: string): string {
-	if (!p) return os.homedir();
-	return path.isAbsolute(p) ? p : path.join(os.homedir(), p);
+export const LIBRARY_MISSING_MESSAGE =
+	"The library is empty right now (it is being built). Try search_documents.";
+export const LIBRARY_ESCAPE_MESSAGE =
+	"Paths are relative to the library root (start with index.md); absolute paths and '..' are not allowed.";
+
+/** Options shared by the library tool factories. `beforeAccess` runs before
+ *  every call (the freshness hook; unused until the bundle service wires it). */
+export interface LibraryToolOptions {
+	beforeAccess?: () => Promise<void>;
+}
+
+export type LibraryPath = { ok: true; abs: string } | { ok: false; error: string };
+
+/**
+ * Resolve a tool path argument against the library root. Relative paths
+ * only: absolute paths, `..` traversal and symlinks that leave the root are
+ * refused. A missing root answers with the "being built" copy and is never
+ * created. A non-existent target inside the root resolves lexically so the
+ * caller can report "not found".
+ */
+export async function resolveLibraryPath(root: string, p?: string): Promise<LibraryPath> {
+	const escape: LibraryPath = { ok: false, error: LIBRARY_ESCAPE_MESSAGE };
+	const raw = p ?? "";
+	if (raw.includes("\0")) return escape;
+	if (path.isAbsolute(raw) || path.posix.isAbsolute(raw) || path.win32.isAbsolute(raw)) return escape;
+	const rel = path.normalize(raw === "" ? "." : raw);
+	if (rel === ".." || rel.startsWith(`..${path.sep}`)) return escape;
+
+	let rootReal: string;
+	try {
+		rootReal = await fs.realpath(root);
+		if (!(await fs.stat(rootReal)).isDirectory()) return { ok: false, error: LIBRARY_MISSING_MESSAGE };
+	} catch {
+		return { ok: false, error: LIBRARY_MISSING_MESSAGE };
+	}
+	const inside = (candidate: string) =>
+		candidate === rootReal || candidate.startsWith(rootReal.endsWith(path.sep) ? rootReal : rootReal + path.sep);
+
+	const lexical = path.join(rootReal, rel);
+	try {
+		const real = await fs.realpath(lexical);
+		return inside(real) ? { ok: true, abs: real } : escape;
+	} catch {
+		// Not found (or a dangling link): check the nearest existing ancestor
+		// stays inside, then hand back the lexical path.
+		let ancestor = path.dirname(lexical);
+		for (;;) {
+			try {
+				const real = await fs.realpath(ancestor);
+				if (!inside(real)) return escape;
+				break;
+			} catch {
+				const up = path.dirname(ancestor);
+				if (up === ancestor) return escape;
+				ancestor = up;
+			}
+		}
+		return { ok: true, abs: lexical };
+	}
+}
+
+/** Resolve or throw the refusal copy as an error (the tool result the model sees). */
+export async function requireLibraryPath(root: string, p?: string): Promise<string> {
+	const r = await resolveLibraryPath(root, p);
+	if (!r.ok) throw new Error(r.error);
+	return r.abs;
 }
 
 /** pi's formatSize idiom (50KB prints as "50.0KB"). */

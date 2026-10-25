@@ -48,7 +48,7 @@ import { DispatchCard } from "../components/artifacts/dispatch-card.tsx";
 import { JobCard, PdfJobCard } from "../components/artifacts/job-card.tsx";
 import { ToolCallCard } from "../components/artifacts/tool-call-card.tsx";
 import { JobsContext } from "../components/jobs-context.ts";
-import { demoInputSchema, jobTools, pdfInputSchema, visualInputSchema } from "../src/agent/tools/jobs.ts";
+import { demoInputSchema, jobTools, visualInputSchema } from "../src/agent/tools/jobs.ts";
 import { runDemoBuilder } from "../src/agent/subagents/demo-builder.ts";
 import { headlessOverride, type DemoRunResult, type HeadlessApi } from "../src/agent/subagents/headless.ts";
 import { createJobRunner, demoModelOverride, visualModelOverride } from "../src/agent/subagents/runner.ts";
@@ -965,6 +965,7 @@ describe("demo/visual job runners", () => {
 							chatStore,
 							jobStore,
 							spawn: (job, input) => void runner.runJob(job.id, input),
+							libraryRoot: "/nonexistent-library",
 						}),
 					}),
 			);
@@ -1005,17 +1006,14 @@ describe("tool + renderer registry wiring", () => {
 	it("demo and visual are SERVER-EXECUTED dispatch tools with the contract schemas", () => {
 		const { runner } = testRunner();
 		const tools = jobTools({ chatId: "chat_registry", jobStore, spawn: (job) => void runner.runJob(job.id) });
-		assert.deepEqual(Object.keys(tools).sort(), ["demo", "pdf", "research", "visual"]);
-		for (const name of ["demo", "visual", "research", "pdf"] as const) {
+		assert.deepEqual(Object.keys(tools).sort(), ["demo", "research", "visual"]);
+		for (const name of ["demo", "visual", "research"] as const) {
 			assert.equal(typeof (tools[name] as { execute?: unknown }).execute, "function", `${name} executes server-side — fire-and-forget ack per THE ASYNC PROTOCOL`);
 		}
 		assert.equal(Value.Check(demoInputSchema, { title: "T", brief: "b" }), true);
 		assert.equal(Value.Check(demoInputSchema, { brief: "b" }), false, "demo requires a title");
 		assert.equal(Value.Check(visualInputSchema, { brief: "b" }), true);
 		assert.equal(Value.Check(visualInputSchema, {}), false, "visual requires a brief");
-		assert.equal(Value.Check(pdfInputSchema, { path: "/tmp/doc.pdf", question: "q" }), true);
-		assert.equal(Value.Check(pdfInputSchema, { question: "q" }), false, "pdf requires a path");
-		assert.equal(Value.Check(pdfInputSchema, { path: "/tmp/doc.pdf" }), false, "pdf requires a question");
 	});
 
 	it("the artifact renderer registry maps demo/visual to the W6 cards", () => {
