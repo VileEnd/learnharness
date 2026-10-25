@@ -19,7 +19,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { LEDGER_FILES, PATHS, SETTINGS_FILE, SOURCES_FILE, TOPIC_ALIASES_FILE } from "../../config.ts";
 import type { LearnerSnapshot, OkfFile } from "../core/contracts/okf.ts";
-import { deriveEvidence, deriveLearnerState } from "../core/learner.ts";
+import { buildLearnerSnapshot } from "./learner-snapshot.ts";
 import { getGraph } from "../core/graph.ts";
 import { OKF_RENDER_REV, renderOkfBundle } from "../core/okf.ts";
 import { renderOkfViewer } from "../core/okf-viz.ts";
@@ -101,10 +101,7 @@ export function createLibrary(deps: LibraryDeps): Library {
 	 *  Parsing the chats is the cost of a rebuild (rebuilds are rare: stamp-gated, at most daily without new data). */
 	function learnerSnapshot(graph: ReturnType<typeof getGraph>): LearnerSnapshot | undefined {
 		if (!deps.learnerStore) return undefined;
-		const nodeIds = [...new Set(graph.nodes.map((n) => n.id))];
-		const chats = deps.chatStore.listChats().flatMap((c) => deps.chatStore.getChat(c.id) ?? []);
-		const events = deriveEvidence(chats, deps.learnerStore.readAttributions(), new Set(nodeIds));
-		return deriveLearnerState(events, graph.chains, nodeIds, now());
+		return buildLearnerSnapshot({ chatStore: deps.chatStore, learnerStore: deps.learnerStore }, graph, now());
 	}
 
 	function buildInput(gates: { documents: boolean; graph: boolean }) {

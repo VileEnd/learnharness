@@ -68,8 +68,8 @@ import {
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
-import { chainsForSelection, formatChainLine, fuzzyScore, groupChains } from "@/src/core";
-import type { ChainGroup, GraphChain, GraphGroupBy, GraphNode, SnapshotDocument } from "@/src/core";
+import { chainsForSelection, formatChainLine, fuzzyScore, groupChains, LEARNER_STATE_STYLES, suggestedConceptIds } from "@/src/core";
+import type { ChainGroup, GraphChain, GraphGroupBy, GraphNode, LearnerSnapshot, SnapshotDocument } from "@/src/core";
 import { GroupByToggle } from "@/components/group-by-toggle";
 import { TopBar } from "@/components/top-bar";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog";
@@ -110,11 +110,15 @@ export function ChainTableBody({
 	onGroupBy,
 	nodeTopics = {},
 	documents = {},
+	learner = null,
 }: {
 	nodes: GraphNode[];
 	chains: GraphChain[];
 	sessions: Record<string, string>;
 	fileSources: Record<string, string>;
+	/** The learner model: in the practice picker (selectMode) it feeds the
+	 *  "Suggested: shaky and due" group. Absent = no group. */
+	learner?: LearnerSnapshot | null;
 	/** PR H: how folders form. "topic" = topic -> document -> section;
 	 *  "source" = chat / notes, or document -> section for documents. */
 	groupBy?: GraphGroupBy;
@@ -215,6 +219,16 @@ export function ChainTableBody({
 		const selectedNodes = [...selection].map((id) => byId.get(id)).filter((n): n is GraphNode => n !== undefined);
 		return chainsForSelection(selectedNodes, storedChains);
 	}, [selection, byId, storedChains]);
+
+	// "Suggested: shaky and due" (practice picker only): exactly the shaky
+	// and due concepts, most urgent first; the search narrows it like the rest.
+	const suggested = useMemo(() => {
+		if (!selectMode || !learner) return [];
+		return suggestedConceptIds(learner.states, new Set(byId.keys()))
+			.map((id) => byId.get(id))
+			.filter((n): n is GraphNode => n !== undefined)
+			.filter((n) => !searching || fuzzyScore(query, n.name, n.statement, ...n.aliases) !== null);
+	}, [selectMode, learner, byId, searching, query]);
 
 	const nameOf = (id: string) => byId.get(id)?.name ?? id;
 	const dateOf = (id: string) => byId.get(id)?.createdAt.slice(0, 10) ?? "";
@@ -469,7 +483,45 @@ export function ChainTableBody({
 					</button>
 				</div>
 
-				{groups.length === 0 && (
+				{suggested.length > 0 && learner && (
+					<div data-testid="suggested-group" className="border-b border-border/60">
+						<div className="flex items-center gap-2 px-3 py-1.5">
+							<RowCheckbox
+								checked={suggested.every((n) => selection.has(n.id))}
+								indeterminate={suggested.some((n) => selection.has(n.id)) && !suggested.every((n) => selection.has(n.id))}
+								onToggle={(next) => onToggleNodes(suggested.map((n) => n.id), next)}
+								testid="suggested-checkbox"
+								label="Select all suggested: shaky and due"
+							/>
+							<span className="min-w-0 flex-1 truncate text-sm font-medium">Suggested: shaky and due</span>
+							<span className="text-xs tabular-nums text-muted-foreground">{suggested.length}</span>
+						</div>
+						{suggested.map((n) => {
+							const st = learner.states[n.id];
+							return (
+								<div key={n.id} data-testid={`suggested-row-${n.id}`} className="flex items-center gap-2 py-1 pl-8 pr-3">
+									<RowCheckbox
+										checked={selection.has(n.id)}
+										onToggle={(next) => onToggleNodes([n.id], next)}
+										testid={`suggested-checkbox-${n.id}`}
+										label={`Select node ${n.name}`}
+									/>
+									<span className="min-w-0 flex-1 truncate text-xs">{n.name}</span>
+									<span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+										<span
+											aria-hidden
+											className="inline-block size-2 rounded-full"
+											style={{ backgroundColor: LEARNER_STATE_STYLES[st?.state ?? "not-yet-checked"].color }}
+										/>
+										{st?.state === "shaky" ? "Shaky" : "Due"}
+									</span>
+								</div>
+							);
+						})}
+					</div>
+				)}
+
+				{groups.length === 0 && suggested.length === 0 && (
 					<div data-testid="chain-table-nomatch" className="px-4 pt-3 text-xs text-muted-foreground">
 						No matching chains.
 					</div>
@@ -613,8 +665,11 @@ export function ChainTableOverlay({
 	onGroupBy,
 	nodeTopics,
 	documents,
+	learner,
 }: {
 	open: boolean;
+	/** The learner model for the picker's suggestions (caller-fetched). */
+	learner?: LearnerSnapshot | null;
 	nodes: GraphNode[];
 	chains: GraphChain[];
 	sessions: Record<string, string>;
@@ -701,6 +756,7 @@ export function ChainTableOverlay({
 					onGroupBy={onGroupBy}
 					nodeTopics={nodeTopics}
 					documents={documents}
+					learner={learner}
 					query={query}
 					onQuery={setQuery}
 					sort={sort}

@@ -26,6 +26,7 @@
  * the root's okf_version.
  */
 
+import { EVIDENCE_VERBS } from "./learner-colors.ts";
 import { createHash } from "node:crypto";
 import type { DocumentMeta, DocumentSection } from "./contracts/documents.ts";
 import type { GraphChain, GraphNode } from "./contracts/graph.ts";
@@ -253,18 +254,6 @@ const isDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2
 
 // ─── me/ : the learner model, linking INTO the library ───────────────────────
 
-const ME_VERBS: Record<string, string> = {
-	correct: "answered correctly",
-	tentative: "answered correctly but unsure",
-	miss: "missed",
-	dontKnow: "didn't know",
-	partly: "partly right",
-	wrong: "got wrong",
-	solved: "solved",
-	solvedWithHints: "solved with hints",
-	movedOn: "moved on",
-	surrendered: "gave up",
-};
 /** The "Weakest foundations" and "Due now" lists show at most this many entries. */
 const ME_LIST_MAX = 15;
 const ME_DUE_MAX = 25;
@@ -304,7 +293,7 @@ function renderMe(m: MeInput): Array<[string, string]> {
 		return t ? `"${oneLine(t)}"` : "a session";
 	};
 	const noteOf = (e: EvidenceEvent) => (e.note ? `: ${cut(e.note, INDEX_DESC_MAX)}` : "");
-	const verbOf = (e: EvidenceEvent) => ME_VERBS[e.raw] ?? e.raw;
+	const verbOf = (e: EvidenceEvent) => EVIDENCE_VERBS[e.raw] ?? e.raw;
 	/** "missed 2026-10-20 in "Semaphores": confused P and V" */
 	const evidenceLine = (e: EvidenceEvent) => `${verbOf(e)} ${dayOf(e.at)} in ${sessionOf(e)}${noteOf(e)}`;
 	const stateLine = (s: ConceptState): string => {

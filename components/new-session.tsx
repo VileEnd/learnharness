@@ -11,6 +11,7 @@ import { SetupDialog } from "@/components/setup-dialog";
 import { useStrongKeyless, useZeroKeys, ZeroKeysPill } from "@/components/setup-cta";
 import { StatsBar } from "@/components/stats-bar";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
+import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import type { ChatSettings, GraphSnapshot } from "@/src/core";
 
@@ -249,6 +250,8 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	};
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
+	// The picker's "Suggested: shaky and due" group (fetched while it is open).
+	const learner = useLearnerSnapshot(pickerOpen);
 	const openPicker = () => {
 		if (snapshot) {
 			setPickerOpen(true);
@@ -329,6 +332,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 						fileSources={snapshot?.fileSources ?? {}}
 						onClose={() => setPickerOpen(false)}
 						selectMode
+						learner={learner}
 						controlledSelection={new Set(picks.map((p) => p.id))}
 						onSelectionChange={(ids) => {
 							const byId = new Map((snapshot?.propositions ?? []).map((n) => [n.id, n]));

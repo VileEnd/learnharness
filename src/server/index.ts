@@ -54,3 +54,5 @@ export { OcrError } from "./ocr-client.ts";
 export { library } from "./okf-library.ts";
 export { createLibrary, type Library, type LibraryDeps } from "./okf.ts";
 export { zipFiles } from "./zip.ts";
+export { buildLearnerSnapshot, type LearnerSnapshotDeps } from "./learner-snapshot.ts";
+export { learnerSnapshotNow } from "./learner-now.ts";
