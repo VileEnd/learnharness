@@ -30,6 +30,17 @@ describe("SessionRow — the right-click seam", () => {
 	});
 });
 
+describe("SessionRow — the ⋯ button (touch has no right-click)", () => {
+	it("renders only when a handler is given, visible on coarse pointers, hover-only otherwise", () => {
+		const plain = renderToStaticMarkup(<SessionRow chat={chat} active={false} onOpen={() => {}} />);
+		assert.ok(!plain.includes("session-row-menu"));
+		const html = renderToStaticMarkup(<SessionRow chat={chat} active={false} onOpen={() => {}} onMenu={() => {}} />);
+		const btn = html.split('data-testid="session-row-menu"')[1] ?? "";
+		assert.ok(btn.includes("pointer-coarse:opacity-100"));
+		assert.ok(btn.includes("group-hover:opacity-100") && btn.includes("opacity-0"));
+	});
+});
+
 describe("RenameRow — the inline rename surface", () => {
 	it("renders the draft input with the current title, keeping the meta line", () => {
 		const html = renderToStaticMarkup(

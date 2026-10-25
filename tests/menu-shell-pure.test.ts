@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeMenuPlacement, type MenuSide } from "../components/menu-shell.tsx";
+import { clampMenuHorizontal, computeMenuPlacement, type MenuSide } from "../components/menu-shell.tsx";
 
 /**
  * The shared menu shell's placement decision (fix wave chunk B): the
@@ -78,5 +78,40 @@ describe("computeMenuPlacement — cap + position", () => {
 		const p = computeMenuPlacement(rect(400, 440), viewport(800), 300, "down", "left");
 		assert.equal(p.style.left, 100);
 		assert.ok(!("right" in p.style));
+	});
+});
+describe("clampMenuHorizontal", () => {
+	const place = (anchor: { left: number; right: number }, align: "left" | "right") =>
+		computeMenuPlacement({ top: 400, bottom: 440, ...anchor }, { width: 390, height: 800 }, 300, "down", align);
+
+	it("leaves a menu that fits untouched", () => {
+		const p = place({ left: 100, right: 200 }, "left");
+		assert.equal(clampMenuHorizontal(p, 390, 200), p);
+		const q = place({ left: 100, right: 300 }, "right");
+		assert.equal(clampMenuHorizontal(q, 390, 200), q);
+	});
+
+	it("pulls a left-aligned menu back from the right edge", () => {
+		// A 352px menu from x=200 would end at 552 > 390 − 8.
+		const p = clampMenuHorizontal(place({ left: 200, right: 240 }, "left"), 390, 352);
+		assert.equal(p.style.left, 390 - 8 - 352);
+		assert.ok(!("right" in p.style));
+	});
+
+	it("pulls a right-aligned menu back from the left edge", () => {
+		// Right-aligned to x=150 with a 300px menu would start at −150.
+		const p = clampMenuHorizontal(place({ left: 100, right: 150 }, "right"), 390, 300);
+		assert.equal(p.style.left, 8);
+		assert.ok(!("right" in p.style));
+	});
+
+	it("a menu wider than the room pins to the left edge", () => {
+		const p = clampMenuHorizontal(place({ left: 100, right: 150 }, "left"), 390, 500);
+		assert.equal(p.style.left, 8);
+	});
+
+	it("keeps the vertical placement", () => {
+		const base = place({ left: 200, right: 240 }, "left");
+		assert.equal(clampMenuHorizontal(base, 390, 352).style.top, base.style.top);
 	});
 });

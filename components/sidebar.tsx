@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { DumbbellIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -17,6 +17,9 @@ import { Hint } from "@/components/ui/hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { classifySwipe, resolveSidebarOpen, sidebarStorageKey, WIDE_QUERY } from "@/components/sidebar-state";
+import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { BottomTabs } from "@/components/bottom-tabs";
 import { fuzzyScore } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import type { ChatListItem } from "@/src/core";
@@ -24,17 +27,26 @@ import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
 /**
- * Toggleable sidebar — NOT a modal drawer: no backdrop, no focus theft. It
- * sits inline next to the content and can stay open while working in a
- * session. Open state persists across pages (provider lives in the root
- * layout) and across reloads (localStorage).
+ * Toggleable sidebar — NOT a modal: no focus theft. From `md` up it sits
+ * inline next to the content and can stay open while working in a session.
+ * Below `md` (phones) it is a fixed slide-in drawer over the app with a
+ * backdrop; a swipe from the left edge opens it, a swipe left or a route
+ * change closes it. Open state persists across pages (provider lives in the
+ * root layout) and across reloads (localStorage) — under separate keys for
+ * the two layouts, so a phone and a desktop never fight over one value.
  */
 
-const STORAGE_KEY = "lh:sidebar-open";
-
-const SidebarContext = createContext<{ open: boolean; toggle: () => void }>({
+const SidebarContext = createContext<{
+	open: boolean;
+	toggle: () => void;
+	/** Below md: the sidebar is an overlay drawer, not an inline panel. */
+	narrow: boolean;
+	setOpen: (next: boolean) => void;
+}>({
 	open: false,
 	toggle: () => {},
+	narrow: false,
+	setOpen: () => {},
 });
 
 export function useSidebar() {
@@ -44,22 +56,68 @@ export function useSidebar() {
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	// Start closed so server and client first-render agree (no hydration
 	// mismatch); the stored value is applied after mount.
-	const [open, setOpen] = useState(false);
+	const [open, setOpenState] = useState(false);
+	const [narrow, setNarrow] = useState(false);
 	const [mounted, setMounted] = useState(false);
+	const narrowRef = useRef(false);
+	const openRef = useRef(false);
+	openRef.current = open;
+	narrowRef.current = narrow;
+	const pathname = usePathname();
 
 	useEffect(() => {
-		const stored = localStorage.getItem(STORAGE_KEY);
-		// Default: open (first run introduces the sidebar).
-		setOpen(stored === null ? true : stored === "1");
-		setMounted(true);
+		const mq = window.matchMedia(WIDE_QUERY);
+		const apply = () => {
+			const wide = mq.matches;
+			narrowRef.current = !wide;
+			setNarrow(!wide);
+			setOpenState(resolveSidebarOpen(localStorage.getItem(sidebarStorageKey(wide)), wide));
+			setMounted(true);
+		};
+		apply();
+		mq.addEventListener("change", apply);
+		return () => mq.removeEventListener("change", apply);
 	}, []);
 
-	const toggle = useCallback(() => {
-		setOpen((v) => {
-			localStorage.setItem(STORAGE_KEY, v ? "0" : "1");
-			return !v;
-		});
+	const setOpen = useCallback((next: boolean) => {
+		localStorage.setItem(sidebarStorageKey(!narrowRef.current), next ? "1" : "0");
+		setOpenState(next);
 	}, []);
+
+	const toggle = useCallback(() => setOpen(!openRef.current), [setOpen]);
+
+	// The drawer covers the page: navigating (a session row, the tabs, a
+	// link) closes it. Not on first render — that is the stored state.
+	const lastPathRef = useRef(pathname);
+	useEffect(() => {
+		if (lastPathRef.current === pathname) return;
+		lastPathRef.current = pathname;
+		if (narrowRef.current && openRef.current) setOpen(false);
+	}, [pathname, setOpen]);
+
+	// Edge swipe opens, swipe left closes (phones only; touch only).
+	useEffect(() => {
+		if (!narrow) return;
+		let start: { x: number; y: number } | null = null;
+		const onStart = (e: TouchEvent) => {
+			const t = e.touches.length === 1 ? e.touches[0] : undefined;
+			start = t ? { x: t.clientX, y: t.clientY } : null;
+		};
+		const onEnd = (e: TouchEvent) => {
+			const t = e.changedTouches[0];
+			const from = start;
+			start = null;
+			if (!from || !t) return;
+			const intent = classifySwipe(from, { x: t.clientX, y: t.clientY }, openRef.current);
+			if (intent) setOpen(intent === "open");
+		};
+		window.addEventListener("touchstart", onStart, { passive: true });
+		window.addEventListener("touchend", onEnd, { passive: true });
+		return () => {
+			window.removeEventListener("touchstart", onStart);
+			window.removeEventListener("touchend", onEnd);
+		};
+	}, [narrow, setOpen]);
 
 	// ⌘B: the global shortcut dispatches kbdEventForAction("toggle-sidebar")
 	// and the context answers on exactly that name — the shared spelling
@@ -75,9 +133,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, [toggle]);
 
 	return (
-		<SidebarContext.Provider value={{ open, toggle }}>
+		<SidebarContext.Provider value={{ open, toggle, narrow, setOpen }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
-			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
+			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,translate]")}>{children}</div>
 		</SidebarContext.Provider>
 	);
 }
@@ -95,12 +153,13 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
  *  The icon fades with the slot and is clipped by it as it collapses —
  *  no popping in either direction. */
 export function SidebarToggle() {
-	const { open, toggle } = useSidebar();
+	const { open, toggle, narrow } = useSidebar();
+	// Below md the drawer overlays the page, so the slot never collapses.
 	return (
 		<span
 			className={cn(
-				"sidebar-motion relative flex h-9 shrink-0 overflow-hidden duration-200",
-				open ? "w-0 -mr-3" : "w-9 mr-0",
+				"sidebar-motion relative flex h-9 w-9 shrink-0 overflow-hidden duration-200",
+				open ? "md:w-0 md:-mr-3" : "md:mr-0",
 			)}
 		>
 			<Hint label="Open sidebar" action="toggle-sidebar">
@@ -108,10 +167,10 @@ export function SidebarToggle() {
 				variant="ghost"
 				size="icon"
 				aria-label="Open sidebar"
-				aria-hidden={open}
-				tabIndex={open ? -1 : 0}
+				aria-hidden={open && !narrow}
+				tabIndex={open && !narrow ? -1 : 0}
 				onClick={toggle}
-				className={cn("sidebar-motion duration-200", open ? "pointer-events-none opacity-0" : "opacity-100")}
+				className={cn("sidebar-motion duration-200", open ? "md:pointer-events-none md:opacity-0" : "opacity-100")}
 			>
 				{/* Owner, round 6: size-4, SAME as the close glyph — the toggle
 				    must not grow when the sidebar is closed (it did: size-5 here).
@@ -187,6 +246,7 @@ export function SessionRow({
 	onOpen,
 	kbdSelected = false,
 	onContextMenu,
+	onMenu,
 }: {
 	chat: ChatListItem;
 	active: boolean;
@@ -196,15 +256,21 @@ export function SessionRow({
 	kbdSelected?: boolean;
 	/** Right-click opens the context menu (wave 6: Rename / Delete). */
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+	/** The "⋯" button opens the same menu without a right-click — iOS
+	 *  never fires contextmenu on long-press. Hover-only on desktop,
+	 *  always visible on touch. */
+	onMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
 	return (
+		<div className="group relative mb-0.5">
 		<button
 			type="button"
 			onClick={onOpen}
 			onContextMenu={onContextMenu}
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			className={cn(
-				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
+				"relative flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
+				onMenu && "pointer-coarse:pr-11",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-border",
 			)}
@@ -226,6 +292,18 @@ export function SessionRow({
 				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Practice session" />
 			)}
 		</button>
+		{onMenu && (
+			<button
+				type="button"
+				aria-label="Session actions"
+				data-testid="session-row-menu"
+				onClick={onMenu}
+				className="absolute right-1 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:bg-accent group-hover:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
+			>
+				<MoreHorizontalIcon className="size-4" />
+			</button>
+		)}
+		</div>
 	);
 }
 
@@ -286,7 +364,8 @@ export type SessionKindFilter = "teach" | "all" | "practice";
 const KIND_FILTER_KEY = "lh:session-kind-filter";
 
 function SessionsSidebar() {
-	const { open, toggle } = useSidebar();
+	const { open, toggle, narrow, setOpen } = useSidebar();
+	const backdropDismiss = useBackdropDismiss(() => setOpen(false));
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -452,6 +531,14 @@ function SessionsSidebar() {
 		ctxAnchorRef.current = e.currentTarget;
 		setCtxChatId(chat.id);
 	};
+	// The row's "⋯": same menu, anchored to the button; a second tap closes.
+	const toggleContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
+		if (ctxChatId === chat.id && ctxAnchorRef.current === e.currentTarget) {
+			setCtxChatId(null);
+			return;
+		}
+		openContext(e, chat);
+	};
 
 	// The menu contract (agent-section's): any pointerdown outside the menu
 	// or its row closes it; Esc is CLAIMED so it never also aborts a turn
@@ -527,11 +614,11 @@ function SessionsSidebar() {
 		return () => window.removeEventListener("lh:kbd-sessions-search", onFocusSearch);
 	}, [open, toggle]);
 
-	// Keep the kbd-selected row in view (the rows are the container's only
-	// buttons, so the index matches).
+	// Keep the kbd-selected row in view (the row buttons, in list order, so
+	// the index matches; the "⋯" buttons carry another testid).
 	useEffect(() => {
 		if (kbdIndex === null) return;
-		listRef.current?.querySelectorAll("button")[kbdIndex]?.scrollIntoView({ block: "nearest" });
+		listRef.current?.querySelectorAll('button[data-testid^="session-row"]')[kbdIndex]?.scrollIntoView({ block: "nearest" });
 	}, [kbdIndex]);
 
 	useEffect(() => {
@@ -542,11 +629,23 @@ function SessionsSidebar() {
 	}, [open, pathname, refresh]);
 
 	return (
+		<>
+		{/* Phones: the dim backdrop behind the drawer — a tap on it closes. */}
+		{narrow && open && (
+			<div className="fixed inset-0 z-40 bg-background/80 md:hidden" data-testid="sidebar-backdrop" {...backdropDismiss} />
+		)}
 		<aside
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
+			className={cn(
+				"sidebar-motion overflow-hidden duration-200",
+				// Below md: a fixed slide-in drawer. md and up: the inline push panel.
+				"fixed inset-y-0 left-0 z-50 w-[85vw] max-w-72 md:static md:z-auto md:max-w-none md:shrink-0 md:translate-x-0",
+				open ? "translate-x-0 md:w-72" : "-translate-x-full md:w-0",
+			)}
 			aria-hidden={!open}
+			inert={narrow && !open}
+			data-testid="sidebar"
 		>
-			<div className="flex h-full w-72 flex-col border-r bg-background">
+			<div className="flex h-full w-full flex-col border-r bg-background max-md:pb-safe max-md:pl-safe max-md:pt-safe md:w-72">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge. */}
 				<div className="flex items-center justify-between px-4 py-3">
 					{/* The owner's mark (2026-09-17) replaces the "LH" text — still the
@@ -663,9 +762,9 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60"
+							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60 pointer-coarse:h-9 pointer-coarse:pl-8"
 						/>
-						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/70" />
+						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 pointer-coarse:left-2.5 size-3 -translate-y-1/2 text-muted-foreground/70" />
 					</span>
 					</Hint>
 				</div>
@@ -685,7 +784,7 @@ function SessionsSidebar() {
 							data-testid={`kind-filter-${f}`}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors",
+								"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors pointer-coarse:min-h-9",
 								kindFilter === f
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:text-foreground",
@@ -723,6 +822,7 @@ function SessionsSidebar() {
 										router.push(`/chat/${c.id}`);
 									}}
 									onContextMenu={(e) => openContext(e, c)}
+									onMenu={(e) => toggleContext(e, c)}
 								/>
 							),
 						)
@@ -829,6 +929,7 @@ function SessionsSidebar() {
 					onDeleted={onDeleted}
 				/>
 			</aside>
+		</>
 	);
 }
 
@@ -837,7 +938,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 	return (
 		<SettingsDialogProvider>
 			<SessionsSidebar />
-			<main className="min-w-0 flex-1">{children}</main>
+			<main className="min-w-0 flex-1 max-md:pb-[var(--lh-tabbar-h,0px)] max-md:[&>div]:h-full">{children}</main>
+			<BottomTabs />
 			{/* The single document-level keydown listener (keyboard wave A) —
 			    after the content in the tree, but it's window-level so order only
 			    matters for the events it dispatches, never for DOM priority. */}
