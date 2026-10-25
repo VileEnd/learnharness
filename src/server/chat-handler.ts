@@ -28,6 +28,7 @@ import { effectiveSettings, stores } from "./stores.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
 import { providerKeyPresent } from "./keys.ts";
 import { docIndex } from "./doc-index.ts";
+import { library } from "./okf-library.ts";
 import {
 	extractionEnabled,
 	documentToolsEnabled,
@@ -388,6 +389,7 @@ export async function handleChatInput(
 							searchAvailable,
 						},
 						libraryRoot: PATHS.okf,
+						libraryBeforeAccess: () => library.ensureFresh(),
 						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
@@ -405,6 +407,7 @@ export async function handleChatInput(
 						// = no research tool in the teacher's registry.
 						searchAvailable,
 						libraryRoot: PATHS.okf,
+						libraryBeforeAccess: () => library.ensureFresh(),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -421,6 +424,7 @@ export async function handleChatInput(
 						spawn: (job, input) => void jobRunner.runJob(job.id, input),
 						searchAvailable,
 						libraryRoot: PATHS.okf,
+						libraryBeforeAccess: () => library.ensureFresh(),
 						// The map reader (wave 7): the prober reads the learner's
 						// knowledge graph through tools when the gate opens —
 						// graph master switch AND the agent.graphTools toggle.
