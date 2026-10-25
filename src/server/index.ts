@@ -48,7 +48,7 @@ export * from "./push.ts";
 // The document library (PR G): the service, its scan registry for the dock, and the request-side types.
 export { documents, topicBackfill } from "./library.ts";
 export { docIndex } from "./doc-index.ts";
-export { scanStatuses, abortScan, incomingFiles, type CheckResult, type ImportTicket, type ImportCompletion, type IncomingFile } from "./documents.ts";
+export { withActivityRow, scanStatuses, abortScan, incomingFiles, type CheckResult, type ImportTicket, type ImportCompletion, type IncomingFile } from "./documents.ts";
 export { OcrError } from "./ocr-client.ts";
 // The OKF library (generated bundle + download): the freshness service, the zip writer.
 export { library } from "./okf-library.ts";

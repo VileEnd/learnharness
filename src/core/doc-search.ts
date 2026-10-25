@@ -60,6 +60,8 @@ export interface DocSearchQuery {
 	limit?: number;
 	/** false = document passages only (the /documents page has no reader for a concept). Default true. */
 	includeConcepts?: boolean;
+	/** true = concept hits only (no document passages): the learner-model attribution searches the library for the concepts a question tests. */
+	conceptsOnly?: boolean;
 }
 
 export interface DocListEntry {
