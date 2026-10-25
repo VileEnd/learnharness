@@ -204,7 +204,7 @@ export interface PromptOverrideStore {
 
 /**
  * The long-standing flat {VAR: value} auth.json map (config.AUTH_FILE) —
- * the same file the Electron app has always hand-edited, now first-class
+ * the same file the app has always hand-edited, now first-class
  * server-managed. Values are opaque strings: shape validation is a
  * server-band concern (core/auth-keys.ts validateKeyShape — the store
  * persists what it is given); env precedence is a server-band concern

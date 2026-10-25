@@ -1,0 +1,17 @@
+# Mirrors .gitignore — never send data, keys, or build output to the builder.
+node_modules/
+data/
+.next/
+*.log
+.DS_Store
+*.tsbuildinfo
+.env*
+.memory/
+SCOPE.md
+real-data-extraction/
+dist/
+auth.json
+.fresh-data/
+# Not needed in the image build.
+.git/
+deploy/

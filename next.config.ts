@@ -1,21 +1,20 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-	// Desktop target (Electron wrapper, 2026-09-17): standalone output = a
-	// self-contained .next/standalone/server.js the Electron shell spawns
-	// on 127.0.0.1. Harmless for plain web deploys (extra build output).
+	// Container target: standalone output = a self-contained
+	// .next/standalone/server.js the Docker image runs (`node server.js`).
 	// The manual copies the docs require — public/ and .next/static — are
 	// done by scripts/build-server.mjs.
 	output: "standalone",
 	// SAFETY (empirically verified 2026-09-17): without this, output file
 	// tracing sweeps the repo's real data/ — chat records, graph ledgers —
-	// INTO the standalone bundle. A shipped desktop app would carry the
+	// INTO the standalone bundle. A shipped image would carry the
 	// developer's session data inside it.
 	//
 	// SECRETS (2026-10-08, caught in the payload audit): the same sweep
 	// ships the repo-root auth.json — the DEV BYOK key store — byte-identical
-	// into the DMG (the packaged app never reads it: the shell passes
-	// LH_AUTH_FILE → userData). Excluded here; build-server.mjs also REFUSES
+	// into the payload (the container never reads it: LH_AUTH_FILE points at
+	// the data volume). Excluded here; build-server.mjs also REFUSES
 	// to package any standalone still containing it. .env* belt-and-braces
 	// the same class. Next also copies loaded bare .env after tracing;
 	// the build-server refusal remains required even with these excludes.
@@ -32,13 +31,10 @@ const nextConfig: NextConfig = {
 	// Turbopack tracer: that still prunes gcp-metadata and its private deps.
 	// Keep the narrow closure workaround below AND the native runtime gate.
 	// Real SDK data/ directories still need their explicit includes too.
-	// The recursive-DMG payload (repo dist/ swept into the bundle, shipping
-	// the previous build inside the next) is instead prevented by the
-	// desktop:dist clean step AND targeted post-trace curation in
-	// scripts/build-server.mjs (2026-10-11): remove standalone-root dist/
-	// and node_modules/electron/ (the demo helper's DEV runtime; packaged
-	// helpers use the app's own binary). Runtime dependencies' dist/ dirs
-	// stay intact, and the script guards against leaked data/keys.
+	// A repo-root dist/ swept into the bundle is instead removed by
+	// targeted post-trace curation in scripts/build-server.mjs (2026-10-11).
+	// Runtime dependencies' dist/ dirs stay intact, and the script guards
+	// against leaked data/keys.
 	outputFileTracingExcludes: {
 		"*": [
 			"**/data/**/*",
@@ -74,9 +70,8 @@ const nextConfig: NextConfig = {
 			// per-platform-binary story as the canvas above (one per build).
 			"node_modules/@resvg/resvg-js-*/**/*",
 			"node_modules/@earendil-works/pi-ai/dist/providers/data/**/*",
-			// Public native OAuth factories load these flows through variable imports.
-			// Electron main uses the same standalone SDK; the offline runtime gate
-			// evaluates their real toAuth paths without login or provider requests.
+			// Public native OAuth factories load these flows through variable imports
+			// (pi-ai resolves them lazily even for API-key use of those providers).
 			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,github-copilot,xai,device-code}.js",
 			"node_modules/@earendil-works/pi-ai/dist/utils/sleep.js",
 			"node_modules/@earendil-works/pi-agent-core/dist/**/*.json",

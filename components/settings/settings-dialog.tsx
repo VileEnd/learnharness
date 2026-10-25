@@ -14,7 +14,7 @@
  *   doctrine.
  * - The dialog is surface-agnostic by construction: the sections talk to
  *   /api/settings* and localStorage only, so this shell can be re-mounted
- *   as a true OS window in the Electron round with near-zero churn.
+ *   elsewhere with near-zero churn.
  *
  * The record + the single `write` seam moved here from the thin page:
  * one record instance for the whole dialog, sections write through it,
@@ -49,8 +49,6 @@ import { KeysSection } from "./keys-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
-import { ChatGPTUIProvider } from "./chatgpt-connection.tsx";
-import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
 
 /** Owner (2026-09-20): hints earn their place — mechanics-explaining
  *  prose is out; only the keyboard note stays (storage location is a
@@ -93,12 +91,12 @@ export function SettingsDialogProvider({
 		setShow(true);
 	}, []);
 	return (
-		<ChatGPTUIProvider><NativeSubscriptionUIProvider><DialogContext.Provider value={{ open }}>
+		<DialogContext.Provider value={{ open }}>
 			{children}
 			{show && (
 				<SettingsDialog onClose={() => setShow(false)} initialSection={landOn} initialRow={landOnRow} />
 			)}
-		</DialogContext.Provider></NativeSubscriptionUIProvider></ChatGPTUIProvider>
+		</DialogContext.Provider>
 	);
 }
 

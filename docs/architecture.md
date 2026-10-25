@@ -1,8 +1,8 @@
 # Learning Harness — Architecture
 
-Status: **the canonical architecture spec** — describes the as-built system, verified against the code by a full audit on 2026-09-18 (every file under `src/`, `app/`, `components/`, `electron/`, `scripts/`, the lint config, and the test suite; `lint` and `typecheck` clean on the audited tree). The pre-audit spec is archived at [`archive/architecture-2026-09-08.md`](archive/architecture-2026-09-08.md) — history only. Product reasoning lives in [`docs/vision.md`](vision.md); file-by-file layout lives in the README.
+Status: **the canonical architecture spec** — describes the as-built system, verified against the code by a full audit on 2026-09-18 (every file under `src/`, `app/`, `components/`, `scripts/`, the lint config, and the test suite; `lint` and `typecheck` clean on the audited tree). The pre-audit spec is archived at [`archive/architecture-2026-09-08.md`](archive/architecture-2026-09-08.md) — history only. Product reasoning lives in [`docs/vision.md`](vision.md); file-by-file layout lives in the README.
 
-**What this is.** A standalone learning app (web + Electron desktop): the learner's knowledge accumulates into one persistent, cross-session knowledge graph, built from tutoring sessions in which a teacher agent authors a formal, visible dependency tree (the plan tree) and verifies understanding with structured questions. The graph is the home page; the session is the classroom; everything else serves those two.
+**What this is.** A self-hosted, browser-only learning app (Docker behind a Keycloak login — [`self-hosting.md`](self-hosting.md); the Electron desktop shell was removed 2026-10-25): the learner's knowledge accumulates into one persistent, cross-session knowledge graph, built from tutoring sessions in which a teacher agent authors a formal, visible dependency tree (the plan tree) and verifies understanding with structured questions. The graph is the home page; the session is the classroom; everything else serves those two.
 
 **Design principles, in priority order:**
 
@@ -30,7 +30,7 @@ Hold the architecture along two orthogonal axes:
 | **Library** — world model | `data/graph/*` ledgers | extraction pipeline (sole graph writer), derivation, birth-session clusters |
 | **Practice** — problem sets | `data/practice/*.json` | partitioner→generator→grader pipeline, self-contained sets (§7) |
 | **Stage** — presentation shell | nothing server-side | components/, graph canvas, docks — pure consumer via `/api/*` |
-| **Machine room** — host | process + config | Electron main, standalone Next server, `config.ts`, data-dir seam, BYOK keys |
+| **Machine room** — host | process + config | Docker image (standalone Next server), the deploy/ stack (Caddy · oauth2-proxy · Keycloak), `config.ts`, data-dir seam, BYOK keys |
 
 **The unifying law** (generates everything else): **imports point inward, writes point to append-only evidence, and everything else is derived.** Dependency flows toward purity; data flows toward evidence; no state is stored where it can be recomputed.
 
@@ -136,7 +136,7 @@ flowchart TB
     COMP -.->|"✗ FORBIDDEN (lint)"| SERVER
 ```
 
-**Two rules are documentation-only by design.** The ESLint plugin's `except` can't express "all but one", so (a) `src/server/stores.ts` is *intended* to be the only server module importing adapters — but the server barrel also re-exports the two portless settings adapters and `observability.ts` imports `chatStore` directly; and (b) the browser-safety of the core barrel is a doc-comment convention (see §2.1). `tests/`, `scripts/`, and `electron/` are deliberately outside the law (lint-excluded); tests import freely across layers, scripts act as extra composition roots.
+**Two rules are documentation-only by design.** The ESLint plugin's `except` can't express "all but one", so (a) `src/server/stores.ts` is *intended* to be the only server module importing adapters — but the server barrel also re-exports the two portless settings adapters and `observability.ts` imports `chatStore` directly; and (b) the browser-safety of the core barrel is a doc-comment convention (see §2.1). `tests/` and `scripts/` are deliberately outside the law (lint-excluded); tests import freely across layers, scripts act as extra composition roots.
 
 ### 2.1 The core barrel and browser-safety
 
@@ -174,7 +174,7 @@ flowchart LR
         BROWSER["Browser UI — components/: question dock (addToolOutput) · graph canvas · docks"]
         HTTP["HTTP transport — app/api/*: 28 route handlers"]
         NOTES["Notes front door — POST /api/graph/import"]
-        ELEC["Electron main — thin launcher, spawns server, LH_DATA_DIR + BYOK env"]
+        ELEC["Caddy → oauth2-proxy (Keycloak) — HTTPS + login in front of the server"]
     end
 
     subgraph HEXCORE["THE CORE — src/core (pure domain)"]
@@ -245,7 +245,7 @@ flowchart TB
     end
 
     subgraph ROOM["MACHINE ROOM — host"]
-        HOST["Electron main → standalone Next server · config.ts · LH_DATA_DIR · BYOK"]
+        HOST["Docker: standalone Next server · config.ts · LH_DATA_DIR · BYOK"]
     end
 
     LEARNER -->|"text · answers [transport adapter]"| UI
@@ -374,6 +374,8 @@ flowchart TB
 
 ## 7. Practice — strengthening, not assessment (owner ruling 2026-09-29)
 
+> **Superseded (2026-10-04):** the problem-set pipeline below (`data/practice`, `/practice`, `practice-pipeline.ts`, `PracticeStore`) no longer exists. Practice is now a chat session kind (`ChatRecord.kind === "practice"`, absent = teach): the practice agent with its own prompts (`src/agent/prompts/practice/`) and two tools, `problem` / `conclude` (`src/agent/tools/practice.ts`); practice sessions run no extraction and write nothing to the graph. The section is kept as design history.
+
 Practice turns the graph into problem sets the learner reasons through out loud. The purpose ruling first: this is **strengthening, not assessment**. Grades are feedback for the learner — a score, a brief justification, a look at the model solution — and nothing else. Grading writes nothing to the graph, no understanding levels exist anywhere, and the vision doc's exam machinery (scores, streaks, spaced repetition over failure rates) stays parked. A set exercises what the learner already met; it certifies nothing.
 
 **The chain model.** Practice reads the STORED chains directly (chains-primary, 2026-09-30): `chainsForSelection` (`src/core/practice.ts`) includes a stored argument iff its conclusion AND every premise are selected — an argument missing any member is excluded entirely, and a node in no surviving argument becomes a singleton chain; premise-only nodes belong to no chain. Each argument keeps its own `arg_` id: two independent arguments for one conclusion stay two chains (never a unioned premise set — the exact corruption edge-grouping invited). The partition must cover every chain **exactly once** — a true partition; duplicates fail validation exactly like gaps (owner amendment 2026-09-29: variety accumulates ACROSS sets, never within one — the at-least-once doctrine is dead). `chainCoverage` is the soundness check: only `missing` fails a partition, `duplicated` is informational.
@@ -398,36 +400,34 @@ Practice turns the graph into problem sets the learner reasons through out loud.
 
 ```mermaid
 flowchart LR
-    subgraph DESKTOP["Electron app (production)"]
-        MAIN["Electron main (electron/main.cjs)<br/>launcher + credential/security owner<br/>origin-pinned controls · private child IPC"] -->|"spawn: ELECTRON_RUN_AS_NODE,<br/>loopback port, LH_DATA_DIR=userData/data"| NEXT["standalone Next server (child)<br/>ALL app logic: turns · extraction · jobs · graph"]
-        MAIN -->|"loadURL, sandboxed renderer"| REND["Browser renderer (components/)<br/>fetch/WebSocket to own origin only"]
+    subgraph LAN["home network"]
+        BROWSER["Browser / installed PWA (components/)<br/>fetch + EventSource to its own origin"]
     end
-    subgraph OUTSIDE["outside the process"]
-        OR["OpenRouter (BYOK key from auth.json, env-injected — never argv)"]
+    subgraph STACK["Docker host (deploy/compose.yaml)"]
+        CADDY["Caddy — HTTPS (local CA)<br/>forward_auth on every app request"]
+        PROXY["oauth2-proxy — session cookie,<br/>group learnharness required"]
+        KC["Keycloak (+ Postgres) — users, OIDC"]
+        NEXT["LearnHarness image: standalone Next server<br/>ALL app logic: turns · extraction · jobs · graph<br/>+ Chromium (demo verification)"]
+        DISK["/data volume — data/ ledgers (LH_DATA_DIR) · auth.json (LH_AUTH_FILE)"]
+    end
+    subgraph OUTSIDE["outside"]
+        OR["LLM providers (BYOK keys from auth.json, reflected into env)"]
         DG["Deepgram STT (browser-direct WebSocket)"]
         GCSE["Google CSE / Jina (researcher tools)"]
-        CHROME["system Chrome (headless: demo verify · SVG render)"]
-        DISK["data/ ledgers (via LH_DATA_DIR seam)"]
     end
+    BROWSER -->|"HTTPS"| CADDY
+    CADDY -->|"/oauth2/* · auth subrequest"| PROXY
+    PROXY -->|"OIDC"| KC
+    CADDY -->|"authorized requests (SSE unbuffered)"| NEXT
+    NEXT --> DISK
     NEXT --> OR
     NEXT --> GCSE
-    NEXT --> CHROME
-    NEXT --> DISK
-    REND --> DG
-    REND -->|"fetch /api/*"| NEXT
+    BROWSER --> DG
 ```
 
-The Electron main is a launcher + credential/security guard, never a host for teaching or inference logic: single-instance lock, deny-by-default permissions, origin-pinned navigation, sandboxed renderer. All Next.js code runs unchanged in a child process (`output: "standalone"`), relocated by the `LH_DATA_DIR` seam (also the test seam — `data-dir-seam.test.ts` covers it, including a fresh-child-process case). The build hard-fails if repo `data/` would leak into the bundle or if prompt assets fall out of the trace (`scripts/build-server.mjs`).
+The app server has **no authentication of its own**: every `/api/*` route trusts whoever reaches it, so it publishes no port — only Caddy does, and Caddy forwards a request only after oauth2-proxy has accepted the Keycloak session (the PWA manifest and its icons are the one public exception: browsers fetch them without cookies). All app data lives on the mounted `/data` volume through the `LH_DATA_DIR` / `LH_AUTH_FILE` seams (also the test seam — `data-dir-seam.test.ts`). The image build hard-fails if repo `data/` or keys would leak into the payload or if prompt assets fall out of the trace (`scripts/build-server.mjs`), boots the server once (`scripts/smoke-server.mjs`), and drives a demo page through the image's Chromium (`scripts/smoke-demo-runtime.mjs --browser`).
 
 ---
-
-### 8.1 Subscription connection boundary
-
-`electron/chatgpt.cjs` retains the existing verified-account ChatGPT authentication, storage and revocation behavior. `electron/subscriptions.cjs` delegates GitHub Copilot/Grok login and refresh to the installed Pi SDK through its public provider/Models interfaces. Their single saved connections live independently in owner-only, atomically written `github-copilot-credentials.json` / `xai-credentials.json` beside the existing app credential files. Electron main alone owns durable OAuth credentials and serialized refresh; no global Pi files or API-key credential precedence are involved.
-
-The renderer gets projected status, public device user codes, prompts and controls over origin-pinned IPC. The privately launched server child receives credential-free catalogs and scoped request auth (including native headers/account endpoints), never refresh tokens. `src/agent/subscription-bridge.ts` rejects framework-only IPC and invalidates stale connection/catalog scopes. `subscription-stream.ts` dispatches directly through native providers, retaining native protocol identity on the wire and restoring logical app identity in assistant history. Persisted routes `chatgpt`, `github-copilot-subscription` and `xai-subscription` are distinct from ordinary API routes and never fall back to them.
-
-`subscription-request-cycle.ts` is the shared admission/automatic-input recovery state machine; the old ChatGPT module is its compatibility export. Background consent is independent per provider, default ON, with foreground-preserving cancellation and queue ownership retained on no-dispatch. Native usage rejected before dispatch is transiently excluded from helper usage collectors, without adding persisted provenance fields. Catalogs and read-time pricing preserve the selected connection: subscription use displays compact provider labels, API dollars remain dollars, and mixed usage joins both without estimating subscription dollars or claiming detected tiers/allowances.
 
 ## 9. The foundational invariants — what ALWAYS holds
 
@@ -465,8 +465,8 @@ The renderer gets projected status, public device user codes, prompts and contro
 ### Known deviations from the ideal (documented, deliberate or accepted)
 
 - Two portless settings adapters re-exported through the server barrel; `observability.ts` imports `chatStore` directly. The "only `stores.ts` imports adapters" rule is documentation-only.
-- `scripts/` and `electron/` are lint-exempt; scripts act as extra composition roots (and backfills are, by design, extra graph writers); `tests/` imports freely across layers.
-- Small conventional-only sync points: `SIDEBAR_AUTOCLOSE` mirrored in `electron/main.cjs` ↔ `components/sidebar.tsx`; IPC channel names mirrored by comment; the jobs dir path hardcoded in the adapter rather than `config.ts`.
+- `scripts/` is lint-exempt; scripts act as extra composition roots (and backfills are, by design, extra graph writers); `tests/` imports freely across layers.
+- Small conventional-only sync point: the jobs dir path hardcoded in the adapter rather than `config.ts`.
 
 ---
 
@@ -543,8 +543,8 @@ Every place the architecture is designed to be cut — the "one file" a future c
 | Push events | `src/core/events.ts` (bus) + `src/server/events-stream.ts` (SSE seam) + `components/server-events.tsx` (the window's EventSource) | change notification, end to end |
 | Agent construction (tests) | `handleChatRequest(req, buildAgent?)` | scripted engines, no refactor |
 | Sub-agent verification | `sub-agents/headless.ts` (`headlessOverride`) | demo/SVG verification, no Chrome |
-| Data location (Electron) | `LH_DATA_DIR` env (`config.ts` PATHS) | where data/ lives, nothing else |
-| Desktop host | `electron/main.cjs` | launcher/security shell only |
+| Data location (Docker volume) | `LH_DATA_DIR` env (`config.ts` PATHS) | where data/ lives, nothing else |
+| Host + access control | `Dockerfile` + `deploy/` (Caddy · oauth2-proxy · Keycloak) | how the server is run and who may reach it |
 
 ---
 

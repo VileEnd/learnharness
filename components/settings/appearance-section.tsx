@@ -17,10 +17,10 @@
  *
  * Reading font (appearance wave, 2026-09-26, owner ruling): a searchable
  * dropdown of the user's INSTALLED fonts (FontMenuList over model-menu's
- * machine) fed by window.queryLocalFonts() in the desktop shell — the
- * enumeration is click-bound (the API requires user activation), deduped
- * to unique families, the factory family excluded (the DEFAULT row is
- * it). In a plain dev browser the API is absent → a small curated list
+ * machine) fed by window.queryLocalFonts() where the browser offers it
+ * (Chromium, secure context) — the enumeration is click-bound (the API
+ * requires user activation), deduped to unique families, the factory
+ * family excluded (the DEFAULT row is it). Where the API is absent → a small curated list
  * + a footer that says exactly that — never a fabricated system list.
  * The custom-family input inside the menu is the manual escape path.
  * Empty/unset keeps meaning Source Sans 3.
@@ -101,11 +101,9 @@ export function AppearanceSection({
 	const md = appearance?.mdRendering;
 
 	// The font dropdown's open state + its enumeration cache. undefined =
-	// not enumerated yet (desktop: click-bound queryLocalFonts pending);
-	// null = enumeration UNAVAILABLE (the API is absent in a plain
-	// browser, rejected, or resolved EMPTY — Electron 44's local-fonts
-	// grant passes and the enumeration still yields zero fonts,
-	// reproduced 2026-09-26) → the curated fallback; a list = the deduped
+	// not enumerated yet (click-bound queryLocalFonts pending);
+	// null = enumeration UNAVAILABLE (the API is absent in this browser,
+	// rejected, or resolved EMPTY) → the curated fallback; a list = the deduped
 	// families. enumEmpty distinguishes WHY it fell back, for the footer.
 	const [fontMenuOpen, setFontMenuOpen] = useState(false);
 	const [localFonts, setLocalFonts] = useState<string[] | null | undefined>(undefined);
@@ -133,8 +131,7 @@ export function AppearanceSection({
 								.sort((a, b) => a.localeCompare(b));
 							if (families.length === 0) {
 								// Resolved-but-empty: not a failure the catch sees —
-								// an honest unavailable (this Electron 44 build
-								// enumerates nothing even granted).
+								// an honest unavailable.
 								setLocalFonts(null);
 								setEnumEmpty(true);
 							} else {
@@ -259,7 +256,7 @@ export function AppearanceSection({
 										: localFonts === null
 											? enumEmpty
 												? "Common families — installed fonts could not be read"
-												: "Common families — your installed list needs the desktop app"
+												: "Common families — this browser can't list installed fonts"
 											: "Your installed fonts"
 								}
 							/>

@@ -159,10 +159,6 @@ export function DraftShell({
 		 * orientation. The chain picker then owns the column top exactly
 		 * like the graph view's — no stacked bars. */
 		<div className="relative flex h-dvh">
-			{/* Window-drag strip — deliberately FIRST in the DOM (the mask
-			    law: no-drag subtraction resolves by DOM order, so every
-			    carved control later in the tree subtracts correctly). */}
-			<div className="lh-drag absolute inset-x-0 top-0 h-13" aria-hidden="true" />
 			<div className="flex min-w-0 flex-1 flex-col">
 				<div className="relative flex min-h-0 flex-1">
 					{/* The pointer-events pattern (953b22b): the sticky wrapper is
@@ -325,7 +321,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 					// THE PICKER (owner round 10b): hosted INSIDE the content
 					// column — absolute inset-0 resolves to the column's relative
 					// container, the same confinement the graph view gives it;
-					// never over the sidebar or the traffic lights.
+					// never over the sidebar.
 					<ChainTableOverlay
 						open={pickerOpen}
 						nodes={snapshot?.propositions ?? []}

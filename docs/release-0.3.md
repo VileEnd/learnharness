@@ -1,9 +1,8 @@
 # First Release (0.3.0) — polish list + lock question
 
 > **Historical planning notes (2026-10-06), not the current release checklist.**
-> Several items below have since shipped, including signing/notarization and
-> automatic updates. See [Desktop builds and releases](desktop-release.md) for
-> the current build, verification, and release procedure.
+> Several items below have since shipped. The desktop app has since been
+> replaced by browser-only self-hosting — see [Self-hosting](self-hosting.md).
 
 Started 2026-10-06, owner brain-dump round. Priority 1 — everything else (assessment levels → docs/vision-assessment.md) comes after. Items are captured as spoken; design decisions inside them are **unruled** unless marked.
 
