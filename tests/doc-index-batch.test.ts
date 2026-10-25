@@ -15,16 +15,19 @@ const TMP_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "lh-doc-batch-"));
 process.env.LH_DATA_DIR = TMP_DATA;
 
 const { documentStore } = await import("../src/store/documents.ts");
+const { conceptVectorStore } = await import("../src/store/concept-vectors.ts");
 const { createDocIndex, openRouterBatchClient, buildBatchRequests } = await import("../src/server/doc-index.ts");
 const { fingerprint } = await import("../src/core/documents.ts");
 import type { BatchRequest } from "../src/server/doc-index.ts";
 import type { DocumentMeta } from "../src/core/contracts/documents.ts";
+import type { GraphNode } from "../src/core/contracts/graph.ts";
 
 const scanRows = () => ((globalThis as { __lhDocumentScans?: Map<string, { title: string }> }).__lhDocumentScans ??= new Map());
 
 after(() => fs.rmSync(TMP_DATA, { recursive: true, force: true }));
 beforeEach(() => {
 	fs.rmSync(path.join(TMP_DATA, "documents"), { recursive: true, force: true });
+	fs.rmSync(path.join(TMP_DATA, "graph"), { recursive: true, force: true });
 	scanRows().clear();
 });
 
@@ -317,5 +320,65 @@ describe("batch indexing", () => {
 			await new Promise((r) => setTimeout(r, 10));
 		}
 		assert.deepEqual(or.calls, [], "no batch request");
+	});
+});
+
+describe("concepts through the batch path", () => {
+	const node = (id: string, name: string, statement: string): GraphNode => ({
+		id,
+		name,
+		statement,
+		aliases: [],
+		createdAt: "2026-10-01T00:00:00.000Z",
+		provenance: [],
+	});
+	const nodes = [node("n_aaaaaa1", "Semaphore P/V atomic", "P und V sind atomar."), node("n_bbbbbb2", "Mutex lock", "Ein Mutex schützt.")];
+	const graph = { readNodes: () => nodes, readTopics: () => [], readTopicAliases: () => ({}) };
+
+	it("concept vectors survive a restart", async () => {
+		const { or, clock, make } = setup({ graphStore: graph, graphStamp: () => "1", conceptVectors: conceptVectorStore });
+		const first = make();
+		await first.tick();
+		clock.t += 2 * MINUTE;
+		await first.tick();
+		const sent = or.batches.get("batch_1")!;
+		assert.deepEqual(sent.body.requests.map((r) => r.custom_id).sort(), ["cpt_n_aaaaaa1~0", "cpt_n_bbbbbb2~0"]);
+		assert.equal(sent.body.requests.find((r) => r.custom_id === "cpt_n_bbbbbb2~0")!.body.input, "Mutex lock\nEin Mutex schützt.");
+		assert.deepEqual(Object.keys(pendingFile()[0]!.docs).sort(), ["cpt_n_aaaaaa1", "cpt_n_bbbbbb2"]);
+
+		or.complete("batch_1");
+		clock.t += MINUTE;
+		await first.tick();
+		const stored = conceptVectorStore.read()!;
+		assert.deepEqual([stored.model, stored.dims, Object.keys(stored.entries).sort()], [MODEL, 3, ["cpt_n_aaaaaa1", "cpt_n_bbbbbb2"]]);
+		assert.deepEqual(pendingFile(), []);
+
+		const second = make(); // a new process on the same data dir
+		clock.t += 10 * MINUTE;
+		await second.tick();
+		clock.t += 10 * MINUTE;
+		await second.tick();
+		assert.deepEqual(or.state.submits, ["batch_1"], "no new batch for concepts that already have vectors");
+	});
+
+	it("an edited concept is resubmitted alone", async () => {
+		const live = [...nodes];
+		const g = { ...graph, readNodes: () => live };
+		let stamp = 1;
+		const { or, clock, make } = setup({ graphStore: g, graphStamp: () => String(stamp), conceptVectors: conceptVectorStore });
+		const index = make();
+		await index.tick();
+		clock.t += 2 * MINUTE;
+		await index.tick();
+		or.complete("batch_1");
+		clock.t += MINUTE;
+		await index.tick();
+		live[1] = node("n_bbbbbb2", "Mutex lock", "Ein Mutex sperrt.");
+		stamp++;
+		clock.t += 3 * MINUTE;
+		await index.tick();
+		clock.t += 3 * MINUTE;
+		await index.tick();
+		assert.deepEqual(or.batches.get("batch_2")!.body.requests.map((r) => r.custom_id), ["cpt_n_bbbbbb2~0"]);
 	});
 });

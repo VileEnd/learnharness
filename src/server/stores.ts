@@ -7,6 +7,7 @@
  */
 
 import { chatStore } from "../store/chats.ts";
+import { conceptVectorStore } from "../store/concept-vectors.ts";
 import { documentStore } from "../store/documents.ts";
 import { graphStore } from "../store/graph.ts";
 import { jobStore } from "../store/jobs.ts";
@@ -17,6 +18,7 @@ import { resolveSettings, type EffectiveSettings } from "../core/settings-resolu
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
 	chatStore,
+	conceptVectorStore,
 	documentStore,
 	graphStore,
 	jobStore,
