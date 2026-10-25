@@ -32,6 +32,8 @@ interface CheckResult {
 	verdict: DuplicateVerdict;
 	scanned?: boolean;
 	error?: string;
+	/** An old import of this file name that produced no nodes (new, with a hint). */
+	legacyEmpty?: { sourceId: string; importedAt: string };
 }
 
 interface Estimate {
@@ -64,25 +66,41 @@ const ACCEPT = ".md,.markdown,.txt,.pdf,text/markdown,text/x-markdown,text/plain
 // ─── pure helpers (exported for the SSR pins) ────────────────────────────────
 
 /** The decision choices a verdict offers (exact duplicates are the same
- *  content, so "import as new" would be a no-op there). */
+ *  content, so "import as new" would be a no-op there). A file already in
+ *  the graph from an old import is attached by default; extracting it again
+ *  is the alternative. */
 export function choicesFor(verdict: DuplicateVerdict): DocumentDecision[] {
+	if (verdict.status === "legacy") return ["attach", "new", "skip"];
 	return verdict.status === "similar" ? ["skip", "replace", "new"] : verdict.status === "duplicate" ? ["skip", "replace"] : [];
+}
+
+/** What happens to a matched file when the learner changes nothing. */
+export function defaultDecision(verdict: DuplicateVerdict): DocumentDecision {
+	return verdict.status === "legacy" ? "attach" : "skip";
 }
 
 export function statusLabel(verdict: DuplicateVerdict): string {
 	const of = verdict.of;
+	if (verdict.status === "legacy" && verdict.legacy) {
+		const { importedAt, nodeCount } = verdict.legacy;
+		return `Already in your graph · imported ${new Date(importedAt).toLocaleDateString()} · ${nodeCount} node${nodeCount === 1 ? "" : "s"} — add to library (no re-extraction)`;
+	}
 	if (verdict.status === "duplicate" && of) return `Already imported as ${of.title} · ${new Date(of.importedAt).toLocaleDateString()}`;
 	if (verdict.status === "similar" && of) return `${Math.round((verdict.score ?? 0) * 100)}% similar to ${of.title}`;
 	return "New";
 }
 
-const CHOICE_LABEL: Record<DocumentDecision, string> = { skip: "Skip", replace: "Replace", new: "Import as new" };
+const CHOICE_LABEL: Record<DocumentDecision, string> = { skip: "Skip", replace: "Replace", new: "Import as new", attach: "Add to library" };
+
+/** "new" on an old import means extracting the file again. */
+export const choiceLabel = (choice: DocumentDecision, verdict: DuplicateVerdict): string =>
+	choice === "new" && verdict.status === "legacy" ? "Re-extract" : CHOICE_LABEL[choice];
 
 /** Will this entry be sent? New files always; matched ones unless skipped. */
 export function willImport(entry: Entry, decisions: Record<number, DocumentDecision>): boolean {
 	if (entry.state !== "ready" || !entry.check) return false;
 	if (entry.check.verdict.status === "new") return true;
-	return (decisions[entry.key] ?? "skip") !== "skip";
+	return (decisions[entry.key] ?? defaultDecision(entry.check.verdict)) !== "skip";
 }
 
 const usdLabel = (usd: number) => `≈ $${usd < 0.01 ? "<0.01" : usd.toFixed(2)}`;
@@ -189,7 +207,7 @@ export function AddDocumentsBody({
 									<EntryRow
 										key={entry.key}
 										entry={entry}
-										decision={decisions[entry.key] ?? "skip"}
+										decision={decisions[entry.key] ?? (entry.check ? defaultDecision(entry.check.verdict) : "skip")}
 										disabled={phase === "importing"}
 										onRemove={() => onRemove(entry.key)}
 										onDecide={(d) => onDecide(entry.key, d)}
@@ -266,6 +284,11 @@ function EntryRow({
 					) : verdict ? (
 						<div data-testid="add-documents-status" data-status={verdict.status} className="break-words text-xs text-muted-foreground">
 							<span className={verdict.status === "new" ? "text-foreground" : undefined}>{statusLabel(verdict)}</span>
+							{entry.check?.legacyEmpty && (
+								<span data-testid="add-documents-legacy-empty">
+									{" · "}the old import of this file produced nothing, so it will be read again
+								</span>
+							)}
 							{entry.check?.kind === "pdf" && (
 								<>
 									{entry.pages ? ` · ${entry.pages} pages` : ""}
@@ -300,7 +323,7 @@ function EntryRow({
 								(decision === choice ? "border-foreground/40 bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent")
 							}
 						>
-							{CHOICE_LABEL[choice]}
+							{verdict ? choiceLabel(choice, verdict) : CHOICE_LABEL[choice]}
 						</button>
 					))}
 				</div>
@@ -395,7 +418,7 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 			const res = await postForm(
 				"/api/documents/import",
 				send.map((e) => files.current.get(e.key)!),
-				{ decisions: JSON.stringify(send.map((e) => (e.check?.verdict.status === "new" ? null : decisions[e.key] ?? "skip"))) },
+				{ decisions: JSON.stringify(send.map((e) => (e.check?.verdict.status === "new" ? null : decisions[e.key] ?? defaultDecision(e.check!.verdict)))) },
 			);
 			const body = (await res.json()) as { results?: ImportTicket[]; error?: string };
 			if (!res.ok || !body.results) throw new Error(body.error ?? `Import failed (HTTP ${res.status})`);

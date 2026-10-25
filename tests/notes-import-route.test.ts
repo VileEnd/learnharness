@@ -83,6 +83,7 @@ it("real route plus in-memory ledgers and faux stages extract identical text onc
 		appendChain: (chain) => { chains.push(chain); }, readChains: () => [...chains],
 		appendCheckpoint: (checkpoint) => { checkpoints.push(checkpoint); }, readCheckpoints: () => [...checkpoints],
 		appendCoverage: () => {}, readCoverage: () => [],
+		appendTopic: () => {}, readTopics: () => [], readTopicAliases: () => ({}), writeTopicAliases: () => {},
 		upsertSource: (source) => { sources.set(source.id, { ...source, extractions: sources.get(source.id)?.extractions ?? [] }); },
 		readSources: () => [...sources.values()],
 		appendSourceUsage: (id, usage) => { sources.get(id)!.extractions!.push(usage); },
@@ -95,7 +96,7 @@ it("real route plus in-memory ledgers and faux stages extract identical text onc
 			faux.setResponses([() => {
 				if (role === "extractor") calls++;
 				return fauxAssistantMessage([fauxToolCall(role === "extractor" ? "submit_findings" : "submit_review", role === "extractor" ? {
-					propositions: [{ id: "p1", name: "Synthetic import", statement: "Identical notes are one document.", aliases: [] }], chains: [],
+					propositions: [{ id: "p1", name: "Synthetic import", statement: "Identical notes are one document.", aliases: [], topics: ["Notes"], section: "s1" }], chains: [],
 				} : { links: [] })], { stopReason: "toolUse" });
 			}]);
 			return { model: faux.getModel(), streamFn: faux.streamSimple };

@@ -50,9 +50,21 @@ export interface DocumentMeta {
 /** The library list row: the meta without its sketch. */
 export type DocumentSummary = Omit<DocumentMeta, "minhash">;
 
+/** An earlier import of this file in the graph, from before the document
+ *  library existed (PR H): a source with nodes but no stored document. The
+ *  file arrived under the same name, which was the old identity. */
+export interface LegacyImport {
+	sourceId: string;
+	importedAt: string;
+	nodeCount: number;
+}
+
 /** The duplicate check's verdict for one candidate file. */
 export interface DuplicateVerdict {
-	status: "new" | "duplicate" | "similar";
+	/** "legacy": already in the graph from an old import and not yet in the
+	 *  library - attach the document to it instead of extracting again. */
+	status: "new" | "duplicate" | "similar" | "legacy";
+	legacy?: LegacyImport;
 	/** The stored document it matches (duplicate / similar). */
 	of?: { id: string; title: string; importedAt: string };
 	/** Estimated Jaccard similarity (similar), 1 for an exact duplicate. */
@@ -60,7 +72,7 @@ export interface DuplicateVerdict {
 }
 
 /** What the learner decided for one non-new file. */
-export type DocumentDecision = "skip" | "replace" | "new";
+export type DocumentDecision = "skip" | "replace" | "new" | "attach";
 
 // ─── search (PR I) ───────────────────────────────────────────────────────────
 

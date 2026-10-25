@@ -357,3 +357,71 @@ describe("ChainTableOverlay — the lifted practice pick (owner vision, 2026-10-
 		assert.ok(!html.includes('data-testid="chain-practice-done"'));
 	});
 });
+
+// ─── PR H: topics, documents and sections ───────────────────────────────────
+
+describe("ChainTableBody - group by topic / source for stored documents", () => {
+	const docNode = (id: string, name: string, section: string): GraphNode =>
+		({
+			id,
+			name,
+			statement: `${name} statement`,
+			aliases: [],
+			createdAt: "2026-10-01T10:00:00.000Z",
+			provenance: [{ chatId: "doc_x", messageId: "", section, pageFrom: 3 }],
+		}) as unknown as GraphNode;
+	const nodes = [docNode("t1", "Permit counter", "s2"), docNode("t2", "Mutual exclusion", "s2"), docNode("t3", "Deadlock", "s3"), ...NODES];
+	const chains: GraphChain[] = [
+		...CHAINS,
+		{ id: "k1", premises: ["t1"], conclusion: "t2", provenance: [], createdAt: "2026-10-01T10:00:00.000Z" },
+		{ id: "k2", premises: ["t2"], conclusion: "t3", provenance: [], createdAt: "2026-10-01T10:00:00.000Z" },
+	];
+	const documents = {
+		doc_x: {
+			id: "doc_1",
+			title: "Betriebssysteme Blatt 8",
+			sections: { s2: { headingPath: ["Skript", "2 Kontextwechsel"], pageFrom: 3, pageTo: 4 }, s3: { headingPath: ["Skript", "3 Deadlocks"] } },
+		},
+	};
+	const common = {
+		nodes,
+		chains,
+		fileSources: { ...BASE.fileSources, doc_x: "Betriebssysteme Blatt 8" },
+		documents,
+		nodeTopics: { t2: ["Semaphoren", "Mutex"], t3: ["Nebenläufigkeit"] },
+		onGroupBy: () => {},
+	};
+	const open = (...keys: string[]) => new Set(keys);
+
+	it("source mode: a document is a folder of sections, chats stay flat, and the switch shows", () => {
+		const html = render({ ...common, groupBy: "source", expandedClusters: open("doc_x") } as never);
+		assert.ok(html.includes('data-testid="cluster-group-doc_x"'));
+		assert.ok(html.includes("Betriebssysteme Blatt 8"));
+		assert.ok(html.includes("§ Skript › 2 Kontextwechsel · pp.3–4"), "section folder with pages");
+		assert.ok(html.includes("§ Skript › 3 Deadlocks"));
+		assert.ok(!html.includes("cluster-group-topic:"), "no topic folders in source mode");
+		assert.ok(html.includes('data-testid="cluster-group-chat1"'), "chats unchanged");
+		assert.ok(html.includes('data-testid="group-by"') && html.includes('aria-checked="true"'), "Group by switch");
+	});
+
+	it("topic mode: topic -> document -> section -> chains, by the conclusion's FIRST topic", () => {
+		const topicKeys = ["topic:semaphoren", "topic:nebenläufigkeit"];
+		const html = render({
+			...common,
+			groupBy: "topic",
+			expandedClusters: open(topicKeys[0]!, `${topicKeys[0]}/doc_x`, `${topicKeys[0]}/doc_x/s2`),
+		} as never);
+		for (const key of topicKeys) assert.ok(html.includes(`data-testid="cluster-group-${key}"`), key);
+		assert.ok(html.includes(`data-testid="cluster-group-${topicKeys[0]}/doc_x"`), "document inside the topic");
+		assert.ok(html.includes(`data-testid="cluster-group-${topicKeys[0]}/doc_x/s2"`), "section inside the document");
+		assert.ok(html.includes('data-testid="chain-row-k1"'), "the chain concluding t2 sits under Semaphoren / s2");
+		assert.ok(!html.includes('data-testid="chain-row-k2"'), "k2 concludes t3: a different topic, still collapsed");
+		assert.ok(!html.includes("topic:mutex"), "a second topic never becomes a folder");
+		assert.ok(html.includes('data-testid="cluster-group-chat1"'), "conclusions without topics fall back to their source");
+	});
+
+	it("a folder's checkbox selects every node of its subtree", () => {
+		const html = render({ ...common, groupBy: "topic", selection: new Set(["t1", "t2"]) } as never);
+		assert.match(html, /data-testid="cluster-checkbox-topic:semaphoren"[^>]*checked/);
+	});
+});

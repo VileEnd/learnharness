@@ -39,6 +39,7 @@ import {
 	LINK_DISTANCE,
 	type DepthAnchorMode,
 } from "./layout.ts";
+import type { GraphGroupBy } from "./contracts/graph.ts";
 
 export interface GraphRenderSettings {
 	/** Semantic stamp for the size-unit pivot (2026-09-15): "world" =
@@ -66,6 +67,11 @@ export interface GraphRenderSettings {
 	/** Live-sim physics + inference-depth anchoring. Server-persisted
 	 *  since 2026-09-13 (user request) — was session-only dev state. */
 	physics: PhysicsTuning;
+	/** How the graph clusters its nodes (PR H): by SOURCE (birth session /
+	 *  document, the default) or by TOPIC (a node's first topic, source as
+	 *  the fallback). Hulls, region labels and the chain table follow it;
+	 *  layout positions stay source-based either way. */
+	groupBy: GraphGroupBy;
 }
 
 
@@ -109,6 +115,7 @@ export function sanitizeRenderSettings(raw: unknown): GraphRenderSettings {
 			? { ...sanitizeRegionTuning(r.regions), dilation: DEFAULT_REGION_TUNING.dilation }
 			: sanitizeRegionTuning(r.regions),
 		physics: sanitizePhysicsTuning(r.physics),
+		groupBy: r.groupBy === "topic" ? "topic" : "source",
 	};
 }
 
@@ -270,6 +277,7 @@ export const DEFAULT_RENDER_SETTINGS: GraphRenderSettings = {
 	clusterLabelSize: 14,
 	regions: DEFAULT_REGION_TUNING,
 	physics: DEFAULT_PHYSICS_TUNING,
+	groupBy: "source",
 };
 
 // ─── The slider ladders (2026-09-17) ─────────────────────────────────────────
