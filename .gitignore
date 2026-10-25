@@ -25,3 +25,4 @@ deploy/volumes/
 deploy/proxmox/.terraform/
 deploy/proxmox/.image
 deploy/proxmox/*.tfplan
+deploy/proxmox/terraform.tfstate.backup

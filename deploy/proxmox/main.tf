@@ -48,7 +48,7 @@ resource "proxmox_virtual_environment_vm" "learnharness" {
   }
 
   memory {
-    dedicated = 4096
+    dedicated = 12288
   }
 
   disk {

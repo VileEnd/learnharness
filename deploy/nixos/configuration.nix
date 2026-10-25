@@ -23,6 +23,16 @@
 
   services.qemuGuest.enable = true;
 
+  # Public names with publicly trusted certificates (Let's Encrypt via the
+  # Cloudflare DNS challenge); the A records point at the LAN address
+  # (deploy/proxmox/dns.tf). Nothing is reachable from the internet.
+  services.learnharness = {
+    host = "learnharness.home.moyjak.com";
+    authSite = "auth.home.moyjak.com";
+    authUrl = "https://auth.home.moyjak.com";
+    tls = "cloudflare";
+  };
+
   services.openssh = {
     enable = true;
     settings = {

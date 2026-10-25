@@ -1,0 +1,8 @@
+# Let's Encrypt via the DNS-01 challenge: Caddy proves domain ownership with a
+# temporary TXT record (CLOUDFLARE_API_TOKEN: Zone → DNS → Edit, one zone).
+# The hosts stay LAN-only — no inbound port is needed for issuance.
+cert_issuer acme {
+	dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	# Check TXT propagation against Cloudflare's resolvers, not the LAN's.
+	resolvers 1.1.1.1 1.0.0.1
+}
