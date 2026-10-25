@@ -220,3 +220,36 @@ export interface AuthStore {
 	deleteAuthVar(name: string): void;
 }
 
+
+// ─── PushStore — Web Push subscriptions + VAPID keys (data/push) ────────────
+
+/** One device's push subscription (the browser's PushSubscription JSON plus
+ *  bookkeeping). The endpoint is the identity. */
+export interface PushSubscriptionRecord {
+	endpoint: string;
+	keys: { p256dh: string; auth: string };
+	createdAt: string;
+	/** Human label for the device ("Chrome on Android" — from the UA). */
+	label: string;
+}
+
+export interface VapidKeys {
+	publicKey: string;
+	privateKey: string;
+}
+
+/**
+ * Push subscriptions and the server's VAPID key pair. src/server/push.ts is
+ * the only writer. Absent/corrupt files read as empty / null (first-boot
+ * state); the VAPID file is the one secret and is written 0600.
+ */
+export interface PushStore {
+	listSubscriptions(): PushSubscriptionRecord[];
+	/** Insert, or replace the record with the same endpoint. */
+	saveSubscription(sub: PushSubscriptionRecord): void;
+	/** Drop by endpoint (absent = no-op). */
+	removeSubscription(endpoint: string): void;
+	/** The key pair, or null until first use generates it. */
+	readVapid(): VapidKeys | null;
+	writeVapid(keys: VapidKeys): void;
+}

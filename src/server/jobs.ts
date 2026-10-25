@@ -66,6 +66,7 @@ import {
 import type { TurnInput } from "../core/input-events.ts";
 import { danglingQuestionOf, endsInDismissal, type LhMessage } from "../core/native-messages.ts";
 import { fireJobAbort, isJobLive } from "../agent/subagents/aborts.ts";
+import { notify } from "./push.ts";
 import { stores } from "./stores.ts";
 import { isTurnRunning } from "./turn-liveness.ts";
 import type { Agent } from "@earendil-works/pi-agent-core";
@@ -587,6 +588,14 @@ function finalizeJob(jobId: string): void {
 		status: failed ? "error" : "done",
 		activity: failed ? "failed" : "delivered",
 	});
+	notifyJob(job.chatId, job.kind, failed ? "error" : "done");
+}
+
+/** Push the final status (a side channel — notify never throws). One tag per
+ *  chat, so it replaces the "teacher replied" notification the wake turn
+ *  just raised instead of stacking a second one. */
+function notifyJob(chatId: string, jobKind: string, status: "done" | "error"): void {
+	void notify({ kind: "job", chatId, jobKind, status, title: stores.chatStore.getChat(chatId)?.title ?? "" });
 }
 
 function failJob(jobId: string, err: Error): void {
@@ -596,6 +605,7 @@ function failJob(jobId: string, err: Error): void {
 	const job = stores.jobStore.getJob(jobId);
 	if (!job || job.status !== "running") return;
 	stores.jobStore.updateJob(jobId, { status: "error", error: err.message, activity: "delivery failed" });
+	notifyJob(job.chatId, job.kind, "error");
 }
 
 /**
