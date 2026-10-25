@@ -4,7 +4,7 @@
  *
  *   node scripts/make-pwa-icons.mjs
  *
- * Writes public/icons/icon-{192,512}.png (the mark as-is), a maskable
+ * Writes public/icons/icon-{96,192,512}.png (the mark as-is), a maskable
  * variant (mark at 80% on the app background, inside the launcher safe
  * zone), and app/apple-icon.png (180px, iOS home screen).
  */
@@ -29,6 +29,7 @@ const maskable = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://ww
 </svg>`;
 
 const outputs = [
+	["public/icons/icon-96.png", svg, 96],
 	["public/icons/icon-192.png", svg, 192],
 	["public/icons/icon-512.png", svg, 512],
 	["public/icons/icon-maskable-512.png", maskable, 512],

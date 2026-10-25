@@ -149,6 +149,9 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
 			root.style.setProperty(name, value);
 			appliedNamesRef.current.add(name);
 		}
+		// The browser / installed-app chrome follows the app background.
+		const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+		if (meta) meta.content = vars["--background"] ?? "#141414";
 	}, [key, vars]);
 
 	// One fetch per app load: the record (sanitized server-side) carries the
