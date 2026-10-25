@@ -103,3 +103,8 @@ export function conclude(id: string, outcome: string, verdict = "v"): LhMessage[
 export function chat(id: string, messages: LhMessage[], kind?: "practice"): ChatRecord {
 	return { id, title: id, createdAt: "2026-10-20T09:00:00.000Z", updatedAt: "2026-10-20T11:00:00.000Z", messages, ...(kind ? { kind } : {}) };
 }
+
+/** A teacher prose message (visible to extraction coverage). */
+export function prose(text: string): LhMessage {
+	return { ...call("unused", "x", {}), content: [{ type: "text", text }] } as unknown as LhMessage;
+}

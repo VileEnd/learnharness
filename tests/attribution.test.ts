@@ -11,7 +11,9 @@ import type { PiEngine } from "../src/agent/models.ts";
 import { createAttributor } from "../src/agent/subagents/attribution.ts";
 import { createAttributionService } from "../src/server/attribution.ts";
 import type { AttributionRow, GraphNode } from "../src/core/contracts.ts";
-import { chat, quiz } from "./learner-helpers.ts";
+import { messageFingerprint } from "../src/core/coverage.ts";
+import type { CoverageEntry } from "../src/core/contracts.ts";
+import { chat, prose, quiz } from "./learner-helpers.ts";
 
 const call = (name: string, input: unknown) =>
 	fauxAssistantMessage([fauxToolCall(name, input as ToolCall["arguments"], { id: `${name}-call` })], { stopReason: "toolUse" });
@@ -38,7 +40,7 @@ function setup(steps: FauxResponseStep[], opts: { nodes?: GraphNode[] } = {}) {
 	const nodes = opts.nodes ?? [node("n1", "c1"), node("n2", "c1"), node("n3", "c1"), node("n9", "other")];
 	const service = createAttributionService({
 		chatStore: { getChat: (id) => (id === "c1" ? record : null) },
-		graphStore: { readNodes: () => nodes, readChains: () => [] },
+		graphStore: { readNodes: () => nodes, readChains: () => [], readCoverage: () => [] },
 		learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
 		attributor: attributorWith(steps),
 		now: () => new Date("2026-10-22T08:00:00.000Z"),
@@ -110,7 +112,7 @@ describe("attribution", () => {
 		const record = chat("c1", quiz("q1", { pick: 1 }));
 		const service = createAttributionService({
 			chatStore: { getChat: () => record },
-			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [] },
+			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => [] },
 			learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
 			attributor: createAttributor({ engineFor: () => engine }),
 		});
@@ -136,7 +138,7 @@ describe("attribution", () => {
 		const record = chat("c1", quiz("q1", { pick: 1 }));
 		const service = createAttributionService({
 			chatStore: { getChat: () => record },
-			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [] },
+			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => [] },
 			learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
 			attributor: createAttributor({ engineFor: () => undefined }),
 		});
@@ -154,6 +156,41 @@ describe("attribution", () => {
 		const { service, rows } = setup([() => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ["n1"] }, { toolCallId: "q2", conceptIds: [] }] })]);
 		const [a, b] = await Promise.all([service.attributeChat("c1"), service.attributeChat("c1")]);
 		assert.deepEqual([a, b], [2, 0], "the second run sees the first run's rows");
+		assert.equal(rows.length, 2);
+	});
+
+	it("an item whose preceding teaching is not yet covered is not sent and gets no row; coverage lets the next run attribute it", async () => {
+		const p1 = prose("Semaphores make P and V atomic.");
+		const record = chat("c1", [p1, ...quiz("q1", { pick: 1 })]);
+		const coverage: CoverageEntry[] = [];
+		const rows: AttributionRow[] = [];
+		const faux = createFauxCore({});
+		let prompt = "";
+		faux.setResponses([
+			(context) => {
+				prompt = JSON.stringify((context as { messages: unknown }).messages);
+				return call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ["n1"] }] });
+			},
+		]);
+		const engine: PiEngine = { model: faux.getModel(), streamFn: faux.streamSimple };
+		const service = createAttributionService({
+			chatStore: { getChat: () => record },
+			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => coverage },
+			learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
+			attributor: createAttributor({ engineFor: () => engine }),
+		});
+		assert.equal(await service.attributeChat("c1"), 0);
+		assert.equal(rows.length, 0, "no row, not even an empty one");
+		assert.equal(service.hasPendingItems("c1"), true);
+		coverage.push({ chatId: "c1", fp: messageFingerprint(p1), tokens: 8, foldedAt: "t" });
+		assert.equal(await service.attributeChat("c1"), 1);
+		assert.deepEqual(rows.map((r) => [r.toolCallId, r.conceptIds]), [["q1", ["n1"]]]);
+		assert.match(prompt, /q1/);
+	});
+
+	it("a probe item with no prior teacher prose is eligible once the chat has provenance", async () => {
+		const { service, rows } = setup([() => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: [] }, { toolCallId: "q2", conceptIds: [] }] })]);
+		assert.equal(await service.attributeChat("c1"), 2);
 		assert.equal(rows.length, 2);
 	});
 });
