@@ -920,7 +920,21 @@ export function AgentSection({
 						placeholder={resolvedDocuments.embeddingModel}
 						ariaLabel="embedding model"
 						testid="input-embedding-model"
-						onCommit={(v) => onDocumentsChange?.(v === "" ? {} : { ...documents, embeddingModel: v.trim() })}
+						onCommit={(v) => {
+							const { embeddingModel: _drop, ...rest } = documents ?? {};
+							onDocumentsChange?.(v === "" ? rest : { ...rest, embeddingModel: v.trim() });
+						}}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label="Batch indexing"
+					hint="Index with the batch API — about half price; results usually within minutes, at most a day"
+					testid="documents-row-batch"
+				>
+					<Toggle
+						checked={resolvedDocuments.embeddingBatch}
+						label="batch indexing"
+						onChange={(on) => onDocumentsChange?.({ ...documents, embeddingBatch: on })}
 					/>
 				</SettingsRow>
 				<SettingsRow

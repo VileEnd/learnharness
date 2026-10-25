@@ -368,13 +368,17 @@ export interface DocumentsSettings {
 	 *  DEFAULT_EMBEDDING_MODEL. Changing it re-embeds the library in the
 	 *  background (search stays keyword-only for a document until then). */
 	embeddingModel?: string;
+	/** Index through the OpenRouter Batch API (about half the sync price;
+	 *  results usually within minutes, at most a day). Absent = true. Queries
+	 *  always use the sync endpoint. */
+	embeddingBatch?: boolean;
 }
 
-/** bge-m3: multilingual (100+ languages, German included), 1024 dims, 8k
- *  context, $0.01 per million tokens on OpenRouter - a few cents embed a
- *  whole library. Free embedding models exist but may retain and train on
- *  the learner's documents, so they are not the default. */
-export const DEFAULT_EMBEDDING_MODEL = "baai/bge-m3";
+/** gemini-embedding-2: multilingual, 3072 dims, and available through the
+ *  Batch API (the `:batch` variant, used for indexing; queries use this
+ *  sync id, the same vector space). Free embedding models exist but may
+ *  retain and train on the learner's documents, so they are not the default. */
+export const DEFAULT_EMBEDDING_MODEL = "google/gemini-embedding-2";
 
 /** THE record. Every section optional (delta); unknown top-level keys are
  *  preserved verbatim by the sanitizer (forward-compat with newer records). */
@@ -429,7 +433,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
 	compaction: { thresholdTokens: 150_000 },
-	documents: { embeddingModel: DEFAULT_EMBEDDING_MODEL },
+	documents: { embeddingModel: DEFAULT_EMBEDDING_MODEL, embeddingBatch: true },
 };
 
 /** The chunk budget's validated floor (GraphSettings.extractionChunkTokens
@@ -638,6 +642,7 @@ function sanitizeDocuments(raw: Record<string, unknown>): DocumentsSettings {
 	if (typeof raw.embeddingModel === "string" && EMBEDDING_MODEL_PATTERN.test(raw.embeddingModel.trim())) {
 		out.embeddingModel = raw.embeddingModel.trim();
 	}
+	if (typeof raw.embeddingBatch === "boolean") out.embeddingBatch = raw.embeddingBatch;
 	return out;
 }
 
