@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { LEDGER_FILES, POSITIONS_FILE } from "../../config.ts";
-import type { GraphSnapshot } from "../core/contracts.ts";
+import type { GraphGroupBy, GraphSnapshot } from "../core/contracts.ts";
+import { readRenderSettings } from "../store/render-settings.ts";
 import type { GraphCostSummary } from "../core/cost-summary.ts";
 import { graphCostSummary } from "../core/cost-summary.ts";
 import { graphSnapshot } from "../core/graph.ts";
@@ -19,8 +20,13 @@ import { callCost } from "./pricing.ts";
  * answers in sessions (turn-service), never from here — the home view
  * reflects whatever the pipeline has merged so far.
  */
-export function graphView(): GraphSnapshot {
-	return graphSnapshot(stores);
+export function graphView(groupBy?: GraphGroupBy): GraphSnapshot {
+	// The grouping is a render setting; an explicit request (the client's
+	// current choice, possibly not saved yet) wins over the saved one.
+	return graphSnapshot(stores, {
+		groupBy: groupBy ?? readRenderSettings()?.groupBy ?? "source",
+		documents: stores.documentStore,
+	});
 }
 
 /** The graph view's cost surface (GET /api/graph/costs — the 2026-09 cost
@@ -59,6 +65,7 @@ export function graphRevision(): number {
 		LEDGER_FILES.chains,
 		LEDGER_FILES.sessions,
 		LEDGER_FILES.coverage,
+		LEDGER_FILES.topics,
 		POSITIONS_FILE,
 	]) {
 		try {

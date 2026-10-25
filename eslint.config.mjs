@@ -20,7 +20,7 @@ import importPlugin from "eslint-plugin-import";
  */
 
 export default defineConfig([
-	globalIgnores([".next/**", "node_modules/**", "data/**", "next-env.d.ts", "scripts/**", "dist/**"]),
+	globalIgnores([".next/**", "node_modules/**", "data/**", "next-env.d.ts", "scripts/**", "dist/**", ".claude/**", "services/**"]),
 	{
 		files: ["**/*.{js,mjs,ts,tsx}"],
 		languageOptions: {

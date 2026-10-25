@@ -33,6 +33,7 @@ import { projectView as projectNative } from "../src/core/view.ts";
 import type {
 	AuditVerdicts,
 	CoverageEntry,
+	TopicRow,
 	ExtractionRunUsage,
 	GraphChain,
 	GraphNode,
@@ -83,6 +84,8 @@ function memoryLedgers() {
 	const chains: GraphChain[] = [];
 	const checkpoints: SessionCheckpoint[] = [];
 	const coverage: CoverageEntry[] = [];
+	const topics: TopicRow[] = [];
+	let aliases: Record<string, string> = {};
 	const sources = new Map<string, NotesSource>();
 	const positions = new Map<string, { x: number; y: number }>();
 		return {
@@ -96,6 +99,10 @@ function memoryLedgers() {
 		// the chat pipeline checkpoints one entry per covered message.
 		appendCoverage: (e) => void coverage.push({ ...e }),
 		readCoverage: () => coverage.map((e) => ({ ...e })),
+		appendTopic: (r: TopicRow) => void topics.push({ ...r }),
+		readTopics: () => topics.map((r) => ({ ...r })),
+		readTopicAliases: () => ({ ...aliases }),
+		writeTopicAliases: (a: Record<string, string>) => void (aliases = { ...a }),
 		upsertSource: (s: NotesSource) => {
 			// Mirrors the real store: an upsert KEEPS the existing usage log.
 			const prev = sources.get(s.id);
@@ -123,6 +130,7 @@ function memoryLedgers() {
 			if (next.chains) chains.splice(0, chains.length, ...next.chains.map((c) => ({ ...c, premises: [...c.premises], provenance: [...c.provenance] })));
 			if (next.coverage) coverage.splice(0, coverage.length, ...next.coverage.map((c) => ({ ...c })));
 			if (next.checkpoints) checkpoints.splice(0, checkpoints.length, ...next.checkpoints.map((c) => ({ ...c })));
+			if (next.topics) topics.splice(0, topics.length, ...next.topics.map((r) => ({ ...r })));
 		},
 	} satisfies GraphStore;
 }

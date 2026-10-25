@@ -23,6 +23,7 @@ import type {
 	Position,
 	CoverageEntry,
 	SessionCheckpoint,
+	TopicRow,
 	TurnUsage,
 	NotesSource,
 } from "./contracts.ts";
@@ -93,6 +94,15 @@ export interface GraphStore {
 	 *  checkpoint — "uncovered" is derived from these, never tracked. */
 	appendCoverage(entry: CoverageEntry): void;
 	readCoverage(): CoverageEntry[];
+	/** Topic membership (PR H): append-only; the merger is the only writer. */
+	appendTopic(row: TopicRow): void;
+	/** Raw topic rows in append order (corrupt lines skipped). */
+	readTopics(): TopicRow[];
+	/** The topic alias table (variant topic key -> canonical label). Not a
+	 *  ledger: the document service replaces it whole BEFORE extraction;
+	 *  the merger only reads it. */
+	readTopicAliases(): Record<string, string>;
+	writeTopicAliases(aliases: Record<string, string>): void;
 
 	/** Append one cluster-naming run's usage (graph-global money channel) —
 	 *  idempotent per startedAt. */
@@ -126,6 +136,7 @@ export interface GraphStore {
 		chains?: GraphChain[];
 		coverage?: CoverageEntry[];
 		checkpoints?: SessionCheckpoint[];
+		topics?: TopicRow[];
 	}): void;
 }
 

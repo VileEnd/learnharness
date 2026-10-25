@@ -203,11 +203,15 @@ export function deleteChatTraces(graphStore: GraphStore, chatId: string, mode: C
 	stats.nodesRemoved = [...new Set(nodeLines.map((line) => line.id))].filter((id) => !live.has(id)).length;
 	stats.chainsRemoved = chainLines.length - outChains.length;
 
+	// Topic rows die with their node (PR H); a surviving node keeps its rows.
+	const topicRows = graphStore.readTopics();
+	const outTopics = topicRows.filter((row) => live.has(row.nodeId) || !knownNodeIdsOf(nodeLines).has(row.nodeId));
 	graphStore.rewriteLedgers({
 		nodes: outNodes,
 		chains: outChains,
 		coverage,
 		checkpoints,
+		...(outTopics.length !== topicRows.length ? { topics: outTopics } : {}),
 	});
 
 	// 4. Positions: prune dead nodes AND dead chains (an argument's derived
@@ -271,6 +275,10 @@ export interface NodeDeletionStats {
 	chainsRemoved: number;
 }
 
+function knownNodeIdsOf(lines: readonly GraphNode[]): Set<string> {
+	return new Set(lines.map((line) => line.id));
+}
+
 function nodeLinesOf(graphStore: GraphStore, nodeId: string): GraphNode[] {
 	return graphStore.readNodes().filter((line) => line.id === nodeId);
 }
@@ -313,9 +321,12 @@ export function deleteNodeTraces(graphStore: GraphStore, nodeId: string): NodeDe
 	// Only the touched ledgers: the node's own lines always die (its file
 	// must move), everything else rewrites only when rows actually drop.
 	const outNodes = graphStore.readNodes().filter((line) => line.id !== nodeId);
+	const topicRows = graphStore.readTopics();
+	const outTopics = topicRows.filter((row) => row.nodeId !== nodeId);
 	graphStore.rewriteLedgers({
 		nodes: outNodes,
 		...(outChains.length !== chainLines.length ? { chains: outChains } : {}),
+		...(outTopics.length !== topicRows.length ? { topics: outTopics } : {}),
 	});
 
 	// The resting positions die with the node and every dead chain.

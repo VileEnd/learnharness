@@ -1,7 +1,7 @@
 /**
  * POST /api/documents/import - add documents to the library. Multipart:
  * field "files" plus an optional JSON field "decisions", an array aligned
- * with the files whose entries are "skip" | "replace" | "new" (the server
+ * with the files whose entries are "skip" | "replace" | "new" | "attach" (the server
  * re-checks every file; a duplicate or similar file with no decision is
  * skipped, a new file imports regardless).
  *
@@ -16,7 +16,7 @@ import { documents, incomingFiles } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-const DECISIONS = new Set<string>(["skip", "replace", "new"]);
+const DECISIONS = new Set<string>(["skip", "replace", "new", "attach"]);
 
 export async function POST(request: Request) {
 	const form = await request.formData();
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 			if (!Array.isArray(parsed)) throw new Error("not an array");
 			decisions = parsed.map((d) => (typeof d === "string" && DECISIONS.has(d) ? (d as DocumentDecision) : undefined));
 		} catch {
-			return Response.json({ results: [], error: "decisions must be a JSON array of skip | replace | new" }, { status: 400 });
+			return Response.json({ results: [], error: "decisions must be a JSON array of skip | replace | new | attach" }, { status: 400 });
 		}
 	}
 	const tickets = await documents.importFiles(files, decisions);

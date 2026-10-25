@@ -71,7 +71,13 @@ export const LEDGER_FILES = {
 	 *  the checkpoint's replacement for chat extractions — notes keep
 	 *  sessions.jsonl, whole-file as they are). */
 	coverage: path.join(PATHS.graph, "coverage.jsonl"),
+	/** Topic membership (contracts/graph.ts TopicRow, PR H): append-only, written only by the merger. */
+	topics: path.join(PATHS.graph, "topics.jsonl"),
 } as const;
+
+/** Topic canonicalisation (PR H): variant topic key -> canonical label,
+ *  written by the document service BEFORE extraction, read by the merger. */
+export const TOPIC_ALIASES_FILE = path.join(PATHS.graph, "topic-aliases.json");
 
 /**
  * Notes-import bookkeeping (NOT a ledger): one JSON map, src-id → NotesSource

@@ -67,7 +67,8 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import Link from "next/link";
 import { FileTextIcon, LibraryIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
-import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
+import { documentCitation, incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
+import { GroupByToggle } from "@/components/group-by-toggle";
 import { costLabel } from "@/components/usage-format";
 import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
@@ -488,6 +489,14 @@ function GraphSettingsControl({
 				// distance from the panel's right border.
 				<div className="absolute right-0 top-full mt-2 flex max-h-[60vh] w-72 flex-col rounded-xl border bg-card/85 p-2.5 shadow-lg backdrop-blur">
 					<div className="flex flex-col gap-2 overflow-y-auto pr-2.5">
+							{/* Cluster grouping (PR H): by source (chat / document) or by
+							    topic. Hulls, region labels and the chain table follow it;
+							    node positions never move. */}
+							<GroupByToggle
+								value={settings.groupBy}
+								onChange={(groupBy) => changeSettings((cur) => ({ ...cur, groupBy }))}
+								className="justify-between"
+							/>
 							{/* Size/zoom/region sliders: LADDER-mapped 0-100, step 10 (11
 							    stops, every DEFAULT dead-center at 50, every value a nice
 							    number — src/core/render-settings.ts). Physics keeps the
@@ -1080,7 +1089,9 @@ export function GraphView({
 	}, [chainSelectOpen]);
 	useEffect(() => {
 		let cancelled = false;
-		fetch("/api/graph")
+		// The grouping rides the request, so a switch applies at once (the
+		// saved copy follows, debounced).
+		fetch(`/api/graph?groupBy=${settings.groupBy}`)
 			.then((res) => res.json() as Promise<GraphSnapshot>)
 			.then((data) => {
 				if (!cancelled) setSnapshot(data);
@@ -1089,7 +1100,7 @@ export function GraphView({
 		return () => {
 			cancelled = true;
 		};
-	}, [refreshTick]);
+	}, [refreshTick, settings.groupBy]);
 
 	// Add documents (the document library's front door): the dialog checks
 	// the files by content, posts /api/documents/import, and nudges the
@@ -1409,6 +1420,9 @@ export function GraphView({
 			logicalEdges: snapshot.logicalEdges.map((e) => ({ from: e.from, to: e.to })),
 			impLinks: snapshot.impLinks,
 			clusters: snapshot.clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),
+			...(snapshot.layoutClusters
+				? { pullClusters: snapshot.layoutClusters.map((c) => ({ id: c.id, label: c.label, members: c.members })) }
+				: {}),
 			colors: {
 				node: tokenHex(NODE_COLOR_TOKEN),
 				edge: tokenHex("--ring"),
@@ -1634,6 +1648,31 @@ export function GraphView({
 						<div className="mt-3 flex flex-col gap-1">
 							<div className="text-xs text-muted-foreground">Sessions</div>
 							{selected.sourceIds.map((sourceId) => {
+								// A stored DOCUMENT (PR H): "<title> · §section · p.N", linked
+								// to the reader at the page anchor. One line per distinct
+								// place the node came up in.
+								const doc = snapshot?.documents?.[sourceId];
+								if (doc) {
+									const cites = new Map<string, { label: string; page?: number }>();
+									for (const pt of selected.node.provenance) {
+										if (pt.chatId !== sourceId) continue;
+										const cite = documentCitation(doc, pt);
+										cites.set(cite.label, cite);
+									}
+									if (cites.size === 0) cites.set(doc.title, { label: doc.title });
+									return [...cites.values()].map((cite) => (
+										<div key={`${sourceId}:${cite.label}`} className="flex items-center gap-1.5">
+											<FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
+											<Link
+												href={`/documents/${doc.id}${cite.page !== undefined ? `#p-${cite.page}` : ""}`}
+												data-testid="card-document-link"
+												className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+											>
+												{cite.label}
+											</Link>
+										</div>
+									));
+								}
 								// An imported-notes file: a STATIC entry — the path,
 								// plain text, never a link (no session to open).
 								if (snapshot?.fileSources?.[sourceId] !== undefined) {
@@ -1686,6 +1725,10 @@ export function GraphView({
 				chains={snapshot?.chains ?? []}
 				sessions={snapshot?.sessions ?? {}}
 				fileSources={snapshot?.fileSources ?? {}}
+				groupBy={settings.groupBy}
+				onGroupBy={(groupBy) => changeSettings((cur) => ({ ...cur, groupBy }))}
+				nodeTopics={snapshot?.nodeTopics ?? {}}
+				documents={snapshot?.documents ?? {}}
 				onClose={() => {
 					setChainsOpen(false);
 					onChainSelectClose?.();
