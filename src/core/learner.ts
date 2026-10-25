@@ -1,0 +1,336 @@
+/**
+ * The learner model's EVIDENCE layer (pure). What the learner has shown, per
+ * concept, is derived at read time from the persisted chat records plus the
+ * attribution ledger; nothing is stored as a score (the record is the only
+ * source of truth).
+ *
+ * The mapping, exactly:
+ *   quiz / probe   correct, confidence absent or above TENTATIVE_MAX_CONFIDENCE -> clean
+ *                  correct, confidence at or below it                          -> weak   (raw "tentative")
+ *                  miss, don't know                                            -> failed
+ *   explain / recall  only through a `grade` call:
+ *                  correct -> clean, partly -> weak, wrong / dontKnow -> failed
+ *   practice       solved -> clean, solvedWithHints -> weak, surrendered / movedOn -> failed
+ *   NOT evidence   predictions (`type: "predict"`; a record without `type` is a check),
+ *                  dismissed questions, dismissed problems, an explain/recall nobody graded.
+ *
+ * A graded item belongs to the concepts it was TAGGED with (`concepts`, or a
+ * practice problem's `target`) plus the concepts the attribution ledger links
+ * it to, restricted to ids that still exist.
+ */
+
+import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AttributionRow, ChatRecord, CoverageEntry, EvidenceEvent, EvidenceResult } from "./contracts.ts";
+import { coverageOf } from "./coverage.ts";
+import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, type LhMessage } from "./native-messages.ts";
+import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
+
+/** A correct answer at or below this stated confidence (the slider's active
+ *  doubt) counts as tentative, not clean. The untouched default 50 is clean. */
+export const TENTATIVE_MAX_CONFIDENCE = 30;
+
+const QUIZ_CALLS = ["quiz", "probe"] as const;
+const RECALL_CALLS = ["explain", "recall"] as const;
+const GRADES = ["correct", "partly", "wrong", "dontKnow"] as const;
+const PRACTICE_OUTCOMES = ["solved", "solvedWithHints", "movedOn", "surrendered"] as const;
+
+type Grade = (typeof GRADES)[number];
+
+/** One graded item of a chat, before concept resolution. */
+export interface GradedItem {
+	chatId: string;
+	/** The question call (quiz / probe / explain / recall) or the practice conclude call. */
+	toolCallId: string;
+	kind: EvidenceEvent["kind"];
+	at: string;
+	raw: string;
+	result: EvidenceResult;
+	note?: string;
+	misconception?: EvidenceEvent["misconception"];
+	/** The concept ids the call itself carried (`concepts`, or the problem's `target`). */
+	tags: string[];
+	/** For the attribution agent: what was asked and what came back. */
+	question: string;
+	answer: string;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined);
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const iso = (ms: number): string => new Date(Number.isFinite(ms) ? ms : 0).toISOString();
+
+interface ToolCallBlock {
+	id: string;
+	name: string;
+	arguments: Record<string, unknown>;
+}
+
+function toolCallsOf(messages: readonly LhMessage[]): ToolCallBlock[] {
+	const out: ToolCallBlock[] = [];
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "assistant") continue;
+		for (const b of (m as AssistantMessage).content) {
+			if (b.type === "toolCall") out.push({ id: b.id, name: b.name, arguments: isObject(b.arguments) ? b.arguments : {} });
+		}
+	}
+	return out;
+}
+
+/** The clean (non-error) results by call id. */
+function cleanResults(messages: readonly LhMessage[]): Map<string, ToolResultMessage> {
+	const out = new Map<string, ToolResultMessage>();
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "toolResult") continue;
+		const r = m as ToolResultMessage;
+		if (!r.isError) out.set(r.toolCallId, r);
+	}
+	return out;
+}
+
+interface RecordedGrade {
+	grade: Grade;
+	note?: string;
+	misconception?: EvidenceEvent["misconception"];
+	at: string;
+}
+
+/** The first clean `grade` call per question id (one grade per question). */
+function gradesOf(calls: readonly ToolCallBlock[], results: Map<string, ToolResultMessage>): Map<string, RecordedGrade> {
+	const out = new Map<string, RecordedGrade>();
+	for (const c of calls) {
+		if (c.name !== "grade") continue;
+		const result = results.get(c.id);
+		if (!result) continue;
+		const question = str(c.arguments.question);
+		const grade = c.arguments.grade;
+		if (!question || out.has(question) || !(GRADES as readonly unknown[]).includes(grade)) continue;
+		const mis = isObject(c.arguments.misconception) ? c.arguments.misconception : undefined;
+		const term = str(mis?.term);
+		const misconception =
+			term && (grade === "partly" || grade === "wrong")
+				? { term, ...(str(mis?.instead) ? { instead: str(mis?.instead)! } : {}), ...(str(mis?.why) ? { why: str(mis?.why)! } : {}) }
+				: undefined;
+		out.set(question, {
+			grade: grade as Grade,
+			...(str(c.arguments.note) ? { note: str(c.arguments.note)! } : {}),
+			...(misconception ? { misconception } : {}),
+			at: iso(result.timestamp),
+		});
+	}
+	return out;
+}
+
+/** An answered, non-dismissed explain/recall: the answer record, or null. */
+function answerOf(result: ToolResultMessage | undefined): QuestionAnswerData | null {
+	const d = result?.details;
+	if (!isObject(d) || d.dismissed === true) return null;
+	return d as unknown as QuestionAnswerData;
+}
+
+/** The ids of answered explain/recall calls that no `grade` call covers yet
+ *  (the `grade` tool stays registered while any exist). */
+export function ungradedAnsweredRecalls(messages: readonly LhMessage[]): string[] {
+	const calls = toolCallsOf(messages);
+	const results = cleanResults(messages);
+	const graded = gradesOf(calls, results);
+	return calls
+		.filter((c) => (RECALL_CALLS as readonly string[]).includes(c.name))
+		.filter((c) => answerOf(results.get(c.id)) !== null && !graded.has(c.id))
+		.map((c) => c.id);
+}
+
+/** The answered explain/recall call ids of a record (what `grade` may target). */
+export function answeredRecallIds(messages: readonly LhMessage[]): Set<string> {
+	const calls = toolCallsOf(messages);
+	const results = cleanResults(messages);
+	return new Set(
+		calls.filter((c) => (RECALL_CALLS as readonly string[]).includes(c.name) && answerOf(results.get(c.id)) !== null).map((c) => c.id),
+	);
+}
+
+/** The question ids a clean `grade` call already covers. */
+export function gradedQuestionIds(messages: readonly LhMessage[]): Set<string> {
+	return new Set(gradesOf(toolCallsOf(messages), cleanResults(messages)).keys());
+}
+
+const labelsOf = (answer: QuestionAnswerData, indices: readonly number[]): string[] =>
+	(Array.isArray(answer.options) ? answer.options : []).filter((o) => indices.includes(o.index)).map((o) => o.label);
+
+function quizItem(chat: ChatRecord, call: ToolCallBlock, answer: QuestionAnswerData, result: ToolResultMessage): GradedItem | null {
+	const at = str(answer.answeredAt) ?? iso(result.timestamp);
+	const note = str(answer.thinking) ?? str(answer.note);
+	const base = {
+		chatId: chat.id,
+		toolCallId: call.id,
+		kind: call.name as "quiz" | "probe",
+		at,
+		...(note ? { note } : {}),
+		tags: strings(call.arguments.concepts),
+		question: str(call.arguments.question) ?? "",
+	};
+	if (answer.dontKnow === true) {
+		return { ...base, raw: "dontKnow", result: "failed", answer: "I don't know" };
+	}
+	const picked = (Array.isArray(answer.answers) ? answer.answers : []).map((a) => a.label).filter((l) => typeof l === "string");
+	const answerText = picked.join("; ");
+	if (answer.correct === true) {
+		const tentative = typeof answer.confidence === "number" && answer.confidence <= TENTATIVE_MAX_CONFIDENCE;
+		return { ...base, raw: tentative ? "tentative" : "correct", result: tentative ? "weak" : "clean", answer: answerText };
+	}
+	if (answer.correct === false) {
+		const instead = labelsOf(answer, Array.isArray(answer.correctIndices) ? answer.correctIndices : []).join("; ");
+		const misconception =
+			picked.length > 0
+				? { term: answerText, ...(instead ? { instead } : {}), ...(note ? { why: note } : {}) }
+				: undefined;
+		return { ...base, raw: "miss", result: "failed", answer: answerText, ...(misconception ? { misconception } : {}) };
+	}
+	return null;
+}
+
+const GRADE_RESULT: Record<Grade, EvidenceResult> = { correct: "clean", partly: "weak", wrong: "failed", dontKnow: "failed" };
+
+const PRACTICE_RESULT: Record<(typeof PRACTICE_OUTCOMES)[number], EvidenceResult> = {
+	solved: "clean",
+	solvedWithHints: "weak",
+	surrendered: "failed",
+	movedOn: "failed",
+};
+
+/** Every graded item of one chat, in transcript order. */
+export function gradedItems(chat: ChatRecord): GradedItem[] {
+	const calls = toolCallsOf(chat.messages);
+	const results = cleanResults(chat.messages);
+	const grades = gradesOf(calls, results);
+	const out: GradedItem[] = [];
+	for (const call of calls) {
+		const isQuiz = (QUIZ_CALLS as readonly string[]).includes(call.name);
+		const isRecall = (RECALL_CALLS as readonly string[]).includes(call.name);
+		if (isQuiz || isRecall) {
+			// Predictions are posed before the teaching: misses are expected, not evidence.
+			if (normalizeQuizType(call.arguments.type) === "predict") continue;
+			const result = results.get(call.id);
+			const answer = answerOf(result);
+			if (!result || !answer) continue;
+			if (isQuiz) {
+				const item = quizItem(chat, call, answer, result);
+				if (item) out.push(item);
+				continue;
+			}
+			const g = grades.get(call.id);
+			if (!g) continue; // an answer nobody graded produces no evidence
+			out.push({
+				chatId: chat.id,
+				toolCallId: call.id,
+				kind: call.name as "explain" | "recall",
+				at: g.at,
+				raw: g.grade,
+				result: GRADE_RESULT[g.grade],
+				...(g.note ? { note: g.note } : {}),
+				...(g.misconception ? { misconception: g.misconception } : {}),
+				tags: strings(call.arguments.concepts),
+				question: str(call.arguments.question) ?? "",
+				answer: str(answer.text) ?? str(answer.other) ?? (answer.dontKnow ? "I don't know" : ""),
+			});
+			continue;
+		}
+		if (call.name === PRACTICE_CONCLUDE_TOOL) {
+			const outcome = call.arguments.outcome;
+			if (!(PRACTICE_OUTCOMES as readonly unknown[]).includes(outcome)) continue; // dismissed, or malformed
+			const result = results.get(call.id);
+			if (!result) continue;
+			const problem = problemInputForConclude(chat.messages, call.id);
+			const o = outcome as (typeof PRACTICE_OUTCOMES)[number];
+			const verdict = str(call.arguments.verdict);
+			const failed = PRACTICE_RESULT[o] === "failed";
+			out.push({
+				chatId: chat.id,
+				toolCallId: call.id,
+				kind: "practice",
+				at: iso(result.timestamp),
+				raw: o,
+				result: PRACTICE_RESULT[o],
+				...(verdict ? { note: verdict } : {}),
+				...(failed && verdict ? { misconception: { term: verdict } } : {}),
+				tags: strings(problem?.target),
+				question: str(problem?.statement) ?? "",
+				answer: verdict ?? "",
+			});
+		}
+	}
+	return out;
+}
+
+const attributionKey = (chatId: string, toolCallId: string): string => `${chatId}\u0000${toolCallId}`;
+
+/** The evidence events of all chats: one per (graded item x concept). */
+export function deriveEvidence(
+	chats: readonly ChatRecord[],
+	attributions: readonly AttributionRow[],
+	nodeIds: ReadonlySet<string>,
+): EvidenceEvent[] {
+	const linked = new Map<string, string[]>();
+	for (const row of attributions) {
+		const key = attributionKey(row.chatId, row.toolCallId);
+		linked.set(key, [...(linked.get(key) ?? []), ...row.conceptIds]);
+	}
+	const events: EvidenceEvent[] = [];
+	for (const chat of chats) {
+		for (const item of gradedItems(chat)) {
+			const ids = [...new Set([...item.tags, ...(linked.get(attributionKey(chat.id, item.toolCallId)) ?? [])])].filter((id) =>
+				nodeIds.has(id),
+			);
+			for (const conceptId of ids) {
+				events.push({
+					at: item.at,
+					conceptId,
+					chatId: chat.id,
+					toolCallId: item.toolCallId,
+					kind: item.kind,
+					raw: item.raw,
+					result: item.result,
+					...(item.note ? { note: item.note } : {}),
+					...(item.misconception ? { misconception: item.misconception } : {}),
+				});
+			}
+		}
+	}
+	return events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+/** The graded items of a teaching chat that still need attribution: untagged
+ *  (the call carried no `concepts`) and with no ledger row yet (an explicit
+ *  empty row counts as attributed). Practice sessions are tagged by `target`
+ *  and never attributed. */
+export function unattributedItems(chat: ChatRecord, attributions: readonly AttributionRow[]): GradedItem[] {
+	if (chat.kind === "practice") return [];
+	const done = new Set(attributions.map((r) => attributionKey(r.chatId, r.toolCallId)));
+	return gradedItems(chat).filter(
+		(item) => item.kind !== "practice" && item.tags.length === 0 && !done.has(attributionKey(chat.id, item.toolCallId)),
+	);
+}
+
+/** The items ready for attribution: every teacher-prose message of the chat up
+ *  to and including the message carrying the item's tool call has been
+ *  extracted (covered in the coverage ledger, the same selection and
+ *  fingerprints extraction uses). Until then the concepts the question is
+ *  about may not exist yet, so the item stays pending (no ledger row). An
+ *  item with no teacher prose before it (a probe-phase question about prior
+ *  knowledge) is eligible at once. */
+export function eligibleForAttribution<T extends { toolCallId: string }>(
+	chat: ChatRecord,
+	items: readonly T[],
+	coverage: readonly CoverageEntry[],
+): T[] {
+	const view = coverageOf(chat.messages, coverage, chat.id);
+	const uncovered = view.uncovered;
+	const carrier = (id: string): number =>
+		chat.messages.findIndex(
+			(m) => (m as { role?: string }).role === "assistant" && (m as AssistantMessage).content.some((b) => b.type === "toolCall" && b.id === id),
+		);
+	return items.filter((item) => {
+		const idx = carrier(item.toolCallId);
+		if (idx < 0) return false;
+		return !uncovered.some((i) => i <= idx);
+	});
+}

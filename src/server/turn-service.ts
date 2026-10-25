@@ -24,6 +24,7 @@ import { planBlocksFor } from "../core/plan-blocks.ts";
 import { coverageOf } from "../core/coverage.ts";
 import type { ChatStore, GraphStore } from "../core/ports.ts";
 import type { ExtractionPipeline } from "../agent/subagents/extraction.ts";
+import type { AttributionService } from "./attribution.ts";
 import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 
 /**
@@ -126,5 +127,22 @@ export function triggerExtraction(
 		});
 	} catch (err) {
 		console.error(`[chat ${chatId}] extraction trigger failed:`, err);
+	}
+}
+
+/**
+ * The learner model's attribution trigger (evidence layer): when a turn
+ * settles on a chat that has graded questions still waiting to be linked to
+ * concepts, schedule the (debounced, serial, error-contained) attribution.
+ * The record-only pre-check keeps idle chats from arming timers; whether the
+ * chat has propositions yet is the service's call at run time. Skipped under
+ * tests: scripted chats are fixtures (the service is pinned directly).
+ */
+export function triggerAttribution(attribution: AttributionService, chatId: string): void {
+	if (process.env.NODE_ENV === "test") return;
+	try {
+		if (attribution.hasPendingItems(chatId)) attribution.schedule(chatId);
+	} catch (err) {
+		console.error(`[chat ${chatId}] attribution trigger failed:`, err);
 	}
 }

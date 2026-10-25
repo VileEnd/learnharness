@@ -141,6 +141,20 @@ export function quizInputProblems(input: {
 	return problems;
 }
 
+/** The concept tag shared VERBATIM by all four graded-question inputs
+ *  (quiz, probe, explain, recall): which graph concepts the question
+ *  tests. Optional and additive; validated at the tool-call boundary
+ *  (agent/tools.ts conceptsProblem) and read by the evidence derivation
+ *  (core/learner.ts). Old records carry none. */
+export const conceptsField = Type.Optional(
+	Type.Array(Type.String(), {
+		description:
+			"Ids of the library concepts this question tests, copied from the `id` line in the concept files' " +
+			"frontmatter. Validated at call time: an unknown id is rejected back to you. Omit when the question is about " +
+			"something the library does not hold.",
+	}),
+);
+
 // The SHARED quiz authoring fields — everything except `nodeId`. The probe
 // and teach agents use DIFFERENT tools under the same name (docs/probe-teach-
 // split.md §1): the prober's quiz has NO nodeId field at all (there is no
@@ -190,6 +204,7 @@ export const quizInputBase = Type.Object({
 	details: Type.Optional(
 		Type.String({ description: "Optional extra context or instructions shown under the question." }),
 	),
+	concepts: conceptsField,
 });
 
 // The TEACH-side quiz object: the shared base + the plan-position field
@@ -315,6 +330,7 @@ export const explainInputBase = Type.Object({
 	details: Type.Optional(
 		Type.String({ description: "Optional extra context or instructions shown under the question." }),
 	),
+	concepts: conceptsField,
 });
 
 /** The TEACH-side explain object: base + the plan-position field (same
