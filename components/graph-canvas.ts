@@ -60,6 +60,7 @@ import {
 	CLUSTER_PULL_STRENGTH,
 	createGraphSimulation,
 	DEFAULT_PHYSICS_TUNING,
+	DEFAULT_RENDER_SETTINGS,
 	DEFAULT_REGION_TUNING,
 	sanitizePhysicsTuning,
 	sanitizeRegionTuning,
@@ -627,6 +628,53 @@ function drawNameLines(
 	}
 }
 
+// ─── Always-on label placement (pure) ───────────────────────────────────────
+
+/** One always-on label in SCREEN pixels: its node's centre, the distance from the
+ *  centre to the label's near edge, and the label box size. */
+export interface LabelCandidate {
+	id: string;
+	x: number;
+	y: number;
+	off: number;
+	w: number;
+	h: number;
+}
+export type LabelSide = "below" | "above";
+export interface LabelRect {
+	x0: number;
+	y0: number;
+	x1: number;
+	y1: number;
+}
+
+/** The box of a label on one side of its node. */
+export function labelRect(c: LabelCandidate, side: LabelSide): LabelRect {
+	const y0 = side === "below" ? c.y + c.off : c.y - c.off - c.h;
+	return { x0: c.x - c.w / 2, x1: c.x + c.w / 2, y0, y1: y0 + c.h };
+}
+
+const rectsOverlap = (a: LabelRect, b: LabelRect, pad: number): boolean =>
+	a.x0 < b.x1 + pad && b.x0 < a.x1 + pad && a.y0 < b.y1 + pad && b.y0 < a.y1 + pad;
+
+/** Greedy collision avoidance. `candidates` arrive in priority order; each takes
+ *  the space below its node if free, else above, else is skipped (absent from the
+ *  result). Boxes keep `pad` px apart. */
+export function placeLabels(candidates: readonly LabelCandidate[], pad = 2): Map<string, LabelSide> {
+	const placed: LabelRect[] = [];
+	const out = new Map<string, LabelSide>();
+	for (const c of candidates) {
+		for (const side of ["below", "above"] as const) {
+			const r = labelRect(c, side);
+			if (placed.some((q) => rectsOverlap(r, q, pad))) continue;
+			placed.push(r);
+			out.set(c.id, side);
+			break;
+		}
+	}
+	return out;
+}
+
 // ─── The renderer ───────────────────────────────────────────────────────────
 
 export class GraphCanvasRenderer {
@@ -657,6 +705,9 @@ export class GraphCanvasRenderer {
 	private knowledge: CanvasKnowledge | null = null;
 	/** Labels that ignore the zoom gate ("all", or a set of ids); null = the gate rules. */
 	private alwaysLabels: ReadonlySet<string> | "all" | null = null;
+	/** Priority order of the always-on labels (first wins a collision). */
+	private labelOrder: string[] = [];
+	private placement: { key: string; sides: Map<string, LabelSide> } | null = null;
 	/** Fit insets override (a view whose chrome differs from the home graph's); null = the home graph's. */
 	private insetsOverride: { top: number; bottom: number } | null = null;
 
@@ -1006,8 +1057,10 @@ export class GraphCanvasRenderer {
 
 	/** Labels shown at every zoom ("all", or just these ids; the rest keep the zoom
 	 *  gate). On touch the on-screen size gate still applies. */
-	setAlwaysLabels(labels: ReadonlySet<string> | "all" | null): void {
+	setAlwaysLabels(labels: ReadonlySet<string> | "all" | null, order: readonly string[] = []): void {
 		this.alwaysLabels = labels;
+		this.labelOrder = [...order];
+		this.placement = null;
 		this.markDirty();
 	}
 
@@ -1051,43 +1104,15 @@ export class GraphCanvasRenderer {
 		return w < NARROW_VIEW ? { top: FIT_INSET_TOP, bottom: FIT_INSET_BOTTOM } : { top: 0, bottom: 0 };
 	}
 
-	/** The box the fit must contain. With always-on labels (the "My knowledge" view) it grows by
-	 *  each name's extent (centred under its node, in world units), so a wide label at the
-	 *  graph's edge is not cut off. Otherwise the node centres alone, as before. */
-	private fitBBox(): { minX: number; maxX: number; minY: number; maxY: number } | null {
-		const box = this.worldBBox;
-		const data = this.data;
-		if (!box || !data) return box;
-		if (this.alwaysLabels === null) return box;
-		const size = this.settings?.labelSize ?? LABEL_SIZE;
-		const ctx = this.ctx;
-		const prevFont = ctx.font;
-		ctx.font = `${LABEL_WEIGHT} ${size}px ${data.fontFamily}`;
-		const maxW = LABEL_MAX_WIDTH * (size / LABEL_SIZE);
-		const out = { ...box };
-		for (const n of data.nodes) {
-			if (isImpNodeId(n.id)) continue;
-			if (this.alwaysLabels !== "all" && !this.alwaysLabels.has(n.id)) continue;
-			const lines = wrapLabel(ctx, n.label, maxW);
-			const half = Math.max(0, ...lines.map((l) => ctx.measureText(l).width)) / 2;
-			out.minX = Math.min(out.minX, n.x - half);
-			out.maxX = Math.max(out.maxX, n.x + half);
-			out.maxY = Math.max(out.maxY, n.y + size * (0.8 + lines.length * LABEL_LINE_HEIGHT));
-		}
-		ctx.font = prevFont;
-		return out;
-	}
-
 	/** Frame the whole graph (padding included). Keeps the camera on later
 	 *  setData calls — call fit() only for an explicit re-frame (the
 	 *  first-ever open; afterwards the caller-persisted camera wins). */
 	fit(): void {
-		const box = this.fitBBox();
-		if (!this.data || this.data.nodes.length === 0 || !box) return;
+		if (!this.data || this.data.nodes.length === 0 || !this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(box, w, h, 40, this.fitInsets(w));
+		const t = this.computeFit(w, h);
 		this.kFit = t.k;
 		this.hasFit = true;
 		this.fitNarrow = w < NARROW_VIEW;
@@ -1101,11 +1126,129 @@ export class GraphCanvasRenderer {
 	 *  viewport. kFit feeds ONLY zoomRatioOf now (the 2026-09-15 pivot
 	 *  removed it from geometry) — so this never touches geoVersion. */
 	private refreshFitZoom(): void {
-		const box = this.fitBBox();
-		if (!box) return;
+		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(box, w, h, 40, this.fitInsets(w)).k;
+		if (w >= 10 && h >= 10) this.kFit = this.computeFit(w, h).k;
+	}
+
+	/** The camera that frames the graph. Without always-on labels: the node box, as ever.
+	 *  With them (the "My knowledge" view): every placed label must lie fully inside the
+	 *  canvas too, at the zoom the fit lands on. The labels' on-screen size depends on that
+	 *  zoom (a readable minimum), so it iterates: measure the nodes + placed labels at the
+	 *  current zoom, shrink by what overhangs the node box, repeat until it fits. */
+	private computeFit(w: number, h: number): { x: number; y: number; k: number } {
+		const box = this.worldBBox!;
+		const insets = this.fitInsets(w);
+		const base = fitTransform(box, w, h, 40, insets);
+		const data = this.data;
+		if (this.alwaysLabels === null || !data) return base;
+		const margin = 8;
+		const availW = w - 2 * margin;
+		const availH = h - insets.top - insets.bottom - 2 * margin;
+		const W = Math.max(box.maxX - box.minX, 1e-6);
+		const H = Math.max(box.maxY - box.minY, 1e-6);
+		const metrics = this.labelMetrics();
+		const nodeR = (this.settings ?? DEFAULT_RENDER_SETTINGS).nodeSize;
+		let k = base.k;
+		let bx0 = 0;
+		let bx1 = 0;
+		let by0 = 0;
+		let by1 = 0;
+		for (let it = 0; it < 6; it++) {
+			// Everything relative to the top-left node centre (box.minX, box.minY) at zoom k.
+			const items = this.screenCandidates(metrics, k, box.minX, box.minY);
+			const sides = placeLabels(items);
+			bx0 = -nodeR * k;
+			by0 = -nodeR * k;
+			bx1 = W * k + nodeR * k;
+			by1 = H * k + nodeR * k;
+			for (const c of items) {
+				const side = sides.get(c.id);
+				if (!side) continue;
+				const r = labelRect(c, side);
+				bx0 = Math.min(bx0, r.x0);
+				bx1 = Math.max(bx1, r.x1);
+				by0 = Math.min(by0, r.y0);
+				by1 = Math.max(by1, r.y1);
+			}
+			const totalW = bx1 - bx0;
+			const totalH = by1 - by0;
+			if (totalW <= availW + 0.5 && totalH <= availH + 0.5) break;
+			const overW = totalW - W * k;
+			const overH = totalH - H * k;
+			const next = Math.min((availW - overW) / W, (availH - overH) / H, k);
+			if (!(next > 0) || next >= k - 1e-9) break;
+			k = Math.max(next, 0.02);
+		}
+		const totalW = bx1 - bx0;
+		const totalH = by1 - by0;
+		return {
+			k,
+			x: margin + (availW - totalW) / 2 - bx0 - box.minX * k,
+			y: insets.top + margin + (availH - totalH) / 2 - by0 - box.minY * k,
+		};
+	}
+
+	/** World-unit label sizes of the always-on labels, in priority order. */
+	private labelMetrics(): Array<{ id: string; x: number; y: number; ww: number; hh: number }> {
+		const data = this.data;
+		const always = this.alwaysLabels;
+		if (!data || always === null) return [];
+		const size = (this.settings ?? DEFAULT_RENDER_SETTINGS).labelSize;
+		const ctx = this.ctx;
+		const prevFont = ctx.font;
+		ctx.font = `${LABEL_WEIGHT} ${size}px ${data.fontFamily}`;
+		const maxW = LABEL_MAX_WIDTH * (size / LABEL_SIZE);
+		const byId = new Map<string, { id: string; x: number; y: number; ww: number; hh: number }>();
+		for (const n of data.nodes) {
+			if (isImpNodeId(n.id) || (this.visible && !this.visible.has(n.id))) continue;
+			if (always !== "all" && !always.has(n.id)) continue;
+			const lines = wrapLabel(ctx, n.label, maxW);
+			byId.set(n.id, {
+				id: n.id,
+				x: n.x,
+				y: n.y,
+				ww: Math.max(0, ...lines.map((l) => ctx.measureText(l).width)),
+				hh: lines.length * size * LABEL_LINE_HEIGHT,
+			});
+		}
+		ctx.font = prevFont;
+		const ordered = this.labelOrder.flatMap((id) => byId.get(id) ?? []);
+		const seen = new Set(this.labelOrder);
+		for (const m of byId.values()) if (!seen.has(m.id)) ordered.push(m);
+		return ordered;
+	}
+
+	/** The always-on labels as screen boxes at zoom k (positions relative to (ox, oy) in world units). */
+	private screenCandidates(
+		metrics: ReadonlyArray<{ id: string; x: number; y: number; ww: number; hh: number }>,
+		k: number,
+		ox: number,
+		oy: number,
+	): LabelCandidate[] {
+		const s = this.settings ?? DEFAULT_RENDER_SETTINGS;
+		// A readable minimum on screen: the label is scaled up about its node.
+		const boost = Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (s.labelSize * k), 1), 4);
+		const f = k * boost;
+		return metrics.map((m) => ({
+			id: m.id,
+			x: (m.x - ox) * k,
+			y: (m.y - oy) * k,
+			off: (s.nodeSize + LABEL_GAP) * f,
+			w: m.ww * f,
+			h: m.hh * f,
+		}));
+	}
+
+	/** Where each always-on label goes at zoom k (cached until the zoom, the geometry or the order moves). */
+	private placementAt(k: number): Map<string, LabelSide> {
+		const key = `${k}|${this.geoVersion}`;
+		if (this.placement?.key === key) return this.placement.sides;
+		const metrics = this.labelMetrics();
+		const sides = placeLabels(this.screenCandidates(metrics, k, 0, 0));
+		this.placement = { key, sides };
+		return sides;
 	}
 
 	destroy(): void {
@@ -2020,20 +2163,25 @@ export class GraphCanvasRenderer {
 			ctx.save();
 			ctx.font = this.worldLabelFont;
 			// An always-on name never drops below MIN_ALWAYS_LABEL_PX on screen (it is scaled up about
-			// its node instead of hidden); the zoom-gated labels keep the home graph's size law.
+			// its node instead of hidden) and avoids the always-on names placed before it (below its
+			// node, else above, else skipped); the zoom-gated labels keep the home graph's rules.
 			const boost = Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (this.world.labelSize * k), 1), 4);
+			const sides = always !== null ? this.placementAt(k) : null;
+			const { nodeR, labelGap, labelSize } = this.world;
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
 				if (!n) continue;
 				const isAlways = always === "all" || always?.has(id) === true;
-				const a = isAlways ? 1 : labelsAlpha;
-				if (a <= 0.01) continue;
-				ctx.globalAlpha = a;
-				if (isAlways && boost > 1) {
+				const side = isAlways ? sides?.get(id) : undefined;
+				if (isAlways && !side) continue; // collided both ways: the node stays clickable
+				ctx.globalAlpha = isAlways ? 1 : labelsAlpha;
+				if (!isAlways && labelsAlpha <= 0.01) continue;
+				if (isAlways) {
 					ctx.save();
 					ctx.translate(n.x, n.y);
 					ctx.scale(boost, boost);
-					drawNameLines(ctx, 0, 0, lines, this.world, data.colors.label);
+					const blockH = lines.length * labelSize * LABEL_LINE_HEIGHT;
+					drawNameLines(ctx, 0, side === "above" ? -2 * (nodeR + labelGap) - blockH : 0, lines, this.world, data.colors.label);
 					ctx.restore();
 				} else {
 					drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
