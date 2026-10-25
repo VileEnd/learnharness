@@ -574,9 +574,34 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		return tickets;
 	}
 
+	/** RE-DESCRIBE (maintenance): regenerate title, summary and topics from
+	 *  the stored CONTENT - for documents whose front matter carried only a
+	 *  filename-derived title (early OCR runs). Nothing is re-extracted: the
+	 *  graph source takes the new title, and a source whose nodes have no
+	 *  topics yet gets the adopt path's tagging pass. */
+	async function redescribe(id: string): Promise<ImportCompletion> {
+		const meta = store.getMeta(id);
+		const markdown = store.readMarkdown(id);
+		if (!meta || markdown === null) return { ok: false, outcome: "failed", error: "No such document" };
+		return settle(async () => {
+			const described = await deps.describe(normalizeText(markdown, { keepCase: true }));
+			const topics = await canonicalizeTopics(normalizeTopics(described.topics));
+			const next: DocumentMeta = { ...meta, title: described.title, summary: described.summary, topics, updatedAt: new Date().toISOString() };
+			store.save(next, markdown);
+			const graph = deps.graph;
+			if (graph && !graph.readTopics().some((row) => row.sourceId === next.sourceId)) return adopt(next);
+			if (graph) {
+				const prior = graph.readSources().find((s) => s.id === next.sourceId);
+				graph.upsertSource({ id: next.sourceId, filePath: next.title, importedAt: prior?.importedAt ?? next.importedAt });
+			}
+			return { ok: true, outcome: "completed", docId: id };
+		}, meta.title);
+	}
+
 	return {
 		check,
 		importFiles,
+		redescribe,
 		list: (): DocumentSummary[] => store.listMetas().map(asSummary),
 		get: (id: string): { meta: DocumentSummary; markdown: string } | null => {
 			const meta = store.getMeta(id);
