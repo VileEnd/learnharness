@@ -81,6 +81,9 @@ sha256: "${"a".repeat(64)}"
 		assert.deepEqual(d?.topics, ["LL(1)-Parser", "Syntaxanalyse"]);
 		assert.equal(d?.pages, 3);
 		assert.equal(describedByFrontMatter({}), null);
+		// An early OCR run: the filename as title, nothing else - not a content description.
+		assert.equal(describedByFrontMatter({ title: "02-Folien", source: "02-Folien.pdf", pages: 14 }), null);
+		assert.equal(describedByFrontMatter({ title: "aufg01-2026", source: "aufg01-2026.pdf", summary: "s", topics: ["t"] }), null);
 	});
 	it("topics match by NFKC case-fold", () => {
 		assert.deepEqual(normalizeTopics([" Semaphor ", "semaphor", "ﬁle", "FILE"]), ["Semaphor", "ﬁle"]);
