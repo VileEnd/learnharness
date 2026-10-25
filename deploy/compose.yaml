@@ -1,0 +1,109 @@
+# LearnHarness self-hosted stack (docs/self-hosting.md).
+#
+#   browser ──HTTPS──▶ caddy ──forward_auth──▶ oauth2-proxy ──OIDC──▶ keycloak
+#                        └──────────────────────▶ learnharness (no auth of its own)
+#
+# Only Caddy publishes ports. Hostnames come from .env (see .env.example).
+name: learnharness
+
+services:
+  learnharness:
+    build: ..
+    image: learnharness:local
+    restart: unless-stopped
+    volumes:
+      # /data/data = LH_DATA_DIR (chats, graph, settings), /data/auth.json = API keys.
+      # The entrypoint hands the files to the app user (uid 1000) on start.
+      - ./volumes/learnharness:/data
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.11.7
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:8443"
+    environment:
+      LH_HOST: ${LH_HOST:?set LH_HOST in .env}
+      AUTH_SITE: ${AUTH_SITE:?set AUTH_SITE in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Holds the local CA (caddy/pki/authorities/local/root.crt) — back it up;
+      # devices trust this root once.
+      - ./volumes/caddy/data:/data
+      - ./volumes/caddy/config:/config
+    networks: [internal]
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+    restart: unless-stopped
+    environment:
+      OAUTH2_PROXY_PROVIDER: keycloak-oidc
+      # Tokens carry the PUBLIC issuer (Keycloak's KC_HOSTNAME) and are checked
+      # against it. The browser logs in at the public URL; oauth2-proxy itself
+      # talks to Keycloak over the internal network (no TLS/CA, no LAN DNS).
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${AUTH_URL:?set AUTH_URL in .env}/realms/learnharness
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
+      OAUTH2_PROXY_LOGIN_URL: ${AUTH_URL}/realms/learnharness/protocol/openid-connect/auth
+      OAUTH2_PROXY_REDEEM_URL: http://keycloak:8080/realms/learnharness/protocol/openid-connect/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://keycloak:8080/realms/learnharness/protocol/openid-connect/certs
+      OAUTH2_PROXY_PROFILE_URL: http://keycloak:8080/realms/learnharness/protocol/openid-connect/userinfo
+      OAUTH2_PROXY_VALIDATE_URL: http://keycloak:8080/realms/learnharness/protocol/openid-connect/userinfo
+      OAUTH2_PROXY_CLIENT_ID: learnharness
+      OAUTH2_PROXY_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
+      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
+      # Groups arrive through the client's group-membership mapper, not a scope.
+      OAUTH2_PROXY_SCOPE: openid email profile
+      OAUTH2_PROXY_ALLOWED_GROUPS: learnharness
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_REDIRECT_URL: https://${LH_HOST}/oauth2/callback
+      OAUTH2_PROXY_WHITELIST_DOMAINS: ${LH_HOST}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET:?set OAUTH2_COOKIE_SECRET in .env}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_EXPIRE: 168h
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_UPSTREAMS: static://202
+    depends_on: [keycloak]
+    networks: [internal]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    restart: unless-stopped
+    # The realm (client, group, mappers) is imported on first start only.
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      KC_HOSTNAME: ${AUTH_URL}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:?set KC_ADMIN_USER in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?set KC_ADMIN_PASSWORD in .env}
+      # Substituted into the realm file at import.
+      LH_HOST: ${LH_HOST}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+    volumes:
+      - ./keycloak/realm-learnharness.json:/opt/keycloak/data/import/realm-learnharness.json:ro
+    depends_on: [keycloak-db]
+    networks: [internal]
+
+  keycloak-db:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./volumes/keycloak-db:/var/lib/postgresql/data
+    networks: [internal]
+
+networks:
+  internal:

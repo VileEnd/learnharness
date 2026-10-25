@@ -1,6 +1,6 @@
 /**
  * The AuthStore adapter (auth-keys wave, 2026-09-19): the flat {VAR: value}
- * auth.json map at config.AUTH_FILE — the SAME file the Electron app has
+ * auth.json map at config.AUTH_FILE — the SAME file the app has
  * always hand-edited (owner decision: option A — same file, env-located,
  * zero migration). 0600, atomic writes, hand-edits keep working (the file
  * is re-read from disk on every access).

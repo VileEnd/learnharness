@@ -9,7 +9,7 @@
  * holds REAL user override files — this suite must never touch it (the
  * old after() wiped it as "disposable scratch", killing real overrides
  * and orphaning their ON switches). LH_DATA_DIR is the established
- * data-location seam (Electron contract, 2026-09-17; see
+ * data-location seam (2026-09-17; see
  * data-dir-seam.test.ts), evaluated at config.ts's MODULE LOAD — so it
  * must be set before the first import that (transitively) loads config.
  * Every app-module import below is dynamic for exactly that reason;

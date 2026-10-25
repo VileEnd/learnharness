@@ -1,8 +1,8 @@
 /**
- * The LH_DATA_DIR seam (Electron contract, 2026-09-17): when set, every
- * mutable record relocates under it; when unset, byte-for-byte the old
- * repo-data/ behavior. The desktop shell's whole data story rests on this,
- * so pin both directions.
+ * The LH_DATA_DIR seam (2026-09-17): when set, every mutable record
+ * relocates under it; when unset, byte-for-byte the old repo-data/
+ * behavior. The container's whole data story (the mounted volume) rests on
+ * this, so pin both directions.
  *
  * The seam is evaluated at MODULE LOAD, so the "set" case must set the env
  * BEFORE the first import of config.ts in this process (dynamic import,
