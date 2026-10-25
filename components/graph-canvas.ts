@@ -628,6 +628,88 @@ function drawNameLines(
 	}
 }
 
+// ─── Label-aware fit (pure) ─────────────────────────────────────────────────
+
+/** One node for the label-aware fit: its world position and its label's world-unit size. */
+export interface FitLabelNode {
+	x: number;
+	y: number;
+	/** The widest line of the label, world units (0 = no label). */
+	ww: number;
+	/** The label block height, world units. */
+	hh: number;
+}
+
+/** The on-screen scale of an always-on label at zoom z: world-scaled, but never smaller than
+ *  MIN_ALWAYS_LABEL_PX on screen (boosted up to 4x). Mirrors the draw pass. */
+export const alwaysLabelScale = (labelSize: number, z: number): number =>
+	z * Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (labelSize * z), 1), 4);
+
+/**
+ * The camera that puts every node disc AND its label box (below or above: the larger extent
+ * is assumed on both sides) inside a viewport minus a margin. Closed form, no iteration on the
+ * layout: the two axes are independent. For a fixed centre c every node gives a bound on the
+ * zoom (|p - c| * z + extent(z) <= available / 2, extent being the larger of the disc and the
+ * label, which itself depends on z through the readable-size clamp), so the largest feasible z is
+ * found by bisection (feasibility only shrinks as z grows); the centre that maximises that z is
+ * found by ternary search (the bound is the minimum of pieces rising and falling in c). Returns
+ * the transform: screen = world * k + (x, y).
+ */
+export function fitLabelCamera(args: {
+	nodes: readonly FitLabelNode[];
+	nodeR: number;
+	labelSize: number;
+	labelGap: number;
+	/** Viewport size and the space the fit keeps clear of overlaid chrome at the top and bottom. */
+	viewW: number;
+	viewH: number;
+	insetTop: number;
+	insetBottom: number;
+	margin: number;
+	maxZoom: number;
+}): { k: number; x: number; y: number } {
+	const { nodes, nodeR, labelSize, labelGap, margin } = args;
+	const availW = Math.max(args.viewW - 2 * margin, 1);
+	const availH = Math.max(args.viewH - args.insetTop - args.insetBottom - 2 * margin, 1);
+	const MIN_Z = 0.02;
+	const extX = (n: FitLabelNode, z: number) => Math.max(nodeR * z, (n.ww / 2) * alwaysLabelScale(labelSize, z));
+	const extY = (n: FitLabelNode, z: number) => Math.max(nodeR * z, (nodeR + labelGap + n.hh) * alwaysLabelScale(labelSize, z));
+	const feasible = (coords: readonly number[], ext: (n: FitLabelNode, z: number) => number, half: number, c: number, z: number) =>
+		coords.every((v, i) => Math.abs(v - c) * z + ext(nodes[i]!, z) <= half + 1e-9);
+	const zAt = (coords: readonly number[], ext: (n: FitLabelNode, z: number) => number, half: number, c: number): number => {
+		if (feasible(coords, ext, half, c, args.maxZoom)) return args.maxZoom;
+		let lo = MIN_Z;
+		let hi = args.maxZoom;
+		for (let i = 0; i < 40; i++) {
+			const mid = (lo + hi) / 2;
+			if (feasible(coords, ext, half, c, mid)) lo = mid;
+			else hi = mid;
+		}
+		return lo;
+	};
+	const best = (coords: readonly number[], ext: (n: FitLabelNode, z: number) => number, half: number): { c: number; z: number } => {
+		let lo = Math.min(...coords);
+		let hi = Math.max(...coords);
+		for (let i = 0; i < 40; i++) {
+			const m1 = lo + (hi - lo) / 3;
+			const m2 = hi - (hi - lo) / 3;
+			if (zAt(coords, ext, half, m1) < zAt(coords, ext, half, m2)) lo = m1;
+			else hi = m2;
+		}
+		const c = (lo + hi) / 2;
+		return { c, z: zAt(coords, ext, half, c) };
+	};
+	if (nodes.length === 0) return { k: 1, x: 0, y: 0 };
+	const bx = best(nodes.map((n) => n.x), extX, availW / 2);
+	const by = best(nodes.map((n) => n.y), extY, availH / 2);
+	const k = Math.max(Math.min(bx.z, by.z, args.maxZoom), MIN_Z);
+	return {
+		k,
+		x: args.viewW / 2 - bx.c * k,
+		y: args.insetTop + margin + availH / 2 - by.c * k,
+	};
+}
+
 // ─── Always-on label placement (pure) ───────────────────────────────────────
 
 /** One always-on label in SCREEN pixels: its node's centre, the distance from the
@@ -1143,51 +1225,26 @@ export class GraphCanvasRenderer {
 		const base = fitTransform(box, w, h, 40, insets);
 		const data = this.data;
 		if (this.alwaysLabels === null || !data) return base;
-		const margin = 8;
-		const availW = w - 2 * margin;
-		const availH = h - insets.top - insets.bottom - 2 * margin;
-		const W = Math.max(box.maxX - box.minX, 1e-6);
-		const H = Math.max(box.maxY - box.minY, 1e-6);
+		const s = this.settings ?? DEFAULT_RENDER_SETTINGS;
 		const metrics = this.labelMetrics();
-		const nodeR = (this.settings ?? DEFAULT_RENDER_SETTINGS).nodeSize;
-		let k = base.k;
-		let bx0 = 0;
-		let bx1 = 0;
-		let by0 = 0;
-		let by1 = 0;
-		for (let it = 0; it < 6; it++) {
-			// Everything relative to the top-left node centre (box.minX, box.minY) at zoom k.
-			const items = this.screenCandidates(metrics, k, box.minX, box.minY);
-			const sides = placeLabels(items);
-			bx0 = -nodeR * k;
-			by0 = -nodeR * k;
-			bx1 = W * k + nodeR * k;
-			by1 = H * k + nodeR * k;
-			for (const c of items) {
-				const side = sides.get(c.id);
-				if (!side) continue;
-				const r = labelRect(c, side);
-				bx0 = Math.min(bx0, r.x0);
-				bx1 = Math.max(bx1, r.x1);
-				by0 = Math.min(by0, r.y0);
-				by1 = Math.max(by1, r.y1);
-			}
-			const totalW = bx1 - bx0;
-			const totalH = by1 - by0;
-			if (totalW <= availW + 0.5 && totalH <= availH + 0.5) break;
-			const overW = totalW - W * k;
-			const overH = totalH - H * k;
-			const next = Math.min((availW - overW) / W, (availH - overH) / H, k);
-			if (!(next > 0) || next >= k - 1e-9) break;
-			k = Math.max(next, 0.02);
-		}
-		const totalW = bx1 - bx0;
-		const totalH = by1 - by0;
-		return {
-			k,
-			x: margin + (availW - totalW) / 2 - bx0 - box.minX * k,
-			y: insets.top + margin + (availH - totalH) / 2 - by0 - box.minY * k,
-		};
+		const labelled = new Map(metrics.map((m) => [m.id, m]));
+		const nodes = data.nodes
+			.filter((n) => !isImpNodeId(n.id))
+			.map((n) => ({ x: n.x, y: n.y, ww: labelled.get(n.id)?.ww ?? 0, hh: labelled.get(n.id)?.hh ?? 0 }));
+		if (nodes.length === 0) return base;
+		const t = fitLabelCamera({
+			nodes,
+			nodeR: s.nodeSize,
+			labelSize: s.labelSize,
+			labelGap: LABEL_GAP,
+			viewW: w,
+			viewH: h,
+			insetTop: insets.top,
+			insetBottom: insets.bottom,
+			margin: 8,
+			maxZoom: base.k,
+		});
+		return { k: t.k, x: t.x, y: t.y };
 	}
 
 	/** World-unit label sizes of the always-on labels, in priority order. */

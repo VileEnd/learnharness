@@ -11,7 +11,7 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BottomTabsBar } from "../components/bottom-tabs.tsx";
 import { alwaysLabelIds, labelPriority, shortLabel } from "../components/knowledge-graph.tsx";
-import { placeLabels, type LabelCandidate } from "../components/graph-canvas.ts";
+import { alwaysLabelScale, fitLabelCamera, placeLabels, type LabelCandidate } from "../components/graph-canvas.ts";
 import { KnowledgeBody, KnowledgeTabSwitch, parseKnowledgeTab } from "../components/knowledge-view.tsx";
 import { KNOWLEDGE_EMPTY_TEXT, KnowledgeOverviewBody } from "../components/knowledge-overview.tsx";
 import { SidebarLibraryLinks } from "../components/sidebar.tsx";
@@ -159,6 +159,52 @@ describe("graph labels", () => {
 		assert.equal(alwaysLabelIds([...ids.slice(0, 20), "arg_1"], states), "all");
 		const some = alwaysLabelIds(ids, states);
 		assert.deepEqual([...(some as Set<string>)].sort(), ["n0", "n1", "n2"]);
+	});
+});
+
+describe("label-aware fit", () => {
+	const nodes = [
+		{ x: -300, y: -120, ww: 140, hh: 31 },
+		{ x: 280, y: -100, ww: 150, hh: 31 },
+		{ x: -40, y: 20, ww: 120, hh: 16 },
+		{ x: 310, y: 160, ww: 140, hh: 31 },
+		{ x: -310, y: 170, ww: 150, hh: 16 },
+	];
+
+	for (const [name, viewW, viewH, top, bottom] of [
+		["phone 390x844", 390, 844, 44, 0],
+		["desktop 1440x900", 1440, 900, 44, 0],
+		["narrow 320x500", 320, 500, 44, 0],
+	] as const) {
+		it(`every node disc and label box lies inside the margins (${name})`, () => {
+			const margin = 8;
+			const nodeR = 6;
+			const labelSize = 12;
+			const gap = 2.9;
+			const t = fitLabelCamera({ nodes, nodeR, labelSize, labelGap: gap, viewW, viewH, insetTop: top, insetBottom: bottom, margin, maxZoom: 40 });
+			const f = alwaysLabelScale(labelSize, t.k);
+			for (const n of nodes) {
+				const sx = n.x * t.k + t.x;
+				const sy = n.y * t.k + t.y;
+				const off = (nodeR + gap) * f;
+				const boxes = [
+					{ x0: sx - (n.ww / 2) * f, x1: sx + (n.ww / 2) * f, y0: sy + off, y1: sy + off + n.hh * f }, // below
+					{ x0: sx - (n.ww / 2) * f, x1: sx + (n.ww / 2) * f, y0: sy - off - n.hh * f, y1: sy - off }, // above
+					{ x0: sx - nodeR * t.k, x1: sx + nodeR * t.k, y0: sy - nodeR * t.k, y1: sy + nodeR * t.k },
+				];
+				for (const b of boxes) {
+					assert.ok(b.x0 >= margin - 0.5 && b.x1 <= viewW - margin + 0.5, `x ${b.x0}..${b.x1}`);
+					assert.ok(b.y0 >= top + margin - 0.5 && b.y1 <= viewH - bottom - margin + 0.5, `y ${b.y0}..${b.y1}`);
+				}
+			}
+		});
+	}
+
+	it("zooms in more on a wide screen than on a phone", () => {
+		const args = { nodes, nodeR: 6, labelSize: 12, labelGap: 2.9, insetTop: 44, insetBottom: 0, margin: 8, maxZoom: 40 };
+		const phone = fitLabelCamera({ ...args, viewW: 390, viewH: 844 });
+		const desk = fitLabelCamera({ ...args, viewW: 1440, viewH: 900 });
+		assert.ok(desk.k > phone.k);
 	});
 });
 
