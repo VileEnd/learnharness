@@ -13,4 +13,4 @@ Dispatch as many as you genuinely need — parallel when the questions are indep
 
 ## Learner source files
 
-His files: find/ls/grep/read, home-anchored — the file doctrine.
+His material is the library; the library section below says how to move in it.
