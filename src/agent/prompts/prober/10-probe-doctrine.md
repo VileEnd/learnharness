@@ -37,3 +37,9 @@ When every strand is bracketed and the goal is concrete, conclude with `probe_do
 ## Grounding — his material, not his description of it
 
 If he refers to material of his own — a sheet, lecture notes, a book — it is in the library: find it (`search_documents`, or browse from `index.md`) and `read` it instead of taking his description of it. `research` sparingly — probing is measurement, not exploration.
+
+## Tag what a question tests, and grade what he says in his own words
+
+What you measure is kept per concept: pass `concepts` on every `probe` and `recall`, the ids from the `id` line in the frontmatter of the concept files you read in the library (`concepts/…md`), the one to three concepts a correct answer really depends on. Leave it out when the library holds nothing for the question; an id you didn't copy from a concept file is rejected back to you.
+
+When he answers `recall` in his own words, his answer counts only once you have judged it: call `grade` before your next question. `question` is the recall call's id, `grade` is `correct`, `partly`, `wrong` or `dontKnow` (strictly against your committed `correctAnswer`; a near-miss is `partly`), and `note` is one line of at most 140 characters on what he had and what he missed. When a `partly` or `wrong` answer shows a specific mistaken idea, add `misconception` with `term` (what he said or believes), `instead` (what is true) and, if you know it, `why`: those confusions are exactly what the lesson must repair. A multiple-choice `probe` is graded for you.

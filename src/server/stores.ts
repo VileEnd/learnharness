@@ -11,6 +11,7 @@ import { conceptVectorStore } from "../store/concept-vectors.ts";
 import { documentStore } from "../store/documents.ts";
 import { graphStore } from "../store/graph.ts";
 import { jobStore } from "../store/jobs.ts";
+import { learnerStore } from "../store/learner.ts";
 import { okfBundleStore } from "../store/okf.ts";
 import { pushStore } from "../store/push.ts";
 import { settingsStore } from "../store/settings.ts";
@@ -22,6 +23,7 @@ export const stores = {
 	documentStore,
 	graphStore,
 	jobStore,
+	learnerStore,
 	okfBundleStore,
 	pushStore,
 	settingsStore,

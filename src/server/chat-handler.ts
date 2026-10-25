@@ -10,6 +10,8 @@ import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
 import { createTopicist } from "../agent/subagents/topics.ts";
+import { createAttributor } from "../agent/subagents/attribution.ts";
+import { createAttributionService } from "./attribution.ts";
 import { PATHS, type ModelRole } from "../../config.ts";
 import {
 	deliverJobResult,
@@ -41,7 +43,7 @@ import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { notify } from "./push.ts";
 import { registerTurn, unregisterTurn } from "./turn-runs.ts";
-import { persistTurn, triggerExtraction } from "./turn-service.ts";
+import { persistTurn, triggerAttribution, triggerExtraction } from "./turn-service.ts";
 import { hasProbeDone, danglingQuestionOf } from "../core/native-messages.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
@@ -107,6 +109,19 @@ export const topicist = createTopicist({
 	providerKeyMissing: (provider, tier) =>
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
 });
+/** The learner model's attribution service (cheap slot): links graded,
+ *  untagged questions of a session to the concepts they test. Triggered
+ *  after merges (below) and when turns settle; never under tests. */
+export const attribution = createAttributionService({
+	chatStore: stores.chatStore,
+	graphStore: stores.graphStore,
+	learnerStore: stores.learnerStore,
+	attributor: createAttributor({
+		engineFor: (role) => resolveEngine(role),
+		providerKeyMissing: (provider, tier) =>
+			providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
+	}),
+});
 /** The app's ONE extraction pipeline instance — both front doors share it:
  *  quiz-triggered session runs (turn-service) and notes imports
  *  (/api/graph/import) hit the same single-flight registry. */
@@ -127,6 +142,10 @@ export const extraction = createExtractionPipeline({
 	onRunFinished: (run) => void notify({ kind: "extraction", ...run }),
 	// Session topics: proposed labels fold onto the library's topics before the merge.
 	canonicalizeTopics: (topics, existing, signal) => topicist.canonicalize(topics, existing, signal),
+	// Learner model: new propositions may be the concepts of already-graded questions.
+	onChatMerged: (chatId) => {
+		if (process.env.NODE_ENV !== "test") attribution.schedule(chatId);
+	},
 });
 
 
@@ -417,6 +436,8 @@ export async function handleChatInput(
 						searchAvailable,
 						libraryRoot: PATHS.okf,
 						libraryBeforeAccess: () => library.ensureFresh(),
+						// The questions' `concepts` tags validate against the whole graph.
+						graphNodes: () => stores.graphStore.readNodes(),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -434,6 +455,8 @@ export async function handleChatInput(
 						searchAvailable,
 						libraryRoot: PATHS.okf,
 						libraryBeforeAccess: () => library.ensureFresh(),
+						// The questions' `concepts` tags validate against the whole graph.
+						graphNodes: () => stores.graphStore.readNodes(),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -508,6 +531,8 @@ export async function handleChatInput(
 					// (extraction-UX redesign, 2026-09-24): the trigger compares
 					// against it and the pipeline's batches share it.
 					triggerExtraction(stores, extraction, chatId, effective.graph.extractionChunkTokens);
+					// Graded questions of this session that still need their concepts.
+					triggerAttribution(attribution, chatId);
 				}
 				// PARKED DISMISSAL (owner, 2026-10-04): a dismissal that arrived
 				// mid-turn was parked by the dismiss route (202); now that

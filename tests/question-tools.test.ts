@@ -282,7 +282,7 @@ describe("tool toggles (core/pending.ts + factories)", () => {
 		// The mechanic switch (owner 2026-09-27): tools.explain === true arms
 		// free-recall — explain in, quiz out, exactly one quizzing tool.
 		const free = createProberTools(ctx, { explain: true });
-		assert.deepEqual(Object.keys(free).sort(), ["ask_user_question", "find", "grep", "ls", "probe_done", "read", "recall", "research"]);
+		assert.deepEqual(Object.keys(free).sort(), ["ask_user_question", "find", "grade", "grep", "ls", "probe_done", "read", "recall", "research"]);
 		assert.ok(createProberTools(ctx, { probe_done: false }).probe_done, "probe_done always-on");
 	});
 
@@ -310,7 +310,7 @@ describe("tool toggles (core/pending.ts + factories)", () => {
 
 		// The mechanic switch (owner 2026-09-27): free-recall swaps the teach
 		// quiz for the teach explain — one quizzing tool, whichever is armed.
-		const freeFull = ["ask_user_question", "demo", "explain", "find", "grep", "ls", "plan_init", "read", "research", "visual"];
+		const freeFull = ["ask_user_question", "demo", "explain", "find", "grade", "grep", "ls", "plan_init", "read", "research", "visual"];
 		assert.deepEqual(Object.keys(createTeacherTools(ctx, { explain: true })).sort(), freeFull);
 		assert.deepEqual(
 			Object.keys(createTeacherTools(ctx, { explain: true, research: false })).sort(),

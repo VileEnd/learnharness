@@ -13,8 +13,10 @@ import {
 	quizInputProblems,
 } from "../core/question-core.ts";
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
-import type { JobRecord } from "../core/contracts.ts";
-import type { JobStore } from "../core/ports.ts";
+import { resolveTargetId } from "../core/chains.ts";
+import { ungradedAnsweredRecalls } from "../core/learner.ts";
+import type { GraphNode, JobRecord } from "../core/contracts.ts";
+import type { ChatStore, JobStore } from "../core/ports.ts";
 import { jobTools, type DemoInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
@@ -23,6 +25,7 @@ import { readToolFor } from "./tools/read.ts";
 import { lsToolFor } from "./tools/ls.ts";
 import { findToolFor } from "./tools/find.ts";
 import { grepToolFor } from "./tools/grep.ts";
+import { gradeTool } from "./tools/grade.ts";
 import { healToolRecord } from "./tools/heal.ts";
 
 export { jobTools };
@@ -63,16 +66,48 @@ export type { ProbeDoneContext } from "./tools/probe.ts";
  *  again in normalizeOptions (question-core), the same parseOptionsIfString.
  *  Anything unparseable passes through untouched: validation then reports
  *  honestly and the agent retries with a real error to learn from. */
-function prepareQuestionArguments<T extends object>(args: unknown): T {
-	if (args && typeof args === "object" && !Array.isArray(args)) {
-		const o = args as { options?: unknown };
-		if (typeof o.options === "string") {
-			const parsed = parseOptionsIfString(o.options);
-			if (parsed !== o.options) return { ...o, options: parsed } as T;
+/** The whole-graph node list the `concepts` tag validates against, read
+ *  fresh per call (the practice tools' `graphNodes` idiom). Absent (tests,
+ *  graph off) = no validation. */
+export type ConceptNodes = () => ReadonlyArray<Pick<GraphNode, "id" | "name">>;
+
+function prepareQuestionArgumentsFor<T extends object>(graphNodes?: ConceptNodes): (args: unknown) => T {
+	return (args: unknown): T => {
+		if (!(args && typeof args === "object" && !Array.isArray(args))) return args as T;
+		let out = args as { options?: unknown; concepts?: unknown };
+		if (typeof out.options === "string") {
+			const parsed = parseOptionsIfString(out.options);
+			if (parsed !== out.options) out = { ...out, options: parsed };
 		}
-		return o as T;
-	}
-	return args as T;
+		// CONCEPTS (mirrors the practice `target` seam): an explicit empty list
+		// is healed AWAY (the record's canonical form is tagged-or-absent); names
+		// silently become ids; unresolvable strings pass through for execute to
+		// reject.
+		if (Array.isArray(out.concepts)) {
+			const concepts: unknown[] = out.concepts;
+			if (concepts.length === 0) {
+				out = { ...out, concepts: undefined };
+			} else if (graphNodes) {
+				const list = graphNodes();
+				const normalized = concepts.map((c) => (typeof c === "string" ? (resolveTargetId(c, list) ?? c) : c));
+				if (normalized.some((c, i) => c !== concepts[i])) out = { ...out, concepts: normalized };
+			}
+		}
+		return out as T;
+	};
+}
+function prepareQuestionArguments<T extends object>(args: unknown): T {
+	return prepareQuestionArgumentsFor<T>()(args);
+}
+
+/** Call-time validation of a question's `concepts` tag (the `target` idiom):
+ *  every id must be a graph node. Empty result = valid or nothing to check. */
+export function conceptsProblems(graphNodes: ConceptNodes | undefined, concepts: readonly string[] | undefined): string[] {
+	if (!graphNodes || !concepts || concepts.length === 0) return [];
+	const known = new Set(graphNodes().map((n) => n.id));
+	return concepts
+		.filter((id) => !known.has(id))
+		.map((id) => `concepts: unknown id "${id}" - copy ids from the concept files' frontmatter`);
 }
 
 export const askUserQuestionTool: AgentTool<typeof askInputSchema> = {
@@ -201,34 +236,38 @@ function explainDescription(name: "explain" | "recall", nodeId: boolean): string
  *  that habit (the tools_fails_2 incident). Distinct names make the
  *  phase boundary visible in the transcript itself: history written by
  *  `probe` never lies about what `quiz` requires. */
-export const probeQuizTool: AgentTool<typeof probeQuizInputSchema> = {
-	name: "probe",
-	label: "probe",
-	description: quizDescription({ name: "probe", nodeId: false, types: false }),
-	parameters: probeQuizInputSchema,
-	prepareArguments: prepareQuestionArguments,
-	executionMode: "sequential",
-	execute: async (_toolCallId, input) => {
-		const problems = quizInputProblems(input);
-		if (problems.length > 0) return invalidInputResult("probe", problems);
-		return questionResult();
-	},
-};
+export function probeQuizToolFor(ctx: { graphNodes?: ConceptNodes } = {}): AgentTool<typeof probeQuizInputSchema> {
+	return {
+		name: "probe",
+		label: "probe",
+		description: quizDescription({ name: "probe", nodeId: false, types: false }),
+		parameters: probeQuizInputSchema,
+		prepareArguments: prepareQuestionArgumentsFor(ctx.graphNodes),
+		executionMode: "sequential",
+		execute: async (_toolCallId, input) => {
+			const problems = [...quizInputProblems(input), ...conceptsProblems(ctx.graphNodes, input.concepts)];
+			if (problems.length > 0) return invalidInputResult("probe", problems);
+			return questionResult();
+		},
+	};
+}
+/** The validation-free probe quiz (no graph wired: tests). */
+export const probeQuizTool = probeQuizToolFor();
 
 /** The teacher's free-recall variant (nodeId-validated, same seam as the
  *  teach quiz — phases/plan recognize BOTH tool names). */
 export function teachExplainToolFor(
-	ctx: Pick<PlanToolContext, "chatId" | "chatStore">,
+	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes },
 ): AgentTool<typeof explainInputObject> {
 	return {
 		name: "explain",
 		label: "explain",
 		description: explainDescription("explain", true),
 		parameters: explainInputObject,
-		prepareArguments: prepareQuestionArguments,
+		prepareArguments: prepareQuestionArgumentsFor(ctx.graphNodes),
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
-			const problems = [...explainInputProblems(input)];
+			const problems = [...explainInputProblems(input), ...conceptsProblems(ctx.graphNodes, input.concepts)];
 			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
 			if (problems.length > 0) return invalidInputResult("explain", problems);
@@ -245,19 +284,23 @@ export function teachExplainToolFor(
  *  probe call shape into teaching. Old probe-phase records keep the
  *  `explain` name and parse identically (the display seam accepts
  *  both). */
-export const probeExplainTool: AgentTool<typeof explainInputBase> = {
-	name: "recall",
-	label: "recall",
-	description: explainDescription("recall", false),
-	parameters: explainInputBase,
-	prepareArguments: prepareQuestionArguments,
-	executionMode: "sequential",
-	execute: async (_toolCallId, input) => {
-		const problems = explainInputProblems(input);
-		if (problems.length > 0) return invalidInputResult("recall", problems);
-		return questionResult();
-	},
-};
+export function probeExplainToolFor(ctx: { graphNodes?: ConceptNodes } = {}): AgentTool<typeof explainInputBase> {
+	return {
+		name: "recall",
+		label: "recall",
+		description: explainDescription("recall", false),
+		parameters: explainInputBase,
+		prepareArguments: prepareQuestionArgumentsFor(ctx.graphNodes),
+		executionMode: "sequential",
+		execute: async (_toolCallId, input) => {
+			const problems = [...explainInputProblems(input), ...conceptsProblems(ctx.graphNodes, input.concepts)];
+			if (problems.length > 0) return invalidInputResult("recall", problems);
+			return questionResult();
+		},
+	};
+}
+/** The validation-free recall tool (no graph wired: tests). */
+export const probeExplainTool = probeExplainToolFor();
 
 /** The prober's registry context: the probe's own needs (probe_done —
  *  ProbeDoneContext) PLUS the job-dispatch wiring, since the owner ruling
@@ -277,6 +320,9 @@ export interface ProberToolContext extends ProbeDoneContext {
 	libraryRoot: string;
 	/** Runs before every library tool call (the bundle freshness hook). */
 	libraryBeforeAccess?: () => Promise<void>;
+	/** The whole-graph node list the questions' `concepts` tags validate
+	 *  against (read fresh per call). Absent = tags are not validated. */
+	graphNodes?: ConceptNodes;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -311,7 +357,9 @@ export function createProberTools(
 	// differently-typed literals makes the whole object's type a union —
 	// unusable as Record<string, AgentTool<any>> downstream).
 	const quizzing: Record<string, AgentTool<any>> =
-		mechanics === "free" ? { recall: probeExplainTool } : { probe: probeQuizTool };
+		mechanics === "free"
+			? { recall: probeExplainToolFor({ graphNodes: ctx.graphNodes }) }
+			: { probe: probeQuizToolFor({ graphNodes: ctx.graphNodes }) };
 	// healToolRecord (owner, 2026-10-09 — the whitehead generalization):
 	// the standard argument heal over the WHOLE registry — every tool,
 	// not just the one the latest wobble incident landed on.
@@ -335,6 +383,7 @@ export function createProberTools(
 				// remains available without a search-provider key.
 				...(jobs.research ? { research: jobs.research } : {}),
 				...(ctx.documents ? documentTools(ctx.documents) : {}),
+				...gradeFor(ctx, mechanics),
 				...done,
 			},
 				withoutMechanics(enabled),
@@ -368,16 +417,18 @@ function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeI
  *  nodeId is REQUIRED (owner ruling 2026-09-26): the untagged ad-hoc quiz is
  *  gone — off-map checks route through ask_user_question, and the teach
  *  seam (first tagged quiz) is structurally guaranteed. */
-export function teachQuizToolFor(ctx: Pick<PlanToolContext, "chatId" | "chatStore">): AgentTool<typeof quizInputObject> {
+export function teachQuizToolFor(
+	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes },
+): AgentTool<typeof quizInputObject> {
 	return {
 		name: "quiz",
 		label: "quiz",
 		description: quizDescription({ name: "quiz", nodeId: true, types: true }),
 		parameters: quizInputObject,
-		prepareArguments: prepareQuestionArguments,
+		prepareArguments: prepareQuestionArgumentsFor(ctx.graphNodes),
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
-			const problems = [...quizInputProblems(input)];
+			const problems = [...quizInputProblems(input), ...conceptsProblems(ctx.graphNodes, input.concepts)];
 			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
 			if (problems.length > 0) return invalidInputResult("quiz", problems);
@@ -402,6 +453,9 @@ export interface TeacherToolContext extends PlanToolContext {
 	libraryRoot: string;
 	/** Runs before every library tool call (the bundle freshness hook). */
 	libraryBeforeAccess?: () => Promise<void>;
+	/** The whole-graph node list the questions' `concepts` tags validate
+	 *  against (read fresh per call). Absent = tags are not validated. */
+	graphNodes?: ConceptNodes;
 }
 
 /**
@@ -433,6 +487,23 @@ function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
 	return rest;
 }
 
+/** The `grade` tool's registration law: present whenever the free-recall
+ *  mechanic is armed, OR an answered explain/recall in the record still
+ *  waits for its grade (the mechanic may have been switched off mid-session,
+ *  and a pending answer must stay gradeable). Read from the live record at
+ *  registry construction (one registry per turn). */
+function gradeFor(
+	ctx: { chatId: string; chatStore: ChatStore },
+	mechanics: "choice" | "free",
+): Record<string, AgentTool<any>> {
+	if (mechanics !== "free") {
+		// Optional chain: partial test contexts carry no store (no record = nothing pending).
+		const record = ctx.chatStore?.getChat?.(ctx.chatId);
+		if (!record || ungradedAnsweredRecalls(record.messages).length === 0) return {};
+	}
+	return { grade: gradeTool(ctx) };
+}
+
 export function createTeacherTools(
 	ctx: TeacherToolContext,
 	enabled?: EnabledTools,
@@ -462,6 +533,7 @@ export function createTeacherTools(
 			...planTools(ctx),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
 			...(ctx.documents ? documentTools(ctx.documents) : {}),
+			...gradeFor(ctx, mechanics),
 		},
 		withoutMechanics(enabled),
 		),
