@@ -50,3 +50,7 @@ export { documents } from "./library.ts";
 export { docIndex } from "./doc-index.ts";
 export { scanStatuses, abortScan, incomingFiles, type CheckResult, type ImportTicket, type ImportCompletion, type IncomingFile } from "./documents.ts";
 export { OcrError } from "./ocr-client.ts";
+// The OKF library (generated bundle + download): the freshness service, the zip writer.
+export { library } from "./okf-library.ts";
+export { createLibrary, type Library, type LibraryDeps } from "./okf.ts";
+export { zipFiles } from "./zip.ts";

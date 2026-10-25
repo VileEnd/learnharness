@@ -283,6 +283,8 @@ export interface ProberToolContext extends ProbeDoneContext {
 	documents?: DocumentToolDeps;
 	/** The library root the read/ls/find/grep tools are confined to. */
 	libraryRoot: string;
+	/** Runs before every library tool call (the bundle freshness hook). */
+	libraryBeforeAccess?: () => Promise<void>;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -329,10 +331,10 @@ export function createProberTools(
 				// The learner-filesystem set is always-on (user-decided 2026-09,
 				// sources v1): the prober inspects and LOCATES learner-referenced
 				// files while assessing the edge. Read-only by construction.
-				read: readToolFor(ctx.libraryRoot),
-				ls: lsToolFor(ctx.libraryRoot),
-				find: findToolFor(ctx.libraryRoot),
-				grep: grepToolFor(ctx.libraryRoot),
+				read: readToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+				ls: lsToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+				find: findToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+				grep: grepToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 				// Job dispatch in the probe phase (owner ruling, 2026-09-20):
 				// research is ALWAYS available in every phase — the
 				// prober can verify facts while assessing.
@@ -411,6 +413,8 @@ export interface TeacherToolContext extends PlanToolContext {
 	documents?: DocumentToolDeps;
 	/** The library root the read/ls/find/grep tools are confined to. */
 	libraryRoot: string;
+	/** Runs before every library tool call (the bundle freshness hook). */
+	libraryBeforeAccess?: () => Promise<void>;
 }
 
 /**
@@ -464,10 +468,10 @@ export function createTeacherTools(
 			// sources v1): the teacher locates and reads learner-referenced
 			// files on its own terms — nothing auto-injects. Read-only by
 			// construction (fs-shared.ts).
-			read: readToolFor(ctx.libraryRoot),
-			ls: lsToolFor(ctx.libraryRoot),
-			find: findToolFor(ctx.libraryRoot),
-			grep: grepToolFor(ctx.libraryRoot),
+			read: readToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+			ls: lsToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+			find: findToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+			grep: grepToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 			...planTools(ctx),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
 			...(ctx.documents ? documentTools(ctx.documents) : {}),
