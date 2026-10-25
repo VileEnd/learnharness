@@ -324,6 +324,8 @@ const FIT_INSET_TOP = 56; // overlaid top controls
 const FIT_INSET_BOTTOM = 140; // the composer dock on phones
 /** Node labels below this on-screen size are illegible smudges (touch). */
 const LABEL_MIN_PX = 6;
+/** Always-on labels (the "My knowledge" view) are scaled up to at least this many CSS px on screen. */
+const MIN_ALWAYS_LABEL_PX = 10;
 const LABEL_FULL_PX = 8;
 const COARSE_DPR_CAP = 2;
 
@@ -844,7 +846,7 @@ export class GraphCanvasRenderer {
 			const wy = (prevH / 2 - ty) / k;
 			this.syncSize();
 			if (!this.hasFit) this.fit(); // first real size → fit once
-			else if (this.fitNarrow && !this.userMoved && this.viewW >= NARROW_VIEW) {
+			else if (!this.userMoved && ((this.fitNarrow && this.viewW >= NARROW_VIEW) || this.insetsOverride !== null)) {
 				// The first fit happened in a narrow view (tiny k): refit now it widened.
 				this.fit();
 			} else {
@@ -911,6 +913,8 @@ export class GraphCanvasRenderer {
 
 	setSettings(settings: GraphRenderSettings): void {
 		this.settings = settings;
+		// Label sizes feed the label-inclusive fit: reframe while the camera is still untouched.
+		if (this.insetsOverride !== null && this.hasFit && !this.userMoved) this.fit();
 		this.geoVersion++; // sizes/wrap width changed → rebuild geometry
 		this.markDirty();
 	}
@@ -1047,15 +1051,43 @@ export class GraphCanvasRenderer {
 		return w < NARROW_VIEW ? { top: FIT_INSET_TOP, bottom: FIT_INSET_BOTTOM } : { top: 0, bottom: 0 };
 	}
 
+	/** The box the fit must contain. With always-on labels (the "My knowledge" view) it grows by
+	 *  each name's extent (centred under its node, in world units), so a wide label at the
+	 *  graph's edge is not cut off. Otherwise the node centres alone, as before. */
+	private fitBBox(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+		const box = this.worldBBox;
+		const data = this.data;
+		if (!box || !data) return box;
+		if (this.alwaysLabels === null) return box;
+		const size = this.settings?.labelSize ?? LABEL_SIZE;
+		const ctx = this.ctx;
+		const prevFont = ctx.font;
+		ctx.font = `${LABEL_WEIGHT} ${size}px ${data.fontFamily}`;
+		const maxW = LABEL_MAX_WIDTH * (size / LABEL_SIZE);
+		const out = { ...box };
+		for (const n of data.nodes) {
+			if (isImpNodeId(n.id)) continue;
+			if (this.alwaysLabels !== "all" && !this.alwaysLabels.has(n.id)) continue;
+			const lines = wrapLabel(ctx, n.label, maxW);
+			const half = Math.max(0, ...lines.map((l) => ctx.measureText(l).width)) / 2;
+			out.minX = Math.min(out.minX, n.x - half);
+			out.maxX = Math.max(out.maxX, n.x + half);
+			out.maxY = Math.max(out.maxY, n.y + size * (0.8 + lines.length * LABEL_LINE_HEIGHT));
+		}
+		ctx.font = prevFont;
+		return out;
+	}
+
 	/** Frame the whole graph (padding included). Keeps the camera on later
 	 *  setData calls — call fit() only for an explicit re-frame (the
 	 *  first-ever open; afterwards the caller-persisted camera wins). */
 	fit(): void {
-		if (!this.data || this.data.nodes.length === 0 || !this.worldBBox) return;
+		const box = this.fitBBox();
+		if (!this.data || this.data.nodes.length === 0 || !box) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40, this.fitInsets(w));
+		const t = fitTransform(box, w, h, 40, this.fitInsets(w));
 		this.kFit = t.k;
 		this.hasFit = true;
 		this.fitNarrow = w < NARROW_VIEW;
@@ -1069,10 +1101,11 @@ export class GraphCanvasRenderer {
 	 *  viewport. kFit feeds ONLY zoomRatioOf now (the 2026-09-15 pivot
 	 *  removed it from geometry) — so this never touches geoVersion. */
 	private refreshFitZoom(): void {
-		if (!this.worldBBox) return;
+		const box = this.fitBBox();
+		if (!box) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40, this.fitInsets(w)).k;
+		if (w >= 10 && h >= 10) this.kFit = fitTransform(box, w, h, 40, this.fitInsets(w)).k;
 	}
 
 	destroy(): void {
@@ -1983,16 +2016,28 @@ export class GraphCanvasRenderer {
 		const sizeAlpha = this.coarse ? labelSizeAlpha(this.world.labelSize, k) : 1;
 		const labelsAlpha = nodeAlpha * sizeAlpha;
 		const always = this.alwaysLabels;
-		if (labelsAlpha > 0.01 || (always !== null && sizeAlpha > 0.01)) {
+		if (labelsAlpha > 0.01 || always !== null) {
 			ctx.save();
 			ctx.font = this.worldLabelFont;
+			// An always-on name never drops below MIN_ALWAYS_LABEL_PX on screen (it is scaled up about
+			// its node instead of hidden); the zoom-gated labels keep the home graph's size law.
+			const boost = Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (this.world.labelSize * k), 1), 4);
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
 				if (!n) continue;
-				const a = always === "all" || always?.has(id) ? sizeAlpha : labelsAlpha;
+				const isAlways = always === "all" || always?.has(id) === true;
+				const a = isAlways ? 1 : labelsAlpha;
 				if (a <= 0.01) continue;
 				ctx.globalAlpha = a;
-				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
+				if (isAlways && boost > 1) {
+					ctx.save();
+					ctx.translate(n.x, n.y);
+					ctx.scale(boost, boost);
+					drawNameLines(ctx, 0, 0, lines, this.world, data.colors.label);
+					ctx.restore();
+				} else {
+					drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
+				}
 			}
 			ctx.restore();
 		}
