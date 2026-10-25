@@ -53,6 +53,7 @@ import {
 	EXTRACTION_CORE,
 	SESSION_PREAMBLE,
 	SESSION_MESSAGE_ID_RULE,
+	SESSION_TOPICS_RULE,
 	NOTES_PREAMBLE,
 	EXTRACTOR_INSTRUCTIONS,
 	NOTES_EXTRACTOR_INSTRUCTIONS,
@@ -2553,5 +2554,86 @@ describe("notes import completion and retry reliability", () => {
 		assert.equal(ledgers.readSources().length, 1);
 		assert.equal(ledgers.readSources()[0]!.extractions?.length, 2);
 		assert.equal(ledgers.readNodes().length, 2);
+	});
+});
+
+describe("session topics (PR 4)", () => {
+	const withTopics = (topics: string[], extra: Record<string, unknown> = {}) => ({
+		propositions: [
+			{ id: "p1", name: "Semaphore", statement: "A semaphore is a counter guarding a shared resource.", aliases: [], messageId: "a2", topics, ...extra },
+		],
+		chains: [],
+	});
+	const run = async (
+		payload: unknown,
+		canonicalizeTopics?: (t: readonly string[], e: readonly string[]) => Promise<Record<string, string>>,
+		ledgers = memoryLedgers(),
+	) => {
+		const { chatId } = fixtureChat();
+		const pipeline = createExtractionPipeline({
+			chatStore,
+			graphStore: ledgers,
+			extractor: submitModel("submit_findings", payload),
+			auditor: submitModel("submit_review", { links: [] }),
+			...(canonicalizeTopics ? { canonicalizeTopics } : {}),
+		});
+		await pipeline.runExtraction(chatId);
+		return { chatId, ledgers };
+	};
+
+	it("the session prompt names topics, goal-first; the notes prompt does not", () => {
+		assert.ok(EXTRACTOR_INSTRUCTIONS.includes(SESSION_TOPICS_RULE));
+		assert.match(SESSION_TOPICS_RULE, /organised by topic/);
+		assert.match(SESSION_TOPICS_RULE, /in topics/);
+		assert.ok(!NOTES_EXTRACTOR_INSTRUCTIONS.includes("topics"));
+	});
+
+	it("session extraction writes topic rows with sourceId = the chat id", async () => {
+		const { chatId, ledgers } = await run(withTopics(["Semaphoren"]));
+		const node = ledgers.readNodes()[0]!;
+		assert.deepEqual(
+			ledgers.readTopics().map((r) => [r.nodeId, r.topic, r.sourceId]),
+			[[node.id, "Semaphoren", chatId]],
+		);
+	});
+
+	it("variant spellings fold before the merge: the proposal canonicalises onto the existing topic", async () => {
+		const ledgers = memoryLedgers();
+		ledgers.appendTopic({ nodeId: "n_old", topic: "Semaphoren", sourceId: "src_a", at: "2026-10-25T00:00:00.000Z" });
+		let offered: readonly string[] = [];
+		const { chatId } = await run(
+			withTopics(["Semaphore"]),
+			async (topics, existing) => {
+				offered = existing;
+				return Object.fromEntries(topics.map((t) => [t, t === "Semaphore" ? "Semaphoren" : t]));
+			},
+			ledgers,
+		);
+		assert.deepEqual(offered, ["Semaphoren"], "the canonicalizer sees the library's topics");
+		assert.deepEqual(ledgers.readTopicAliases(), { semaphore: "Semaphoren" }, "the alias is stored before the merge");
+		const mine = ledgers.readTopics().filter((r) => r.sourceId === chatId);
+		assert.deepEqual(mine.map((r) => r.topic), ["Semaphoren"]);
+	});
+
+	it("a failing canonicalizer is contained: the run still merges, topics keep their own spelling", async () => {
+		const { chatId, ledgers } = await run(withTopics(["Semaphore"]), async () => {
+			throw new Error("no cheap model");
+		});
+		assert.deepEqual(ledgers.readTopics().map((r) => [r.topic, r.sourceId]), [["Semaphore", chatId]]);
+	});
+
+	it("more than three topics rides the error-back channel; no topics at all still merges", async () => {
+		const { chatId } = fixtureChat();
+		const ledgers = memoryLedgers();
+		const step = (payload: unknown): FauxResponseStep => () =>
+			fauxAssistantMessage([fauxToolCall("submit_findings", payload as ToolCall["arguments"], { id: "t-call" })], { stopReason: "toolUse" });
+		const pipeline = createExtractionPipeline({
+			chatStore,
+			graphStore: ledgers,
+			extractor: fauxEngine([step(withTopics(["A", "B", "C", "D"])), step(withTopics([]))]),
+			auditor: submitModel("submit_review", { links: [] }),
+		});
+		assert.deepEqual(await pipeline.runExtraction(chatId), { nodes: 1, chains: 0 });
+		assert.deepEqual(ledgers.readTopics(), [], "the second submit had no topics");
 	});
 });
