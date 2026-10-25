@@ -47,6 +47,34 @@ export function alwaysLabelIds(
 	return new Set(concepts.filter((id) => states[id]?.state === "solid" || states[id]?.state === "shaky" || states[id]?.due === true));
 }
 
+/** Who wins a label collision: shaky, then due, then learning, then solid; ties by how many
+ *  chains touch the concept (most first), then name. */
+export function labelPriority(
+	nodes: ReadonlyArray<{ id: string; name: string }>,
+	edges: ReadonlyArray<{ from: string; to: string }>,
+	states: Readonly<Record<string, { state: string; due: boolean }>>,
+): string[] {
+	const degree = new Map<string, number>();
+	for (const e of edges) {
+		degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+		degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+	}
+	const rank = (id: string): number => {
+		const s = states[id];
+		return s?.state === "shaky" ? 0 : s?.due ? 1 : s?.state === "learning" ? 2 : 3;
+	};
+	return nodes
+		.filter((n) => !n.id.startsWith("arg_"))
+		.sort(
+			(a, b) =>
+				rank(a.id) - rank(b.id) ||
+				(degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0) ||
+				(a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
+				(a.id < b.id ? -1 : 1),
+		)
+		.map((n) => n.id);
+}
+
 interface Open {
 	id: string;
 	anchor: { x: number; y: number };
@@ -140,6 +168,7 @@ export function KnowledgeGraph({
 				nodes.map((n) => n.id),
 				view.learner.states,
 			),
+			labelPriority(nodes, view.graph.logicalEdges, view.learner.states),
 		);
 		renderer.setData({
 			nodes: nodes.map((n) => ({ id: n.id, x: positions.get(n.id)?.x ?? 0, y: positions.get(n.id)?.y ?? 0, label: shortLabel(n.name) })),

@@ -10,7 +10,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BottomTabsBar } from "../components/bottom-tabs.tsx";
-import { alwaysLabelIds, shortLabel } from "../components/knowledge-graph.tsx";
+import { alwaysLabelIds, labelPriority, shortLabel } from "../components/knowledge-graph.tsx";
+import { placeLabels, type LabelCandidate } from "../components/graph-canvas.ts";
 import { KnowledgeBody, KnowledgeTabSwitch, parseKnowledgeTab } from "../components/knowledge-view.tsx";
 import { KNOWLEDGE_EMPTY_TEXT, KnowledgeOverviewBody } from "../components/knowledge-overview.tsx";
 import { SidebarLibraryLinks } from "../components/sidebar.tsx";
@@ -161,7 +162,45 @@ describe("graph labels", () => {
 	});
 });
 
-const emptyView =(): KnowledgeView => ({
+describe("label placement", () => {
+	// 60x12 px labels, 10 px below the node centre.
+	const c = (id: string, x: number, y: number): LabelCandidate => ({ id, x, y, off: 10, w: 60, h: 12 });
+
+	it("keeps free labels below, moves a colliding one above, skips one that fits neither way", () => {
+		const placed = placeLabels([c("a", 100, 100), c("b", 100, 100), c("c", 100, 100)]);
+		assert.equal(placed.get("a"), "below");
+		assert.equal(placed.get("b"), "above");
+		assert.equal(placed.has("c"), false);
+	});
+
+	it("priority order decides who keeps the spot, and the pad keeps boxes apart", () => {
+		assert.equal(placeLabels([c("x", 0, 0), c("y", 0, 0)]).get("x"), "below");
+		assert.equal(placeLabels([c("y", 0, 0), c("x", 0, 0)]).get("y"), "below");
+		// x's box spans y 10..22. y's below box starts at y+10: y=13 -> 23 (1 px gap, inside the 2 px pad), y=15 -> 25.
+		assert.equal(placeLabels([c("x", 0, 0), c("y", 0, 13)]).get("y"), "above");
+		assert.equal(placeLabels([c("x", 0, 0), c("y", 0, 15)]).get("y"), "below");
+	});
+
+	it("orders labels shaky, due, learning, solid, then by chain count, then name", () => {
+		const nodes = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id, name: id }));
+		const states = {
+			a: { state: "solid", due: false },
+			b: { state: "learning", due: false },
+			c: { state: "shaky", due: false },
+			d: { state: "solid", due: true },
+			e: { state: "solid", due: false },
+			f: { state: "learning", due: false },
+		};
+		const edges = [
+			{ from: "f", to: "b0" },
+			{ from: "f", to: "b1" },
+			{ from: "e", to: "x" },
+		];
+		assert.deepEqual(labelPriority(nodes, edges, states), ["c", "d", "f", "b", "e", "a"]);
+	});
+});
+
+const emptyView =():KnowledgeView => ({
 	learner: { asOf: "2026-10-25T00:00:00.000Z", states: {}, sessions: {} },
 	overview: { checkedCount: 0, due: [], confusions: [], topics: [] },
 	graph: { nodes: [], edges: [], logicalEdges: [], impLinks: [], sessions: {}, fileSources: {}, nodeSessions: {}, documents: {} },
