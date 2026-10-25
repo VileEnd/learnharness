@@ -136,7 +136,7 @@ export function MinimalHome({
 				ref={fileInputRef}
 				type="file"
 				multiple
-				accept=".md,.markdown,.txt"
+				accept=".md,.markdown,.txt,text/markdown,text/x-markdown,text/plain"
 				className="hidden"
 				onChange={(e) => {
 					onImportFiles(e.target.files);

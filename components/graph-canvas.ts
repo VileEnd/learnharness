@@ -292,9 +292,53 @@ const ZOOM_EASE_MS = 45; // wheel-zoom glide: exponential-ease time constant (~2
 /** Extra pickable radius (px) beyond the disc — the whole halo is
  *  hit-testable (the old flicker fix, minus the picking shader). */
 const PICKING_PAD = 10;
+/** Fingers are fat and imprecise: touch gets a wider pick pad and tap slop. */
+const PICKING_PAD_TOUCH = 22;
 
 /** Click vs drag threshold: pointer travel under this many px is a click. */
 const CLICK_SLOP = 4;
+const CLICK_SLOP_TOUCH = 10;
+/** A stationary touch held this long opens the node menu (iOS never fires
+ *  contextmenu, Android fires it only sometimes). */
+const LONG_PRESS_MS = 500;
+/** Below this view width the first fit is provisional (a phone, or a
+ *  layout that had not widened yet) and the overlaid chrome eats space. */
+const NARROW_VIEW = 640;
+const FIT_INSET_TOP = 56; // overlaid top controls
+const FIT_INSET_BOTTOM = 140; // the composer dock on phones
+/** Node labels below this on-screen size are illegible smudges (touch). */
+const LABEL_MIN_PX = 6;
+const LABEL_FULL_PX = 8;
+const COARSE_DPR_CAP = 2;
+
+/** Pointer-type tuning, pure. Anything that is not a finger (mouse, pen)
+ *  keeps the desktop numbers. */
+export const tapSlop = (pointerType: string): number =>
+	pointerType === "touch" ? CLICK_SLOP_TOUCH : CLICK_SLOP;
+export const pickPad = (pointerType: string): number =>
+	pointerType === "touch" ? PICKING_PAD_TOUCH : PICKING_PAD;
+/** Backing-store scale: coarse-pointer devices cap at 2x (a 3x phone
+ *  canvas triples the fill cost for no visible gain). */
+export const cappedDpr = (dpr: number, coarse: boolean): number =>
+	coarse ? Math.min(dpr, COARSE_DPR_CAP) : dpr;
+/** Region label wrap width: the desktop 220px, clamped to ~40% of a
+ *  narrow view. */
+export const regionLabelMaxWidth = (viewW: number): number =>
+	viewW > 0 ? Math.min(REGION_LABEL_MAX_WIDTH, Math.max(96, viewW * 0.4)) : REGION_LABEL_MAX_WIDTH;
+/** Opacity factor for node labels from their on-screen size: 0 below
+ *  LABEL_MIN_PX, ramping to 1 at LABEL_FULL_PX. */
+export const labelSizeAlpha = (labelSize: number, k: number): number =>
+	Math.min(Math.max((labelSize * k - LABEL_MIN_PX) / (LABEL_FULL_PX - LABEL_MIN_PX), 0), 1);
+/** Has the camera moved far enough from where a touch started that the
+ *  gesture is a pan/pinch, not a tap? (Tap jitter must not read as a
+ *  camera move — that dismisses the card and menus.) */
+export function cameraMovedPastSlop(
+	from: { k: number; x: number; y: number },
+	to: { k: number; x: number; y: number },
+	slop: number,
+): boolean {
+	return Math.hypot(to.x - from.x, to.y - from.y) > slop || Math.abs(to.k / from.k - 1) > 0.01;
+}
 /** Live-sim tuning — see the class doc comment. */
 const LIVE_ALPHA_DECAY = 0.05; // snappier anneal than the settle's 0.0228
 const DRAG_ALPHA_TARGET = 0.3; // d3-drag's own reheat constant
@@ -425,13 +469,20 @@ export function fitTransform(
 	w: number,
 	h: number,
 	padding: number,
+	/** Space under overlaid chrome the fit must avoid (phones). Shrunk
+	 *  proportionally when it would leave under 40% of the height. */
+	insets: { top: number; bottom: number } = { top: 0, bottom: 0 },
 ): { x: number; y: number; k: number } {
+	const total = insets.top + insets.bottom;
+	const shrink = total > h * 0.6 ? (h * 0.6) / total : 1;
+	const top = insets.top * shrink;
+	const bottom = insets.bottom * shrink;
 	const bw = Math.max(bbox.maxX - bbox.minX, 1e-6);
 	const bh = Math.max(bbox.maxY - bbox.minY, 1e-6);
-	const k = Math.min((w - 2 * padding) / bw, (h - 2 * padding) / bh);
+	const k = Math.min((w - 2 * padding) / bw, (h - top - bottom - 2 * padding) / bh);
 	const cx = (bbox.minX + bbox.maxX) / 2;
 	const cy = (bbox.minY + bbox.maxY) / 2;
-	return { x: w / 2 - cx * k, y: h / 2 - cy * k, k };
+	return { x: w / 2 - cx * k, y: top + (h - top - bottom) / 2 - cy * k, k };
 }
 
 /** The arrowhead geometry for a directed edge a→b: shaft endpoints
@@ -630,6 +681,31 @@ export class GraphCanvasRenderer {
 	private resizeObserver: ResizeObserver;
 	private downPos: Pt | null = null;
 
+	// ── Touch / multi-pointer state ──
+	/** (pointer: coarse) — phones and tablets: bigger slop, DPR cap, label size gate. */
+	private coarse = false;
+	private lastPointerType = "mouse";
+	/** Pointer type of the press in flight (slop + pad follow it). */
+	private downType = "mouse";
+	private dragPointerId: number | null = null;
+	/** Pointers currently down on the canvas; >1 means a pinch, never a click. */
+	private activePointers = new Set<number>();
+	private multiPointer = false;
+	private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Camera at touch-down: moves under the tap slop are jitter, not camera
+	 *  moves (they would dismiss the card/menus). Cleared once exceeded. */
+	private tapBase: { k: number; x: number; y: number } | null = null;
+	/** The first fit happened in a narrow view: refit when it widens. */
+	private fitNarrow = false;
+	/** The user moved the camera themselves: never refit over it. */
+	private userMoved = false;
+	private selectedId: string | null = null;
+	private regionWrapW = 0;
+	// Reused by buildRegions (three ~1MB buffers every third frame otherwise).
+	private blurBufA = new Float32Array(0);
+	private blurBufB = new Float32Array(0);
+	private blurBufTmp = new Float32Array(0);
+
 	// ── Cached world geometry ─────────────────────────────────────────────
 	// Everything above is drawn per frame; everything below is derived from
 	// data+visibility+settings+kFit and rebuilt ONLY when one of those
@@ -664,6 +740,7 @@ export class GraphCanvasRenderer {
 		initialCamera?: { k: number; x: number; y: number } | null,
 	) {
 		this.canvas = canvas;
+		this.coarse = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
 		const ctx = canvas.getContext("2d");
 		if (!ctx) throw new Error("2d context unavailable");
 		this.ctx = ctx;
@@ -673,9 +750,23 @@ export class GraphCanvasRenderer {
 		// transform change just marks dirty (draws happen in OUR loop).
 		this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
 			.scaleExtent([0.02, 40])
-			.on("zoom", ({ transform }) => {
+			// d3's default filter, plus: a finger on a node drags the NODE.
+			// pointerdown fires before touchstart, so dragId is already set
+			// when d3 would start panning the camera under the same finger.
+			.filter((event: Event) => {
+				if (event.type.startsWith("touch") && this.dragId) return false;
+				const e = event as MouseEvent;
+				return (!e.ctrlKey || event.type === "wheel") && !e.button;
+			})
+			.on("zoom", ({ transform, sourceEvent }) => {
 				this.transform = transform;
+				if (sourceEvent) this.userMoved = true;
 				this.markDirty();
+				// A touch tap jitters the camera by a pixel or two: not a move.
+				if (this.tapBase) {
+					if (!cameraMovedPastSlop(this.tapBase, transform, tapSlop("touch"))) return;
+					this.tapBase = null;
+				}
 				// The transform doubles as the persistence payload (view state).
 				this.callbacks.onCameraMove(transform);
 			});
@@ -691,6 +782,8 @@ export class GraphCanvasRenderer {
 		canvas.addEventListener("pointermove", this.onPointerMove);
 		canvas.addEventListener("pointerdown", this.onPointerDown);
 		canvas.addEventListener("pointerup", this.onPointerUp);
+		canvas.addEventListener("pointercancel", this.onPointerCancel);
+		canvas.addEventListener("lostpointercapture", this.onPointerCancel);
 		canvas.addEventListener("pointerleave", this.onPointerLeave);
 		// Right-click → the caller's context menu (node interlude). Always
 		// preventDefault: the native menu on a full-bleed custom canvas is
@@ -708,6 +801,7 @@ export class GraphCanvasRenderer {
 			typeof initialCamera.y === "number" && Number.isFinite(initialCamera.y)
 		) {
 			this.hasFit = true;
+			this.userMoved = true; // a restored camera is the user's: never refit over it
 			select(canvas).call(
 				this.zoomBehavior.transform,
 				zoomIdentity.translate(initialCamera.x, initialCamera.y).scale(initialCamera.k),
@@ -725,7 +819,10 @@ export class GraphCanvasRenderer {
 			const wy = (prevH / 2 - ty) / k;
 			this.syncSize();
 			if (!this.hasFit) this.fit(); // first real size → fit once
-			else {
+			else if (this.fitNarrow && !this.userMoved && this.viewW >= NARROW_VIEW) {
+				// The first fit happened in a narrow view (tiny k): refit now it widened.
+				this.fit();
+			} else {
 				this.refreshFitZoom(); // the gate's "1×" is viewport-bound
 				// Center-anchor (2026-09-17, owner): same world point under
 				// the NEW center. Applied through the zoom behavior like every
@@ -736,6 +833,10 @@ export class GraphCanvasRenderer {
 						zoomIdentity.translate(this.viewW / 2 - wx * k, this.viewH / 2 - wy * k).scale(k),
 					);
 				}
+			}
+			// Region labels wrap at a view-relative width: re-wrap if it changed.
+			if (regionLabelMaxWidth(this.viewW) !== this.regionWrapW) {
+				this.regionBuiltVersion = -2;
 			}
 			// Redraw SYNCHRONOUSLY: syncSize may have reallocated the backing
 			// store (which clears the canvas), and during live window resizes
@@ -842,7 +943,7 @@ export class GraphCanvasRenderer {
 		// No settings yet → nothing is drawn; patch the data side only and
 		// let the next build derive the wrap (same guard the build uses).
 		if (!settings) {
-			applyClusterLabels(data.clusters, [], labels, REGION_LABEL_MAX_WIDTH, REGION_LABEL_MAX_LINES, () => 0);
+			applyClusterLabels(data.clusters, [], labels, regionLabelMaxWidth(this.viewW), REGION_LABEL_MAX_LINES, () => 0);
 			return;
 		}
 		const ctx = this.ctx;
@@ -852,7 +953,7 @@ export class GraphCanvasRenderer {
 			data.clusters,
 			this.regionMeta,
 			labels,
-			REGION_LABEL_MAX_WIDTH,
+			regionLabelMaxWidth(this.viewW),
 			REGION_LABEL_MAX_LINES,
 			(s) => ctx.measureText(s).width,
 		);
@@ -866,6 +967,20 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** The node whose detail card is open: it keeps a persistent glow (touch
+	 *  has no hover, so the glow is the only "this is what you tapped"). */
+	setSelected(id: string | null): void {
+		if (id === this.selectedId) return;
+		this.selectedId = id;
+		this.markDirty();
+	}
+
+	/** Space the fit keeps clear of overlaid chrome: phones only (desktop
+	 *  frames the full canvas exactly as before). */
+	private fitInsets(w: number): { top: number; bottom: number } {
+		return w < NARROW_VIEW ? { top: FIT_INSET_TOP, bottom: FIT_INSET_BOTTOM } : { top: 0, bottom: 0 };
+	}
+
 	/** Frame the whole graph (padding included). Keeps the camera on later
 	 *  setData calls — call fit() only for an explicit re-frame (the
 	 *  first-ever open; afterwards the caller-persisted camera wins). */
@@ -874,9 +989,10 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40);
+		const t = fitTransform(this.worldBBox, w, h, 40, this.fitInsets(w));
 		this.kFit = t.k;
 		this.hasFit = true;
+		this.fitNarrow = w < NARROW_VIEW;
 		select(this.canvas).call(
 			this.zoomBehavior.transform,
 			zoomIdentity.translate(t.x, t.y).scale(t.k),
@@ -890,7 +1006,7 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
+		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40, this.fitInsets(w)).k;
 	}
 
 	destroy(): void {
@@ -899,12 +1015,15 @@ export class GraphCanvasRenderer {
 		this.sim = null;
 		this.simActive = false;
 		this.dragId = null;
+		this.clearLongPress();
 		this.resizeObserver.disconnect();
 		select(this.canvas).on(".zoom", null);
 		this.canvas.removeEventListener("wheel", this.onWheel);
 		this.canvas.removeEventListener("pointermove", this.onPointerMove);
 		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
 		this.canvas.removeEventListener("pointerup", this.onPointerUp);
+		this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+		this.canvas.removeEventListener("lostpointercapture", this.onPointerCancel);
 		this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
 		this.canvas.removeEventListener("contextmenu", this.onContextMenu);
 		this.canvas.style.cursor = "";
@@ -922,20 +1041,26 @@ export class GraphCanvasRenderer {
 		// Must stay inside the zoomBehavior's scaleExtent [0.02, 40].
 		const k = Math.min(Math.max(current * Math.exp(delta), 0.02), 40);
 		this.zoomTarget = { k, x, y };
+		this.userMoved = true;
 		// Fresh easing clock so the glide starts gentle, never half-done.
 		this.lastTickAt = performance.now();
 		this.markDirty();
 	};
 
 	private onPointerMove = (e: PointerEvent) => {
+		this.lastPointerType = e.pointerType;
 		const pos = this.eventPos(e);
 		if (this.dragId) {
+			// Only the pointer that started the drag moves the node.
+			if (e.pointerId !== this.dragPointerId) return;
 			const n = this.simById.get(this.dragId);
 			if (n) {
 				const moved =
 					this.dragOrigin !== null &&
-					Math.hypot(pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y) > CLICK_SLOP;
+					Math.hypot(pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y) > tapSlop(this.downType);
 				if (moved) {
+					// Travel past the slop is a drag, never a long-press.
+					this.clearLongPress();
 					// First real movement: reheat and glue the node to the cursor.
 					if (this.commitTimer) {
 						clearTimeout(this.commitTimer);
@@ -951,6 +1076,8 @@ export class GraphCanvasRenderer {
 			}
 			return;
 		}
+		// Touch has no hover: a finger sliding over nodes must not glow them.
+		if (e.pointerType === "touch") return;
 		const node = this.pickAt(pos.x, pos.y);
 		if ((node?.id ?? null) !== this.hoverId) this.setHover(node?.id ?? null);
 		this.canvas.style.cursor = node ? "pointer" : "";
@@ -962,13 +1089,26 @@ export class GraphCanvasRenderer {
 		// the right-pointerup must never read as a click (the detail card
 		// used to open under the menu).
 		if (e.button !== 0) return;
+		this.lastPointerType = e.pointerType;
+		this.activePointers.add(e.pointerId);
+		if (this.activePointers.size > 1 || !e.isPrimary) {
+			// A second finger: this is a pinch. Drop any node press and tap in
+			// flight, and make sure no up of this gesture reads as a click.
+			this.multiPointer = true;
+			this.downPos = null;
+			this.tapBase = null;
+			this.clearLongPress();
+			if (this.dragId) this.releaseDrag(null);
+			return;
+		}
+		this.downType = e.pointerType;
 		const pos = this.eventPos(e);
-		const node = this.pickAt(pos.x, pos.y);
+		const node = this.pickAt(pos.x, pos.y, e.pointerType);
 		if (node && this.sim) {
 			// Node press: pin the node (at ITS OWN position — the cursor
 			// may be inside the pick pad, off-center). preventDefault kills
 			// the compatibility mousedown, so d3-zoom never starts a pan.
-			// Physics only reheats once the pointer exceeds CLICK_SLOP —
+			// Physics only reheats once the pointer exceeds the slop —
 			// a plain click stays perfectly still.
 			e.preventDefault();
 			try {
@@ -977,6 +1117,7 @@ export class GraphCanvasRenderer {
 				/* capture is best-effort */
 			}
 			this.dragId = node.id;
+			this.dragPointerId = e.pointerId;
 			this.dragOrigin = pos;
 			const n = this.simById.get(node.id);
 			if (n) {
@@ -984,56 +1125,114 @@ export class GraphCanvasRenderer {
 				n.fy = n.y;
 			}
 			this.canvas.style.cursor = "grabbing";
+			if (e.pointerType === "touch") this.armLongPress(node.id);
 			this.markDirty();
 			return;
 		}
 		this.downPos = pos;
+		this.tapBase = e.pointerType === "touch" ? { ...this.transform } : null;
 		this.zoomTarget = null; // a pan takes over — cancel any zoom glide
 	};
 
 	private onPointerUp = (e: PointerEvent) => {
 		if (e.button !== 0) return; // right-click is context-menu territory
+		const wasMulti = this.multiPointer;
+		this.activePointers.delete(e.pointerId);
+		if (this.activePointers.size === 0) this.multiPointer = false;
+		// Only the primary pointer of a single-finger press can click; the
+		// stationary finger of a pinch lifting must never select.
+		if (!e.isPrimary || wasMulti) return;
+		this.tapBase = null;
 		// Node press ending: click (no slop) → select; drag → release-and-relax.
 		if (this.dragId) {
-			const id = this.dragId;
-			this.dragId = null;
-			this.dragOrigin = null;
-			try {
-				this.canvas.releasePointerCapture(e.pointerId);
-			} catch {
-				/* already released */
-			}
-			this.canvas.style.cursor = "";
-			const n = this.simById.get(id);
-			if (n) {
-				n.fx = null;
-				n.fy = null;
-			}
-			if (this.simActive) {
-				// Real drag: the sim anneals to the new rest state; advanceSim
-				// detects the settle and schedules the commit.
-				this.sim?.alphaTarget(0);
-				this.markDirty();
-			} else {
-				// Never heated: a plain click on the node.
-				this.callbacks.onSelect(id, this.eventPos(e));
-			}
+			if (e.pointerId !== this.dragPointerId) return;
+			this.releaseDrag(e);
 			return;
 		}
 		if (!this.downPos) return;
 		const pos = this.eventPos(e);
 		const moved = Math.hypot(pos.x - this.downPos.x, pos.y - this.downPos.y);
 		this.downPos = null;
-		if (moved > CLICK_SLOP) return; // that was a drag (pan), not a click
-		const node = this.pickAt(pos.x, pos.y);
+		if (moved > tapSlop(this.downType)) return; // that was a drag (pan), not a click
+		const node = this.pickAt(pos.x, pos.y, this.downType);
 		if (node) this.callbacks.onSelect(node.id, pos);
 		else this.callbacks.onStageClick();
 	};
+
+	/** End the node press in flight. With an `up` event and no travel it is
+	 *  a click (select); with null (cancel, second finger, long-press) it
+	 *  is a plain release. A drag that heated the sim relaxes either way. */
+	private releaseDrag(up: PointerEvent | null): void {
+		const id = this.dragId;
+		if (!id) return;
+		this.clearLongPress();
+		this.dragId = null;
+		this.dragOrigin = null;
+		if (this.dragPointerId !== null) {
+			try {
+				this.canvas.releasePointerCapture(this.dragPointerId);
+			} catch {
+				/* already released */
+			}
+		}
+		this.dragPointerId = null;
+		this.canvas.style.cursor = "";
+		const n = this.simById.get(id);
+		if (n) {
+			n.fx = null;
+			n.fy = null;
+		}
+		if (this.simActive) {
+			// Real drag: the sim anneals to the new rest state; advanceSim
+			// detects the settle and schedules the commit.
+			this.sim?.alphaTarget(0);
+			this.markDirty();
+		} else if (up) {
+			// Never heated: a plain click on the node.
+			this.callbacks.onSelect(id, this.eventPos(up));
+		}
+	}
+
+	/** pointercancel (iOS system gestures, palm rejection) and
+	 *  lostpointercapture: a release that never selects. After a normal up
+	 *  there is nothing left to release, so the trailing
+	 *  lostpointercapture is a no-op. */
+	private onPointerCancel = (e: PointerEvent) => {
+		this.activePointers.delete(e.pointerId);
+		if (this.activePointers.size === 0) this.multiPointer = false;
+		if (this.dragId && e.pointerId === this.dragPointerId) this.releaseDrag(null);
+		this.downPos = null;
+		this.tapBase = null;
+	};
+
+	/** A stationary touch held on a node opens the node menu (the touch
+	 *  path to the right-click menu). The press is released without
+	 *  selecting, so the lift that follows does nothing. */
+	private armLongPress(id: string): void {
+		this.clearLongPress();
+		this.longPressTimer = setTimeout(() => {
+			this.longPressTimer = null;
+			if (this.dragId !== id) return;
+			const pos = this.dragOrigin;
+			this.releaseDrag(null);
+			if (pos) this.callbacks.onContext(id, pos);
+		}, LONG_PRESS_MS);
+	}
+
+	private clearLongPress(): void {
+		if (this.longPressTimer) {
+			clearTimeout(this.longPressTimer);
+			this.longPressTimer = null;
+		}
+	}
 
 	/** Right-click: pick the node under the pointer, hand the position to
 	 *  the caller (empty stage = null — the caller closes any open menu). */
 	private onContextMenu = (e: MouseEvent) => {
 		e.preventDefault();
+		// Android fires contextmenu on a long-press too: that press is a menu
+		// gesture, not a click, so drop it before the lift selects.
+		if (this.dragId) this.releaseDrag(null);
 		const pos = this.eventPos(e);
 		const node = this.pickAt(pos.x, pos.y);
 		this.callbacks.onContext(node?.id ?? null, pos);
@@ -1052,7 +1251,7 @@ export class GraphCanvasRenderer {
 		return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 	}
 
-	private pickAt(px: number, py: number): CanvasNode | null {
+	private pickAt(px: number, py: number, pointerType = this.lastPointerType): CanvasNode | null {
 		if (!this.data || !this.settings) return null;
 		// Screen positions, filtered to visible nodes.
 		const { x: tx, y: ty, k } = this.transform;
@@ -1061,7 +1260,7 @@ export class GraphCanvasRenderer {
 		// nodeSize is world units now (2026-09-15): the on-screen hit radius
 		// is the disc's world radius × the camera zoom, plus the constant
 		// screen pad — the whole halo stays hit-testable.
-		const maxDist = this.settings.nodeSize * k + PICKING_PAD;
+		const maxDist = this.settings.nodeSize * k + pickPad(pointerType);
 		const projected: { id: string; x: number; y: number }[] = [];
 		for (const n of this.data.nodes) {
 			if (this.visible && !this.visible.has(n.id)) continue;
@@ -1202,7 +1401,7 @@ export class GraphCanvasRenderer {
 	private syncSize(): void {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = cappedDpr(window.devicePixelRatio || 1, this.coarse);
 		const bw = Math.max(1, Math.round(w * dpr));
 		const bh = Math.max(1, Math.round(h * dpr));
 		if (this.canvas.width !== bw || this.canvas.height !== bh) {
@@ -1429,9 +1628,10 @@ export class GraphCanvasRenderer {
 			const ctx = this.ctx;
 			const prevFont = ctx.font;
 			ctx.font = `${LABEL_WEIGHT} ${settings.clusterLabelSize}px ${data.fontFamily}`;
+			this.regionWrapW = regionLabelMaxWidth(this.viewW);
 			for (const rm of this.regionMeta) {
 				rm.lines = rm.label
-					? wrapRegionLabel(rm.label, REGION_LABEL_MAX_WIDTH, REGION_LABEL_MAX_LINES, (s) => ctx.measureText(s).width)
+					? wrapRegionLabel(rm.label, this.regionWrapW, REGION_LABEL_MAX_LINES, (s) => ctx.measureText(s).width)
 					: null;
 			}
 			ctx.font = prevFont;
@@ -1562,7 +1762,14 @@ export class GraphCanvasRenderer {
 			const blurPx = tuning.blur > 0 ? Math.max(1, Math.round(blurW / cell)) : 0;
 			const img = rctx.getImageData(0, 0, bw, bh);
 			const n = bw * bh * 4;
-			const a = new Float32Array(n);
+			if (this.blurBufA.length < n) {
+				this.blurBufA = new Float32Array(n);
+				this.blurBufB = new Float32Array(n);
+				this.blurBufTmp = new Float32Array(n);
+			}
+			// Exact-length views over the reused buffers (every cell is
+			// rewritten below, so no clearing).
+			const a = this.blurBufA.subarray(0, n);
 			for (let i = 0; i < n; i += 4) {
 				const alpha = img.data[i + 3]! / 255;
 				a[i] = img.data[i]! * alpha;
@@ -1570,8 +1777,8 @@ export class GraphCanvasRenderer {
 				a[i + 2] = img.data[i + 2]! * alpha;
 				a[i + 3] = img.data[i + 3]!;
 			}
-			const b = new Float32Array(n);
-			const tmp = new Float32Array(n); // scratch inside each round only
+			const b = this.blurBufB.subarray(0, n);
+			const tmp = this.blurBufTmp.subarray(0, n); // scratch inside each round only
 			boxBlurRound(a, tmp, b, bw, bh, blurPx); // a → b
 			boxBlurRound(b, tmp, a, bw, bh, blurPx); // b → a
 			boxBlurRound(a, tmp, b, bw, bh, blurPx); // a → b (result)
@@ -1608,7 +1815,7 @@ export class GraphCanvasRenderer {
 		if (!data || !settings) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = cappedDpr(window.devicePixelRatio || 1, this.coarse);
 		const ctx = this.ctx;
 
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1667,9 +1874,12 @@ export class GraphCanvasRenderer {
 
 		// 6. Node labels — one global gate, faded together. World-scaled
 		// with the graph (they grow as you zoom in, Obsidian-style).
-		if (nodeAlpha > 0.01) {
+		// On touch the labels also need legible on-screen size (a phone's fit
+		// zoom puts them at 2-3px).
+		const labelsAlpha = this.coarse ? nodeAlpha * labelSizeAlpha(this.world.labelSize, k) : nodeAlpha;
+		if (labelsAlpha > 0.01) {
 			ctx.save();
-			ctx.globalAlpha = nodeAlpha;
+			ctx.globalAlpha = labelsAlpha;
 			ctx.font = this.worldLabelFont;
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
@@ -1677,6 +1887,21 @@ export class GraphCanvasRenderer {
 				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
 			}
 			ctx.restore();
+		}
+
+		// 6b. Selected glow: persistent (touch has no hover), same halo as hover.
+		if (this.selectedId && (!this.visible || this.visible.has(this.selectedId))) {
+			const sel = this.nodeById.get(this.selectedId);
+			if (sel) {
+				const glow = ctx.createRadialGradient(sel.x, sel.y, nodeR, sel.x, sel.y, glowOuter);
+				glow.addColorStop(0, rgbaFromHex(data.colors.node, GLOW_ALPHA * 2));
+				glow.addColorStop(1, rgbaFromHex(data.colors.node, 0));
+				ctx.fillStyle = glow;
+				ctx.beginPath();
+				ctx.arc(sel.x, sel.y, glowOuter, 0, Math.PI * 2);
+				ctx.arc(sel.x, sel.y, nodeR, 0, Math.PI * 2, true);
+				ctx.fill("evenodd");
+			}
 		}
 
 		// 7. Hover glow (topmost): halo in the node's color + the brightened
