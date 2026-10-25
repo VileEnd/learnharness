@@ -39,6 +39,7 @@ import { createPortal } from "react-dom";
 
 const GAP = 4; // anchor edge → menu (the bespoke shells' settled 4px)
 const EDGE = 8; // viewport floor the menu never enters
+const MAX_WIDTH = "calc(100vw - 16px)"; // EDGE on both sides
 const CAP_VH = 0.6; // 60vh — the graph pattern's cap
 const MIN_USABLE = 96; // floor: a shorter cap is an unusable sliver; the
 // cap then overflows the edge instead of crushing the menu
@@ -98,6 +99,30 @@ export function computeMenuPlacement(
 	return { side, style: { ...horizontal, ...vertical }, maxHeight };
 }
 
+/** Pure: keep the menu's horizontal extent inside [EDGE, width − EDGE].
+ *  A menu that already fits comes back untouched (same object), so desktop
+ *  placement is unchanged; an overflowing one is re-keyed to `left` (a
+ *  menu wider than the room pins to EDGE and the max-width caps it). */
+export function clampMenuHorizontal(
+	placement: MenuPlacement,
+	viewportWidth: number,
+	menuWidth: number,
+): MenuPlacement {
+	if (menuWidth <= 0) return placement;
+	const { left, right, ...rest } = placement.style;
+	const natural = typeof right === "number" ? viewportWidth - right - menuWidth : typeof left === "number" ? left : 0;
+	const clamped = Math.max(EDGE, Math.min(natural, viewportWidth - EDGE - menuWidth));
+	if (clamped === natural) return placement;
+	return { ...placement, style: { ...rest, left: clamped } };
+}
+
+/** The visible viewport (shrinks under the on-screen keyboard); the layout
+ *  viewport where visualViewport is unsupported. */
+function viewportSize() {
+	const vv = window.visualViewport;
+	return { width: vv?.width ?? window.innerWidth, height: vv?.height ?? window.innerHeight };
+}
+
 /** The shared shell. Exactly one anchor seam: pass `anchorRef` (a live
  *  element ref) or `anchorTestid` (the settings section's pattern — the
  *  trigger is queried by testid at place time). */
@@ -147,7 +172,9 @@ export function MenuShell({
 		focusedOnceRef.current = true;
 		const el = menuRef.current;
 		if (!el) return;
-		const input = el.querySelector<HTMLElement>("input");
+		// Touch: a focused input would summon the keyboard over the menu.
+		const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+		const input = coarse ? null : el.querySelector<HTMLElement>("input");
 		(input ?? el).focus();
 	}, [placed]);
 
@@ -198,14 +225,15 @@ export function MenuShell({
 		const place = () => {
 			const el = anchor();
 			if (!el || !menuRef.current) return;
+			const vp = viewportSize();
 			const p = computeMenuPlacement(
 				el.getBoundingClientRect(),
-				{ width: window.innerWidth, height: window.innerHeight },
+				vp,
 				menuRef.current.scrollHeight,
 				preferredSide,
 				align,
 			);
-			setPlaced(p);
+			setPlaced(clampMenuHorizontal(p, vp.width, menuRef.current.offsetWidth));
 		};
 		place();
 		const rePlace = () => {
@@ -214,10 +242,12 @@ export function MenuShell({
 		};
 		window.addEventListener("scroll", rePlace, true);
 		window.addEventListener("resize", rePlace);
+		window.visualViewport?.addEventListener("resize", rePlace);
 		return () => {
 			cancelAnimationFrame(raf);
 			window.removeEventListener("scroll", rePlace, true);
 			window.removeEventListener("resize", rePlace);
+			window.visualViewport?.removeEventListener("resize", rePlace);
 		};
 	}, [anchorRef, anchorTestid, preferredSide, align]);
 
@@ -230,7 +260,7 @@ export function MenuShell({
 				ref={menuRef}
 				data-testid={testid}
 				data-lh-menu=""
-				style={{ position: "fixed", left: 0, top: 0, visibility: "hidden" }}
+				style={{ position: "fixed", left: 0, top: 0, visibility: "hidden", maxWidth: MAX_WIDTH }}
 				className={menuClass}
 			>
 				{children}
@@ -245,7 +275,7 @@ export function MenuShell({
 			data-lh-menu=""
 			tabIndex={-1}
 			onKeyDown={onBodyKeyDown}
-			style={{ position: "fixed", zIndex: 60, ...placed.style, maxHeight: placed.maxHeight, overflowY: "auto" }}
+			style={{ position: "fixed", zIndex: 60, ...placed.style, maxHeight: placed.maxHeight, maxWidth: MAX_WIDTH, overflowY: "auto" }}
 			// The body is the arrow machine's focus home (input-less menus
 			// land focus here on open) — the focus STAYS, but the browser's
 			// default blue ring around it must not draw (owner, polish
