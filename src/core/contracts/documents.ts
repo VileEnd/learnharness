@@ -98,3 +98,16 @@ export interface DocumentVectors {
 	chunks: DocumentChunkRef[];
 	vectors: Float32Array;
 }
+
+/** An embeddings batch submitted to the OpenRouter Batch API and not yet
+ *  read back (data/documents/pending-batches.json). Survives a restart so
+ *  polling resumes. `docs` records, per document, the content the requests
+ *  were built from and how many retrieval units were sent. */
+export interface PendingBatch {
+	batchId: string;
+	/** The BASE model id (no ":batch"); vectors are stored under it. */
+	model: string;
+	/** Epoch ms. */
+	submittedAt: number;
+	docs: Record<string, { contentHash: string; units: number }>;
+}

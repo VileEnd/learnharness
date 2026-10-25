@@ -14,6 +14,15 @@
  *     current model (new import, model change, key added later). It shows as
  *     one abortable activity-dock row, and a failure is contained: it logs,
  *     backs off for ten minutes and leaves those documents keyword-only;
+ *   - by default the backfill goes through the OpenRouter BATCH API (about
+ *     half price, results within minutes to a day): the units of every
+ *     document lacking vectors become one batch of `/v1/embeddings` requests
+ *     (up to 64 texts each, custom_id `${docId}~${offset}`) submitted two
+ *     minutes after the last change; pending batches persist through the
+ *     store (pending-batches.json) so a restart resumes polling (once a
+ *     minute), and a finished batch is read, written as vectors and DELETED
+ *     remotely. Vectors are stored under the BASE model id, queries use the
+ *     sync model;
  *   - a search NEVER waits for that work. Only the query itself is embedded,
  *     under a short timeout; if that fails the result is keyword-only and
  *     says so (`mode: "keyword"` + `note`).
@@ -46,7 +55,7 @@ import type {
 	DocSearchQuery,
 	DocSearchResult,
 } from "../core/doc-search.ts";
-import type { DocumentMeta } from "../core/contracts/documents.ts";
+import type { DocumentMeta, PendingBatch } from "../core/contracts/documents.ts";
 import type { DocumentStore } from "../core/ports.ts";
 import { keyValue } from "./keys.ts";
 import { effectiveSettings, stores } from "./stores.ts";
@@ -123,6 +132,143 @@ export function openRouterEmbedder(apiKey: string, model: string, fetchFn: Fetch
 	};
 }
 
+// ─── the Batch API seam ──────────────────────────────────────────────────────
+
+/** One request of an embeddings batch: `input` is an array of strings and the
+ *  response holds one embedding per string, ordered by `index`. */
+export interface BatchRequest {
+	custom_id: string;
+	body: { input: string[]; encoding_format: "float" };
+}
+
+/** GET /api/v1/batches/{id}. `results` is null until the batch is terminal;
+ *  each result has either a `response` or an `error`. */
+export interface BatchState {
+	status: string;
+	results: BatchResult[] | null;
+	error: { message?: string } | null;
+	usage: { cost?: number } | null;
+}
+export interface BatchResult {
+	custom_id: string;
+	response: { status_code?: number; body?: { data?: { index?: number; embedding?: number[] }[] } } | null;
+	error: { message?: string } | null;
+}
+
+/** A non-2xx answer from the batch endpoints (413 split, 402 balance, 429 wait). */
+export class BatchHttpError extends Error {
+	readonly status: number;
+	constructor(status: number, message: string) {
+		super(message);
+		this.status = status;
+	}
+}
+
+export interface BatchClient {
+	/** The BASE model id; the client submits it as `${model}:batch`. */
+	model: string;
+	/** POST /api/v1/batches -> the batch id. Throws BatchHttpError. */
+	submit(requests: BatchRequest[]): Promise<string>;
+	get(batchId: string): Promise<BatchState>;
+	/** DELETE /api/v1/batches/{id} (terminal batches only); 404 counts as done. */
+	remove(batchId: string): Promise<void>;
+}
+
+const BATCHES = "https://openrouter.ai/api/v1/batches";
+
+export function openRouterBatchClient(apiKey: string, model: string, fetchFn: FetchLike = fetch): BatchClient {
+	const headers = { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
+	const call = (url: string, init: RequestInit, timeoutMs: number): Promise<Response> =>
+		fetchFn(url, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
+	async function fail(resp: Response, what: string): Promise<never> {
+		const text = await resp.text().catch(() => "");
+		let message = text.slice(0, 200);
+		try {
+			message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message;
+		} catch {
+			// not JSON: keep the raw text
+		}
+		throw new BatchHttpError(resp.status, `OpenRouter batch ${what} ${resp.status}: ${message}`);
+	}
+	return {
+		model,
+		async submit(requests) {
+			// endpoint and model go BEFORE requests: OpenRouter reads the body as a stream.
+			const resp = await call(
+				BATCHES,
+				{ method: "POST", body: JSON.stringify({ endpoint: "/v1/embeddings", model: `${model}:batch`, requests }) },
+				120_000,
+			);
+			if (!resp.ok) return fail(resp, "submit");
+			const id = ((await resp.json()) as { id?: unknown }).id;
+			if (typeof id !== "string" || id === "") throw new Error("OpenRouter batch submit returned no id");
+			return id;
+		},
+		async get(batchId) {
+			const resp = await call(`${BATCHES}/${encodeURIComponent(batchId)}`, { method: "GET" }, 120_000);
+			if (!resp.ok) return fail(resp, "poll");
+			const b = (await resp.json()) as Partial<BatchState>;
+			return {
+				status: String(b.status ?? ""),
+				results: Array.isArray(b.results) ? b.results : null,
+				error: b.error ?? null,
+				usage: b.usage ?? null,
+			};
+		},
+		async remove(batchId) {
+			const resp = await call(`${BATCHES}/${encodeURIComponent(batchId)}`, { method: "DELETE" }, 60_000);
+			if (!resp.ok && resp.status !== 404) await fail(resp, "delete");
+			await resp.text().catch(() => "");
+		},
+	};
+}
+
+/** Texts per request of a batch (one request = one embeddings call). */
+export const BATCH_INPUTS = 64;
+/** Per-batch caps, well under OpenRouter's documented 200 MB body limit. */
+const BATCH_MAX_REQUESTS = 5000;
+const BATCH_MAX_BYTES = 50 * 1024 * 1024;
+
+export interface BatchDoc {
+	id: string;
+	contentHash: string;
+	units: number;
+	requests: BatchRequest[];
+}
+
+/** A document's units as requests of up to 64 texts; custom_id is
+ *  `${docId}~${offset}` with offset = the first unit's index. */
+export function buildBatchRequests(docId: string, texts: string[]): BatchRequest[] {
+	const out: BatchRequest[] = [];
+	for (let offset = 0; offset < texts.length; offset += BATCH_INPUTS) {
+		out.push({ custom_id: `${docId}~${offset}`, body: { input: texts.slice(offset, offset + BATCH_INPUTS), encoding_format: "float" } });
+	}
+	return out;
+}
+
+/** Group whole documents into batches under the request and byte caps (a
+ *  document never spans two batches; one over the caps alone gets its own). */
+export function packBatches(docs: BatchDoc[]): BatchDoc[][] {
+	const groups: BatchDoc[][] = [];
+	let cur: BatchDoc[] = [];
+	let count = 0;
+	let bytes = 0;
+	for (const d of docs) {
+		const size = d.requests.reduce((n, r) => n + JSON.stringify(r).length, 0);
+		if (cur.length > 0 && (count + d.requests.length > BATCH_MAX_REQUESTS || bytes + size > BATCH_MAX_BYTES)) {
+			groups.push(cur);
+			cur = [];
+			count = 0;
+			bytes = 0;
+		}
+		cur.push(d);
+		count += d.requests.length;
+		bytes += size;
+	}
+	if (cur.length > 0) groups.push(cur);
+	return groups;
+}
+
 function normalize(v: Float32Array): Float32Array {
 	let n = 0;
 	for (const x of v) n += x * x;
@@ -155,6 +301,7 @@ interface ScanGlobal {
 const scanRows = (): Map<string, ScanRow> => ((globalThis as ScanGlobal).__lhDocumentScans ??= new Map());
 
 const BACKFILL_ROW = "index_library";
+const BATCH_ROW = "index_library_batch";
 
 // ─── the index ───────────────────────────────────────────────────────────────
 
@@ -162,6 +309,18 @@ export interface DocIndexDeps {
 	store: DocumentStore;
 	/** The live embedder (key present + current model), or null. Read per call. */
 	embedder(): Embedder | null;
+	/** The Batch API client (key present + current model), or null. Read per
+	 *  call; absent = no batch path. */
+	batcher?(): BatchClient | null;
+	/** Index through batches (the documents.embeddingBatch setting); false
+	 *  keeps the synchronous backfill. Default true when a batcher is wired. */
+	batchMode?(): boolean;
+	/** Quiet period after the last change before a batch is submitted (2 min). */
+	debounceMs?: number;
+	/** Gap between polls of a pending batch (1 min). */
+	pollIntervalMs?: number;
+	/** Run the poll/submit timer (default true); tests drive tick() instead. */
+	autoTick?: boolean;
 	/** Query-embedding budget before a search falls back to keywords. */
 	queryTimeoutMs?: number;
 	/** Texts per embeddings request. */
@@ -203,6 +362,16 @@ export function createDocIndex(deps: DocIndexDeps) {
 	let running: Promise<void> | null = null;
 	let again = false;
 	let backoffUntil = 0;
+	// The batch path's state: what is out at OpenRouter, when each batch was
+	// last polled, when a document last changed (the debounce clock), and why
+	// submitting is paused (shown on the activity row).
+	const pending = new Map<string, PendingBatch>();
+	const lastPolled = new Map<string, number>();
+	let lastChangeAt = 0;
+	let note: string | null = null;
+	let batchRow: ScanRow | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	let tickChain: Promise<void> = Promise.resolve();
 
 	// ── building ──────────────────────────────────────────────────────────────
 
@@ -246,6 +415,8 @@ export function createDocIndex(deps: DocIndexDeps) {
 	function ensureBuilt(): void {
 		if (built) return;
 		built = true;
+		lastChangeAt = now();
+		for (const p of store.readPendingBatches()) pending.set(p.batchId, p);
 		for (const meta of store.listMetas()) {
 			try {
 				load(meta);
@@ -267,6 +438,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 			console.warn(`[doc-index] could not index ${id}: ${err instanceof Error ? err.message : err}`);
 			return;
 		}
+		lastChangeAt = now();
 		kickBackfill();
 	}
 
@@ -283,6 +455,8 @@ export function createDocIndex(deps: DocIndexDeps) {
 	/** Embed every document lacking vectors for the live model. One run at a
 	 *  time; a trigger during a run asks for one more pass. */
 	function kickBackfill(): void {
+		if (deps.batcher && (deps.batchMode?.() ?? true)) return scheduleTick(0);
+		if (pending.size > 0) scheduleTick(0); // batches submitted earlier still need reading
 		if (running) {
 			again = true;
 			return;
@@ -345,10 +519,17 @@ export function createDocIndex(deps: DocIndexDeps) {
 		// The document may have been replaced while the requests were out.
 		const current = docs.get(doc.id);
 		if (!current || current.contentHash !== doc.contentHash) return;
+		commitVectors(doc, vectors, embedder.model);
+	}
+
+	/** Persist a document's (normalised) vectors under `model` and make them
+	 *  live in memory. The caller has checked the content is still current. */
+	function commitVectors(doc: IndexedDoc, vectors: Float32Array[], model: string): void {
+		const dims = vectors[0]!.length;
 		const flat = new Float32Array(vectors.length * dims);
 		vectors.forEach((v, i) => flat.set(v, i * dims));
 		store.writeVectors(doc.id, {
-			model: embedder.model,
+			model,
 			dims,
 			contentHash: doc.contentHash,
 			chunks: doc.chunks.map(({ unit: u }) => ({
@@ -360,7 +541,235 @@ export function createDocIndex(deps: DocIndexDeps) {
 			vectors: flat,
 		});
 		doc.chunks.forEach((c, i) => (c.vector = flat.subarray(i * dims, (i + 1) * dims)));
-		doc.vectorModel = embedder.model;
+		doc.vectorModel = model;
+	}
+
+	// ── background embedding through the Batch API ────────────────────────────
+
+	function persist(): void {
+		try {
+			store.writePendingBatches([...pending.values()]);
+		} catch (err) {
+			console.warn(`[doc-index] could not save pending batches: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
+	function forget(batchId: string): void {
+		pending.delete(batchId);
+		lastPolled.delete(batchId);
+		persist();
+	}
+
+	/** Run `tick` soon (replacing a timer already set). */
+	function scheduleTick(delayMs: number): void {
+		if (deps.autoTick === false) return;
+		if (timer) clearTimeout(timer);
+		timer = setTimeout(() => {
+			timer = null;
+			void tick();
+		}, delayMs);
+		timer.unref?.();
+	}
+
+	/** One pass of the batch state machine: poll every pending batch that is
+	 *  due, then submit documents lacking vectors once the library has been
+	 *  quiet for the debounce. Passes never overlap and never throw. */
+	function tick(): Promise<void> {
+		const next = tickChain.then(runTick);
+		tickChain = next;
+		return next;
+	}
+
+	async function runTick(): Promise<void> {
+		try {
+			ensureBuilt();
+			const batcher = deps.batcher?.() ?? null;
+			if (batcher) {
+				const pollMs = deps.pollIntervalMs ?? 60_000;
+				for (const p of [...pending.values()]) {
+					if (now() - (lastPolled.get(p.batchId) ?? -Infinity) < pollMs) continue;
+					lastPolled.set(p.batchId, now());
+					await pollOne(batcher, p);
+				}
+				if (deps.batchMode?.() ?? true) await submitDue(batcher);
+			}
+			syncRow();
+			planNext(batcher);
+		} catch (err) {
+			console.warn(`[doc-index] batch pass failed: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
+	function planNext(batcher: BatchClient | null): void {
+		if (!batcher) return;
+		const pollMs = deps.pollIntervalMs ?? 60_000;
+		if (!(deps.batchMode?.() ?? true) && pending.size === 0) return;
+		const waiting = pending.size > 0;
+		const todo = (deps.batchMode?.() ?? true) && batchTodo(batcher).length > 0;
+		if (!waiting && !todo) return;
+		const dueIn = Math.max(backoffUntil, lastChangeAt + (deps.debounceMs ?? 120_000)) - now();
+		scheduleTick(todo && !waiting ? Math.min(pollMs, Math.max(1000, dueIn)) : pollMs);
+	}
+
+	/** Documents that need vectors and are not already out in a batch. */
+	function batchTodo(batcher: BatchClient): IndexedDoc[] {
+		const inFlight = new Set([...pending.values()].flatMap((p) => Object.keys(p.docs)));
+		return [...docs.values()].filter((d) => needsVectors(d, batcher.model) && !inFlight.has(d.id));
+	}
+
+	async function pollOne(batcher: BatchClient, p: PendingBatch): Promise<void> {
+		let state: BatchState;
+		try {
+			state = await batcher.get(p.batchId);
+		} catch (err) {
+			const status = err instanceof BatchHttpError ? err.status : 0;
+			if (status === 404 || status === 410) {
+				console.warn(`[doc-index] batch ${p.batchId} no longer exists (${status}); its documents go into the next batch`);
+				forget(p.batchId);
+			} else {
+				if (status === 429) lastPolled.set(p.batchId, now() + (deps.pollIntervalMs ?? 60_000)); // back off a second minute
+				console.warn(`[doc-index] polling batch ${p.batchId} failed (will retry): ${err instanceof Error ? err.message : err}`);
+			}
+			return;
+		}
+		if (state.status === "completed") {
+			if (!state.results) return; // terminal but results not attached yet: next poll
+			const written = applyResults(p, batcher.model, state.results);
+			console.info(
+				`[doc-index] batch ${p.batchId} completed: ${written}/${Object.keys(p.docs).length} documents embedded` +
+					(state.usage?.cost !== undefined ? `, cost $${state.usage.cost}` : ""),
+			);
+		} else if (state.status === "failed" || state.status === "expired" || state.status === "cancelled") {
+			console.warn(`[doc-index] batch ${p.batchId} ${state.status}: ${state.error?.message ?? "no reason given"}; retrying in a while`);
+			backoffUntil = now() + (deps.backoffMs ?? 10 * 60_000);
+		} else {
+			return; // validating | in_progress | finalizing
+		}
+		forget(p.batchId);
+		// Privacy: OpenRouter would keep the requests and results for 30 days.
+		try {
+			await batcher.remove(p.batchId);
+		} catch (err) {
+			console.warn(`[doc-index] could not delete batch ${p.batchId} at OpenRouter: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
+	/** Write the vectors of every document whose requests all succeeded and
+	 *  whose text is unchanged; the rest stay unvectored (the next batch picks
+	 *  them up). Returns how many documents were written. */
+	function applyResults(p: PendingBatch, model: string, results: BatchResult[]): number {
+		const parts = new Map<string, Map<number, Float32Array[] | null>>();
+		for (const r of results) {
+			const cut = r.custom_id.lastIndexOf("~");
+			const offset = Number(r.custom_id.slice(cut + 1));
+			if (cut < 0 || !Number.isInteger(offset)) continue;
+			const rows = [...(r.response?.body?.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+			const ok = !r.error && r.response?.status_code === 200 && rows.length > 0 && rows.every((x) => Array.isArray(x.embedding) && x.embedding.length > 0);
+			const byOffset = parts.get(r.custom_id.slice(0, cut)) ?? new Map<number, Float32Array[] | null>();
+			byOffset.set(offset, ok ? rows.map((x) => normalize(Float32Array.from(x.embedding!))) : null);
+			parts.set(r.custom_id.slice(0, cut), byOffset);
+		}
+		if (p.model !== model) return 0; // the embedding model changed while the batch was out
+		let written = 0;
+		for (const [docId, sent] of Object.entries(p.docs)) {
+			const doc = docs.get(docId);
+			if (!doc || doc.contentHash !== sent.contentHash || doc.chunks.length !== sent.units) continue; // replaced or removed while pending
+			const byOffset = parts.get(docId);
+			const vectors: Float32Array[] = [];
+			let complete = !!byOffset;
+			for (let offset = 0; complete && offset < sent.units; offset += BATCH_INPUTS) {
+				const part = byOffset!.get(offset);
+				if (!part || part.length !== Math.min(BATCH_INPUTS, sent.units - offset)) complete = false;
+				else vectors.push(...part);
+			}
+			if (!complete || vectors.some((v) => v.length !== vectors[0]!.length)) {
+				console.warn(`[doc-index] batch ${p.batchId}: ${docId} has failed or missing requests; it goes into the next batch`);
+				continue;
+			}
+			commitVectors(doc, vectors, model);
+			written++;
+		}
+		return written;
+	}
+
+	async function submitDue(batcher: BatchClient): Promise<void> {
+		if (now() < backoffUntil) return;
+		note = null;
+		if (now() - lastChangeAt < (deps.debounceMs ?? 120_000)) return;
+		const todo = batchTodo(batcher).map((d): BatchDoc => {
+			const requests = buildBatchRequests(d.id, d.chunks.map((c) => indexText(c.unit)));
+			return { id: d.id, contentHash: d.contentHash, units: d.chunks.length, requests };
+		});
+		for (const group of packBatches(todo)) if (!(await submitGroup(batcher, group))) return;
+	}
+
+	/** Submit one batch; false = stop for now (the reason is logged and shown). */
+	async function submitGroup(batcher: BatchClient, group: BatchDoc[]): Promise<boolean> {
+		try {
+			const batchId = await batcher.submit(group.flatMap((d) => d.requests));
+			pending.set(batchId, {
+				batchId,
+				model: batcher.model,
+				submittedAt: now(),
+				docs: Object.fromEntries(group.map((d) => [d.id, { contentHash: d.contentHash, units: d.units }])),
+			});
+			lastPolled.set(batchId, now());
+			persist();
+			console.info(`[doc-index] submitted batch ${batchId}: ${group.length} documents, ${group.reduce((n, d) => n + d.requests.length, 0)} requests`);
+			return true;
+		} catch (err) {
+			const status = err instanceof BatchHttpError ? err.status : 0;
+			const why = err instanceof Error ? err.message : String(err);
+			if (status === 413 && group.length > 1) {
+				const half = Math.ceil(group.length / 2);
+				return (await submitGroup(batcher, group.slice(0, half))) && (await submitGroup(batcher, group.slice(half)));
+			}
+			if (status === 429) {
+				backoffUntil = now() + 60_000;
+				note = "rate limited, retrying in a minute";
+			} else if (status === 402) {
+				backoffUntil = now() + (deps.backoffMs ?? 10 * 60_000);
+				note = "OpenRouter balance too low, retrying later";
+			} else {
+				backoffUntil = now() + (deps.backoffMs ?? 10 * 60_000);
+				note = "could not submit, retrying later";
+			}
+			console.warn(`[doc-index] batch submit failed (keyword search only until retry): ${why}`);
+			return false;
+		}
+	}
+
+	/** The activity-dock row while batches are out (or submitting is paused).
+	 *  Abort forgets the pending batches HERE only: OpenRouter has no cancel,
+	 *  so they finish remotely unread and expire after 30 days. */
+	function syncRow(): void {
+		const documents = new Set([...pending.values()].flatMap((p) => Object.keys(p.docs))).size;
+		if (pending.size === 0 && note === null) {
+			if (batchRow) {
+				scanRows().delete(BATCH_ROW);
+				batchRow = null;
+				emit("activity-changed", {});
+			}
+			return;
+		}
+		const title = `Indexing documents (batch) · ${note ?? "waiting for OpenRouter"}${documents > 0 ? ` · ${documents} document${documents === 1 ? "" : "s"}` : ""}`;
+		if (!batchRow) {
+			const controller = new AbortController();
+			controller.signal.addEventListener("abort", () => {
+				pending.clear();
+				lastPolled.clear();
+				persist();
+				note = null;
+				backoffUntil = now() + (deps.backoffMs ?? 10 * 60_000);
+				scanRows().delete(BATCH_ROW);
+				batchRow = null;
+				emit("activity-changed", {});
+			});
+			batchRow = { id: BATCH_ROW, title, startedAt: Date.now(), controller };
+			scanRows().set(BATCH_ROW, batchRow);
+		}
+		batchRow.title = title;
+		emit("activity-changed", {});
 	}
 
 	/** Re-embed the whole library with the current model (settings action). */
@@ -368,6 +777,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		ensureBuilt();
 		for (const d of docs.values()) d.vectorModel = undefined;
 		backoffUntil = 0;
+		lastChangeAt = Number.NEGATIVE_INFINITY; // asked for: no debounce
 		kickBackfill();
 		return { documents: docs.size };
 	}
@@ -479,7 +889,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		return sliceDocument(meta, markdown, input);
 	}
 
-	return { search, list, read, indexDocument, removeDocument, reindex, kickBackfill };
+	return { search, list, read, indexDocument, removeDocument, reindex, kickBackfill, tick };
 }
 
 export type DocIndex = ReturnType<typeof createDocIndex>;
@@ -492,6 +902,11 @@ function liveEmbedder(): Embedder | null {
 	return key ? openRouterEmbedder(key, effectiveSettings().documents.embeddingModel) : null;
 }
 
+function liveBatcher(): BatchClient | null {
+	const key = keyValue("OPENROUTER_API_KEY");
+	return key ? openRouterBatchClient(key, effectiveSettings().documents.embeddingModel) : null;
+}
+
 // Anchored on globalThis like the other registries: Next may load this module
 // once per route bundle, and every copy must share ONE index (the store
 // wrapper that feeds it and the search route would otherwise disagree).
@@ -501,4 +916,6 @@ interface IndexGlobal {
 export const docIndex: DocIndex = ((globalThis as IndexGlobal).__lhDocIndex ??= createDocIndex({
 	store: stores.documentStore,
 	embedder: liveEmbedder,
+	batcher: liveBatcher,
+	batchMode: () => effectiveSettings().documents.embeddingBatch,
 }));

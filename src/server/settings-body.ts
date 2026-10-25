@@ -399,6 +399,10 @@ export function parseDocumentsSettingsBody(body: unknown): SettingsBodyResult<Do
 		}
 		settings.embeddingModel = model;
 	}
+	if (raw.embeddingBatch !== undefined) {
+		if (typeof raw.embeddingBatch !== "boolean") return { ok: false, error: "embeddingBatch must be a boolean" };
+		settings.embeddingBatch = raw.embeddingBatch;
+	}
 	return { ok: true, settings };
 }
 
