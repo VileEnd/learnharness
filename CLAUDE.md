@@ -32,6 +32,11 @@ node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node
 # the image and the full stack
 docker build -t learnharness:local .
 cd deploy && cp .env.example .env && docker compose up -d --build
+
+# the production VM (home Proxmox VM 104): OpenTofu + NixOS, see docs/self-hosting.md §1
+deploy/proxmox/tofu.sh plan|apply        # needs ~/.config/learnharness/proxmox.env (token + state passphrase)
+nix run github:NixOS/nixpkgs/nixos-26.05#nixos-rebuild -- switch --flake ./deploy/nixos#learnharness --target-host root@learnharness.fritz.box
+ssh root@learnharness.fritz.box systemctl restart learnharness-stack   # redeploy the app from main
 ```
 
 Gates on every change: typecheck, all tests, lint, and `next build` must be clean; CI also builds and boots the Docker image. CI runs Node 26.

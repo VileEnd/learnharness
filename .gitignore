@@ -20,3 +20,8 @@ auth.json
 # self-hosting stack: secrets and runtime state, never committed
 deploy/.env
 deploy/volumes/
+
+# OpenTofu (deploy/proxmox): the encrypted state IS committed; these are not
+deploy/proxmox/.terraform/
+deploy/proxmox/.image
+deploy/proxmox/*.tfplan
