@@ -76,3 +76,6 @@ export * from "./coverage.ts";
 // ONE session→markdown formatter — the extractor's view and the user-facing
 // export share it. Pure, browser-safe.
 export * from "./session-markdown.ts";
+// document-pages.ts (PR G): page splitting for the document reader - pure, browser-safe.
+// core/documents.ts (sha256) is deliberately NOT here; the server imports it directly.
+export * from "./document-pages.ts";

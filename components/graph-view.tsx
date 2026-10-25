@@ -64,14 +64,13 @@
  */
 
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { NotesImportErrors, useNotesImport } from "@/components/notes-import.tsx";
+import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import Link from "next/link";
-import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
+import { FileTextIcon, LibraryIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { costLabel } from "@/components/usage-format";
 import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
-import { useActivity } from "@/components/activity-dock";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import { MenuShell } from "@/components/menu-shell.tsx";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog.tsx";
@@ -838,10 +837,8 @@ export function GraphChromeRow({
 	query,
 	onQuery,
 	noMatch,
-	importing,
 	searchInputRef,
-	fileInputRef,
-	onImportFiles,
+	onAddDocuments,
 	settings,
 	changeSettings,
 	onOpenChains,
@@ -852,10 +849,9 @@ export function GraphChromeRow({
 	/** The search panel's "No matching nodes." note (computed by the
 	 *  wrapper — it owns visibleIds + the snapshot). */
 	noMatch: boolean;
-	importing: boolean;
 	searchInputRef: React.RefObject<HTMLInputElement | null>;
-	fileInputRef: React.RefObject<HTMLInputElement | null>;
-	onImportFiles: (files: FileList | null) => void;
+	/** Opens the Add-documents dialog. */
+	onAddDocuments: () => void;
 	settings: GraphRenderSettings;
 	changeSettings: (update: (cur: RenderSettings) => RenderSettings) => void;
 	/** Opens the chain table overlay (the chains-overlay plan,
@@ -908,38 +904,39 @@ export function GraphChromeRow({
 					</Hint>
 				</div>
 			)}
-			{/* Import notes — its own container (36px, header band); ALWAYS
-			    rendered (the empty-graph ruling above — the entry point). */}
-			<div className="shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
-				<input
-					ref={fileInputRef}
-					type="file"
-					multiple
-					accept=".md,.markdown,.txt,text/markdown,text/x-markdown,text/plain"
-					className="hidden"
-					onChange={(e) => {
-						onImportFiles(e.target.files);
-						e.target.value = ""; // allow re-picking the same file
-					}}
-				/>
+			{/* Add documents - its own container (36px, header band); ALWAYS
+			    rendered (the empty-graph ruling above - the entry point). It
+			    opens the dialog (components/add-documents-dialog.tsx); the
+			    library link sits beside it. */}
+			<div className="flex shrink-0 items-center rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
 				<Hint
 					// The one button whose action isn't obvious from its label:
 					// the missing fact is where imports go (owner, subtlety
 					// round 2026-09-25).
-					label="Import notes into the graph"
+					label="Add documents to the graph"
 					side="bottom"
 				>
 					<button
 						type="button"
-						disabled={importing}
-						onClick={() => fileInputRef.current?.click()}
+						onClick={onAddDocuments}
 						data-testid="import-notes"
-						aria-label="Import notes"
-						className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50 sm:w-auto sm:justify-start sm:px-2.5"
+						aria-label="Add documents"
+						className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent sm:w-auto sm:justify-start sm:px-2.5"
 					>
 						<UploadIcon className="size-3" />
-						<span className="hidden sm:inline">{importing ? "Importing…" : "Import notes…"}</span>
+						<span className="hidden sm:inline">Add documents…</span>
 					</button>
+				</Hint>
+				<Hint label="Your document library" side="bottom">
+					<Link
+						href="/documents"
+						data-testid="open-documents"
+						aria-label="Documents"
+						className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent sm:w-auto sm:justify-start sm:px-2.5"
+					>
+						<LibraryIcon className="size-3" />
+						<span className="hidden sm:inline">Documents</span>
+					</Link>
 				</Hint>
 			</div>
 			{!isEmpty && (
@@ -1094,23 +1091,11 @@ export function GraphView({
 		};
 	}, [refreshTick]);
 
-	// Notes import (the format-agnostic front door): file picker → POST
-	// /api/graph/import; the runs surface in the status chips below, and the
-	// graph refetches when they finish (the runs-empty transition).
-	const fileInputRef = useRef<HTMLInputElement>(null);
-	// The dock's start-site nudge (accuracy wave, 2026-09-19): the import
-	// POST awaits the WHOLE pipeline server-side, so the run registers long
-	// before the response — nudge at click and again at +600ms to catch the
-	// start; from its first setPhase the run announces itself on the events
-	// channel (S5), and the dock rides those announcements thereafter.
-	const refreshActivity = useActivity().refresh;
-	const notesImport = useNotesImport({
-		onStart: () => {
-			refreshActivity();
-			setTimeout(() => refreshActivity(), 600);
-		},
-	});
-	const { importing, onImportFiles } = notesImport;
+	// Add documents (the document library's front door): the dialog checks
+	// the files by content, posts /api/documents/import, and nudges the
+	// dock; the runs surface there, and the graph refetches when they finish
+	// (the runs-empty transition below).
+	const [addOpen, setAddOpen] = useState(false);
 
 	// Background pipeline status: read /api/graph/status; whenever a run
 	// LEAVES the feed (finished / aborted / failed), refetch the graph.
@@ -1606,17 +1591,15 @@ export function GraphView({
 					query={query}
 					onQuery={setQuery}
 					noMatch={snapshot !== null && visibleIds.size === 0 && query.trim() !== ""}
-					importing={importing}
 					searchInputRef={searchInputRef}
-					fileInputRef={fileInputRef}
-					onImportFiles={onImportFiles}
+					onAddDocuments={() => setAddOpen(true)}
 					settings={settings}
 					changeSettings={changeSettings}
 					onOpenChains={() => setChainsOpen(true)}
 				/>
 			</div>
 
-			<NotesImportErrors errors={notesImport.errors} />
+			<AddDocumentsDialog open={addOpen} onClose={() => setAddOpen(false)} onImported={() => {}} />
 			{/* Top-right tail (owner, 2026-09-20): the pipeline cost number —
 			    just a number, hover-highlighted, dropdown breakdown — then
 			    the running-pipeline pills under it. Lives BELOW the actions

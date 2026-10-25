@@ -1,25 +1,19 @@
 /**
- * POST /api/graph/import — the format-agnostic front door's transport
- * (vision §1, 2026-09-13): raw personal-notes files in, one extraction run
- * per file through the SAME pipeline the sessions use. Multipart form data
- * (field "files", any text format — the extractor is format-agnostic); the
- * pipeline mints a deterministic source id per file path, persists the
- * source record (the file's provenance + the run's usage), and runs
- * extractor → auditor → merger over the raw text.
+ * POST /api/graph/import - the blocking, markdown-only alias of the
+ * document library's import (POST /api/documents/import), kept so
+ * scripts/import-notes.ts and older clients keep their contract: multipart
+ * field "files", one result per file, answered once every file's extraction
+ * has finished.
  *
- * Small concurrency cap: the model calls are the slow part, and a burst of
- * 25 simultaneous runs would trip provider rate limits — a 3-wide worker
- * pool keeps the run registry (the dock's status chips) and the ledgers
- * healthy. The dock's chips + graph refetch track progress live through
- * /api/graph/status, as with session runs.
+ * Content decides, not the filename: a file whose text is already in the
+ * library (exact duplicate or very similar) is skipped, not re-extracted -
+ * its result is {ok: true, outcome: "completed", skipped: true, of: <title>}
+ * with zero stats. (This reverses the old "always re-extract" behavior; the
+ * Add-documents dialog is where a learner chooses Replace or Import as new.)
+ * PDFs are refused here; they go through Add documents.
  */
-import { extraction, NotesImportError } from "@/src/server";
-import {
-	ModelsNotConfiguredError,
-	PROVIDER_KEY_MISSING_CODE,
-	ProviderKeyMissingError,
-	type EmissionStats,
-} from "@/src/core";
+import type { EmissionStats } from "@/src/core";
+import { documents, incomingFiles } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -30,67 +24,51 @@ interface ImportResult {
 	ok: boolean;
 	stats?: EmissionStats;
 	error?: string;
-	/** The machine discriminator when ok:false is a config refusal — the
+	/** The machine discriminator when ok:false is a config refusal - the
 	 * BYOK models refusal (owner, 2026-09-22) or the provider-key refusal
 	 * (2026-09-25); the client can open the setup/keys flow off it. */
-	code?: "models_not_configured" | (typeof PROVIDER_KEY_MISSING_CODE);
+	code?: string;
 	missing?: string[];
 	/** The key-refusal specifics (provider_key_missing only). */
 	provider?: string;
 	slots?: string[];
+	/** The library document this file is (or matched, when skipped). */
+	docId?: string;
+	/** True when the file was already in the library and nothing ran. */
+	skipped?: boolean;
+	/** Title of the stored document a skipped file matched. */
+	of?: string;
 }
 
 export async function POST(request: Request) {
-	const form = await request.formData();
-	const files = form.getAll("files").filter((f): f is File => f instanceof File);
+	const files = await incomingFiles(await request.formData());
 	if (files.length === 0) {
 		return Response.json({ results: [] as ImportResult[], error: "no files" }, { status: 400 });
 	}
-
-	const results: ImportResult[] = [];
-	const queue = files.map((file, requestIndex) => ({ file, requestIndex }));
-	const workers = Array.from({ length: Math.min(3, files.length) }, async () => {
-		for (;;) {
-			const next = queue.shift();
-			if (!next) return;
-			const { file, requestIndex } = next;
-			try {
-				const text = await file.text();
-				const stats = await extraction.importNotes({ filePath: file.name, text });
-				results.push({ filePath: file.name, requestIndex, outcome: "completed", ok: true, stats });
-			} catch (err) {
-				if (err instanceof ModelsNotConfiguredError) {
-					results.push({
-						filePath: file.name,
-						ok: false,
-						requestIndex, outcome: "failed",
-						error: err.envelope.error,
-						code: "models_not_configured",
-						missing: err.envelope.missing,
-					});
-					continue;
-				}
-				if (err instanceof ProviderKeyMissingError) {
-					results.push({
-						filePath: file.name,
-						ok: false,
-						requestIndex, outcome: "failed",
-						error: err.envelope.error,
-						code: PROVIDER_KEY_MISSING_CODE,
-						provider: err.envelope.provider,
-						slots: err.envelope.slots,
-					});
-					continue;
-				}
-				results.push({
-					filePath: file.name, requestIndex, ok: false,
-					outcome: err instanceof NotesImportError ? err.outcome : "failed",
-					...(err instanceof NotesImportError ? { stats: err.partialStats } : {}),
-					error: err instanceof Error ? err.message : String(err),
-				});
+	const tickets = await documents.importFiles(files, [], { markdownOnly: true });
+	const results: ImportResult[] = await Promise.all(
+		tickets.map(async (t): Promise<ImportResult> => {
+			const base = { requestIndex: t.index, filePath: t.name };
+			if (t.outcome === "skipped") {
+				return { ...base, outcome: "completed", ok: true, stats: { nodes: 0, chains: 0 }, skipped: true, docId: t.docId, of: t.title };
 			}
-		}
-	});
-	await Promise.all(workers);
+			if (t.outcome === "failed") {
+				return { ...base, outcome: "failed", ok: false, error: t.error ?? "Import failed", code: t.code, missing: t.missing, provider: t.provider, slots: t.slots };
+			}
+			const done = await t.completion!;
+			if (done.ok) return { ...base, outcome: "completed", ok: true, stats: done.stats ?? { nodes: 0, chains: 0 }, docId: t.docId };
+			return {
+				...base,
+				outcome: done.outcome && done.outcome !== "completed" && done.outcome !== "skipped" ? done.outcome : "failed",
+				ok: false,
+				...(done.stats ? { stats: done.stats } : {}),
+				error: done.error ?? "Import failed",
+				code: done.code,
+				missing: done.missing,
+				provider: done.provider,
+				slots: done.slots,
+			};
+		}),
+	);
 	return Response.json({ results });
 }
