@@ -78,11 +78,11 @@ def test_vision_strategy_reads_every_page_once_and_can_keep_images(tmp_path, pdf
     assert "![page 1]" not in md and "![page 2](My_Lecture/images/p002.png)" in md
 
 
-def test_naming_failure_falls_back_to_the_pdf_name(tmp_path, pdf_bytes):
+def test_naming_failure_falls_back_to_the_text_not_the_file_name(tmp_path, pdf_bytes):
     client = FakeClient()
     client.text = lambda *a, **k: {"text": "sorry, no JSON", "cost": 0.0005}
     m = process_pdf(pdf_bytes, "My Lecture.pdf", client, Cache(tmp_path / "cache"), tmp_path / "job/My_Lecture", CFG)
-    assert m["markdown"] == "My-Lecture.md" and m["title"] == "My Lecture"
+    assert m["title"] == "ocr My_Lecture-p1.pdf" and m["markdown"] == "ocr-My_Lecture-p1.pdf.md"
 
 
 def test_emits_live_request_events(tmp_path, pdf_bytes):

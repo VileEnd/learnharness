@@ -131,6 +131,10 @@ The desktop app stored everything in `%APPDATA%\LearnHarness` (`C:\Users\<you>\A
    ```
 5. Check that your chats, graph, and keys are there. Once you're happy, uninstall the desktop app. `%APPDATA%\LearnHarness` stays behind as a fallback copy.
 
+## PDF scanning service
+
+The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdown through OpenRouter. It has no published port and no Caddy route: only the app reaches it at `http://ocr:8000`, and every call carries the shared secret `OCR_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env`). The OpenRouter key is the one in the app's Settings, sent per job. Results and cache live in `volumes/ocr/`, which belongs in the backups.
+
 ## Updating
 
 ```bash
