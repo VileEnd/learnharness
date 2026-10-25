@@ -42,8 +42,8 @@ import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, 
 import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { notify } from "./push.ts";
-import { registerTurn, unregisterTurn } from "./turn-runs.ts";
-import { persistTurn, triggerAttribution, triggerExtraction } from "./turn-service.ts";
+import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
+import { persistTurn, triggerAttribution, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
 import { hasProbeDone, danglingQuestionOf } from "../core/native-messages.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
@@ -78,6 +78,10 @@ import type {CallUsage, SteerMessage} from "../core/contracts.ts";
  * wake pipeline's server-side steers (src/server/jobs.ts) — one code path
  * for write-ahead persistence, turn liveness, and the turn services.
  */
+
+function settlementErrorText(error: unknown): string {
+	return error instanceof TurnPersistenceError ? error.message : "An error occurred.";
+}
 
 const jobRunner = createJobRunner({
 	chatStore: stores.chatStore,
@@ -310,7 +314,11 @@ export async function handleChatInput(
 	// the composer gates), so adjacency holds by construction.
 	if (input.type === "answer" && danglingQuestionOf([...record.messages, ...appends]) !== null) {
 		const merged = [...record.messages, ...appends];
-		stores.chatStore.saveMessages(chatId, merged);
+		try { stores.chatStore.saveMessages(chatId, merged); }
+		catch (err) {
+			console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
+			return new Response("Your input could not be saved. Please try again.", { status: 500 });
+		}
 		emit("record-changed", { chatId });
 		return settledTurnResponse(); // the cheap terminal — no beginTurn, no turn
 	}
@@ -332,14 +340,19 @@ export async function handleChatInput(
 	const merged = [...record.messages, ...appends];
 	try {
 		stores.chatStore.saveMessages(chatId, merged);
-		// Dock fix (owner ruling 2026-09-26): persisted markers are visible
-		// in the record — flip their jobs now (the wake's steers ride this
-		// write-ahead; the delivering turn may run for minutes).
+	} catch (err) {
+		console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
+		endTurn(chatId);
+		return new Response("Your input could not be saved. Please try again.", { status: 500 });
+	}
+	// Visibility bookkeeping is not the canonical save. Its failure must
+	// neither misreport a saved input as lost nor prevent the turn running.
+	try {
 		for (const appended of appends) {
 			if ((appended as { role?: string }).role === "custom") noteSteerVisible(appended as SteerMessage);
 		}
 	} catch (err) {
-		console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
+		console.error(`[chat ${chatId}] input visibility bookkeeping failed:`, err);
 	}
 
 	// MONEY CHANNEL (wave 4): one collector per request, fed by the agent's
@@ -510,6 +523,21 @@ export async function handleChatInput(
 			onError: (error) => {
 				console.error(`[chat ${chatId}] turn error:`, error);
 				return "An error occurred.";
+			},
+			onSettleError: settlementErrorText,
+			onSettleFailure: (error, reportedErrorText) => {
+				// POST only acknowledges acceptance; the submitter may attach
+				// after this turn has already failed and left the registry.
+				rememberTurnFailure(chatId, reportedErrorText ?? settlementErrorText(error));
+				endTurn(chatId);
+				unregisterTurn(chatId);
+				unregisterLiveAgent(chatId);
+				// The canonical save may have succeeded before later bookkeeping
+				// threw. Reconcile against actual durability, never replay input
+				// merely because usage/extraction/other settlement work failed.
+				const persisted = stores.chatStore.getChat(chatId)?.messages ?? [];
+				reconcileUserSteers(chatId, persisted);
+				settleSteers(chatId, persisted);
 			},
 			onFinish: (turnMessages, isAborted, viewers) => {
 				// Wave B: the record write is the agent's own final state —
