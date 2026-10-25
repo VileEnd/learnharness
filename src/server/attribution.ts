@@ -65,13 +65,20 @@ export interface AttributionService {
 
 export function createAttributionService(deps: AttributionDeps): AttributionService {
 	const tails = new Map<string, Promise<unknown>>();
+	// Items tried without a match, keyed to the chat's merge state (its coverage-ledger
+	// size, which grows with every merge) when tried. In memory: a restart retries.
+	const tried = new Map<string, number>();
 	const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	async function run(chatId: string): Promise<number> {
 		try {
 			const record = deps.chatStore.getChat(chatId);
 			if (!record) return 0;
-			const items = unattributedItems(record, deps.learnerStore.readAttributions());
+			const coverage = deps.graphStore.readCoverage();
+			const mergeState = coverage.filter((c) => c.chatId === chatId).length;
+			const keyOf = (toolCallId: string) => `${chatId}\u0000${toolCallId}`;
+			// Skip items already tried at this merge state: only a new merge can change the answer.
+			const items = unattributedItems(record, deps.learnerStore.readAttributions()).filter((i) => tried.get(keyOf(i.toolCallId)) !== mergeState);
 			if (items.length === 0) return 0;
 			const nodes = new Map(getGraph(deps.graphStore).nodes.map((n) => [n.id, n]));
 			const own = [...nodes.values()].filter((n) => n.provenance.some((p) => p.chatId === chatId));
@@ -106,13 +113,16 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 			const finalEmpty = new Set(
 				deps.extractionEnabled && !deps.extractionEnabled()
 					? items.map((i) => i.toolCallId)
-					: eligibleForAttribution(record, items, deps.graphStore.readCoverage()).map((i) => i.toolCallId),
+					: eligibleForAttribution(record, items, coverage).map((i) => i.toolCallId),
 			);
 			const at = (deps.now?.() ?? new Date()).toISOString();
 			let appended = 0;
 			for (const item of items) {
 				const conceptIds = byItem.get(item.toolCallId) ?? [];
-				if (conceptIds.length === 0 && !finalEmpty.has(item.toolCallId)) continue;
+				if (conceptIds.length === 0 && !finalEmpty.has(item.toolCallId)) {
+					tried.set(keyOf(item.toolCallId), mergeState);
+					continue;
+				}
 				deps.learnerStore.appendAttribution({ chatId, toolCallId: item.toolCallId, conceptIds, at });
 				appended++;
 			}

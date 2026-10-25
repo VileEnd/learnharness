@@ -401,6 +401,15 @@ describe("concepts as search units", () => {
 		assert.ok((await index.search({ query: "Semaphore" })).hits.every((h) => h.kind === "section"));
 	});
 
+	it("conceptsOnly: concept hits only, no passages", async () => {
+		put("Blatt 8", SEMA, ["Semaphoren"]);
+		const g = fakeGraph([NODE_A]);
+		const index = createDocIndex({ store: documentStore, embedder: () => null, graphStore: g, graphStamp: g.stamp });
+		assert.ok((await index.search({ query: "Semaphore" })).hits.some((h) => h.kind === "section"));
+		const only = (await index.search({ query: "Semaphore", conceptsOnly: true })).hits;
+		assert.ok(only.length > 0 && only.every((h) => h.kind === "concept"));
+	});
+
 	it("filters: topic uses topics.jsonl and aliases; document keeps only concepts born in that document", async () => {
 		const doc = put("Blatt 7", MUTEX, ["Mutex"]);
 		const g = fakeGraph(
