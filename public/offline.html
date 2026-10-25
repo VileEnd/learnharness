@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="theme-color" content="#141414">
+	<title>LearnHarness — offline</title>
+	<style>
+		:root { color-scheme: dark; }
+		html, body { margin: 0; height: 100%; background: #141414; color: #e8e8e8; }
+		body {
+			display: flex; align-items: center; justify-content: center;
+			padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+			box-sizing: border-box;
+			font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+		}
+		main { max-width: 22rem; text-align: center; }
+		h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+		p { margin: 0 0 20px; color: #a3a3a3; }
+		button {
+			min-height: 44px; padding: 0 20px; border: 0; border-radius: 12px;
+			background: #e8e8e8; color: #141414; font: inherit; font-weight: 600;
+		}
+	</style>
+</head>
+<body>
+	<main>
+		<h1>Can't reach LearnHarness</h1>
+		<p>Your device seems to be offline, or not on your home network. Your sessions are safe on the server.</p>
+		<button type="button" onclick="location.reload()">Try again</button>
+	</main>
+	<script>
+		// Come back by itself once the network returns.
+		addEventListener("online", () => location.reload());
+	</script>
+</body>
+</html>

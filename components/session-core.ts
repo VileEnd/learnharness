@@ -300,7 +300,23 @@ export class SessionModel {
 
 	private setError(message: string | null): void {
 		this.errorValue = message === null ? null : { message };
+		if (message === null) this.streamLost = false;
 		this.onChange?.();
+	}
+
+	/** The live stream died of a NETWORK failure (a phone backgrounding the
+	 *  app, a Wi-Fi hop) — the turn itself runs on server-side. */
+	private streamLost = false;
+
+	/** RESUME (installed app on a phone, 2026-10-25): back in the foreground
+	 *  or online again after the stream was lost — re-attach through the
+	 *  normal reattach path instead of leaving the error banner up. Only the
+	 *  stream phase qualifies: a send whose POST never landed is NOT retried
+	 *  here (the refetch would silently drop the unsent message). */
+	recoverLostStream(): void {
+		if (this.statusValue !== "error" || !this.streamLost) return;
+		this.setError(null);
+		void this.resumeStream(true);
 	}
 
 	/** The 409 identity-retry fetch (the Wave B contract): the event was
@@ -552,6 +568,7 @@ export class SessionModel {
 		} catch (err) {
 			if (this.consumeAbort !== controller || (err as Error).name === "AbortError") return; // a newer consume won
 			this.setError((err as Error).message);
+			this.streamLost = err instanceof TypeError;
 			this.setStatus("error");
 		}
 	}
