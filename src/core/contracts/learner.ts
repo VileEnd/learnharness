@@ -36,3 +36,31 @@ export interface AttributionRow {
 	conceptIds: string[];
 	at: string;
 }
+
+/** Where a concept stands, derived from its evidence (never stored). */
+export type ConceptStateName = "not-yet-checked" | "shaky" | "learning" | "solid";
+
+export interface ConceptState {
+	conceptId: string;
+	state: ConceptStateName;
+	/** Learning or solid, and its review interval has passed. */
+	due: boolean;
+	/** Consecutive clean, spaced sessions since the last weak or failed one. */
+	streak: number;
+	/** ISO instant the next review is due; absent when the concept has no counted clean session. */
+	nextReviewAt?: string;
+	/** A premise (via a chain concluding this concept) is shaky or due. One level deep. */
+	weakFoundation: boolean;
+	/** The latest evidence, newest first, at most 3. */
+	last: EvidenceEvent[];
+	/** All evidence, oldest first. */
+	history: EvidenceEvent[];
+	/** The confusions not yet closed by a clean session, deduplicated by term. */
+	openMisconceptions: Array<{ term: string; instead?: string; why?: string; at: string }>;
+}
+
+/** The learner model at one instant: a state per concept that exists. */
+export interface LearnerSnapshot {
+	asOf: string;
+	states: Record<string, ConceptState>;
+}
