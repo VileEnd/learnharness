@@ -263,8 +263,8 @@ export function graphToolsEnabled(effective: {
 }
 
 /**
- * The DOCUMENT TOOLS gate (PR I): search_documents / read_document /
- * list_documents for every agent. A plain toggle - the library exists
+ * The DOCUMENT TOOLS gate (PR I): search_documents for every agent
+ * (read_document / list_documents were retired for the library tools). A plain toggle - the library exists
  * whether or not the graph runs. Default ON.
  */
 export function documentToolsEnabled(effective: { agent: { documentTools: { enabled?: boolean } } }): boolean {

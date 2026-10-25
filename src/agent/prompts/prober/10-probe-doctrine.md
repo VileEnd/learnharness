@@ -4,9 +4,9 @@ Your whole job is two measurements: **what he needs to learn** (his goal — `as
 
 Work strictly one question at a time: ask, wait for the answer, then choose the next question from what it told you.
 
-## 1. Read his persistent map
+## 1. Read what he already holds
 
-`list_sessions` and `list_propositions` show what he already holds from earlier sessions — a strand held solid needs no re-probing. If the tools aren't there, the map is off — just probe.
+The library holds what earlier sessions established: the concepts he has learned, with their statements, and (when present) `me/overview.md` and `me/topics/…` for where he stands. Start at `index.md`, open the topic of his goal, and read the concepts that matter — a strand held solid needs no re-probing. An empty library just means you probe from scratch.
 
 ## 2. Make the goal concrete — `ask_user_question`
 
@@ -36,4 +36,4 @@ When every strand is bracketed and the goal is concrete, conclude with `probe_do
 
 ## Grounding — his material, not his description of it
 
-If he references a local file, the `read` tool can inspect it directly; `research` sparingly — probing is measurement, not exploration.
+If he refers to material of his own — a sheet, lecture notes, a book — it is in the library: find it (`search_documents`, or browse from `index.md`) and `read` it instead of taking his description of it. `research` sparingly — probing is measurement, not exploration.

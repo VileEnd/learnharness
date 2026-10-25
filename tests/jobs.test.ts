@@ -1336,22 +1336,22 @@ describe("prompt composition", () => {
 		assert.ok(teacher.includes("Learner source files"), "the teacher carries the source-files section");
 		assert.ok(!teacher.includes("`pdf` job"), "the retired pdf job is no longer taught");
 		const prober = composeInstructions("prober");
-		assert.ok(prober.includes("the `read` tool can inspect it directly"), "the prober knows it can read learner files");
+		assert.ok(prober.includes("find it (`search_documents`, or browse from `index.md`) and `read` it"), "the prober knows to read his material from the library");
 	});
 
-	it("the sources-v1 shared fragment composes into BOTH agents (find/ls/grep doctrine)", () => {
+	it("the shared library fragment composes into BOTH agents (index.md, ls/find/grep/read)", () => {
 		for (const kind of ["teacher", "prober"] as const) {
 			const instructions = composeInstructions(kind);
-			assert.ok(instructions.includes("## Learner files"), `${kind} carries the shared learner-files fragment`);
-			assert.ok(instructions.includes("find it yourself with `find`"), `${kind} knows to locate files itself`);
-			assert.ok(instructions.includes("home directory"), `${kind} knows the home-anchored path rule`);
+			assert.ok(instructions.includes("## The library"), `${kind} carries the shared library fragment`);
+			assert.ok(instructions.includes("Start at `index.md`"), `${kind} knows where the library starts`);
+			assert.ok(instructions.includes("relative to the library root"), `${kind} knows the paths are library-relative`);
 		}
 		// the agent's OWN fragments compose before the shared appendix
 		// (the reorder's order rule, 2026-09-27: job and method lead)
 		const teacher = composeInstructions("teacher");
 		assert.ok(
-			teacher.indexOf("## Learner source files") < teacher.indexOf("## Learner files"),
-			"the teacher's own 40-jobs section precedes the shared learner-files fragment",
+			teacher.indexOf("## Learner source files") < teacher.indexOf("## The library"),
+			"the teacher's own 40-jobs section precedes the shared library fragment",
 		);
 	});
 
@@ -1370,6 +1370,25 @@ describe("prompt composition", () => {
 });
 
 // ─── abort (2026-09 semantics: real kill, cancelled status, teacher told) ───
+
+describe("prompts name the library", () => {
+	it("prompts name the library entry point", () => {
+		for (const kind of ["teacher", "prober", "practice"] as const) {
+			const instructions = composeInstructions(kind);
+			assert.ok(instructions.includes("index.md"), `${kind} names index.md`);
+			assert.ok(instructions.includes("search_documents"), `${kind} names search_documents`);
+			for (const gone of ["list_propositions", "list_sessions", "read_document", "list_documents", "home directory"]) {
+				assert.ok(!instructions.includes(gone), `${kind} no longer mentions ${gone}`);
+			}
+		}
+	});
+
+	it("the library prompts cite the library tools by their exact names", () => {
+		const names = ["ls", "find", "grep", "read", "search_documents"];
+		const body = fs.readFileSync("src/agent/prompts/shared/30-library.md", "utf-8") + fs.readFileSync("src/agent/prompts/shared/35-documents.md", "utf-8");
+		for (const name of names) assert.ok(body.includes(`\`${name}\``), `${name} is cited`);
+	});
+});
 
 describe("abort (src/server/jobs.ts abortJob)", () => {
 	/** A hanging model whose call never resolves until its abort signal
