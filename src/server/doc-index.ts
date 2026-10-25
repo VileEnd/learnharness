@@ -63,18 +63,53 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 /** POST https://openrouter.ai/api/v1/embeddings {model, input: string[]} ->
  *  {data: [{index, embedding: number[]}]}. */
-export function openRouterEmbedder(apiKey: string, model: string, fetchFn: FetchLike = fetch): Embedder {
+/** Transient provider answers worth another try (rate limits, overload). */
+const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
+
+/** Wait before retry `attempt` (0-based): the provider's Retry-After when it
+ *  sends one, else exponential backoff with jitter, capped at 30s. */
+export function retryDelayMs(attempt: number, retryAfter: string | null): number {
+	const seconds = retryAfter === null ? Number.NaN : Number(retryAfter);
+	if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30_000);
+	return Math.min(1000 * 2 ** attempt, 30_000) * (0.75 + Math.random() * 0.5);
+}
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+	new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener("abort", () => {
+			clearTimeout(timer);
+			reject(signal.reason);
+		}, { once: true });
+	});
+
+export function openRouterEmbedder(apiKey: string, model: string, fetchFn: FetchLike = fetch, maxRetries = 6): Embedder {
 	return {
 		model,
 		async embed(texts, opts = {}) {
-			const signals = [AbortSignal.timeout(opts.timeoutMs ?? 60_000)];
-			if (opts.signal) signals.push(opts.signal);
-			const resp = await fetchFn("https://openrouter.ai/api/v1/embeddings", {
-				method: "POST",
-				headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-				body: JSON.stringify({ model, input: texts, encoding_format: "float" }),
-				signal: AbortSignal.any(signals),
-			});
+			// A large library sends many batches back to back; the embedding
+			// providers rate-limit bursts (429). Transient failures retry with
+			// backoff instead of failing the whole document.
+			let resp: Response;
+			for (let attempt = 0; ; attempt++) {
+				const signals = [AbortSignal.timeout(opts.timeoutMs ?? 60_000)];
+				if (opts.signal) signals.push(opts.signal);
+				try {
+					resp = await fetchFn("https://openrouter.ai/api/v1/embeddings", {
+						method: "POST",
+						headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+						body: JSON.stringify({ model, input: texts, encoding_format: "float" }),
+						signal: AbortSignal.any(signals),
+					});
+				} catch (err) {
+					if (opts.signal?.aborted || attempt >= maxRetries) throw err;
+					await sleep(retryDelayMs(attempt, null), opts.signal);
+					continue;
+				}
+				if (resp.ok || !RETRYABLE.has(resp.status) || attempt >= maxRetries) break;
+				await resp.text().catch(() => "");
+				await sleep(retryDelayMs(attempt, resp.headers.get("retry-after")), opts.signal);
+			}
 			if (!resp.ok) throw new Error(`OpenRouter embeddings ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
 			const body = (await resp.json()) as { data?: { index?: number; embedding?: number[] }[] };
 			const rows = [...(body.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
@@ -131,6 +166,8 @@ export interface DocIndexDeps {
 	queryTimeoutMs?: number;
 	/** Texts per embeddings request. */
 	batchSize?: number;
+	/** Pause between a document's embedding batches (default 250ms). */
+	batchPauseMs?: number;
 	/** Pause after a failed backfill before the next attempt. */
 	backoffMs?: number;
 	now?: () => number;
@@ -298,6 +335,9 @@ export function createDocIndex(deps: DocIndexDeps) {
 		const texts = doc.chunks.map((c) => indexText(c.unit));
 		const vectors: Float32Array[] = [];
 		for (let i = 0; i < texts.length; i += size) {
+			// Pace the batches of a big document (books have hundreds) so the
+			// provider's burst limit is not the thing that stops indexing.
+			if (i > 0) await new Promise((r) => setTimeout(r, deps.batchPauseMs ?? 250));
 			vectors.push(...(await embedder.embed(texts.slice(i, i + size), { signal })).map(normalize));
 		}
 		const dims = vectors[0]?.length ?? 0;
