@@ -122,11 +122,14 @@ export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
  *  (zero-keys wave, owner 2026-09-25). */
 async function mintFreshToken(): Promise<string> {
 	const res = await fetch("/api/stt/token");
-	const data = (await res.json()) as { token?: string; message?: string };
-	if (!res.ok || !data.token) {
+	if (!res.ok) {
 		if (res.status === 503) throw new Error(DICTATION_KEYLESS);
-		throw new Error(data.message ?? `token route ${res.status}`);
+		// An error page (proxy, auth redirect) is not JSON: fall back to the status.
+		const body = (await res.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(body?.message ?? `token route ${res.status}`);
 	}
+	const data = (await res.json()) as { token?: string; message?: string };
+	if (!data.token) throw new Error(data.message ?? "token route returned no token");
 	return data.token;
 }
 
@@ -184,6 +187,15 @@ function ensureAudioGraph(): { ctx: AudioContext; module: Promise<void> } {
 		});
 	}
 	return { ctx: sharedCtx, module: workletModule };
+}
+
+/** Drop the shared context so the next ensureAudioGraph() builds a fresh one
+ *  (WebKit can leave it "interrupted" or refuse to resume after a call or a
+ *  backgrounding). The module memo goes with it: worklets belong to a context. */
+function resetAudioGraph(): void {
+	void sharedCtx?.close().catch(() => {});
+	sharedCtx = null;
+	workletModule = null;
 }
 
 /** RMS (0..1) → normalized 0..1 across the audible dB window. */
@@ -441,11 +453,17 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		// context: localhost in dev, HTTPS (Caddy) when served on the LAN.
 		const tokenPromise = warmTokens.mint();
 		tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
-		const micPromise = navigator.mediaDevices.getUserMedia({
-			audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-		});
 		let stream: MediaStream;
 		try {
+			// iOS only lets an AudioContext start inside the tap's own task: create
+			// and resume it here, before the first await (mic prompt, token).
+			ensureAudioGraph().ctx.resume().catch(() => {});
+			if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+				throw new Error("Dictation needs a secure connection (HTTPS or localhost)");
+			}
+			const micPromise = navigator.mediaDevices.getUserMedia({
+				audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+			});
 			stream = await micPromise;
 			if (gen !== genRef.current) {
 				for (const track of stream.getTracks()) track.stop();
@@ -455,9 +473,18 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 
 			// Mitigation C: app-lifetime context + memoized worklet module —
 			// per-run costs (context creation, module fetch) are gone.
-			const { ctx, module } = ensureAudioGraph();
+			let { ctx, module } = ensureAudioGraph();
 			await module;
-			if (ctx.state === "suspended") await ctx.resume();
+			// Anything but "running" (suspended, or WebKit's "interrupted") needs a
+			// resume; if that fails the context is dead, so rebuild it once.
+			if (ctx.state !== "running") await ctx.resume().catch(() => {});
+			if (ctx.state !== "running") {
+				resetAudioGraph();
+				({ ctx, module } = ensureAudioGraph());
+				await module;
+				await ctx.resume().catch(() => {});
+				if (ctx.state !== "running") throw new Error("Audio is blocked, tap the mic again");
+			}
 			if (gen !== genRef.current) return;
 
 			const worklet = new AudioWorkletNode(ctx, "pcm-capture");
@@ -586,6 +613,22 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	useEffect(() => {
 		warmTokens.refresh(); // pre-mint at mount (mitigation D) — silent if keyless
 	}, []);
+	// A backgrounded tab or a closing page must not keep the mic open (iOS
+	// suspends the context under us, leaving a dead "recording").
+	useEffect(() => {
+		const onHide = () => {
+			if (phase === "recording" || phase === "connecting") stop();
+		};
+		const onVisibility = () => {
+			if (document.visibilityState === "hidden") onHide();
+		};
+		window.addEventListener("pagehide", onHide);
+		document.addEventListener("visibilitychange", onVisibility);
+		return () => {
+			window.removeEventListener("pagehide", onHide);
+			document.removeEventListener("visibilitychange", onVisibility);
+		};
+	}, [phase, stop]);
 	useEffect(() => {
 		window.addEventListener("lh:kbd-toggle-dictation", toggle);
 		return () => window.removeEventListener("lh:kbd-toggle-dictation", toggle);
@@ -695,7 +738,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 					data-testid="dictation-toggle"
 				// Same blurring as the floating chrome (owner, fix wave round 3),
 			// but lower opacity — the mic stays quieter than the model pills.
-			className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
+			className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md pointer-coarse:h-10 border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
 			>
 					<MicIcon className="size-3.5" />
 					<span className="max-w-full truncate">{error ?? "Dictate"}</span>
@@ -718,7 +761,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 					disabled={phase === "stopping"}
 					aria-label="Stop dictation"
 				data-testid="dictation-toggle"
-				className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-destructive/10 px-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+				className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-destructive/10 px-2 pointer-coarse:h-10 pointer-coarse:px-3 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
 			>
 				{phase === "stopping" ? (
 					<Loader2Icon className="size-3.5 animate-spin" />

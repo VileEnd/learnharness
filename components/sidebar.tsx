@@ -21,6 +21,8 @@ import { classifySwipe, resolveSidebarOpen, sidebarStorageKey, WIDE_QUERY } from
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { BottomTabs } from "@/components/bottom-tabs";
 import { fuzzyScore } from "@/src/core";
+import { useVisualViewport } from "@/components/use-visual-viewport";
+import { useBackDismiss } from "@/components/use-back-dismiss";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import type { ChatListItem } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
@@ -366,6 +368,8 @@ const KIND_FILTER_KEY = "lh:session-kind-filter";
 function SessionsSidebar() {
 	const { open, toggle, narrow, setOpen } = useSidebar();
 	const backdropDismiss = useBackdropDismiss(() => setOpen(false));
+	// Phone drawer only: the back gesture closes it instead of leaving the page.
+	useBackDismiss(narrow && open, () => setOpen(false));
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -935,10 +939,14 @@ function SessionsSidebar() {
 
 /** The app frame: sidebar inline + content. Rendered once in the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
+	// Publishes --vvh while the phone keyboard is up: the page roots (chat,
+	// new session, home) are h-full of <main>, so one height follows the
+	// visible viewport and the composer stays above the keyboard.
+	useVisualViewport();
 	return (
 		<SettingsDialogProvider>
 			<SessionsSidebar />
-			<main className="min-w-0 flex-1 max-md:pb-[var(--lh-tabbar-h,0px)] max-md:[&>div]:h-full">{children}</main>
+			<main className="min-w-0 flex-1 max-md:h-[var(--vvh,auto)] max-md:pb-[var(--lh-tabbar-h,0px)] max-md:[&>div]:h-full">{children}</main>
 			<BottomTabs />
 			{/* The single document-level keydown listener (keyboard wave A) —
 			    after the content in the tree, but it's window-level so order only

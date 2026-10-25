@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
+import { enterSends } from "@/components/enter-submits";
+import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
 
 /**
@@ -37,6 +39,9 @@ export function ReadingThinkingField({
 	/** Primary dictation claim — true while the check is behind its reveal. */
 	claim: boolean;
 }) {
+	const coarse = useCoarsePointer();
+	const fieldRef = useRef<HTMLTextAreaElement>(null);
+	useAutoGrow(fieldRef, value);
 	useDictationTarget(
 		useCallback(
 			(t: string) => {
@@ -55,6 +60,7 @@ export function ReadingThinkingField({
 				Thinking while reading
 			</div>
 			<textarea
+				ref={fieldRef}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source
@@ -80,7 +86,7 @@ export function ReadingThinkingField({
 					// (and the universal ⌘/Ctrl+Enter) opens it — the dictation
 					// flush lands HERE first via the caller's finishDictation,
 					// so spoken thoughts ride along. Shift+Enter stays a newline.
-					if (e.key === "Enter" && onOpen !== undefined && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
+					if (e.key === "Enter" && onOpen !== undefined && enterSends(e, coarse)) {
 						e.preventDefault();
 						e.stopPropagation();
 						onOpen();
@@ -95,6 +101,7 @@ export function ReadingThinkingField({
 					}
 				}}
 				placeholder="Whatever comes to mind as you read."
+				enterKeyHint="enter"
 				rows={1}
 				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70"
 			/>
