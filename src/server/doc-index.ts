@@ -17,7 +17,8 @@
  *   - by default the backfill goes through the OpenRouter BATCH API (about
  *     half price, results within minutes to a day): the units of every
  *     document lacking vectors become one batch of `/v1/embeddings` requests
- *     (up to 64 texts each, custom_id `${docId}~${offset}`) submitted two
+ *     (ONE text each - Vertex, which runs Gemini batches, rejects multi-input
+ *     embedding requests; custom_id `${docId}~${offset}`) submitted two
  *     minutes after the last change; pending batches persist through the
  *     store (pending-batches.json) so a restart resumes polling (once a
  *     minute), and a finished batch is read, written as vectors and DELETED
@@ -138,7 +139,7 @@ export function openRouterEmbedder(apiKey: string, model: string, fetchFn: Fetch
  *  response holds one embedding per string, ordered by `index`. */
 export interface BatchRequest {
 	custom_id: string;
-	body: { input: string[]; encoding_format: "float" };
+	body: { input: string; encoding_format: "float" };
 }
 
 /** GET /api/v1/batches/{id}. `results` is null until the batch is terminal;
@@ -223,8 +224,10 @@ export function openRouterBatchClient(apiKey: string, model: string, fetchFn: Fe
 	};
 }
 
-/** Texts per request of a batch (one request = one embeddings call). */
-export const BATCH_INPUTS = 64;
+/** Texts per request of a batch: exactly one. Verified live 2026-10-25:
+ *  Gemini embedding batches run on Vertex, which fails the whole batch with
+ *  "Vertex embeddings accept one input per line" for multi-input requests. */
+export const BATCH_INPUTS = 1;
 /** Per-batch caps, well under OpenRouter's documented 200 MB body limit. */
 const BATCH_MAX_REQUESTS = 5000;
 const BATCH_MAX_BYTES = 50 * 1024 * 1024;
@@ -236,14 +239,10 @@ export interface BatchDoc {
 	requests: BatchRequest[];
 }
 
-/** A document's units as requests of up to 64 texts; custom_id is
- *  `${docId}~${offset}` with offset = the first unit's index. */
+/** A document's units as one request per text; custom_id is
+ *  `${docId}~${offset}` with offset = the unit's index. */
 export function buildBatchRequests(docId: string, texts: string[]): BatchRequest[] {
-	const out: BatchRequest[] = [];
-	for (let offset = 0; offset < texts.length; offset += BATCH_INPUTS) {
-		out.push({ custom_id: `${docId}~${offset}`, body: { input: texts.slice(offset, offset + BATCH_INPUTS), encoding_format: "float" } });
-	}
-	return out;
+	return texts.map((input, offset) => ({ custom_id: `${docId}~${offset}`, body: { input, encoding_format: "float" } }));
 }
 
 /** Group whole documents into batches under the request and byte caps (a
@@ -623,7 +622,9 @@ export function createDocIndex(deps: DocIndexDeps) {
 			state = await batcher.get(p.batchId);
 		} catch (err) {
 			const status = err instanceof BatchHttpError ? err.status : 0;
-			if (status === 404 || status === 410) {
+			// A batch reads as "not found" for a few seconds right after it is
+			// created (seen live) - only a lasting 404 means it is gone.
+			if ((status === 404 && now() - p.submittedAt > 10 * 60_000) || status === 410) {
 				console.warn(`[doc-index] batch ${p.batchId} no longer exists (${status}); its documents go into the next batch`);
 				forget(p.batchId);
 			} else {
