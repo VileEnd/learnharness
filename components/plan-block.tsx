@@ -3,6 +3,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useBackDismiss } from "@/components/use-back-dismiss";
+import { useCoarsePointer } from "@/components/use-coarse-pointer";
 // The placement engine — literally mermaid's: dagre-d3-es, the fork
 // mermaid 11 ships with (owner, plan-graph round 8: same engine as the
 // mermaid graphs, our SVG skin stays). The deep subpath is how mermaid
@@ -12,7 +14,7 @@ import { layout as dagreLayout } from "dagre-d3-es/src/dagre/index.js";
 // Mermaid's default flowchart edge curve: dagre's waypoints drawn through
 // d3's curveBasis (the exact recipe dagre-d3's own renderer uses).
 import { curveBasis, line } from "d3-shape";
-import { fitGraphView, fitZoomFor, zoomedGraphView, type Viewport } from "@/components/pan-zoom";
+import { fitGraphView, fitZoomFor, pinchView, zoomedGraphView, type Pt, type Viewport } from "@/components/pan-zoom";
 import type { PlanBlockData, PlanNodeStatus, PlanTree } from "@/src/core";
 import { derivedNodeStatus, derivePlanStatuses } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
@@ -756,6 +758,9 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 	);
 	const statusOf = (id: string): PlanNodeStatus => (statuses ? derivedNodeStatus(statuses, id) : "upcoming");
 
+	// The back gesture (Android back, iOS edge swipe) closes the overlay.
+	useBackDismiss(true, onClose);
+
 	// Esc closes — claimed at the DOCUMENT level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): a surfaced layer's Esc is exactly one
 	// action. The window-level chain (dictation cancel → abort) is the
@@ -840,16 +845,38 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 	// per-frame — the transition is off while dragging or it rubber-bands.
 	const [panning, setPanning] = useState(false);
 	const dragRef = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
+	const pointersRef = useRef(new Map<number, Pt>());
+	const coarse = useCoarsePointer();
 	const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
 		if (e.button !== 0) return;
 		if ((e.target as HTMLElement).closest("button")) return;
+		// Track every finger: a second one turns the drag into a pinch.
+		const r = e.currentTarget.getBoundingClientRect();
+		pointersRef.current.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+		e.currentTarget.setPointerCapture(e.pointerId);
+		if (pointersRef.current.size > 1) {
+			dragRef.current = null;
+			setPanning(true);
+			return;
+		}
 		if (atFloor) return;
 		dragRef.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
 		setPanning(true);
 		e.currentTarget.classList.add("cursor-grabbing");
-		e.currentTarget.setPointerCapture(e.pointerId);
 	};
 	const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+		const pts = pointersRef.current;
+		if (pts.has(e.pointerId)) {
+			const r = e.currentTarget.getBoundingClientRect();
+			const prev = [...pts.values()];
+			pts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+			if (pts.size === 2) {
+				const next = [...pts.values()];
+				setView((v) => pinchView(v, [prev[0]!, prev[1]!], [next[0]!, next[1]!], fitZoom, box, size));
+				userAdjustedRef.current = true;
+				return;
+			}
+		}
 		const d = dragRef.current;
 		if (!d) return;
 		d.moved = true;
@@ -858,6 +885,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 		);
 	};
 	const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+		pointersRef.current.delete(e.pointerId);
 		const d = dragRef.current;
 		if (d) {
 			dragRef.current = null;
@@ -881,10 +909,14 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 	return (
 		<div
 			data-testid="plan-popup"
-			// SESSION-SCOPED (absolute, not fixed): the chat page mounts this
-			// INSIDE the session-area div — below the drag bar, right of the
-			// sidebar. 80% + blur: the transcript ghosts through.
-			className="absolute inset-0 z-40 flex flex-col bg-background/80 p-4 backdrop-blur-sm"
+			// SESSION-SCOPED on md+ (absolute): the chat page mounts this
+			// INSIDE the session-area div, right of the sidebar. 80% + blur:
+			// the transcript ghosts through.
+			className={cn(
+				"flex flex-col bg-background/80 p-4 backdrop-blur-sm md:absolute md:inset-0 md:z-40",
+				// Phones: a full-screen sheet above the bottom tabs, inside the safe areas.
+				"max-md:fixed max-md:inset-0 max-md:z-50 max-md:bg-background/95 max-md:pt-[max(1rem,env(safe-area-inset-top))] max-md:pb-[max(1rem,env(safe-area-inset-bottom))]",
+			)}
 			role="dialog"
 			aria-modal="true"
 			aria-label="The full plan"
@@ -901,7 +933,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 					onClick={onClose}
 					aria-label="Close"
 					data-testid="plan-popup-close"
-					className="ml-auto rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className="ml-auto rounded-lg p-1.5 pointer-coarse:p-3 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 				>
 					<XIcon className="size-4" />
 				</button>
@@ -947,14 +979,14 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 							/>
 						</div>
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
-							<span className="text-xs text-muted-foreground/60">Drag to pan · scroll to zoom</span>
+							<span className="text-xs text-muted-foreground/60">{coarse ? "Drag to pan · pinch to zoom" : "Drag to pan · scroll to zoom"}</span>
 							<div className="flex gap-1">
 								<Hint label="Zoom out" side="bottom">
 <button
 									type="button"
 									aria-label="Zoom out"
 									onClick={() => stepZoom(1 / 1.25)}
-									className="pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+									className="pointer-events-auto flex size-7 pointer-coarse:size-11 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
 								>
 									<MinusIcon className="size-3.5" />
 								</button>
@@ -965,7 +997,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 									aria-label="Fit plan to screen"
 									onClick={fitView}
 									data-testid="plan-popup-fit"
-									className="pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+									className="pointer-events-auto flex size-7 pointer-coarse:size-11 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
 								>
 									<MaximizeIcon className="size-3.5" />
 								</button>
@@ -975,7 +1007,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 									type="button"
 									aria-label="Zoom in"
 									onClick={() => stepZoom(1.25)}
-									className="pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+									className="pointer-events-auto flex size-7 pointer-coarse:size-11 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
 								>
 									<PlusIcon className="size-3.5" />
 								</button>

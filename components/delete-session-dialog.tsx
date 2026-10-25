@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { useBackDismiss } from "@/components/use-back-dismiss";
 import type { ChatDeleteMode, ChatListItem } from "@/src/core";
 
 /** The graph-traces checkbox copy (owner, 2026-09-24 flow rework — was
@@ -53,6 +54,9 @@ export function DeleteSessionDialog({
 	const [traces, setTraces] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const backdropDismiss = useBackdropDismiss(() => {
+		if (!busy) onClose();
+	});
+	useBackDismiss(chat !== null, () => {
 		if (!busy) onClose();
 	});
 	// Retry IS pressing Delete again: the mode always derives from the
@@ -223,7 +227,7 @@ export function DeleteSessionBody({
 					data-testid="delete-cancel"
 					onClick={onClose}
 					disabled={busy}
-					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
 				>
 					Cancel
 				</button>
@@ -232,7 +236,7 @@ export function DeleteSessionBody({
 					data-testid="delete-confirm"
 					onClick={onRun}
 					disabled={busy}
-					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
+					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
 				>
 					{busy ? "Deleting…" : "Delete"}
 				</button>

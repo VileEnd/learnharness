@@ -19,14 +19,40 @@ export function slugFilename(title: string): string {
 	return slug || "demo";
 }
 
-/** Save text as a downloaded file. The blob URL is revoked right after the
- *  click — Chromium keeps the download alive past the revoke. */
+/** How a save is delivered: touch devices go through the share sheet (Save
+ *  to Files, AirDrop) when it accepts files, because iOS Safari and many
+ *  Android browsers ignore `<a download>` on blob URLs; everything else
+ *  uses the anchor. Pure so the choice can be pinned. */
+export function pickDownloadRoute(coarse: boolean, canShareFiles: boolean): "share" | "anchor" {
+	return coarse && canShareFiles ? "share" : "anchor";
+}
+
+/** Save text as a downloaded file. The anchor is attached to the DOM for the
+ *  click (Firefox and some WebViews ignore detached ones) and the blob URL
+ *  is revoked late: revoking right after the click cancels slow downloads
+ *  on Safari and Android. A cancelled share sheet is not an error. */
 export function downloadFile(name: string, text: string, mime: string): void {
-	const blob = new Blob([text], { type: mime });
+	const file = new File([text], name, { type: mime });
+	const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+	const canShare = typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
+	if (pickDownloadRoute(coarse, canShare) === "share") {
+		navigator.share({ files: [file], title: name }).catch((e: unknown) => {
+			if (e instanceof DOMException && e.name === "AbortError") return;
+			anchorDownload(file, name);
+		});
+		return;
+	}
+	anchorDownload(file, name);
+}
+
+function anchorDownload(blob: Blob, name: string): void {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
 	a.download = name;
+	a.hidden = true;
+	document.body.appendChild(a);
 	a.click();
-	URL.revokeObjectURL(url);
+	a.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }

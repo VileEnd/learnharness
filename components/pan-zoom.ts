@@ -53,3 +53,34 @@ export function zoomedGraphView(
 	const k = zoom / view.zoom;
 	return { zoom, x: focus.x - (focus.x - view.x) * k, y: focus.y - (focus.y - view.y) * k };
 }
+
+/** A point in viewport coordinates. */
+export interface Pt {
+	x: number;
+	y: number;
+}
+
+const mid = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+/** Two-finger pinch: zoom by the ratio of the finger distances around the
+ *  previous midpoint (so the content under the fingers stays under them),
+ *  then follow the midpoint's own movement as a pan. Same fit-floor and
+ *  ZOOM_MAX clamps as every other zoom; at the floor the view re-fits, so
+ *  nothing pans there. Pure. */
+export function pinchView(
+	view: Viewport,
+	prev: readonly [Pt, Pt],
+	next: readonly [Pt, Pt],
+	floor: number,
+	box: { w: number; h: number },
+	viewport: { w: number; h: number },
+): Viewport {
+	const d0 = Math.hypot(prev[0].x - prev[1].x, prev[0].y - prev[1].y);
+	const d1 = Math.hypot(next[0].x - next[1].x, next[0].y - next[1].y);
+	if (d0 < 1) return view;
+	const m0 = mid(prev[0], prev[1]);
+	const m1 = mid(next[0], next[1]);
+	const zoomed = zoomedGraphView(view, d1 / d0, floor, m0, box, viewport);
+	if (zoomed.zoom <= floor + 1e-9) return zoomed;
+	return { ...zoomed, x: zoomed.x + (m1.x - m0.x), y: zoomed.y + (m1.y - m0.y) };
+}

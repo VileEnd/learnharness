@@ -5,7 +5,8 @@ import { ChevronRightIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
-import { useEnterSubmits } from "@/components/enter-submits";
+import { enterSends, useEnterSubmits } from "@/components/enter-submits";
+import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { repairMathForDisplay } from "@/src/core";
 
@@ -68,6 +69,10 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 		true,
 	);
 
+	const coarse = useCoarsePointer();
+	const fieldRef = useRef<HTMLTextAreaElement>(null);
+	useAutoGrow(fieldRef, thinking);
+
 	const submit = () => {
 		if (compactionRunning) return;
 		const text = thinkingRef.current.trim();
@@ -123,6 +128,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 					YOUR THINKING
 				</div>
 				<textarea
+					ref={fieldRef}
 					value={thinking}
 					onChange={(e) => {
 						thinkingRef.current = e.target.value;
@@ -139,12 +145,13 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 						}
 						// Enter SENDS — the single lane (owner round 2, 2026-10-05);
 						// Shift+Enter is the newline, ⌘/Ctrl+Enter the chord too.
-						if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
+						if (enterSends(e, coarse)) {
 							e.preventDefault();
 							submit();
 						}
 					}}
 					placeholder="Work here, think out loud."
+					enterKeyHint={coarse ? "enter" : "send"}
 					rows={4}
 					className={cn(
 						"field-sizing-content lh-input max-h-64 min-h-16 w-full resize-none bg-transparent px-2.5 pb-2 outline-none placeholder:text-muted-foreground",
@@ -156,7 +163,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 				    field 10 − p-1 (4) = button 6. */}
 				<div className="flex items-center justify-between gap-2 p-1">
 					<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
-						{compactionRunning ? "compacting session…" : "↵ submits · ⇧↵ newline"}
+						{compactionRunning ? "compacting session…" : coarse ? "" : "↵ submits · ⇧↵ newline"}
 					</span>
 					<Button
 						type="button"

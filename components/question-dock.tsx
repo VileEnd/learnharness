@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
-import { useEnterSubmits } from "@/components/enter-submits";
+import { enterSends, useEnterSubmits } from "@/components/enter-submits";
+import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import {
@@ -421,6 +422,11 @@ function QuestionDockForm({
 	const rootRef = useRef<HTMLDivElement>(null);
 	const otherInputRef = useRef<HTMLInputElement>(null);
 	const thinkingRef = useRef<HTMLTextAreaElement>(null);
+	const answerRef = useRef<HTMLTextAreaElement>(null);
+	// Touch: Return is a newline, only the button submits (owner decision).
+	const coarse = useCoarsePointer();
+	useAutoGrow(thinkingRef, thinking);
+	useAutoGrow(answerRef, text);
 	// One row past the options is the trailing row: quiz → don't-know,
 	// ask → Other (a question never has both). Text mode (ask/explain)
 	// has no rows — the composer IS the answer surface.
@@ -540,11 +546,11 @@ function QuestionDockForm({
 	}, [kbdIdx]);
 
 	return (
-		<div ref={rootRef} data-testid="question-dock">
+		<div ref={rootRef} data-testid="question-dock" className="max-md:flex max-md:max-h-[var(--dock-max-h,none)] max-md:flex-col">
 			{/* Question area — scrolls internally if very tall; the bottom row stays put.
 			    Capped by the measured column (--dock-max-h; the old fixed 55dvh cut
 			    long questions short — owner round, 2026-10-05). */}
-			<div data-session-find-root="" className="max-h-[var(--dock-max-h,55dvh)] overflow-y-auto px-4 pt-3">
+			<div data-session-find-root="" className="max-h-[var(--dock-max-h,55dvh)] overflow-y-auto px-4 pt-3 max-md:min-h-0">
 				<div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					{toolName === "probe"
 						? "Probe"
@@ -734,7 +740,7 @@ function QuestionDockForm({
 				GRAYS it out — the layout holds, no value is sent, the IDK
 				signal stands alone. */}
 			{kind === "quiz" && (
-				<div className="border-t border-border/60 px-4 py-2.5">
+				<div className="border-t border-border/60 px-4 py-2.5 max-md:shrink-0">
 					<div className="flex items-center gap-3">
 						<span
 							className={cn(
@@ -745,7 +751,7 @@ function QuestionDockForm({
 							Confidence
 						</span>
 						<div
-							className={cn("relative h-4 min-w-0 flex-1", sel.dontKnow && "opacity-40")}
+							className={cn("relative h-4 min-w-0 flex-1 pointer-coarse:h-8", sel.dontKnow && "opacity-40")}
 							data-testid="confidence-track"
 						>
 							{/* The RAIL is painted here, not on the input: this overlay spans
@@ -761,7 +767,7 @@ function QuestionDockForm({
 							<div
 								aria-hidden
 								data-testid="confidence-rail"
-								className="pointer-events-none absolute top-1/2 left-2 right-2 h-1.5 -translate-y-1/2 rounded-full border border-border"
+								className="pointer-events-none absolute top-1/2 left-2 right-2 h-1.5 -translate-y-1/2 rounded-full border border-border pointer-coarse:left-3 pointer-coarse:right-3"
 								style={confidenceRailStyle(CONFIDENCE_STOPS[confIdx]!)}
 							/>
 							<input
@@ -790,11 +796,11 @@ function QuestionDockForm({
 								}}
 								style={{ color: CONFIDENCE_COLORS[confIdx] }}
 								className={cn(
-									"absolute inset-0 h-4 w-full cursor-pointer appearance-none bg-transparent outline-none",
-									"[&::-webkit-slider-runnable-track]:h-4 [&::-webkit-slider-runnable-track]:bg-transparent",
-									"[&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-current",
-									"[&::-moz-range-track]:h-4 [&::-moz-range-track]:bg-transparent",
-									"[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-current",
+									"absolute inset-0 h-4 w-full cursor-pointer appearance-none bg-transparent outline-none pointer-coarse:h-8",
+									"[&::-webkit-slider-runnable-track]:h-4 [&::-webkit-slider-runnable-track]:bg-transparent pointer-coarse:[&::-webkit-slider-runnable-track]:h-8",
+									"[&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-current pointer-coarse:[&::-webkit-slider-thumb]:mt-1 pointer-coarse:[&::-webkit-slider-thumb]:size-6",
+									"[&::-moz-range-track]:h-4 [&::-moz-range-track]:bg-transparent pointer-coarse:[&::-moz-range-track]:h-8",
+									"[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-current pointer-coarse:[&::-moz-range-thumb]:size-6",
 								)}
 							/>
 						</div>
@@ -808,6 +814,10 @@ function QuestionDockForm({
 							{sel.dontKnow ? "—" : `${CONFIDENCE_STOPS[confIdx]}%`}
 						</span>
 					</div>
+					{/* The slider's title= tooltip never shows on touch; say it in text. */}
+					<p className="mt-1 hidden text-xs text-muted-foreground pointer-coarse:block">
+						Chance your selected answer is correct. 50% is a coin flip.
+					</p>
 				</div>
 			)}
 
@@ -817,7 +827,7 @@ function QuestionDockForm({
 			    is for dumping, soon dictated; the button submits); text mode
 			    keeps "Your answer" with Enter-to-submit. */}
 			<form
-				className="border-t border-border/60 p-1.5"
+				className="border-t border-border/60 p-1.5 max-md:shrink-0"
 				onSubmit={(e) => {
 					e.preventDefault();
 					submit();
@@ -832,6 +842,7 @@ function QuestionDockForm({
 					</div>
 					{qd.mode === "text" ? (
 						<textarea
+							ref={answerRef}
 							value={text}
 							onChange={(e) => {
 								answerTextRef.current = e.target.value;
@@ -849,12 +860,13 @@ function QuestionDockForm({
 								}
 								// Chat convention: Enter submits, Shift+Enter is a newline;
 								// ⌘/Ctrl+Enter also submits (universal across the app).
-								if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
+								if (enterSends(e, coarse)) {
 									e.preventDefault();
 									submit();
 								}
 							}}
 							placeholder="Type your answer…"
+							enterKeyHint={coarse ? "enter" : "send"}
 							rows={1}
 							className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
 						/>
@@ -879,12 +891,13 @@ function QuestionDockForm({
 								// THE STANDARD CHORD (owner round 5, 2026-10-05): Enter
 								// submits, Shift+Enter is a newline, ⌘/Ctrl+Enter works
 								// too — identical to the practice dock and the composer.
-								if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
+								if (enterSends(e, coarse)) {
 									e.preventDefault();
 									submit();
 								}
 							}}
 							placeholder="Why this answer? Whatever comes to mind."
+							enterKeyHint={coarse ? "enter" : "send"}
 							rows={1}
 							className={cn(
 								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70",
@@ -896,7 +909,7 @@ function QuestionDockForm({
 					)}
 					<div className="flex items-center justify-between gap-2 p-1">
 						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
-								{compactionRunning ? "compacting session…" : "↵ submits · ⇧↵ newline"}
+								{compactionRunning ? "compacting session…" : coarse ? "" : "↵ submits · ⇧↵ newline"}
 						</span>
 						<Button
 							type="submit"
