@@ -25,10 +25,14 @@ export const MAX_CONCEPTS_PER_ITEM = 3;
 export interface AttributionItem {
 	toolCallId: string;
 	question: string;
+	/** The correct answer in words ("" when unknown). */
+	correct?: string;
 	/** What the learner answered (or "I don't know"). */
 	answer: string;
 	/** How it counted, in words: "correct", "miss", "partly", ... */
 	outcome: string;
+	/** The concepts this item may be linked to (the model can only pick from these). */
+	candidates: AttributionConcept[];
 }
 
 export interface AttributionConcept {
@@ -54,14 +58,13 @@ const attributionSchema = Type.Object({
 	),
 });
 
-const ATTRIBUTION_INSTRUCTIONS = `You link a learner's graded questions to the concepts they test. You get the CONCEPTS of one teaching session (id | name | statement) and the ITEMS asked in it (id | question | his answer | how it counted). For every item decide which concepts (at most ${MAX_CONCEPTS_PER_ITEM}) the question actually tests, meaning the ideas someone needs to answer it correctly, and submit them in one attribute_items call with an entry per item. Copy concept ids verbatim from the list. If no concept fits an item, give it an empty list: that is a real answer, not a gap to fill.`;
+const ATTRIBUTION_INSTRUCTIONS = `You link a learner's graded questions to the concepts they test. You get the CONCEPTS found in the learner's library (id | name | statement) and the ITEMS asked in a session (id | question | correct answer | his answer | how it counted | candidate concept ids). For every item decide which concepts (at most ${MAX_CONCEPTS_PER_ITEM}) the question actually tests, meaning the ideas someone needs to answer it correctly, and submit them in one attribute_items call with an entry per item. Pick only from an item's own candidate ids, copied verbatim. If no concept fits an item, give it an empty list: that is a real answer, not a gap to fill.`;
 
 export interface Attributor {
-	/** item -> concept ids, batched. Every item gets an entry (possibly empty);
+	/** item -> concept ids (from each item's own candidates), batched. Every item gets an entry (possibly empty);
 	 *  a model failure rejects and nothing is returned. */
 	runAttribution(
 		items: readonly AttributionItem[],
-		concepts: readonly AttributionConcept[],
 		signal?: AbortSignal,
 	): Promise<AttributionLink[]>;
 }
@@ -75,14 +78,14 @@ export function createAttributor(deps: DescriberDeps): Attributor {
 		return e;
 	}
 	return {
-		async runAttribution(items, concepts, signal) {
-			if (items.length === 0) return [];
-			// No concepts to pick from: every item is off the map, no model call needed.
-			if (concepts.length === 0) return items.map((i) => ({ toolCallId: i.toolCallId, conceptIds: [] }));
-			const knownConcepts = new Set(concepts.map((c) => c.id));
-			const out: AttributionLink[] = [];
-			for (let i = 0; i < items.length; i += ATTRIBUTION_BATCH_ITEMS) {
-				const batch = items.slice(i, i + ATTRIBUTION_BATCH_ITEMS);
+		async runAttribution(items, signal) {
+			// Items with no candidates are off the map: no model call needed for them.
+			const asked = items.filter((i) => i.candidates.length > 0);
+			const out: AttributionLink[] = items.filter((i) => i.candidates.length === 0).map((i) => ({ toolCallId: i.toolCallId, conceptIds: [] }));
+			for (let i = 0; i < asked.length; i += ATTRIBUTION_BATCH_ITEMS) {
+				const batch = asked.slice(i, i + ATTRIBUTION_BATCH_ITEMS);
+				const candidatesOf = new Map(batch.map((b) => [b.toolCallId, new Set(b.candidates.map((c) => c.id))]));
+				const concepts = [...new Map(batch.flatMap((b) => b.candidates).map((c) => [c.id, c])).values()];
 				const batchIds = new Set(batch.map((b) => b.toolCallId));
 				const value = await runSubmitAgent<Static<typeof attributionSchema>>({
 					role: "describer",
@@ -100,8 +103,10 @@ export function createAttributor(deps: DescriberDeps): Attributor {
 					validate: (v) => {
 						for (const l of v.links) {
 							if (!batchIds.has(l.toolCallId)) return `links: "${l.toolCallId}" is not one of the listed item ids.`;
-							const stray = l.conceptIds.find((c) => !knownConcepts.has(c));
-							if (stray !== undefined) return `links: concept id "${stray}" is not in the CONCEPTS list - copy ids verbatim.`;
+							const stray = l.conceptIds.find((c) => !candidatesOf.get(l.toolCallId)!.has(c));
+							if (stray !== undefined) {
+								return `links: concept id "${stray}" is not in the CONCEPTS list of item "${l.toolCallId}" - pick only from that item's candidate ids, copied verbatim.`;
+							}
 							if (l.conceptIds.length > MAX_CONCEPTS_PER_ITEM) {
 								return `links: "${l.toolCallId}" has ${l.conceptIds.length} concepts - at most ${MAX_CONCEPTS_PER_ITEM}.`;
 							}
@@ -114,7 +119,10 @@ export function createAttributor(deps: DescriberDeps): Attributor {
 					prompt:
 						`CONCEPTS:\n${concepts.map((c) => `${c.id} | ${c.name} | ${c.statement.replace(/\s+/g, " ")}`).join("\n")}\n\nITEMS:\n` +
 						batch
-							.map((b) => `${b.toolCallId} | ${b.question.replace(/\s+/g, " ")} | ${b.answer.replace(/\s+/g, " ")} | ${b.outcome}`)
+							.map(
+								(b) =>
+									`${b.toolCallId} | ${b.question.replace(/\s+/g, " ")} | ${(b.correct ?? "").replace(/\s+/g, " ")} | ${b.answer.replace(/\s+/g, " ")} | ${b.outcome} | ${b.candidates.map((c) => c.id).join(", ")}`,
+							)
 							.join("\n"),
 					engine: engine(),
 					signal,

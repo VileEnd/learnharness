@@ -116,6 +116,12 @@ export const attribution = createAttributionService({
 	chatStore: stores.chatStore,
 	graphStore: stores.graphStore,
 	learnerStore: stores.learnerStore,
+	// The whole library, independent of extraction: concept hits for question + answer.
+	searchConcepts: async (query) =>
+		(await docIndex.search({ query, limit: 8, includeConcepts: true, conceptsOnly: true })).hits.flatMap((h) =>
+			h.kind === "concept" && h.conceptId ? [h.conceptId] : [],
+		),
+	extractionEnabled: () => extractionEnabled(effectiveSettings().graph),
 	attributor: createAttributor({
 		engineFor: (role) => resolveEngine(role),
 		providerKeyMissing: (provider, tier) =>
@@ -531,9 +537,10 @@ export async function handleChatInput(
 					// (extraction-UX redesign, 2026-09-24): the trigger compares
 					// against it and the pipeline's batches share it.
 					triggerExtraction(stores, extraction, chatId, effective.graph.extractionChunkTokens);
-					// Graded questions of this session that still need their concepts.
-					triggerAttribution(attribution, chatId);
 				}
+				// Graded questions of this session that still need their concepts:
+				// linked by searching the whole library, so independent of extraction.
+				if (record.kind !== "practice") triggerAttribution(attribution, chatId);
 				// PARKED DISMISSAL (owner, 2026-10-04): a dismissal that arrived
 				// mid-turn was parked by the dismiss route (202); now that
 				// persistTurn has landed the turn's messages, apply it against
