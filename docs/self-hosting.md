@@ -104,6 +104,7 @@ Someone who can log in but is not in the group gets a 403 from oauth2-proxy.
   - Chrome or Edge: use the install icon in the address bar.
   - Android: Chrome menu → *Install app*.
   - iOS: Safari → Share → *Add to Home Screen*.
+- **Notifications (optional, per device):** Settings → General → *Notifications on this device*. Tapping the switch asks the browser for permission and registers the device; you then get a push when the teacher replies while the app is not open on that chat, when a background task finishes or fails, and when a notes import finishes. On iOS and iPadOS (16.4+) push only works for the installed app: add it to the Home Screen first, then open it from there and enable the switch. Push needs HTTPS and a certificate the device trusts (see §3 for `CADDY_TLS=internal`). The server generates its VAPID keys on first use (`data/push/vapid.json`, mode 0600, kept on the data volume); no configuration is needed. If you delete that file, devices must switch notifications off and on again.
 - Dictation (Deepgram) and clipboard copy need HTTPS, which the stack provides.
 
 ## 6. Migrate data from the Windows desktop app
