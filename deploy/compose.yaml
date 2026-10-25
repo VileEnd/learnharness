@@ -18,7 +18,9 @@ services:
     networks: [internal]
 
   caddy:
-    image: caddy:2.11.7
+    # caddy:2.11.7 + the Cloudflare DNS plugin (caddy/Dockerfile).
+    build: ./caddy
+    image: learnharness-caddy:local
     restart: unless-stopped
     ports:
       - "80:80"
@@ -27,8 +29,10 @@ services:
     environment:
       LH_HOST: ${LH_HOST:?set LH_HOST in .env}
       AUTH_SITE: ${AUTH_SITE:?set AUTH_SITE in .env}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy:/etc/caddy:ro
       # Holds the local CA (caddy/pki/authorities/local/root.crt) — back it up;
       # devices trust this root once.
       - ./volumes/caddy/data:/data

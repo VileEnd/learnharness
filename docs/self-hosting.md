@@ -7,7 +7,7 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
                      └─────────────────────▶ LearnHarness  (data + keys on ./volumes/learnharness)
 ```
 
-- **Caddy** terminates HTTPS with its own local CA. Each device trusts that CA once.
+- **Caddy** terminates HTTPS. With `CADDY_TLS=cloudflare` (this deployment), certificates come from Let's Encrypt via the Cloudflare DNS challenge, so every device trusts them with no setup. With `CADDY_TLS=internal`, Caddy uses its own local CA, and each device must trust that CA once.
 - **oauth2-proxy** lets a request through only if the user is logged in to Keycloak and is a member of the group `learnharness`.
 - **One shared data set.** Every allowed user sees the same chats, knowledge graph, and API keys.
 - **API keys** are entered in the browser under Settings → Providers. They're stored on the server in `volumes/learnharness/auth.json`, never in the browser.
@@ -16,10 +16,12 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
 
 | | App | Keycloak |
 |---|---|---|
-| Before UniFi move day (FRITZ!Box DNS) | `https://learnharness.fritz.box` | `https://learnharness.fritz.box:8443` |
-| After move day (UniFi DNS records) | `https://learnharness.home.arpa` | `https://auth.home.arpa` |
+| This deployment | `https://learnharness.home.moyjak.com` | `https://auth.home.moyjak.com` |
 
-All names live in `deploy/.env`. See [Move-day switch](#move-day-switch).
+- **The records:** both names are public DNS records (Cloudflare, **DNS only**) pointing at the VM's **LAN** address. They resolve anywhere but only work at home. OpenTofu manages them in `deploy/proxmox/dns.tf`; the address is the variable `lan_ipv4`.
+- **The router:** it must allow public names that resolve to private addresses. On the FRITZ!Box, go to Heimnetz → Netzwerk → Netzwerkeinstellungen → **DNS-Rebind-Schutz** and add `home.moyjak.com`. The UniFi gateway needs no exception unless you turn on its own rebinding protection.
+- **Hostname settings:** they're NixOS options (`services.learnharness.*` in `deploy/nixos/configuration.nix`), or `deploy/.env` on a manual host.
+- **Without a domain:** use `CADDY_TLS=internal` with any local names, for example `learnharness.fritz.box` with Keycloak on `:8443`, and trust Caddy's root once per device (section 3).
 
 ## 1. Create the VM (OpenTofu + NixOS)
 
@@ -32,6 +34,10 @@ The VM is declared in code. `deploy/proxmox/` is OpenTofu, which creates VM 104 
   export PROXMOX_VE_API_TOKEN=terraform@pve!tofu=<secret>   # pveum user token add terraform@pve tofu --privsep 0 (role PVEAdmin on /)
   export PROXMOX_VE_INSECURE=true
   export TF_VAR_state_passphrase=<random>                   # back this up: it decrypts the committed state
+  ```
+- With `CADDY_TLS=cloudflare`, add the Cloudflare token to the same file as `export CLOUDFLARE_API_TOKEN=…`; OpenTofu uses it for the DNS records. Put it on the VM too, so Caddy can use it. Run this in your own terminal; it prompts without echoing:
+  ```bash
+  ssh -t root@learnharness.fritz.box 'umask 077; read -rsp "Cloudflare token: " t; echo; sed -i "/^CLOUDFLARE_API_TOKEN=/d" /var/lib/learnharness/secrets.env; echo "CLOUDFLARE_API_TOKEN=$t" >> /var/lib/learnharness/secrets.env'
   ```
 - Nix must be allowed to build VM disk images (KVM):
   ```bash
@@ -68,7 +74,10 @@ On any Linux host with Docker, clone the repo, then:
 cd learnharness/deploy && cp .env.example .env && nano .env && docker compose up -d --build
 ```
 
-## 3. Trust the local CA on each device
+## 3. Trust the local CA on each device (only with `CADDY_TLS=internal`)
+
+Skip this with `CADDY_TLS=cloudflare`: Let's Encrypt certificates are already trusted everywhere.
+
 
 Copy Caddy's root certificate from the VM. On the NixOS VM it's `/var/lib/learnharness/volumes/caddy/data/caddy/pki/authorities/local/root.crt`; on a manual host it's under `deploy/volumes/`. From Windows: `scp root@learnharness.fritz.box:/var/lib/learnharness/volumes/caddy/data/caddy/pki/authorities/local/root.crt .`
 
@@ -81,7 +90,7 @@ The CA stays the same when hostnames change, so you only do this once per device
 
 ## 4. Create users (Keycloak)
 
-1. Open `https://learnharness.fritz.box:8443/admin` and log in with `KC_ADMIN_USER` / `KC_ADMIN_PASSWORD`. On the NixOS VM: `ssh root@learnharness.fritz.box cat /var/lib/learnharness/secrets.env`.
+1. Open `https://auth.home.moyjak.com/admin` and log in with `KC_ADMIN_USER` / `KC_ADMIN_PASSWORD`. On the NixOS VM: `ssh root@learnharness.fritz.box cat /var/lib/learnharness/secrets.env`.
 2. Switch to the realm **learnharness**.
 3. For each person: go to Users → *Create new user* and set a username and email. Under *Credentials*, set a password (*Temporary* off if you like). Under *Groups*, join **learnharness**.
 
@@ -89,7 +98,7 @@ Someone who can log in but is not in the group gets a 403 from oauth2-proxy.
 
 ## 5. Use it
 
-- Open `https://learnharness.fritz.box` and log in.
+- Open `https://learnharness.home.moyjak.com` and log in.
 - Add your provider API key under Settings → Providers, then pick the strong, cheap, and vision models.
 - **Install as an app:**
   - Chrome or Edge: use the install icon in the address bar.
@@ -134,23 +143,13 @@ Back up the volumes (app data and keys, Caddy CA, Keycloak database) and the sec
 
 ## Move-day switch
 
-When the UniFi gateway takes over the LAN (`/home/test/network/fritzbox-to-unifi-plan.md`), the VM moves to **10.20.1.70** and the FRITZ!Box names stop resolving.
+When the UniFi gateway takes over the LAN (`/home/test/network/fritzbox-to-unifi-plan.md`), the VM moves to **10.20.1.70**. The hostnames and certificates stay the same; only the DNS records change:
 
-1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC, or set the address statically on the VM.
-2. **UniFi DNS:** add host records `learnharness.home.arpa` and `auth.home.arpa` → `10.20.1.70`. *(Verify where your UniFi Network version keeps local DNS records.)*
-3. **Hostnames:**
-   - **NixOS VM:** set them in `deploy/nixos/configuration.nix`, then run the `nixos-rebuild switch … --target-host` command from section 1. The stack restarts with the new values.
-     ```nix
-     services.learnharness = {
-       host = "learnharness.home.arpa";
-       authSite = "auth.home.arpa";
-       authUrl = "https://auth.home.arpa";
-     };
-     ```
-   - **Manual host:** switch `deploy/.env` to the "After the move day" block (`LH_HOST`, `AUTH_SITE`, `AUTH_URL`).
-4. **Keycloak** (at its *old* URL, before restarting, or at the new one after): realm learnharness → Clients → `learnharness` → set *Valid redirect URIs* to `https://learnharness.home.arpa/oauth2/callback`, *Web origins* to `https://learnharness.home.arpa`, and *Valid post logout redirect URIs* to `https://learnharness.home.arpa/*`.
-5. On a manual host, run `docker compose up -d`; the NixOS rebuild already did this. Caddy issues certificates for the new names from the same CA.
-6. Log in again on each device and reinstall the PWA from the new address. No certificate re-trust is needed.
+1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC (`BC:24:11:B3:41:E1`).
+2. **Point the records at the new address:** run `deploy/proxmox/tofu.sh apply -var lan_ipv4=10.20.1.70`, or change the default in `variables.tf` and commit it.
+3. That's it. Keycloak, redirect URIs and devices are unaffected; the TTL is 5 minutes.
+
+With `CADDY_TLS=internal` and local names instead, change the hostnames (NixOS options or `deploy/.env`), update the Keycloak client's redirect URI, web origin and post-logout URI to the new app host, and restart the stack.
 
 ## Troubleshooting
 
