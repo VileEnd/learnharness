@@ -81,7 +81,7 @@ function put(title: string, markdown: string, topics: string[] = []): DocumentMe
 		pages: 3,
 		origin: "markdown",
 		sections: fp.sections,
-		sourceId: id,
+		sourceId: `src_${id}`, // the graph source id differs from the docId, as in the app
 	};
 	documentStore.save(meta, markdown);
 	return meta;
@@ -404,7 +404,7 @@ describe("concepts as search units", () => {
 	it("filters: topic uses topics.jsonl and aliases; document keeps only concepts born in that document", async () => {
 		const doc = put("Blatt 7", MUTEX, ["Mutex"]);
 		const g = fakeGraph(
-			[NODE_A, { ...NODE_B, provenance: [{ chatId: doc.id, messageId: "", section: "s1" }] }],
+			[NODE_A, { ...NODE_B, provenance: [{ chatId: doc.sourceId, messageId: "", section: "s1" }] }],
 			[
 				{ nodeId: NODE_A.id, topic: "Sema" },
 				{ nodeId: NODE_B.id, topic: "Locks" },

@@ -376,6 +376,8 @@ interface IndexedChunk {
 
 interface IndexedDoc {
 	id: string;
+	/** The graph source the document's extraction wrote under (provenance chatId). */
+	sourceId: string;
 	title: string;
 	topics: string[];
 	contentHash: string;
@@ -435,7 +437,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 			docId: meta.id,
 			unit: u,
 		}));
-		const doc: IndexedDoc = { id: meta.id, title: meta.title, topics: meta.topics, contentHash: meta.contentHash, chunks };
+		const doc: IndexedDoc = { id: meta.id, sourceId: meta.sourceId, title: meta.title, topics: meta.topics, contentHash: meta.contentHash, chunks };
 		// Persisted vectors count only when they describe exactly these units.
 		const stored = store.readVectors(meta.id);
 		if (
@@ -980,7 +982,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		if (q.includeConcepts === false) return [];
 		let list = [...concepts.values()];
 		if (q.document) {
-			const wanted = new Set([...docs.values()].filter((d) => documentMatches(d, q.document!)).map((d) => d.id));
+			const wanted = new Set([...docs.values()].filter((d) => documentMatches(d, q.document!)).map((d) => d.sourceId));
 			list = list.filter((c) => c.node.provenance.some((p) => wanted.has(p.chatId)));
 		}
 		if (q.topic && list.length > 0) {
