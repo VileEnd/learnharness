@@ -789,6 +789,7 @@ export class GraphCanvasRenderer {
 	private alwaysLabels: ReadonlySet<string> | "all" | null = null;
 	/** Priority order of the always-on labels (first wins a collision). */
 	private labelOrder: string[] = [];
+	private layoutFrozen = false;
 	private placement: { key: string; sides: Map<string, LabelSide> } | null = null;
 	/** Fit insets override (a view whose chrome differs from the home graph's); null = the home graph's. */
 	private insetsOverride: { top: number; bottom: number } | null = null;
@@ -1080,11 +1081,18 @@ export class GraphCanvasRenderer {
 		// state, so mode toggles (off/vertical/radial) visibly RE-FORM the
 		// graph instead of waiting for the next drag. Mid-drag is safe —
 		// buildSim preserved the pinned node's fx/fy.
-		if (this.sim) {
+		if (this.sim && !this.layoutFrozen) {
 			this.sim.alpha(1);
 			this.simActive = true;
 		}
 		this.markDirty();
+	}
+
+	/** Keep the supplied layout as is: a tuning change no longer re-anneals the nodes (only a
+	 *  drag moves them). The "My knowledge" view frames its precomputed layout once; a live
+	 *  re-anneal after that would move the nodes out from under the fit. */
+	setLayoutFrozen(frozen: boolean): void {
+		this.layoutFrozen = frozen;
 	}
 
 	/** Label-only channel (rename-shuffle fix, 2026-09-23): live

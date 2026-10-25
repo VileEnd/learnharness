@@ -152,6 +152,9 @@ export function KnowledgeGraph({
 		// This view has no composer dock: only the legend sits over the canvas (the header and
 		// the phone tab bar are outside it), so the fit keeps clear of the legend alone.
 		renderer.setFitInsets({ top: FIT_INSET_TOP, bottom: 0 });
+		// The layout is computed once (incrementalLayout) and frozen: the live sim must not
+		// re-anneal it after the fit has framed it.
+		renderer.setLayoutFrozen(true);
 		rendererRef.current = renderer;
 		return () => {
 			rendererRef.current = null;
