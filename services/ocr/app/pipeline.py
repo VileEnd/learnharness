@@ -12,7 +12,7 @@ from pathlib import Path
 import pymupdf
 
 from .assemble import build_markdown, clean_ocr
-from .naming import NAME_PROMPT, NAME_PROMPT_VERSION, excerpt, parse_name, slugify
+from .naming import NAME_PROMPT, NAME_PROMPT_VERSION, excerpt, fallback_title, parse_name, slugify
 from .render import PDF_LOCK, page_kind, page_kinds, page_pdf, render_png
 
 PROMPT_VERSION = "v8"
@@ -193,11 +193,13 @@ def process_pdf(pdf_bytes, name, client, cache, out_dir, cfg, emit=lambda event:
             pg["image"] = f"{out_dir.name}/{pg['image']}"  # the markdown sits next to this PDF's folder
 
     failed = [i + 1 for i, pg in enumerate(pages) if pg["errors"]]
-    meta = {"title": naming["title"] if naming else Path(name).stem,
+    content = "\n\n".join(x for pg in pages for x in (pg["text"], pg["vision"]) if x)
+    title = naming["title"] if naming else fallback_title(content)
+    meta = {"title": title,
             "summary": naming["summary"] if naming else "", "topics": naming["topics"] if naming else [],
             "source": name, "pages": len(pages), "sha256": src, "converted": date.today().isoformat(),
             "strategy": strategy, "ocr_engine": engine if strategy != "vision" else None, "vision_model": vmodel}
-    stem = (naming and naming["filename"]) or slugify(Path(name).stem) or "document"
+    stem = (naming and naming["filename"]) or slugify(title) or "document"
     if markdown_name:
         md_path = out_dir.parent / markdown_name
         md_path.write_text(build_markdown(meta, pages), encoding="utf-8")
@@ -228,8 +230,8 @@ def name_document(client, cache, cfg, source, src_hash, folder, pages, emit):
     emit({**req, "state": "running"})
     started = time.monotonic()
     try:
-        res = client.text(NAME_PROMPT.format(source=source, excerpt=excerpt(content)), model)
-    except Exception as e:  # the original file name is a fine fallback
+        res = client.text(NAME_PROMPT.format(excerpt=excerpt(content)), model)
+    except Exception as e:  # the first heading is the fallback title
         emit({**req, "state": "error", "ms": round((time.monotonic() - started) * 1000), "error": str(e)})
         return None, 0.0
     naming = parse_name(res["text"])
@@ -237,5 +239,5 @@ def name_document(client, cache, cfg, source, src_hash, folder, pages, emit):
         cache.put(res, *key)
     emit({**req, "state": "ok" if naming else "error", "ms": round((time.monotonic() - started) * 1000),
           "cost": res["cost"], "usage": res.get("usage"), "preview": res["text"],
-          "error": None if naming else "reply was not the expected JSON; kept the original file name"})
+          "error": None if naming else "reply was not the expected JSON; kept the first heading as title"})
     return naming, res["cost"]

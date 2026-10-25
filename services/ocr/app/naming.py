@@ -2,10 +2,10 @@ import json
 import re
 import unicodedata
 
-NAME_PROMPT_VERSION = "n1"
+NAME_PROMPT_VERSION = "n2"
 EXCERPT_CHARS = 6000
 HEADING_CHARS = 2000
-NAME_PROMPT = """You name study documents for a personal knowledge base. Below is an excerpt of a document converted from the PDF file "{source}": its beginning, then the headings found further in.
+NAME_PROMPT = """You name study documents for a personal knowledge base. Below is an excerpt of a converted document: its beginning, then the headings found further in. Name it from its content alone.
 Reply with JSON only, no code fence:
 {{"title": "...", "filename": "...", "summary": "...", "topics": ["..."]}}
 - title: readable title in the document's language, with course, document type (slides, exercise sheet, exam, script, notes, book) and number if present, e.g. "Systemsicherheit 1, Aufgabenblatt 3: Crashkurs Assembler".
@@ -55,3 +55,12 @@ def parse_name(text):
     return {"title": data["title"].strip(), "filename": filename,
             "summary": str(data.get("summary", "")).strip(),
             "topics": [str(t) for t in topics] if isinstance(topics, list) else []}
+
+
+def fallback_title(content, limit=80):
+    """Title when naming fails: the first heading, else the first line of text. Never the file name."""
+    lines = [re.sub(r"<!--.*?-->", "", ln).strip() for ln in content.splitlines()]
+    lines = [ln for ln in lines if ln]
+    heading = next((ln for ln in lines if ln.startswith("#")), None)
+    line = re.sub(r"^#+\s*|[*`$]", "", heading or (lines[0] if lines else "")).strip()
+    return line[:limit].rstrip() or "Untitled document"

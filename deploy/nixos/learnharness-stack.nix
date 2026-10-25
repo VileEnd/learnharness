@@ -55,7 +55,7 @@ in
     virtualisation.docker.enable = true;
 
     systemd.services.learnharness-stack = {
-      description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app)";
+      description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app, OCR)";
       wantedBy = [ "multi-user.target" ];
       requires = [ "docker.service" ];
       wants = [ "network-online.target" ];
@@ -98,8 +98,11 @@ in
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
             echo "OIDC_CLIENT_SECRET=$(openssl rand -hex 32)"
             echo "OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32 | tr -- '+/' '-_')"
+            echo "OCR_TOKEN=$(openssl rand -hex 32)"
           } > "$secrets"
         fi
+        # secrets.env of an older install has no OCR_TOKEN yet (PDF scanning service): add it once.
+        grep -q '^OCR_TOKEN=' "$secrets" || (umask 077; echo "OCR_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
 
         cd "$src/deploy"
         docker compose --env-file ${hostsEnv} --env-file "$secrets" up -d --build --remove-orphans

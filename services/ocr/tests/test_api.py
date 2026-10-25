@@ -13,7 +13,7 @@ def test_estimate_endpoint(pdf_bytes):
 def test_run_requires_key(pdf_bytes, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     r = TestClient(app).post("/api/run", files=[("files", ("a.pdf", pdf_bytes, "application/pdf"))])
-    assert r.status_code == 500 and "OPENROUTER_API_KEY" in r.json()["detail"]
+    assert r.status_code == 400 and "OPENROUTER_API_KEY" in r.json()["detail"]
 
 
 def test_job_files_cannot_escape_the_job_dir(tmp_path):
@@ -71,7 +71,7 @@ def test_retry_runs_only_pdfs_with_failed_pages(tmp_path, monkeypatch):
         (tmp_path / folder / "manifest.json").write_text(json.dumps({"markdown": f"{folder}.md", "failed_pages": failed}))
     launched = []
     monkeypatch.setattr(main, "launch", lambda job, items, client: launched.extend(items))
-    monkeypatch.setattr(main, "make_client", lambda: None)
+    monkeypatch.setattr(main, "make_client", lambda key=None: None)
     main.jobs["t"] = {"events": [], "dir": tmp_path, "running": False, "cfg": {},
                       "uploads": [("ok.pdf", b"1", "ok"), ("bad.pdf", b"2", "bad")]}
     assert TestClient(app).post("/api/jobs/t/retry").json() == {"from": 0, "files": 1}

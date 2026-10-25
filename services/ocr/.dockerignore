@@ -1,0 +1,13 @@
+.venv
+.cache
+out
+*.egg-info
+__pycache__
+.pytest_cache
+.env
+tests
+docs
+run.sh
+README.md
+Dockerfile
+.dockerignore

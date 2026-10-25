@@ -57,6 +57,31 @@ The page shows an estimate before converting. Every API result is cached in `.ca
 
 `config.toml`: models, PDF engine (`mistral-ocr`, or the free `cloudflare-ai` for plain text), reasoning effort for the vision model, parallel workers, render DPI, and prices for the estimate. After changing a vision prompt in `app/pipeline.py`, bump `PROMPT_VERSION` so cached results are not reused.
 
+## Service mode (used by LearnHarness)
+
+The same app runs as a sidecar container (`Dockerfile`, `deploy/compose.yaml`: service `ocr`, internal network only, no published port).
+
+| Env | Meaning | Default |
+|---|---|---|
+| `OUT_DIR` | results (`<job>/...`, `job.json` done marker) | `./out` (`/data/out` in the image) |
+| `CACHE_DIR` | cached API results | `./.cache` (`/data/cache`) |
+| `CONFIG_PATH` | `config.toml` | `./config.toml` |
+| `OPENROUTER_API_KEY` | fallback key when a request sends none | unset |
+| `OCR_TOKEN` | when set, every `/api/*` request needs header `X-OCR-Token: <token>` (else 401) | unset (open) |
+
+Headers: `X-OpenRouter-Key` on `POST /api/run` and `POST /api/jobs/{id}/retry` is used for that job's API calls (never logged, not kept after the job ends). `/healthz` is always open.
+
+Endpoints beyond the browser UI's:
+
+- `GET /healthz` returns `{"ok": true}`.
+- `POST /api/run` (multipart `files`, optional `strategy`) returns `{"job": id}` at once. PDFs over 50 MB get 413; PDFs over 300 pages or unreadable get 422.
+- `GET /api/jobs/{id}` returns `{id, status: running|done|failed, strategy, usd, files: [{name, sha256, status: queued|running|done|failed, pages, done_pages, failed_pages, markdown, title, summary, topics, cost_usd, error}]}`. `markdown` is a file name inside the job; fetch it from `GET /api/jobs/{id}/files/{markdown}`. It also works for jobs found only on disk after a restart: `done` if `job.json` exists, else `failed` (interrupted). The job is `failed` only when every file failed; look at the per-file status.
+- `GET /api/by-sha/{sha256}` returns `{job, markdown, title, summary, topics, pages, cost_usd}` for the newest complete conversion of that exact PDF, else 404.
+
+Finished jobs leave memory after an hour (the disk is the source of truth). The uploaded bytes are dropped when a job ends, except for files that still have failed pages (needed for "retry").
+
+Documents are named from their content only, never from the file name; if naming fails, the first heading (or text line) becomes the title.
+
 ## Tests
 
 ```bash

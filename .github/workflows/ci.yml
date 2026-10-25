@@ -32,6 +32,20 @@ jobs:
       - run: npm test
       - run: npm run lint
 
+  ocr:
+    name: OCR service (pytest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install './services/ocr[dev]'
+      # No network: the tests stub OpenRouter.
+      - run: python -m pytest -q
+        working-directory: services/ocr
+
   docker:
     name: Docker image (build + boot)
     runs-on: ubuntu-24.04
@@ -52,5 +66,19 @@ jobs:
           for route in / /api/graph /api/models /api/settings /manifest.webmanifest; do
             curl -fsS -o /dev/null -w "%{http_code} $route\n" "http://127.0.0.1:3000$route"
           done
+      - name: Build the OCR service image, boot it and probe /healthz
+        run: |
+          set -euo pipefail
+          docker build -t learnharness-ocr:ci services/ocr
+          docker run -d --name ocr -e OCR_TOKEN=ci -p 127.0.0.1:8000:8000 learnharness-ocr:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/healthz
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/runs)" = 401
+          curl -fsS -H 'X-OCR-Token: ci' http://127.0.0.1:8000/api/runs
       - if: failure()
-        run: docker logs lh || true
+        run: |
+          docker logs lh || true
+          docker logs ocr || true
