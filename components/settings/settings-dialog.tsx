@@ -42,6 +42,7 @@ import {
 import { useAppearance } from "./appearance.tsx";
 import { SettingsSection, SettingsRow, Toggle } from "./controls.tsx";
 import { AgentSection } from "./agent-section.tsx";
+import { NotificationsRow } from "./notifications-row.tsx";
 import type { ModelsSettings } from "@/src/core";
 import { MENU_CLOSE_EVENT, MENU_OPEN_EVENT } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
@@ -373,6 +374,7 @@ export function SettingsDialogBody({
 											}
 										/>
 									</SettingsRow>
+									<NotificationsRow />
 								</SettingsSection>
 							)}
 							{active === "keys" && (

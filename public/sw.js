@@ -108,3 +108,43 @@ self.addEventListener("fetch", (event) => {
 	}
 	// "pass": no respondWith — the browser handles the request untouched.
 });
+
+// Web Push (mobile E). Payload from src/server/push.ts: { title, body, url,
+// tag }. The tag makes each chat one notification that updates in place
+// (renotify re-alerts when it does).
+self.addEventListener("push", (event) => {
+	let p = {};
+	try {
+		p = event.data ? event.data.json() : {};
+	} catch {
+		/* not JSON - show the generic notification */
+	}
+	event.waitUntil(
+		self.registration.showNotification(p.title || "LearnHarness", {
+			body: p.body || "",
+			tag: p.tag,
+			renotify: true,
+			icon: "/icons/icon-192.png",
+			badge: "/icons/icon-96.png",
+			data: { url: p.url || "/" },
+		}),
+	);
+});
+
+// Tap: focus an open window (navigating it to the target) or open a new one.
+self.addEventListener("notificationclick", (event) => {
+	event.notification.close();
+	const url = (event.notification.data && event.notification.data.url) || "/";
+	event.waitUntil(
+		(async () => {
+			const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+			const open = windows[0];
+			if (open) {
+				await open.focus();
+				if ("navigate" in open) await open.navigate(url).catch(() => undefined);
+			} else {
+				await self.clients.openWindow(url);
+			}
+		})(),
+	);
+});

@@ -36,6 +36,7 @@ import {
 import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
 import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
+import { notify } from "./push.ts";
 import { registerTurn, unregisterTurn } from "./turn-runs.ts";
 import { persistTurn, triggerExtraction } from "./turn-service.ts";
 import { hasProbeDone, danglingQuestionOf } from "../core/native-messages.ts";
@@ -111,6 +112,8 @@ export const extraction = createExtractionPipeline({
 	// refuses BEFORE any batch runs (the typed throw), never mid-run.
 	providerKeyMissing: (provider, tier) =>
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
+	// Push: notes imports that landed (or failed) and failed chat runs.
+	onRunFinished: (run) => void notify({ kind: "extraction", ...run }),
 });
 
 
@@ -460,7 +463,7 @@ export async function handleChatInput(
 				console.error(`[chat ${chatId}] turn error:`, error);
 				return "An error occurred.";
 			},
-			onFinish: (turnMessages, isAborted) => {
+			onFinish: (turnMessages, isAborted, viewers) => {
 				// Wave B: the record write is the agent's own final state —
 				// the new messages are the slice past the merged base.
 				const stamped = persistTurn(stores.chatStore, chatId, merged.length, turnMessages, isAborted);
@@ -503,6 +506,13 @@ export async function handleChatInput(
 				// nothing must find the persisted record current — the same
 				// ordering rule as endTurn.
 				unregisterTurn(chatId);
+				// PUSH: the teacher answered while nobody was attached to the
+				// live stream (viewers = views open when the turn ended; wake
+				// turns have none by construction). An abort is the learner's
+				// own action, so it never pushes.
+				if (!isAborted && viewers === 0) {
+					void notify({ kind: "turn", chatId, title: stores.chatStore.getChat(chatId)?.title ?? "" });
+				}
 				// Wave C steer settlement: the live agent is dead (no more
 				// followUp handoffs) - reconcile the steer registry against
 				// what this run actually persisted (in-run injections

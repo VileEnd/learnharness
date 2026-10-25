@@ -79,8 +79,10 @@ export interface PiTurnSpec {
 	onError?: (error: unknown) => string;
 	/** The canonical end-of-turn seam: persist + usage + extraction + endTurn.
 	 *  Receives the agent's FULL final state (native messages) — the caller
-	 *  persists the slice past its own base count. */
-	onFinish: (messages: AgentMessage[], isAborted: boolean) => void;
+	 *  persists the slice past its own base count. `viewers` is how many
+	 *  views were attached when the stream closed (0 = nobody was watching;
+	 *  push notifications key off it). */
+	onFinish: (messages: AgentMessage[], isAborted: boolean, viewers: number) => void;
 	/** Tool-call ids already used in this chat's record (THE LACAN FIX,
 	 *  owner-approved 2026-10-04): when present, a ToolCallIdUniquifier
 	 *  sits at this boundary — providers that reset ids every response
@@ -143,6 +145,9 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// relative order of concurrent keys stays chronological).
 	const pending = new Map<string, TurnWireEvent>();
 	const subscribers = new Set<PiTurnSubscriber>();
+	// Views attached when the stream closed (closeAll empties the set before
+	// the settle seam runs).
+	let viewersAtClose = 0;
 
 	const coalesceKey = (event: TurnWireEvent): string | null => {
 		if (event.type === "message_update") return "message";
@@ -205,6 +210,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 		// Order to the very end: the last pending snapshot precedes [DONE].
 		flushPending();
 		settled = true;
+		viewersAtClose = subscribers.size;
 		for (const sub of subscribers) sub.done();
 		subscribers.clear();
 	};
@@ -220,7 +226,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// the role wholesale is exact; revisit if prompt-updates ever land.
 	const settleWith = () => {
 		const settled_ = [...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system");
-		onFinish((uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_, sawAbort);
+		onFinish((uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_, sawAbort, viewersAtClose);
 	};
 
 	const handle = (event: AgentEvent) => {
