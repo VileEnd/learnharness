@@ -120,8 +120,44 @@ export function conceptPath(node: GraphNode, title?: string): string {
 	return `concepts/${okfSlug(title ?? node.name, node.id.slice(2, 8))}.md`;
 }
 
-export function documentPath(meta: DocumentMeta): string {
+export function documentPath(meta: Pick<DocumentMeta, "id" | "title">): string {
 	return `documents/${okfSlug(meta.title, meta.id.slice(4, 10))}.md`;
+}
+
+/**
+ * Every document's bundle path, with the same collision rule the renderer
+ * uses (documents in id order; a second document with a taken path gets the
+ * full id as suffix). Search hits use this to name the file they point at.
+ */
+export function documentPaths(metas: readonly Pick<DocumentMeta, "id" | "title">[]): Map<string, string> {
+	const out = new Map<string, string>();
+	const used = new Set<string>();
+	for (const m of [...metas].sort((a, b) => cmp(a.id, b.id))) {
+		let path = documentPath(m);
+		if (used.has(path)) path = `documents/${okfSlug(m.title, m.id.slice(4))}.md`;
+		used.add(path);
+		out.set(m.id, path);
+	}
+	return out;
+}
+
+/** A section's file: `<document path minus .md>/<sec id>-<slug of its last heading>.md`. */
+export function sectionPath(docPath: string, sec: Pick<DocumentSection, "id" | "headingPath">): string {
+	return `${docPath.slice(0, -3)}/${cleanSuffix(sec.id)}-${slugBase(sec.headingPath.at(-1) || "intro")}.md`;
+}
+
+/** Every concept's bundle path, with the renderer's collision rule (nodes in id order, first occurrence of an id wins). */
+export function conceptPaths(nodes: readonly GraphNode[]): Map<string, string> {
+	const out = new Map<string, string>();
+	const used = new Set<string>();
+	for (const n of [...nodes].sort((a, b) => cmp(a.id, b.id))) {
+		if (out.has(n.id)) continue;
+		let path = conceptPath(n);
+		if (used.has(path)) path = `concepts/${okfSlug(n.name, n.id.slice(2))}.md`;
+		used.add(path);
+		out.set(n.id, path);
+	}
+	return out;
 }
 
 export function topicPath(label: string): string {
@@ -219,11 +255,9 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 
 	// ── documents ──
 	const docs: DocInfo[] = [];
-	const usedDocPaths = new Set<string>();
+	const docPathById = documentPaths(input.documents.map((d) => d.meta));
 	for (const d of [...input.documents].sort((a, b) => cmp(a.meta.id, b.meta.id))) {
-		let path = documentPath(d.meta);
-		if (usedDocPaths.has(path)) path = `documents/${okfSlug(d.meta.title, d.meta.id.slice(4))}.md`;
-		usedDocPaths.add(path);
+		const path = docPathById.get(d.meta.id)!;
 		const dir = path.slice(0, -3);
 		const secs = d.meta.sections.length > 0 ? d.meta.sections : [{ id: "s1", headingPath: [], start: 0, end: d.text.length }];
 		docs.push({
@@ -234,7 +268,7 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 			key: cleanSuffix(d.meta.id.slice(4, 10)),
 			sections: secs.map((sec) => ({
 				sec,
-				path: `${dir}/${cleanSuffix(sec.id)}-${slugBase(headingOf(sec) || "intro")}.md`,
+				path: sectionPath(path, sec),
 				heading: sectionTitle(sec),
 			})),
 		});
@@ -256,14 +290,7 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 			nodes.push(n);
 		}
 	}
-	const nodePath = new Map<string, string>();
-	const usedNodePaths = new Set<string>();
-	for (const n of nodes) {
-		let path = conceptPath(n);
-		if (usedNodePaths.has(path)) path = `concepts/${okfSlug(n.name, n.id.slice(2))}.md`;
-		usedNodePaths.add(path);
-		nodePath.set(n.id, path);
-	}
+	const nodePath = conceptPaths(nodes);
 	const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
 	// Valid chains only: every endpoint exists, no self reference. A chain with a

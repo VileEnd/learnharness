@@ -19,13 +19,11 @@ import { jobTools, type DemoInput, type ResearchInput, type VisualInput } from "
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
 import { documentTools, type DocumentToolDeps } from "./tools/documents.ts";
-import { proberGraphTools } from "./tools/graph.ts";
 import { readToolFor } from "./tools/read.ts";
 import { lsToolFor } from "./tools/ls.ts";
 import { findToolFor } from "./tools/find.ts";
 import { grepToolFor } from "./tools/grep.ts";
 import { healToolRecord } from "./tools/heal.ts";
-import type { GraphStore } from "../core/ports.ts";
 
 export { jobTools };
 export type { ProbeDoneContext } from "./tools/probe.ts";
@@ -271,15 +269,9 @@ export interface ProberToolContext extends ProbeDoneContext {
 	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
-	/** The prober's graph-map reader (wave 7): present = the two map tools
-	 *  (list_sessions / list_propositions) are registered. The composition
-	 *  root passes it only when graphToolsEnabled(effective) — the graph
-	 *  master switch AND the agent.graphTools toggle (settings-resolution).
-	 *  Absent = the gate is closed, no map tools (tests drive this seam). */
-	graphStore?: GraphStore;
-	/** The document library tools (PR I): present = search_documents /
-	 *  read_document / list_documents are registered. The composition root
-	 *  passes it only when documentToolsEnabled(effective). */
+	/** The document search tool (PR I): present = search_documents is
+	 *  registered. The composition root passes it only when
+	 *  documentToolsEnabled(effective). */
 	documents?: DocumentToolDeps;
 	/** The library root the read/ls/find/grep tools are confined to. */
 	libraryRoot: string;
@@ -342,11 +334,6 @@ export function createProberTools(
 				// context). Same user-toggle filtering as the teacher; research
 				// remains available without a search-provider key.
 				...(jobs.research ? { research: jobs.research } : {}),
-				// The map reader (wave 7): present only when the settings gate
-				// opened.
-				...(ctx.graphStore
-					? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore })
-					: {}),
 				...(ctx.documents ? documentTools(ctx.documents) : {}),
 				...done,
 			},

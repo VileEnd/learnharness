@@ -18,6 +18,9 @@ const TMP_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "lh-doc-index-"));
 process.env.LH_DATA_DIR = TMP_DATA;
 
 const { documentStore } = await import("../src/store/documents.ts");
+const { conceptVectorStore } = await import("../src/store/concept-vectors.ts");
+const { renderOkfBundle, conceptPath } = await import("../src/core/okf.ts");
+const { createHash } = await import("node:crypto");
 const { createDocIndex } = await import("../src/server/doc-index.ts");
 const { fingerprint } = await import("../src/core/documents.ts");
 const { documentTools } = await import("../src/agent/tools/documents.ts");
@@ -29,6 +32,7 @@ const { sanitizeUserSettings } = await import("../src/core/settings.ts");
 const { parseAgentSettingsBody, parseDocumentsSettingsBody } = await import("../src/server/settings-body.ts");
 import type { Embedder } from "../src/server/doc-index.ts";
 import type { DocumentMeta } from "../src/core/contracts/documents.ts";
+import type { GraphNode } from "../src/core/contracts/graph.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 
 after(() => fs.rmSync(TMP_DATA, { recursive: true, force: true }));
@@ -77,7 +81,7 @@ function put(title: string, markdown: string, topics: string[] = []): DocumentMe
 		pages: 3,
 		origin: "markdown",
 		sections: fp.sections,
-		sourceId: id,
+		sourceId: `src_${id}`, // the graph source id differs from the docId, as in the app
 	};
 	documentStore.save(meta, markdown);
 	return meta;
@@ -172,7 +176,7 @@ describe("keyword mode (no embeddings)", () => {
 		assert.deepEqual(await docsOf({ query: "Mutex Zähler", document: "blatt 7" }), [mutex.id]);
 		assert.deepEqual(await docsOf({ query: "Mutex", document: mutex.id }), [mutex.id]);
 		const none = await index.search({ query: "Mutex", topic: "Graphen" });
-		assert.deepEqual([none.hits.length, /No document matches/.test(none.note ?? "")], [0, true]);
+		assert.deepEqual([none.hits.length, /Nothing matches/.test(none.note ?? "")], [0, true]);
 	});
 
 	it("picks up a stored or replaced document without a rebuild", async () => {
@@ -270,74 +274,221 @@ describe("hybrid mode (stub embedder)", () => {
 	});
 });
 
-// ── the tools ────────────────────────────────────────────────────────────────
+// ── the tool ─────────────────────────────────────────────────────────────────
+
+const textOf = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? "").join("");
+const run = async (tools: ReturnType<typeof documentTools>, name: string, args: object) =>
+	(await tools[name]!.execute("call-1", args as never, undefined as never)) as { content: { type: string; text?: string }[]; details: any };
 
 describe("document tools", () => {
-	const textOf = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? "").join("");
-	const run = async (tools: ReturnType<typeof documentTools>, name: string, args: object) =>
-		(await tools[name]!.execute("call-1", args as never, undefined as never)) as { content: { type: string; text?: string }[]; details: any };
-
-	it("search then read returns the exact stored text with page markers", async () => {
-		const mutex = put("Betriebssysteme Blatt 7", MUTEX, ["Mutex"]);
+	it("only search_documents remains", () => {
 		const index = createDocIndex({ store: documentStore, embedder: () => null });
-		const tools = documentTools(index);
+		assert.deepEqual(Object.keys(documentTools(index)), ["search_documents"]);
+	});
 
+	it("search names the bundle file of every hit and keeps the ids beside it", async () => {
+		const mutex = put("Betriebssysteme Blatt 7", MUTEX, ["Mutex"]);
+		const tools = documentTools(createDocIndex({ store: documentStore, embedder: () => null }));
 		const found = await run(tools, "search_documents", { query: "unlock Aufgabe 3" });
 		assert.match(textOf(found), /keyword only/);
-		assert.match(textOf(found), new RegExp(`Betriebssysteme Blatt 7 · § Mutex > Aufgabe 3 · p\\.2[\\s\\S]*docId ${mutex.id} · section s2`));
+		assert.match(textOf(found), /Betriebssysteme Blatt 7 · § Mutex > Aufgabe 3 · p\.2\n   documents\/.+\/s2-aufgabe-3\.md/);
 		assert.equal(found.details.kind, "search");
-		assert.deepEqual([found.details.hits[0].docId, found.details.hits[0].pageFrom], [mutex.id, 2]);
+		const hit = found.details.hits[0];
+		assert.deepEqual([hit.kind, hit.docId, hit.sectionId, hit.pageFrom], ["section", mutex.id, "s2", 2]);
+		assert.match(hit.path, /^documents\/.+\/s2-aufgabe-3\.md$/);
+	});
+});
 
-		const read = await run(tools, "read_document", { document: mutex.id, section: "s2" });
-		const stored = fs.readFileSync(path.join(TMP_DATA, "documents", mutex.id, "document.md"), "utf-8");
-		const s2 = mutex.sections[1]!;
-		assert.ok(textOf(read).includes(`<!-- page 2 -->\n${stored.slice(s2.start, s2.end)}`), "exact text, page marker kept");
-		assert.deepEqual([read.details.kind, read.details.ok, read.details.pageFrom], ["read", true, 2]);
+// ── bundle paths and concepts ────────────────────────────────────────────────
 
-		const byPages = await run(tools, "read_document", { document: "blatt 7", pages: "2" });
-		assert.ok(textOf(byPages).includes("Warum braucht lock()") && !textOf(byPages).includes("kritischen Abschnitt"));
+describe("search hits carry their bundle path", () => {
+	it("section hits carry their bundle path", async () => {
+		put("Betriebssysteme Blatt 7", MUTEX);
+		const r = await createDocIndex({ store: documentStore, embedder: () => null }).search({ query: "unlock Aufgabe 3" });
+		assert.match(r.hits[0]!.path, /^documents\/.+\/s\d+-.+\.md$/);
+		assert.equal(r.hits[0]!.kind, "section");
 	});
 
-	it("caps a long read at about 12k chars and tells where to continue", async () => {
-		const big = put("Groß", `<!-- page 1 -->\n# Groß\n\n${Array.from({ length: 400 }, (_, i) => `Absatz ${i}: ${para(25, "wort")}`).join("\n\n")}`);
-		const tools = documentTools(createDocIndex({ store: documentStore, embedder: () => null }));
-		const first = await run(tools, "read_document", { document: big.id, pages: "1" });
-		const body = textOf(first);
-		assert.ok(body.length < 12_300);
-		const next = /offset=(\d+)/.exec(body)![1]!;
-		assert.equal(first.details.truncated, true);
-		const second = await run(tools, "read_document", { document: big.id, pages: "1", offset: Number(next) });
-		assert.ok(textOf(second).includes("Absatz") && !textOf(second).startsWith(body.slice(0, 80)));
+	it("the path is the file the bundle renderer writes (incl. colliding titles and umlauts)", async () => {
+		const a = put("Übung: C++ & Mutex", MUTEX);
+		const b = put("Übung: C++ & Mutex", SEMA);
+		const metas = [a, b];
+		const bundle = renderOkfBundle({
+			nodes: [],
+			chains: [],
+			topics: [],
+			aliases: {},
+			documents: metas.map((meta) => ({ meta, text: documentStore.readMarkdown(meta.id)! })),
+			noteSources: [],
+			chats: [],
+			gates: { documents: true, graph: true },
+			now: "2026-10-25T00:00:00.000Z",
+		});
+		const files = new Set(bundle.map((f) => f.path));
+		const index = createDocIndex({ store: documentStore, embedder: () => null });
+		const hits = [...(await index.search({ query: "Mutex Semaphoren Aufgabe", limit: 20 })).hits];
+		assert.ok(hits.length >= 2);
+		for (const h of hits) assert.ok(files.has(h.path), `${h.path} is a bundle file`);
+	});
+});
+
+const NODE_A: GraphNode = {
+	id: "n_aaaaaa1",
+	name: "Semaphore P/V atomic",
+	statement: "Die Operationen P und V einer Semaphore sind atomar.",
+	aliases: [],
+	createdAt: "2026-10-01T00:00:00.000Z",
+	provenance: [{ chatId: "chat_1", messageId: "m1" }],
+};
+const NODE_B: GraphNode = {
+	id: "n_bbbbbb2",
+	name: "Mutex lock",
+	statement: "Ein Mutex schützt einen kritischen Abschnitt.",
+	aliases: [],
+	createdAt: "2026-10-01T00:00:00.000Z",
+	provenance: [{ chatId: "DOC", messageId: "", section: "s1" }],
+};
+
+function fakeGraph(nodes: GraphNode[], topics: { nodeId: string; topic: string }[] = [], aliases: Record<string, string> = {}) {
+	const g = {
+		nodes,
+		topics,
+		aliases,
+		version: 0,
+		readNodes: () => g.nodes,
+		readTopics: () => g.topics.map((t) => ({ ...t, sourceId: "x", at: "2026-10-01T00:00:00.000Z" })),
+		readTopicAliases: () => g.aliases,
+		stamp: () => String(g.version),
+	};
+	return g;
+}
+
+describe("concepts as search units", () => {
+	beforeEach(() => fs.rmSync(path.join(TMP_DATA, "graph"), { recursive: true, force: true }));
+
+	it("search returns concept hits with paths", async () => {
+		const g = fakeGraph([NODE_A]);
+		const index = createDocIndex({ store: documentStore, embedder: () => null, graphStore: g, graphStamp: g.stamp });
+		const r = await index.search({ query: "atomar semaphore" });
+		const hit = r.hits[0]!;
+		assert.equal(hit.kind, "concept");
+		assert.match(hit.path, /^concepts\//);
+		assert.equal(hit.conceptId, NODE_A.id);
+		assert.deepEqual([hit.docId, hit.sectionId, hit.title], ["", "", "Semaphore P/V atomic"]);
+		assert.equal(hit.path, conceptPath(NODE_A));
 	});
 
-	it("lists documents, answers misses plainly, and without a selector gives the outline", async () => {
-		const mutex = put("Betriebssysteme Blatt 7", MUTEX, ["Mutex"]);
+	it("picks up a new concept when nodes.jsonl changes, and drops a removed one", async () => {
+		const g = fakeGraph([NODE_A]);
+		const index = createDocIndex({ store: documentStore, embedder: () => null, graphStore: g, graphStamp: g.stamp });
+		assert.equal((await index.search({ query: "kritischen Abschnitt" })).hits.length, 0);
+		g.nodes = [NODE_A, NODE_B];
+		g.version++;
+		assert.equal((await index.search({ query: "kritischen Abschnitt" })).hits[0]?.conceptId, NODE_B.id);
+		g.nodes = [NODE_B];
+		g.version++;
+		assert.deepEqual((await index.search({ query: "Semaphore atomar" })).hits, []);
+	});
+
+	it("graph gate off: no concept hits; includeConcepts false: passages only", async () => {
 		put("Blatt 8", SEMA, ["Semaphoren"]);
-		const tools = documentTools(createDocIndex({ store: documentStore, embedder: () => null }));
-		const all = textOf(await run(tools, "list_documents", {}));
-		assert.match(all, /2 document\(s\)/);
-		assert.match(all, new RegExp(`Betriebssysteme Blatt 7 · topics: Mutex · 3 pages · docId ${mutex.id}`));
-		assert.match(textOf(await run(tools, "list_documents", { topic: "Graphen" })), /No documents tagged "Graphen"/);
-		assert.match(textOf(await run(tools, "read_document", { document: mutex.id })), /s2 · Mutex > Aufgabe 3 · p\.2/);
-		assert.match(textOf(await run(tools, "read_document", { document: "gibt es nicht" })), /No document matches/);
-		assert.match(textOf(await run(tools, "read_document", { document: "blatt" })), /matches 2 documents/);
+		const g = fakeGraph([NODE_A]);
+		let on = true;
+		const index = createDocIndex({ store: documentStore, embedder: () => null, graphStore: g, graphStamp: g.stamp, conceptsEnabled: () => on });
+		assert.ok((await index.search({ query: "Semaphore" })).hits.some((h) => h.kind === "concept"));
+		assert.ok((await index.search({ query: "Semaphore", includeConcepts: false })).hits.every((h) => h.kind === "section"));
+		on = false;
+		assert.ok((await index.search({ query: "Semaphore" })).hits.every((h) => h.kind === "section"));
+	});
+
+	it("filters: topic uses topics.jsonl and aliases; document keeps only concepts born in that document", async () => {
+		const doc = put("Blatt 7", MUTEX, ["Mutex"]);
+		const g = fakeGraph(
+			[NODE_A, { ...NODE_B, provenance: [{ chatId: doc.sourceId, messageId: "", section: "s1" }] }],
+			[
+				{ nodeId: NODE_A.id, topic: "Sema" },
+				{ nodeId: NODE_B.id, topic: "Locks" },
+			],
+			{ locks: "Sperren" },
+		);
+		const index = createDocIndex({ store: documentStore, embedder: () => null, graphStore: g, graphStamp: g.stamp });
+		const conceptsOf = async (q: Parameters<typeof index.search>[0]) =>
+			(await index.search({ ...q, limit: 20 })).hits.flatMap((h) => (h.conceptId ? [h.conceptId] : []));
+		assert.deepEqual((await conceptsOf({ query: "Semaphore Mutex Abschnitt atomar" })).sort(), [NODE_A.id, NODE_B.id]);
+		assert.deepEqual(await conceptsOf({ query: "Semaphore Mutex Abschnitt atomar", topic: "sperren" }), [NODE_B.id], "alias-folded topic");
+		assert.deepEqual(await conceptsOf({ query: "Semaphore Mutex Abschnitt atomar", topic: "Sema" }), [NODE_A.id]);
+		assert.deepEqual(await conceptsOf({ query: "Semaphore Mutex Abschnitt atomar", document: "Blatt 7" }), [NODE_B.id], "A came from a chat, not this document");
+	});
+
+	it("embeds concepts on the sync path, persists them, and reuses them after a restart", async () => {
+		const g = fakeGraph([NODE_A, NODE_B]);
+		const embedder = stubEmbedder("stub-1");
+		const make = () =>
+			createDocIndex({ store: documentStore, embedder: () => embedder, graphStore: g, graphStamp: g.stamp, conceptVectors: conceptVectorStore, batchPauseMs: 0 });
+		const first = make();
+		await first.search({ query: "Sperre" });
+		await waitFor(() => conceptVectorStore.read() !== null);
+		const stored = conceptVectorStore.read()!;
+		assert.deepEqual([stored.model, stored.dims, Object.keys(stored.entries).sort()], ["stub-1", 3, [`cpt_${NODE_A.id}`, `cpt_${NODE_B.id}`]]);
+		assert.equal(stored.entries[`cpt_${NODE_A.id}`]!.contentHash, createHash("sha256").update(NODE_A.name + NODE_A.statement).digest("hex"));
+		const callsBefore = embedder.calls.flat().filter((t) => t.includes("Semaphore")).length;
+
+		const second = make(); // a new process: only the store remembers
+		const r = await second.search({ query: "Sperre" });
+		assert.equal(r.mode, "hybrid");
+		assert.equal(r.hits[0]?.conceptId, NODE_B.id, "the semantic leg found the concept keywords cannot");
+		await new Promise((res) => setTimeout(res, 50));
+		assert.equal(embedder.calls.flat().filter((t) => t.includes("Semaphore")).length, callsBefore, "no concept was embedded again");
+	});
+
+	it("re-embeds only a changed concept, and everything when the model changes", async () => {
+		const g = fakeGraph([NODE_A, NODE_B]);
+		let embedder = stubEmbedder("stub-1");
+		const index = createDocIndex({ store: documentStore, embedder: () => embedder, graphStore: g, graphStamp: g.stamp, conceptVectors: conceptVectorStore, batchPauseMs: 0 });
+		await index.search({ query: "x y" });
+		await waitFor(() => conceptVectorStore.read() !== null);
+		embedder.calls.length = 0;
+
+		g.nodes = [NODE_A, { ...NODE_B, statement: "Ein Mutex sperrt einen Abschnitt." }];
+		g.version++;
+		await index.search({ query: "x y" });
+		await waitFor(() => embedder.calls.flat().some((t) => t.includes("sperrt")));
+		await new Promise((res) => setTimeout(res, 30));
+		assert.deepEqual(embedder.calls.flat().filter((t) => t.includes("\n")).length, 1, "only the edited concept");
+
+		embedder = stubEmbedder("stub-2");
+		embedder.calls.length = 0;
+		await index.search({ query: "x y" });
+		await waitFor(() => embedder.calls.flat().filter((t) => t.includes("\n")).length === 2);
+		await waitFor(() => conceptVectorStore.read()?.model === "stub-2");
+	});
+});
+
+describe("ConceptVectorStore", () => {
+	beforeEach(() => fs.rmSync(path.join(TMP_DATA, "graph"), { recursive: true, force: true }));
+
+	it("round-trips float32 and reads as absent when torn, corrupt or missing", () => {
+		assert.equal(conceptVectorStore.read(), null);
+		conceptVectorStore.write({ model: "m", dims: 2, entries: { cpt_a: { contentHash: "h", offset: 0 }, cpt_b: { contentHash: "i", offset: 1 } }, vectors: Float32Array.from([1, 0.5, -2, 0.25]) });
+		const back = conceptVectorStore.read()!;
+		assert.deepEqual([back.model, back.dims, [...back.vectors], back.entries.cpt_b!.offset], ["m", 2, [1, 0.5, -2, 0.25], 1]);
+		fs.truncateSync(path.join(TMP_DATA, "graph", "concept-vectors.f32"), 8);
+		assert.equal(conceptVectorStore.read(), null, "an entry points past the vectors");
+		fs.writeFileSync(path.join(TMP_DATA, "graph", "concept-vectors.json"), "{nope");
+		assert.equal(conceptVectorStore.read(), null);
 	});
 });
 
 // ── a scripted teacher session ───────────────────────────────────────────────
 
-describe("a teacher session with the document tools", () => {
-	it("searches, reads, and answers from the result the tools returned", async () => {
-		const mutex = put("Betriebssysteme Blatt 7", MUTEX);
+describe("a teacher session with the search tool", () => {
+	it("searches and answers from the result the tool returned", async () => {
+		put("Betriebssysteme Blatt 7", MUTEX);
 		const index = createDocIndex({ store: documentStore, embedder: () => null });
 		const seen: string[] = [];
 		const faux = createFauxCore({});
 		faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("search_documents", { query: "Aufgabe 3 lock" }, { id: "c1" })], { stopReason: "toolUse" }),
-			(context) => {
-				seen.push(JSON.stringify(context.messages.at(-1)));
-				return fauxAssistantMessage([fauxToolCall("read_document", { document: mutex.id, section: "s2" }, { id: "c2" })], { stopReason: "toolUse" });
-			},
 			(context) => {
 				seen.push(JSON.stringify(context.messages.at(-1)));
 				return fauxAssistantMessage([fauxText("Aufgabe 3 fragt nach lock() und unlock() (Betriebssysteme Blatt 7, p. 2).")]);
@@ -347,10 +498,9 @@ describe("a teacher session with the document tools", () => {
 		const agent = createTeacherAgent(undefined, { engine, tools: documentTools(index) });
 		await agent.prompt("Hilf mir mit Aufgabe 3.");
 
-		assert.match(seen[0]!, new RegExp(`docId ${mutex.id} · section s2`), "the search result reached the model");
-		assert.match(seen[1]!, /Warum braucht lock\(\) ein unlock\(\)/, "the read result reached the model");
+		assert.match(seen[0]!, /documents\/.+\/s2-aufgabe-3\.md/, "the search result, with its file, reached the model");
 		const results = agent.state.messages.filter((m) => m.role === "toolResult") as unknown as { toolName: string; details: { kind: string } }[];
-		assert.deepEqual(results.map((r) => [r.toolName, r.details.kind]), [["search_documents", "search"], ["read_document", "read"]]);
+		assert.deepEqual(results.map((r) => [r.toolName, r.details.kind]), [["search_documents", "search"]]);
 		const last = agent.state.messages.at(-1) as { content: { text?: string }[] };
 		assert.match(last.content[0]!.text ?? "", /p\. 2/);
 	});
@@ -363,7 +513,7 @@ describe("agent.documentTools", () => {
 	const names = Object.keys(deps);
 	const chatStore = { getChat: () => null } as never;
 	const jobStore = {} as never;
-	const docs = { search: async () => ({ mode: "keyword" as const, query: "", hits: [] }), read: () => ({ ok: false as const, error: "" }), list: () => [] };
+	const docs = { search: async () => ({ mode: "keyword" as const, query: "", hits: [] }) };
 
 	it("defaults on, and the setting turns it off", () => {
 		assert.equal(documentToolsEnabled(resolveSettings(null)), true);
@@ -372,7 +522,7 @@ describe("agent.documentTools", () => {
 		assert.equal(parseAgentSettingsBody({ documentTools: { enabled: "no" } }).ok, false);
 	});
 
-	it("prober, teacher and practice carry the three tools only when the context passes them", () => {
+	it("prober, teacher and practice carry the search tool only when the context passes them", () => {
 		const base = { chatId: "c", chatStore, jobStore, spawn: () => {} };
 		for (const make of [
 			(documents?: typeof docs) => createProberTools({ ...base, ...(documents ? { documents } : {}) } as never),

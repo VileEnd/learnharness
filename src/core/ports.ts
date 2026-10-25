@@ -299,6 +299,26 @@ export interface DocumentStore {
 	writePendingBatches(batches: PendingBatch[]): void;
 }
 
+// ─── ConceptVectorStore — embeddings of the graph's concepts ────────────────
+
+/** The embeddings of concepts (data/graph/concept-vectors.json + .f32), keyed
+ *  `cpt_<nodeId>`. `offset` is the entry's row in `vectors` (row-major,
+ *  dims wide); `contentHash` = sha256(name + statement), so a vector is only
+ *  reused for the text it was computed from. One model for the whole file. */
+export interface ConceptVectors {
+	model: string;
+	dims: number;
+	entries: Record<string, { contentHash: string; offset: number }>;
+	vectors: Float32Array;
+}
+
+/** Sole writer of concept-vectors.*; writes are atomic (vectors first, json last).
+ *  Reads never throw and never create anything: absent, torn or corrupt reads as null. */
+export interface ConceptVectorStore {
+	read(): ConceptVectors | null;
+	write(vectors: ConceptVectors): void;
+}
+
 // ─── OkfBundleStore — the generated library bundle (data/okf) ───────────────
 
 /**

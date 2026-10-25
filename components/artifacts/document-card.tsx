@@ -11,6 +11,12 @@ import type { ArtifactPartProps } from "@/src/core";
  * each linking into the reader at its page anchor (/documents/<docId>#p-N).
  * It renders from the tool result's `details` (ids, titles, pages; never the
  * document text) and the call's input.
+ *
+ * Only search_documents is still offered to the agents; read_document and
+ * list_documents are retired but old transcripts hold their parts, so those
+ * still render. A search hit is a passage ("section") or a graph concept
+ * (shown "Concept · title", no reader link); parts saved before concepts
+ * joined the search carry no `kind`, and a missing kind means "section".
  */
 
 interface ToolPart {
@@ -22,6 +28,11 @@ interface ToolPart {
 }
 
 interface Hit {
+	/** Absent in parts saved before concepts were searchable: a section. */
+	kind?: "section" | "concept";
+	/** The hit's file in the library bundle (absent in old parts). */
+	path?: string;
+	conceptId?: string;
 	docId: string;
 	title: string;
 	sectionId: string;
@@ -87,14 +98,22 @@ export function DocumentCard({ part }: ArtifactPartProps) {
 						{details.hits.length === 0 && <p className="text-muted-foreground">No passages matched.</p>}
 						<ul className="space-y-2">
 							{details.hits.map((h, i) => (
-								<li key={`${h.docId}-${h.sectionId}-${i}`} className="min-w-0">
-									<Link href={documentHref(h.docId, h.pageFrom)} className={LINK}>
-										{h.title}
-									</Link>
-									<span className="text-muted-foreground">
-										{" "}
-										{[h.headingPath.join(" › "), pageText(h.pageFrom, h.pageTo)].filter(Boolean).join(" · ")}
-									</span>
+								<li key={`${h.conceptId ?? h.docId}-${h.sectionId}-${i}`} className="min-w-0">
+									{h.kind === "concept" ? (
+										<span data-testid="concept-hit" className="break-words font-medium text-foreground">
+											Concept · {h.title}
+										</span>
+									) : (
+										<>
+											<Link href={documentHref(h.docId, h.pageFrom)} className={LINK}>
+												{h.title}
+											</Link>
+											<span className="text-muted-foreground">
+												{" "}
+												{[h.headingPath.join(" › "), pageText(h.pageFrom, h.pageTo)].filter(Boolean).join(" · ")}
+											</span>
+										</>
+									)}
 									{h.snippet && <p className="mt-0.5 break-words text-muted-foreground">{h.snippet}</p>}
 								</li>
 							))}
