@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF to Markdown</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='1' width='12' height='14' rx='1.5' fill='%231F3A93'/%3E%3Cpath d='M5 5h6M5 8h6M5 11h4' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF2F6;--sheet:#FFFFFF;--ink:#1F3A93;--text:#2F353B;--muted:#66707C;--rule:#D5DCE4;
+  --marker:#F2C94C;--red:#C8372D;--green:#2E7D5B;--cache:#AFC0E8;--grid:#DDE5EE;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#11161D;--sheet:#18202A;--ink:#8FA8F0;--text:#E3E8EE;--muted:#93A0AE;--rule:#2A3542;
+  --marker:#E7C14B;--red:#F07167;--green:#5CC39A;--cache:#3A4E86;--grid:#1D2733;color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--paper);color:var(--text);font:15px/1.5 "Atkinson Hyperlegible",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;padding:1rem 20px .75rem}
+h1{margin:0;font-size:1.35rem;color:var(--ink)}
+#models{color:var(--muted);font-size:.9rem}
+main{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:16px;padding:0 20px 20px;height:calc(100vh - 3.6rem)}
+section{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;min-height:0}
+#left{display:flex;flex-direction:column;gap:12px;padding:14px;overflow:auto}
+#right{display:grid;grid-template-rows:auto 1fr auto;overflow:hidden}
+h2{font-size:1rem;margin:0}
+
+/* drop zone on graph paper: the material these notes were written on */
+#drop{display:block;border:1.5px dashed var(--ink);border-radius:8px;padding:1.6rem 1rem;text-align:center;cursor:pointer;color:var(--ink);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:12px 12px}
+#drop.over,#drop:focus-within{background-color:color-mix(in srgb,var(--ink) 8%,transparent)}
+#drop small{display:block;color:var(--muted);margin-top:.25rem}
+button,.btn{font:inherit;font-weight:700;padding:.5rem 1rem;border-radius:7px;border:1.5px solid var(--ink);background:var(--ink);color:var(--sheet);cursor:pointer;text-decoration:none;display:inline-block}
+.btn.secondary{background:transparent;color:var(--ink)}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:3px solid var(--marker);outline-offset:2px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#total{color:var(--muted);font-size:.9rem}
+
+/* one file = one contact sheet of its pages */
+.file{border-top:1px solid var(--rule);padding-top:10px}
+.file-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 8px;align-items:baseline}
+.file-name{font-weight:700;word-break:break-all}
+.file-meta{color:var(--muted);font-size:.85rem;word-break:break-all}
+.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(13px,1fr));gap:3px;margin-top:8px}
+.cell{aspect-ratio:3/4;border-radius:2px;background:var(--rule);border:0;padding:0;cursor:pointer;position:relative}
+.cell.k-scan::after,.cell.k-figures::after{content:"";position:absolute;right:1px;top:1px;width:4px;height:4px;border-radius:50%;background:var(--muted)}
+.cell.partial{background:color-mix(in srgb,var(--ink) 40%,var(--rule))}
+.cell.running{background:var(--marker);animation:pulse 1.2s ease-in-out infinite}
+.cell.done{background:var(--ink)}
+.cell.cached{background:var(--cache)}
+.cell.error{background:var(--red)}
+.cell.done::after,.cell.cached::after{background:var(--sheet)}
+@keyframes pulse{50%{opacity:.55}}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:9px;height:12px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+fieldset{border:0;margin:0;padding:0;display:grid;gap:6px}
+legend{font-weight:700;margin-bottom:4px}
+.choice{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;align-items:baseline;border:1.5px solid var(--rule);border-radius:8px;padding:8px 10px;cursor:pointer}
+.choice:has(input:checked){border-color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent)}
+.choice b{color:var(--text)}.choice .price{font-weight:700;color:var(--ink)}
+.choice small{grid-column:2/4;color:var(--muted)}
+#runs{display:grid;gap:18px}
+.run{display:grid;gap:8px;border-top:2px solid var(--ink);padding-top:10px}
+.run-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.run-state{font-size:.85rem;color:var(--muted)}.run-state.live{color:var(--text);font-weight:700}
+.run-summary{margin:0;font-weight:700}
+.run-results{display:grid;gap:6px}
+#history{display:grid;gap:0}
+#history h2{margin:4px 0 6px}
+.past{border-top:1px solid var(--rule);padding:8px 0}
+.past>summary{cursor:pointer;display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 8px}
+.past>summary small{color:var(--muted)}
+.past[open]>summary{margin-bottom:8px}
+.note{color:var(--muted);font-size:.85rem;margin:0}
+.result{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;border-top:1px solid var(--rule);padding-top:6px}
+.result .fname{font-weight:700;word-break:break-all}.result small{color:var(--muted);grid-column:1}
+.result button{grid-row:1/3;grid-column:2;padding:.25rem .7rem;font-weight:400;background:transparent;color:var(--ink)}
+.path{display:flex;gap:6px;align-items:center;font-size:.85rem;word-break:break-all;background:var(--paper);padding:6px 8px;border-radius:6px}
+.path button{padding:.15rem .6rem;font-weight:400;background:transparent;color:var(--ink);flex:none}
+.run-log{font-size:.85rem;color:var(--muted);max-height:12rem;overflow:auto}
+.run-log div{padding:2px 0}
+.ok{color:var(--green)}.warn{color:var(--text)}.error{color:var(--red)}
+
+/* right: live requests */
+#stats{display:flex;flex-wrap:wrap;gap:4px 22px;padding:12px 14px;border-bottom:1px solid var(--rule);align-items:baseline}
+.stat b{font-size:1.15rem;margin-right:4px}
+.stat span{color:var(--muted);font-size:.85rem}
+#filters{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:.85rem}
+#filters button{padding:.2rem .6rem;font-weight:400;background:transparent;color:var(--text);border-color:var(--rule)}
+#filters button[aria-pressed=true]{border-color:var(--ink);color:var(--ink);font-weight:700}
+.tablewrap{overflow:auto;min-height:0}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+thead th{position:sticky;top:0;background:var(--sheet);text-align:left;font-weight:700;color:var(--muted);padding:6px 10px;border-bottom:1px solid var(--rule);z-index:1}
+td{padding:5px 10px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td:nth-child(2){white-space:normal;word-break:break-all;min-width:9rem}
+td.num,th.num{text-align:right}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--ink) 11%,transparent)}
+.state{display:inline-block;padding:0 .5rem;border-radius:999px;font-size:.8rem;font-weight:700}
+.s-running,.s-retry{background:var(--marker);color:#3A2E00}
+.s-ok{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green)}
+.s-cached{background:color-mix(in srgb,var(--cache) 45%,transparent);color:var(--text)}
+.s-error{background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red)}
+.empty{padding:2.5rem 1rem;text-align:center;color:var(--muted)}
+#detail{border-top:1px solid var(--rule);max-height:45vh;overflow:auto;padding:12px 14px;display:none}
+#detail.open{display:block}
+#detail .row{display:flex;gap:14px;align-items:flex-start}
+#detail img{width:220px;max-width:40%;border:1px solid var(--rule);border-radius:4px}
+#detail pre{flex:1;margin:0;white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--paper);padding:10px;border-radius:6px;max-height:36vh;overflow:auto}
+#detail .head{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px}
+#detail .close{background:transparent;color:var(--muted);border-color:var(--rule);padding:.1rem .6rem;font-weight:400}
+.dmeta{color:var(--muted);font-size:.85rem}
+
+@media (max-width:900px){main{grid-template-columns:1fr;height:auto}#right{min-height:70vh}header{padding:1rem 16px .5rem}main{padding:0 16px 16px}}
+@media (prefers-reduced-motion:reduce){.cell.running{animation:none}}
+</style></head><body>
+<header><h1>PDF to Markdown</h1><span id="models">Mistral OCR for printed text, a vision model for figures and handwriting</span></header>
+<main>
+<section id="left" aria-label="Files">
+  <label id="drop">Drop PDFs here or choose files<small>Lecture slides, exams, scripts, handwritten notes</small>
+    <input type="file" id="pick" accept="application/pdf" multiple hidden></label>
+  <fieldset id="strategy" hidden><legend>How to read the pages</legend>
+    <label class="choice"><input type="radio" name="strategy" value="ocr+vision"><b>Best quality</b><span class="price" data-price="ocr+vision"></span>
+      <small>Mistral OCR reads printed text and formulas; DeepSeek draws the diagrams and transcribes handwriting.</small></label>
+    <label class="choice"><input type="radio" name="strategy" value="vision"><b>Cheapest</b><span class="price" data-price="vision"></span>
+      <small>DeepSeek reads every page, including diagrams and handwriting. About 5x cheaper; check printed math.</small></label>
+  </fieldset>
+  <div class="actions"><button id="run" disabled>Convert</button><span id="total"></span></div>
+  <div class="legend" aria-hidden="true"><span><i style="background:var(--rule)"></i>waiting</span><span><i style="background:var(--marker)"></i>in progress</span><span><i style="background:var(--ink)"></i>done</span><span><i style="background:var(--cache)"></i>from cache</span><span><i style="background:var(--red)"></i>failed</span><span>• has figures or handwriting</span></div>
+  <div id="pending"></div>
+  <div id="runs" aria-live="polite"></div>
+  <div id="history"></div>
+</section>
+<section id="right" aria-label="Live requests">
+  <div id="stats">
+    <div class="stat"><b id="st-flight">0</b><span>in flight</span></div>
+    <div class="stat"><b id="st-done">0</b><span>done</span></div>
+    <div class="stat"><b id="st-err">0</b><span>failed</span></div>
+    <div class="stat"><b id="st-cost">$0.000</b><span>spent</span></div>
+    <div class="stat"><b id="st-rate">–</b><span>pages/min</span></div>
+    <div class="stat"><b id="st-time">0:00</b><span>elapsed</span></div>
+    <div id="filters" role="group" aria-label="Filter requests">
+      <button data-f="all" aria-pressed="true">All</button><button data-f="active" aria-pressed="false">In progress</button><button data-f="error" aria-pressed="false">Failed</button><button data-f="nocache" aria-pressed="false">Hide cached</button>
+    </div>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Time</th><th>Page</th><th>Step</th><th>Model</th><th>State</th><th class="num">Duration</th><th class="num">Tokens in/out</th><th class="num">Cost</th></tr></thead>
+    <tbody id="reqs"></tbody></table>
+    <div class="empty" id="empty">Requests appear here as soon as you start converting.</div></div>
+  <div id="detail" aria-live="polite"></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let files=[],t0=null,timer=null,filter="all",selected=null;
+const reqs=new Map(),rows=new Map(),runs=new Map();  // requests and rows are keyed "job|request id"
+const STEPS={null:["text"],text:["text"],figures:["text","vision"],scan:["vision"]};
+const wantSteps=(s,i)=>s.strategy==="vision"?["vision"]:STEPS[s.kinds[i]];
+const stepLabel=r=>r.step==="text"?"OCR":r.step==="name"?"File name":r.kind==="figures"?"Vision (figures)":"Vision (full page)";
+const shortModel=m=>m.split("/").pop();
+const fmtTime=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+const chosen=()=>document.querySelector("input[name=strategy]:checked")?.value;
+const form=()=>{const f=new FormData();files.forEach(x=>f.append("files",x));if(chosen())f.append("strategy",chosen());return f};
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+
+/* choosing files: only a preview until Convert, so a running conversion is never touched */
+async function choose(list){
+  files=[...list].filter(f=>f.name.toLowerCase().endsWith(".pdf"));
+  if(!files.length){$("total").textContent="Only PDF files can be converted.";return}
+  $("run").disabled=true;$("total").textContent="Checking pages…";
+  const r=await(await fetch("/api/estimate",{method:"POST",body:form()})).json();
+  $("models").textContent=`OCR with ${r.ocr_engine}, vision with ${r.vision_model}`;
+  const pages=r.files.reduce((a,b)=>a+b.pages,0);
+  $("total").textContent=`${files.length} file${files.length>1?"s":""}, ${pages} pages`;
+  const usd=v=>`about $${v.toFixed(v<0.1?3:2)}`;
+  document.querySelectorAll("[data-price]").forEach(x=>x.textContent=usd(r.usd[x.dataset.price]));
+  const pick=document.querySelector(`input[name=strategy][value="${chosen()||r.default_strategy}"]`);if(pick)pick.checked=true;
+  $("strategy").hidden=false;
+  $("pending").replaceChildren(...r.files.map(f=>{
+    const d=el("div","file");const h=el("div","file-head");
+    h.append(el("span","file-name",f.name),el("span","file-meta",`${f.pages} pages, ${f.figure_pages} with figures, ${f.handwritten_pages} handwritten`));
+    d.append(h);return d}));
+  $("run").disabled=false;
+}
+$("pick").onchange=e=>choose(e.target.files);
+$("drop").ondragover=e=>{e.preventDefault();$("drop").classList.add("over")};
+$("drop").ondragleave=()=>$("drop").classList.remove("over");
+$("drop").ondrop=e=>{e.preventDefault();$("drop").classList.remove("over");choose(e.dataTransfer.files)};
+
+/* one section per run; runs go on in parallel and keep their own page grids, log and results */
+const runLabel=job=>{const m=job.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);return m?`${m[3]}.${m[2]}.${m[1]}, ${m[4]}:${m[5]}`:job};
+function makeRun(job){
+  const box=el("section","run");box.setAttribute("aria-label",`Run of ${runLabel(job)}`);
+  const head=el("div","run-head"),state=el("span","run-state live","starting");
+  head.append(el("h2",null,`Run of ${runLabel(job)}`),state);
+  const filesEl=el("div"),summary=el("p","run-summary"),results=el("div","run-results"),logEl=el("div","run-log");
+  results.hidden=true;box.append(head,filesEl,summary,results,logEl);$("runs").prepend(box);
+  const R={job,state,filesEl,summary,results,logEl,sheets:new Map(),received:0,active:true,errors:0};
+  runs.set(job,R);return R;
+}
+function subscribe(R,from){
+  R.received=from;
+  const es=new EventSource(`/api/jobs/${R.job}/events?from=${from}`);
+  es.onmessage=m=>{R.received++;R.errors=0;const e=JSON.parse(m.data);handle(R,e);if(e.type==="done"||e.type==="gone")es.close()};
+  es.onerror=()=>{es.close();  // resume where we were instead of replaying everything
+    if(R.active&&++R.errors<20)setTimeout(()=>subscribe(R,R.received),2000);
+    else if(R.active){R.state.textContent="lost connection to the server";R.active=false;tick()}};
+}
+
+/* contact sheet per file */
+function makeSheet(R,e){
+  const d=el("div","file");const h=el("div","file-head");const meta=el("span","file-meta","");
+  h.append(el("span","file-name",e.name),meta);
+  const grid=el("div","pages");
+  const sheet={el:d,meta,kinds:e.kinds,strategy:e.strategy,steps:e.kinds.map(()=>({}))};
+  sheet.cells=e.kinds.map((k,i)=>{const c=el("button","cell"+(k?" k-"+k:""));c.title=`Page ${i+1}`;c.setAttribute("aria-label",`Page ${i+1}`);
+    c.onclick=()=>{const st=sheet.steps[i];const key=st.vision?.key||st.text?.key;if(key)select(key)};grid.append(c);return c});
+  d.append(h,grid);return sheet;
+}
+function paintCell(sheet,page){
+  const i=page-1,got=wantSteps(sheet,i).map(k=>sheet.steps[i][k]?.state);
+  let cls="queued";
+  if(got.includes("error"))cls="error";
+  else if(got.some(x=>x==="running"||x==="retry"))cls="running";
+  else if(got.every(x=>x==="cached"))cls="cached";
+  else if(got.every(x=>x==="ok"||x==="cached"))cls="done";
+  else if(got.some(Boolean))cls="partial";
+  const k=sheet.kinds[i],c=sheet.cells[i];c.className="cell"+(k?" k-"+k:"")+" "+cls;
+  c.title=`Page ${i+1}: ${k==="scan"?"handwritten/scanned":k==="figures"?"text + figures":"text"}, ${cls}`;
+}
+
+/* request table, shared by all runs */
+function visible(r){
+  if(filter==="active")return r.state==="running"||r.state==="retry";
+  if(filter==="error")return r.state==="error";
+  if(filter==="nocache")return r.state!=="cached";
+  return true;
+}
+function renderRow(r){
+  let tr=rows.get(r.key);
+  if(!tr){tr=el("tr");tr.tabIndex=0;tr.onclick=()=>select(r.key);tr.onkeydown=e=>{if(e.key==="Enter")select(r.key)};rows.set(r.key,tr);$("reqs").prepend(tr);$("empty").hidden=true}
+  const u=r.usage;
+  const cells=[fmtTime(Math.max(0,r.first-t0)),r.page?`${r.file} p.${r.page}`:r.file,stepLabel(r),shortModel(r.model),null,
+    r.ms!=null?(r.ms/1000).toFixed(1)+" s":r.state==="running"||r.state==="retry"?"…":"",
+    u?`${u.prompt} / ${u.completion}`:"",
+    r.cost!=null?"$"+r.cost.toFixed(4):""];
+  tr.replaceChildren(...cells.map((c,i)=>{const td=el("td",i>=5?"num":"");
+    if(i===4){const st=el("span","state s-"+r.state,r.state==="retry"?"retrying":r.state==="ok"?"done":r.state);td.append(st)}else td.textContent=c;return td}));
+  tr.hidden=!visible(r);tr.setAttribute("aria-selected",selected===r.key);
+}
+function select(key){
+  selected=key;rows.forEach((tr,k)=>tr.setAttribute("aria-selected",k===key));
+  const r=reqs.get(key),d=$("detail");if(!r)return;
+  d.replaceChildren();d.classList.add("open");
+  const head=el("div","head");const title=el("h2",null,r.page?`${r.file}, page ${r.page}: ${stepLabel(r)}`:`${r.file}: ${stepLabel(r)}`);
+  const close=el("button","close","Close");close.onclick=()=>{d.classList.remove("open");selected=null;rows.forEach(tr=>tr.setAttribute("aria-selected",false))};
+  head.append(title,close);d.append(head);
+  const u=r.usage;
+  const bits=[`Model ${r.model}`,r.ms!=null?`${(r.ms/1000).toFixed(1)} s`:null,r.cost!=null?`$${r.cost.toFixed(4)}`:null,
+    u?`${u.prompt} tokens in, ${u.completion} out`+(u.reasoning?` (${u.reasoning} of them thinking)`:""):null,r.note?`Last retry: ${r.note}`:null].filter(Boolean);
+  d.append(el("p","dmeta",bits.join(", ")));
+  const row=el("div","row");
+  if(r.image){const img=el("img");img.alt=`Page ${r.page} as sent to the vision model`;img.src=`/api/jobs/${r.job}/files/${r.image}`;img.loading="lazy";img.onerror=()=>img.remove();row.append(img)}
+  row.append(el("pre",null,r.error?`Error: ${r.error}`:r.preview||(r.state==="running"?"Waiting for the response…":"")));
+  d.append(row);
+}
+document.querySelectorAll("#filters button").forEach(b=>b.onclick=()=>{
+  filter=b.dataset.f;document.querySelectorAll("#filters button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  reqs.forEach(r=>{rows.get(r.key).hidden=!visible(r)})});
+
+function stats(){
+  let flight=0,done=0,err=0,cost=0,pagesDone=0;
+  reqs.forEach(r=>{if(r.state==="running"||r.state==="retry")flight++;else if(r.state==="error")err++;else done++;cost+=r.cost||0});
+  runs.forEach(R=>R.sheets.forEach(s=>s.cells.forEach(c=>{if(c.classList.contains("done"))pagesDone++})));
+  const secs=(Date.now()/1000)-t0;
+  $("st-flight").textContent=flight;$("st-done").textContent=done;$("st-err").textContent=err;
+  $("st-cost").textContent="$"+cost.toFixed(3);$("st-time").textContent=fmtTime(secs);
+  $("st-rate").textContent=secs>5&&pagesDone?Math.round(pagesDone/(secs/60)):"–";
+}
+function tick(){  // the stats clock runs while any run is active
+  const active=[...runs.values()].some(R=>R.active);
+  if(active&&!timer)timer=setInterval(stats,1000);
+  if(!active&&timer){clearInterval(timer);timer=null}
+  stats();
+}
+
+function handle(R,e){
+  if(e.type==="start"){if(t0==null)t0=e.t;R.active=true;R.state.className="run-state live";R.state.textContent="running";tick()}
+  else if(e.type==="file"){
+    if(e.kinds&&!R.sheets.has(e.file)){const s=makeSheet(R,e);R.sheets.set(e.file,s);R.filesEl.append(s.el)}
+    const s=R.sheets.get(e.file);
+    if(s&&e.finished)s.meta.textContent=`→ ${e.markdown}`;
+    else if(s)s.meta.textContent=`${e.done}/${e.total} steps`+(e.failed?`, ${e.failed} pages failed`:"");
+  }
+  else if(e.type==="req"){
+    const key=`${R.job}|${e.id}`,prev=reqs.get(key)||{first:e.t};const r={...prev,...e,key,job:R.job};
+    if(e.state==="running"){delete r.ms;delete r.error}
+    reqs.set(key,r);renderRow(r);
+    const s=R.sheets.get(e.file);if(s&&e.page){s.steps[e.page-1][e.step]=r;paintCell(s,e.page)}
+    if(selected===key)select(key);
+  }
+  else if(e.type==="log")R.logEl.prepend(el("div",e.level,e.msg));
+  else if(e.type==="done"||e.type==="gone"){
+    R.active=false;tick();
+    const failed=e.markdown.reduce((a,m)=>a+m.failed,0);
+    R.state.className="run-state";R.state.textContent=e.type==="gone"?"server restarted":failed?`${failed} pages failed`:"finished";
+    R.summary.textContent=e.type==="gone"
+      ?"The server restarted during this run. What finished is below; drop the same PDFs again to finish the rest. Pages that already worked come from the cache for free."
+      :`Finished: $${e.usd} spent.`;
+    showResults(R,e,failed);
+  }
+}
+async function copy(text,btn){
+  try{await navigator.clipboard.writeText(text);btn.textContent="Copied"}catch{btn.textContent="Copy failed"}
+  setTimeout(()=>btn.textContent="Copy",1500)}
+function pathRow(label,path){
+  const d=el("div","path");const b=el("button",null,"Copy");b.onclick=()=>copy(path,b);
+  d.append(el("span",null,`${label} ${path}`),b);return d}
+function showResults(R,e,failed){
+  const box=R.results;box.replaceChildren(el("h2",null,`${e.markdown.length} markdown file${e.markdown.length==1?"":"s"}`));
+  if(failed&&e.type==="done"){
+    const b=el("button",null,`Retry ${failed} failed page${failed==1?"":"s"}`);
+    b.onclick=async()=>{b.disabled=true;
+      const res=await fetch(`/api/jobs/${R.job}/retry`,{method:"POST"});const body=await res.json();
+      if(!res.ok){R.summary.textContent=body.detail;b.disabled=false;return}
+      R.summary.textContent=`Retrying ${body.files} file${body.files==1?"":"s"}; pages that already worked come from the cache.`;
+      const live=R.state?R:makeRun(R.job);  // a run from the history list gets a live section for the retry
+      live.active=true;subscribe(live,body.from)};
+    box.append(b);
+  }
+  else if(failed)box.append(el("p","note","To redo the failed pages, drop the same PDFs again: pages that already worked come from the cache for free."));
+  box.append(pathRow("Folder in Windows Explorer:",e.windows_dir));
+  const dl=el("div","actions");
+  const md=el("a","btn","Download markdown (.zip)");md.href=`/api/jobs/${R.job}/zip?only=markdown`;dl.append(md);
+  if(e.has_images){const all=el("a","btn secondary","Download with page images (.zip)");all.href=`/api/jobs/${R.job}/zip`;dl.append(all)}
+  box.append(dl);
+  for(const m of e.markdown){
+    const r=el("div","result");const b=el("button",null,"Copy");b.setAttribute("aria-label",`Copy ${m.file}`);
+    b.onclick=async()=>copy(await(await fetch(`/api/jobs/${R.job}/files/${encodeURIComponent(m.file).replaceAll("%2F","/")}`)).text(),b);
+    r.append(el("span","fname",m.file),b,el("small",null,`${m.title}, ${m.pages} pages, from ${m.source}`+(m.failed?`, ${m.failed} pages failed`:"")));box.append(r)}
+  box.hidden=false;
+}
+/* earlier runs, read from the out/ folder; a run that is still going is followed live again */
+async function loadHistory(){
+  const list=await(await fetch("/api/runs")).json();
+  for(const r of list.filter(r=>r.running&&!runs.has(r.job)).reverse())subscribe(makeRun(r.job),0);
+  const past=list.filter(r=>!r.running&&!runs.has(r.job));
+  const box=$("history");box.replaceChildren();
+  if(past.length)box.append(el("h2",null,"Earlier runs"));
+  for(const r of past){
+    const d=el("details","past"),sum=el("summary");
+    sum.append(el("span","fname",runLabel(r.job)),el("small",null,
+      `${r.markdown.length} file${r.markdown.length==1?"":"s"}, ${r.pages} pages, $${r.spent_usd.toFixed(r.spent_usd<0.1?3:2)}`+(r.failed_pages?`, ${r.failed_pages} pages failed`:"")));
+    const R={job:r.job,summary:el("p","run-summary"),results:el("div","run-results")};
+    d.append(sum,R.summary,R.results);
+    d.ontoggle=()=>{if(d.open&&!R.loaded){R.loaded=true;showResults(R,{...r,type:r.can_retry?"done":"gone"},r.failed_pages)}};
+    box.append(d);
+  }
+}
+loadHistory();
+
+$("run").onclick=async()=>{
+  $("run").disabled=true;
+  const res=await fetch("/api/run",{method:"POST",body:form()});
+  if(!res.ok){$("total").textContent=(await res.json()).detail;$("run").disabled=false;return}
+  const {job}=await res.json();
+  subscribe(makeRun(job),0);
+  files=[];$("pick").value="";$("pending").replaceChildren();$("strategy").hidden=true;
+  $("total").textContent="Started. You can drop more PDFs now; they run alongside.";
+};
+</script></body></html>
