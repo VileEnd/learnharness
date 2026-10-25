@@ -226,6 +226,21 @@ describe("attribution", () => {
 			assert.deepEqual(off.rows.map((r) => r.conceptIds), [[]]);
 		});
 
+		it("an unmatched, non-eligible item is sent once; again only after a new merge", async () => {
+			const p1 = prose("Teaching not yet extracted.");
+			const queries: string[] = [];
+			const coverage: CoverageEntry[] = [];
+			const none = () => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: [] }] });
+			const { service, rows } = harness({ steps: [none, none], messages: [p1, ...quiz("q1", { pick: 1 })], found: ["L1"], coverage, queries });
+			assert.equal(await service.attributeChat("c1"), 0);
+			assert.equal(await service.attributeChat("c1"), 0);
+			assert.equal(queries.length, 1, "second run: not searched, not sent");
+			coverage.push({ chatId: "c1", fp: "some-other-message", tokens: 8, foldedAt: "t" });
+			assert.equal(await service.attributeChat("c1"), 0);
+			assert.equal(queries.length, 2, "after a merge it is tried again");
+			assert.equal(rows.length, 0);
+		});
+
 		it("refuses concept ids outside the item's candidates", async () => {
 			let second = "";
 			const { service, rows } = harness({
