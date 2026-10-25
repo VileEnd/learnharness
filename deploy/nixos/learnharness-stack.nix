@@ -103,6 +103,10 @@ in
 
         cd "$src/deploy"
         docker compose --env-file ${hostsEnv} --env-file "$secrets" up -d --build --remove-orphans
+        # The Caddyfile is a bind mount: compose does not notice content changes,
+        # so apply them explicitly (a no-op when nothing changed).
+        docker compose --env-file ${hostsEnv} --env-file "$secrets" exec -T caddy \
+          caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || true
       '';
     };
   };
