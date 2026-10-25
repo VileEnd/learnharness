@@ -25,14 +25,16 @@
  */
 
 import type { EmissionStats } from "../core/graph.ts";
-import type { DocumentDecision, DocumentMeta, DocumentSummary, DuplicateVerdict } from "../core/contracts/documents.ts";
-import type { DocumentStore } from "../core/ports.ts";
+import type { DocumentDecision, DocumentMeta, DocumentSummary, DuplicateVerdict, LegacyImport } from "../core/contracts/documents.ts";
+import type { DocumentStore, GraphStore } from "../core/ports.ts";
+import { addAliases, canonicalTopics, knownTopics } from "../core/topics.ts";
 import { emit } from "../core/events.ts";
 import {
 	classify,
 	describedByFrontMatter,
 	documentIdFor,
 	fingerprint,
+	legacySourceIds,
 	normalizeText,
 	normalizeTopics,
 	parseFrontMatter,
@@ -64,6 +66,9 @@ export interface CheckResult {
 	scanned?: boolean;
 	/** The file cannot be imported (binary content, empty). */
 	error?: string;
+	/** A filename match whose old import produced no nodes (raw-PDF text
+	 *  imports): offered as new, with a hint. */
+	legacyEmpty?: { sourceId: string; importedAt: string };
 }
 
 export interface ImportCompletion {
@@ -74,6 +79,10 @@ export interface ImportCompletion {
 	outcome?: "completed" | "failed" | "partial" | "aborted" | "busy" | "skipped";
 	/** The scanned text turned out to duplicate another document. */
 	duplicateOf?: { id: string; title: string };
+	/** An old graph source adopted the document (no extraction ran). */
+	attached?: boolean;
+	/** Nodes the topic tagging pass filed (attach only). */
+	tagged?: number;
 	error?: string;
 	code?: string;
 	missing?: string[];
@@ -101,6 +110,26 @@ export interface DocumentServiceDeps {
 	importNotes(input: NotesImportInput): Promise<EmissionStats>;
 	describe(text: string, signal?: AbortSignal): Promise<DocumentDescription>;
 	ocr: OcrClient;
+	/** The graph's source records + ledgers (PR H): legacy detection, the
+	 *  topic alias table, the source label. Absent = no graph features. */
+	graph?: Pick<
+		GraphStore,
+		"readSources" | "upsertSource" | "readNodes" | "readTopics" | "readTopicAliases" | "writeTopicAliases"
+	>;
+	/** Cheap-slot topic canonicalisation (new -> canonical). Best effort. */
+	canonicalize?(newTopics: readonly string[], existing: readonly string[], signal?: AbortSignal): Promise<Record<string, string>>;
+	/** Cheap-slot topic tagging of an adopted source's nodes. */
+	tagNodes?(
+		topics: readonly string[],
+		nodes: readonly { id: string; name: string; statement: string }[],
+		signal?: AbortSignal,
+	): Promise<{ nodeId: string; topics: string[] }[]>;
+	/** The merger's topic entry point (the pipeline's applyTopicRows). */
+	applyTopicRows?(input: {
+		sourceId: string;
+		label: string;
+		assignments: ReadonlyArray<{ nodeId: string; topics: readonly string[] }>;
+	}): Promise<number>;
 	notify(event: PushEvent): void | Promise<void>;
 	now?: () => Date;
 	/** OCR job poll interval (default 2s; tests pass 0). */
@@ -171,7 +200,31 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 
 	// ── check ─────────────────────────────────────────────────────────────────
 
+	/** An earlier import of this file name in the graph (PR H): a legacy
+	 *  source - id = "src_" + sha256(filename) - that has no document yet.
+	 *  With nodes it is "legacy" (attach, no re-extraction); with none (the
+	 *  old raw-PDF text imports) it is only a hint, and the file is new. */
+	function legacyOf(name: string, metas: DocumentMeta[]): { legacy?: LegacyImport; empty?: { sourceId: string; importedAt: string } } {
+		if (!deps.graph) return {};
+		const ids = legacySourceIds(name);
+		const attached = new Set(metas.map((m) => m.sourceId));
+		const source = deps.graph.readSources().find((s) => ids.includes(s.id) && !attached.has(s.id));
+		if (!source) return {};
+		const nodeCount = new Set(deps.graph.readNodes().filter((n) => n.provenance.some((pt) => pt.chatId === source.id)).map((n) => n.id)).size;
+		return nodeCount > 0
+			? { legacy: { sourceId: source.id, importedAt: source.importedAt, nodeCount } }
+			: { empty: { sourceId: source.id, importedAt: source.importedAt } };
+	}
+
 	async function checkOne(file: IncomingFile, index: number, metas: DocumentMeta[]): Promise<CheckResult> {
+		const result = await classifyOne(file, index, metas);
+		if (result.error || result.verdict.status !== "new") return result;
+		const { legacy, empty } = legacyOf(file.name, metas);
+		if (legacy) return { ...result, verdict: { status: "legacy", legacy } };
+		return empty ? { ...result, legacyEmpty: empty } : result;
+	}
+
+	async function classifyOne(file: IncomingFile, index: number, metas: DocumentMeta[]): Promise<CheckResult> {
 		if (isPdf(file.bytes)) {
 			const pdfSha256 = sha256Hex(file.bytes);
 			const byBytes = metas.find((m) => m.pdfSha256 === pdfSha256);
@@ -233,6 +286,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		pdfSha256?: string;
 		pages?: number;
 		ocr?: DocumentMeta["ocr"];
+		sourceId?: string;
 	}): DocumentMeta {
 		const prior = store.getMeta(args.id);
 		const fp = fingerprint(args.markdown);
@@ -252,7 +306,9 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			origin: args.origin,
 			...(args.ocr ? { ocr: args.ocr } : {}),
 			sections: fp.sections,
-			sourceId: args.id,
+			// A replaced document keeps the graph source it already feeds (and an
+			// adopted old import keeps its legacy id); anything else starts at its id.
+			sourceId: args.sourceId ?? prior?.sourceId ?? args.id,
 		};
 	}
 
@@ -282,13 +338,66 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 	}
 
 	async function extract(meta: DocumentMeta, name: string, markdown: string): Promise<ImportCompletion> {
+		const body = parseFrontMatter(markdown).body;
+		// The sections index the full stored markdown; the extractor reads the
+		// body without its front matter, so shift the offsets to match.
+		const shift = markdown.length - body.length;
 		const stats = await deps.importNotes({
-			id: meta.id,
+			id: meta.sourceId,
 			title: meta.title,
 			filePath: name,
-			text: parseFrontMatter(markdown).body,
+			text: body,
+			topics: meta.topics,
+			sections: meta.sections.map((s) => ({ ...s, start: s.start - shift, end: s.end - shift })),
 		});
 		return { ok: true, outcome: "completed", docId: meta.id, stats };
+	}
+
+	/** Map a new document's topics onto the library's existing ones (cheap
+	 *  slot, across languages) and persist the mapping as the alias table
+	 *  BEFORE extraction - the merger applies it deterministically. Best
+	 *  effort: with no model or on any failure the topics stay as they are. */
+	async function canonicalizeTopics(topics: string[], signal?: AbortSignal): Promise<string[]> {
+		const graph = deps.graph;
+		if (!graph || topics.length === 0) return topics;
+		try {
+			const existing = normalizeTopics([...store.listMetas().flatMap((m) => m.topics), ...knownTopics(graph.readTopics())]);
+			const mapping = deps.canonicalize ? await deps.canonicalize(topics, existing, signal) : {};
+			const before = graph.readTopicAliases();
+			const after = addAliases(before, mapping);
+			if (JSON.stringify(after) !== JSON.stringify(before)) graph.writeTopicAliases(after);
+			return canonicalTopics(topics, after);
+		} catch (err) {
+			console.info(`[documents] topic canonicalisation skipped: ${err instanceof Error ? err.message : err}`);
+			return canonicalTopics(topics, graph.readTopicAliases());
+		}
+	}
+
+	/** ADOPT AN OLD IMPORT (PR H): the document is stored against the legacy
+	 *  graph source (meta.sourceId) and nothing is re-extracted. The source
+	 *  record keeps its usage log but takes the document's title as its
+	 *  label, and the cheap tagging pass files the source's existing nodes
+	 *  under the document's topics - rows that reach the ledger only through
+	 *  the merger (applyTopicRows). */
+	async function adopt(meta: DocumentMeta): Promise<ImportCompletion> {
+		const graph = deps.graph;
+		let tagged = 0;
+		if (graph) {
+			const prior = graph.readSources().find((s) => s.id === meta.sourceId);
+			graph.upsertSource({ id: meta.sourceId, filePath: meta.title, importedAt: prior?.importedAt ?? meta.importedAt });
+			if (deps.tagNodes && deps.applyTopicRows && meta.topics.length > 0) {
+				const seen = new Set<string>();
+				const nodes = graph
+					.readNodes()
+					.filter((n) => n.provenance.some((pt) => pt.chatId === meta.sourceId) && !seen.has(n.id) && !!seen.add(n.id))
+					.map((n) => ({ id: n.id, name: n.name, statement: n.statement }));
+				const assignments = await deps.tagNodes(meta.topics, nodes);
+				if (assignments.length > 0) {
+					tagged = await deps.applyTopicRows({ sourceId: meta.sourceId, label: meta.title, assignments });
+				}
+			}
+		}
+		return { ok: true, outcome: "completed", docId: meta.id, attached: true, tagged };
 	}
 
 	async function describeText(markdown: string, name: string): Promise<DocumentDescription> {
@@ -304,21 +413,22 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		return verdict.of && (decision === "replace" || verdict.status === "duplicate") ? verdict.of.id : undefined;
 	}
 
-	async function importMarkdown(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined): Promise<ImportTicket> {
+	async function importMarkdown(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined, attachTo?: string): Promise<ImportTicket> {
 		const markdown = decodeText(file.bytes);
 		if (markdown === null || normalizeText(markdown) === "") {
 			return { index, name: file.name, outcome: "failed", error: markdown === null ? "Not a text or PDF file." : "The file is empty." };
 		}
 		const fp = fingerprint(markdown);
 		const id = targetOf(verdict, decision) ?? freshId({ contentHash: fp.contentHash });
-		const description = await describeText(markdown, file.name);
-		const meta = buildMeta({ id, markdown, description, filename: file.name, origin: "markdown" });
+		const described = await describeText(markdown, file.name);
+		const description = { ...described, topics: await canonicalizeTopics(normalizeTopics(described.topics)) };
+		const meta = buildMeta({ id, markdown, description, filename: file.name, origin: "markdown", sourceId: attachTo });
 		store.save(meta, markdown);
-		const completion = settle(() => extract(meta, file.name, markdown), meta.title);
+		const completion = settle(() => (attachTo ? adopt(meta) : extract(meta, file.name, markdown)), meta.title);
 		return { index, name: file.name, outcome: "started", docId: meta.id, title: meta.title, completion };
 	}
 
-	async function importPdf(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined): Promise<ImportTicket> {
+	async function importPdf(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined, attachTo?: string): Promise<ImportTicket> {
 		if (!ocr.configured()) {
 			throw new OcrError("ocr_not_configured", "PDF import needs the OCR service, and OCR_URL is not set on this server.");
 		}
@@ -353,7 +463,8 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 				console.info(`[documents] scan of ${file.name} duplicates ${textVerdict.of.id} - not stored`);
 				return { ok: true, outcome: "skipped", duplicateOf: { id: textVerdict.of.id, title: textVerdict.of.title } } satisfies ImportCompletion;
 			}
-			const description = describedByFrontMatter(fm.data) ?? (await deps.describe(normalizeText(markdown, { keepCase: true })));
+			const described = describedByFrontMatter(fm.data) ?? (await deps.describe(normalizeText(markdown, { keepCase: true })));
+			const description = { ...described, topics: await canonicalizeTopics(normalizeTopics(described.topics), controller.signal) };
 			const id = targetId ?? freshId({ pdfSha256, contentHash: fingerprint(markdown).contentHash });
 			const meta = buildMeta({
 				id,
@@ -364,9 +475,10 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 				pdfSha256,
 				pages: pages ?? (typeof fm.data.pages === "number" ? fm.data.pages : undefined),
 				ocr: { job, strategy, costUsd },
+				sourceId: attachTo,
 			});
 			store.save(meta, markdown);
-			return extract(meta, file.name, markdown);
+			return attachTo ? adopt(meta) : extract(meta, file.name, markdown);
 		}, stem(file.name));
 		return { index, name: file.name, outcome: "started", docId: targetId ?? documentIdFor({ pdfSha256 }), title: stem(file.name), completion };
 	}
@@ -438,16 +550,21 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 					tickets.push({ index, name: file.name, outcome: "failed", error: checked.error });
 					continue;
 				}
-				// A decision only exists for a file that matched something.
-				const decision: DocumentDecision | undefined = checked.verdict.status === "new" ? undefined : (decisions[index] ?? "skip");
+				// A decision only exists for a file that matched something. An old
+				// import (legacy) defaults to attach; everything else to skip.
+				const legacy = checked.verdict.legacy;
+				const asked = decisions[index] ?? (legacy ? "attach" : "skip");
+				const decision: DocumentDecision | undefined =
+					checked.verdict.status === "new" ? undefined : asked === "attach" && !legacy ? "skip" : asked;
+				const attachTo = legacy && decision === "attach" ? legacy.sourceId : undefined;
 				if (decision === "skip") {
 					tickets.push({ index, name: file.name, outcome: "skipped", ...(checked.verdict.of ? { docId: checked.verdict.of.id, title: checked.verdict.of.title } : {}) });
 					continue;
 				}
 				tickets.push(
 					checked.kind === "pdf"
-						? await importPdf(file, index, checked.verdict, decision)
-						: await importMarkdown(file, index, checked.verdict, decision),
+						? await importPdf(file, index, checked.verdict, decision, attachTo)
+						: await importMarkdown(file, index, checked.verdict, decision, attachTo),
 				);
 			} catch (err) {
 				const f = failureOf(err);

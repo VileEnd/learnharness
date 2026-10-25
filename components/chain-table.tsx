@@ -54,7 +54,7 @@
  * Read-only toward the graph.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import {
 	ChevronDownIcon,
@@ -68,8 +68,9 @@ import {
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
-import { chainsForSelection, formatChainLine, fuzzyScore } from "@/src/core";
-import type { GraphChain, GraphNode } from "@/src/core";
+import { chainsForSelection, formatChainLine, fuzzyScore, groupChains } from "@/src/core";
+import type { ChainGroup, GraphChain, GraphGroupBy, GraphNode, SnapshotDocument } from "@/src/core";
+import { GroupByToggle } from "@/components/group-by-toggle";
 import { TopBar } from "@/components/top-bar";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog";
 import { LatexGlyph } from "@/components/latex-glyph";
@@ -80,18 +81,6 @@ export interface ChainSort {
 	col: ChainSortCol;
 	/** 1 = ascending (A→Z, oldest-first, smallest-first), -1 = descending. */
 	dir: 1 | -1;
-}
-
-/** A cluster's chains share the conclusion's birth (owner ruling). This
- *  record is assembled per render from the visible chains. */
-interface ClusterGroup {
-	key: string;
-	birth: string | null;
-	label: string | null;
-	kind: "chat" | "notes" | null;
-	chains: ReturnType<typeof chainsForSelection>;
-	nodeIds: string[];
-	newestCreatedAt: string;
 }
 
 /** The table's pure body — exported for SSR pins (the render-suite
@@ -117,11 +106,22 @@ export function ChainTableBody({
 	onClose,
 	selectMode,
 	onSelect,
+	groupBy = "source",
+	onGroupBy,
+	nodeTopics = {},
+	documents = {},
 }: {
 	nodes: GraphNode[];
 	chains: GraphChain[];
 	sessions: Record<string, string>;
 	fileSources: Record<string, string>;
+	/** PR H: how folders form. "topic" = topic -> document -> section;
+	 *  "source" = chat / notes, or document -> section for documents. */
+	groupBy?: GraphGroupBy;
+	/** Present = the header shows the "Group by" switch. */
+	onGroupBy?: (next: GraphGroupBy) => void;
+	nodeTopics?: Record<string, string[]>;
+	documents?: Record<string, SnapshotDocument>;
 	query: string;
 	onQuery: (v: string) => void;
 	sort: ChainSort;
@@ -170,60 +170,45 @@ export function ChainTableBody({
 			.map(({ chain }) => chain);
 	}, [chains, byId, query, searching]);
 
-	// Group the visible chains by their CONCLUSION's birth (owner ruling).
+	// Group the visible chains (core/chains.ts groupChains): a chain lives
+	// where its CONCLUSION was born (owner ruling); documents add a section
+	// level, and topic mode puts topic -> document -> section on top.
 	// Unlabeled births (provenance gone / never named) form one honest
 	// muted group, sorted last under name-sort.
 	const groups = useMemo(() => {
-		const map = new Map<string, ClusterGroup>();
-		for (const chain of visibleChains) {
-			const conclusion = byId.get(chain.conclusion);
-			const birth = conclusion?.provenance[0]?.chatId ?? null;
-			const key = birth ?? "\0unlabeled";
-			let group = map.get(key);
-			if (!group) {
-				const label = birth === null ? null : (sessions[birth] ?? fileSources[birth] ?? null);
-				const kind =
-					birth === null ? null : sessions[birth] !== undefined ? "chat" : fileSources[birth] !== undefined ? "notes" : null;
-				group = { key, birth, label, kind, chains: [], nodeIds: [], newestCreatedAt: "" };
-				map.set(key, group);
-			}
-			group.chains.push(chain);
-			for (const id of [...chain.premises, chain.conclusion]) {
-				if (!group.nodeIds.includes(id)) group.nodeIds.push(id);
-				const createdAt = byId.get(id)?.createdAt ?? "";
-				if (createdAt > group.newestCreatedAt) group.newestCreatedAt = createdAt;
-			}
-		}
 		const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
-		const list = [...map.values()];
-		// Sort law (owner ruling: all three columns sortable — consistency):
-		// the active column orders BOTH cluster rows and chains within; name
-		// is the universal tiebreak (asc). Unlabeled clusters sort last under
-		// name-sort (￿ sentinel).
-		const nameKey = (g: ClusterGroup) => g.label ?? "\uffff";
-		const cmpName = (a: ClusterGroup, b: ClusterGroup) => collator.compare(nameKey(a), nameKey(b)) * (sort.col === "name" ? sort.dir : 1);
-		const cmpProps = (a: ClusterGroup, b: ClusterGroup) =>
+		type Chain = (typeof chains)[number];
+		// Sort law (owner ruling: all three columns sortable - consistency):
+		// the active column orders folders AND chains within, at every level;
+		// name is the universal tiebreak (asc). Unlabeled folders sort last
+		// under name-sort (￿ sentinel).
+		const nameKey = (g: ChainGroup) => g.label ?? "\uffff";
+		const cmpName = (a: ChainGroup, b: ChainGroup) => collator.compare(nameKey(a), nameKey(b)) * (sort.col === "name" ? sort.dir : 1);
+		const cmpProps = (a: ChainGroup, b: ChainGroup) =>
 			sort.dir === -1 ? b.nodeIds.length - a.nodeIds.length : a.nodeIds.length - b.nodeIds.length;
-		const cmpCreated = (a: ClusterGroup, b: ClusterGroup) =>
+		const cmpCreated = (a: ChainGroup, b: ChainGroup) =>
 			sort.dir === -1 ? b.newestCreatedAt.localeCompare(a.newestCreatedAt) : a.newestCreatedAt.localeCompare(b.newestCreatedAt);
-		list.sort((a, b) =>
-			sort.col === "created" ? cmpCreated(a, b) || cmpName(a, b) : sort.col === "props" ? cmpProps(a, b) || cmpName(a, b) : cmpName(a, b),
-		);
-		for (const group of list) {
-			const chainName = (chain: (typeof chains)[number]) => byId.get(chain.conclusion)?.name ?? chain.conclusion;
-			const chainSize = (chain: (typeof chains)[number]) => chain.premises.length + 1;
-			const chainDate = (chain: (typeof chains)[number]) => byId.get(chain.conclusion)?.createdAt ?? "";
-			const cName = (a: (typeof chains)[number], b: (typeof chains)[number]) => collator.compare(chainName(a), chainName(b)) * (sort.col === "name" ? sort.dir : 1);
-			const cProps = (a: (typeof chains)[number], b: (typeof chains)[number]) =>
-				sort.dir === -1 ? chainSize(b) - chainSize(a) : chainSize(a) - chainSize(b);
-			const cDate = (a: (typeof chains)[number], b: (typeof chains)[number]) =>
-				sort.dir === -1 ? chainDate(b).localeCompare(chainDate(a)) : chainDate(a).localeCompare(chainDate(b));
-			group.chains.sort((a, b) =>
-				sort.col === "created" ? cDate(a, b) || cName(a, b) : sort.col === "props" ? cProps(a, b) || cName(a, b) : cName(a, b),
+		const chainName = (chain: Chain) => byId.get(chain.conclusion)?.name ?? chain.conclusion;
+		const chainSize = (chain: Chain) => chain.premises.length + 1;
+		const chainDate = (chain: Chain) => byId.get(chain.conclusion)?.createdAt ?? "";
+		const cName = (a: Chain, b: Chain) => collator.compare(chainName(a), chainName(b)) * (sort.col === "name" ? sort.dir : 1);
+		const cProps = (a: Chain, b: Chain) => (sort.dir === -1 ? chainSize(b) - chainSize(a) : chainSize(a) - chainSize(b));
+		const cDate = (a: Chain, b: Chain) =>
+			sort.dir === -1 ? chainDate(b).localeCompare(chainDate(a)) : chainDate(a).localeCompare(chainDate(b));
+		const sortLevel = (list: ChainGroup[]): ChainGroup[] => {
+			list.sort((a, b) =>
+				sort.col === "created" ? cmpCreated(a, b) || cmpName(a, b) : sort.col === "props" ? cmpProps(a, b) || cmpName(a, b) : cmpName(a, b),
 			);
-		}
-		return list;
-	}, [visibleChains, byId, sessions, fileSources, sort]);
+			for (const group of list) {
+				group.chains.sort((a, b) =>
+					sort.col === "created" ? cDate(a, b) || cName(a, b) : sort.col === "props" ? cProps(a, b) || cName(a, b) : cName(a, b),
+				);
+				sortLevel(group.children);
+			}
+			return list;
+		};
+		return sortLevel(groupChains({ chains: visibleChains, nodes: byId, groupBy, sessions, fileSources, nodeTopics, documents }));
+	}, [visibleChains, byId, sessions, fileSources, sort, groupBy, nodeTopics, documents]);
 
 	// The derived shape under the floating bar (the agents' ACTUAL input).
 	const derived = useMemo(() => {
@@ -235,6 +220,180 @@ export function ChainTableBody({
 	const dateOf = (id: string) => byId.get(id)?.createdAt.slice(0, 10) ?? "";
 	const dirIcon = (col: ChainSortCol) =>
 		sort.col !== col ? null : sort.dir === 1 ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />;
+
+	const renderGroup = (group: ChainGroup, depth: number): ReactNode => {
+						const open = searching || expandedClusters.has(group.key);
+						const selectedCount = group.nodeIds.filter((id) => selection.has(id)).length;
+						return (
+							<div
+								key={group.key}
+								data-testid={`cluster-group-${group.key}`}
+								// The horizontal rules (owner rulings, rounds 2 + 5): between
+								// cluster groups AND under the last one — the table is framed
+								// top (header) and bottom. Never on individual rows.
+								className={depth === 0 ? "relative border-b border-border/60" : "relative"}
+							>
+								{/* The TREE THREAD (owner rounds 5–6): a vertical guide at the
+								    expander arrow's column (center 37px: pl-3 + checkbox 14 +
+								    gap 4 + half the 14px expander), BRACKETED by checkbox
+								    bottom edges — it starts at the cluster row's own checkbox
+								    bottom (top-[23px], leaving the arrow's stroke a visible
+								    gap, live-measured) and terminates exactly at the LAST
+								    checkbox bottom (bottom-[8px] = 9px from the border box minus the 1px group rule, measured). */}
+								{open && depth === 0 && group.children.length === 0 && group.chains.length > 0 && (
+									<div
+										data-testid={`cluster-thread-${group.key}`}
+										className="pointer-events-none absolute bottom-[8px] left-[37px] top-[23px] w-px bg-border/50"
+									/>
+								)}
+								{/* The cluster row: birth-session group header. */}
+								<div className="flex items-center gap-1 px-3 py-1.5">
+									<RowCheckbox
+										checked={selectedCount === group.nodeIds.length && group.nodeIds.length > 0}
+										indeterminate={selectedCount > 0 && selectedCount < group.nodeIds.length}
+										onToggle={(next) => onToggleNodes(group.nodeIds, next)}
+										testid={`cluster-checkbox-${group.key}`}
+										label={`Select everything born in ${group.label ?? "unlabeled"}`}
+									/>
+									<Expander open={open} onClick={() => onToggleCluster(group.key)} testid={`cluster-toggle-${group.key}`} label={`Expand cluster ${group.label ?? "unlabeled"}`} />
+									<span className="flex shrink-0 items-center justify-center text-muted-foreground">
+										{open ? <FolderOpenIcon className="size-3.5" /> : <FolderIcon className="size-3.5" />}
+									</span>
+									<span onClick={() => onToggleCluster(group.key)} className="min-w-0 flex-1 truncate text-sm font-medium">
+										{group.label ?? <span className="text-muted-foreground/60">unlabeled</span>}
+										{group.kind === "notes" && <span className="ml-2 text-[11px] uppercase tracking-widest text-muted-foreground/60">notes</span>}
+									</span>
+									<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
+										{group.nodeIds.length}
+									</span>
+									<span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
+										{group.newestCreatedAt.slice(0, 10)}
+									</span>
+								</div>
+	
+								{/* The chain rows — clearly indented under the folder
+								    (owner ruling); visible only when the cluster is open
+								    (searching auto-expands). */}
+								{/* Deeper folders (PR H): documents inside a topic, sections
+								    inside a document - the same folder, indented one step. */}
+								{open &&
+									group.children.map((sub) => (
+										<div key={sub.key} className="ml-4">
+											{renderGroup(sub, depth + 1)}
+										</div>
+									))}
+								{open &&
+									group.chains.map((chain) => {
+										const memberIds = [...chain.premises, chain.conclusion];
+										const chainOpen = expandedChains.has(chain.id);
+										const selectedInChain = memberIds.filter((id) => selection.has(id)).length;
+										return (
+											<div key={chain.id} data-testid={`chain-block-${chain.id}`} className="relative">
+													{/* The chain's own thread (owner rounds 5–6): the same
+													    bracket law one level down — at the chain arrow's column
+													    (center 73px), from the chain row's checkbox bottom
+													    (top-[22px]) to the LAST statement row's checkbox bottom
+													    (bottom-[8px]) — live-measured anchors. */}
+													{chainOpen && memberIds.length > 0 && (
+														<div
+															data-testid={`chain-thread-${chain.id}`}
+															className="pointer-events-none absolute bottom-[8px] left-[57px] top-[22px] w-px bg-border/50 sm:left-[73px]"
+														/>
+													)}
+												<div
+													data-testid={`chain-row-${chain.id}`}
+													aria-label={formatChainLine(chain, Object.fromEntries([...byId.entries()].map(([id, n]) => [id, { name: n.name }])))}
+													className="flex items-center gap-1 py-1 pl-8 pr-3 sm:pl-12"
+												>
+													<RowCheckbox
+														checked={selectedInChain === memberIds.length && memberIds.length > 0}
+														indeterminate={selectedInChain > 0 && selectedInChain < memberIds.length}
+														onToggle={(next) => onToggleNodes(memberIds, next)}
+														testid={`chain-checkbox-${chain.id}`}
+														label={`Select chain ${nameOf(chain.conclusion)}`}
+													/>
+													<Expander open={chainOpen} onClick={() => onToggleChain(chain.id)} testid={`chain-toggle-${chain.id}`} label={`Expand chain ${nameOf(chain.conclusion)}`} />
+													{/* The chain line: proposition names as faint-outlined
+													    chips. THE LOGIC IS THE PAYLOAD (owner rulings,
+													    2026-09-30): premises join with the LaTeX LAND (∧),
+													    the conclusion separates by the LaTeX IMPLICATION
+													    (⟹) — `A ∧ B ⟹ C`, never the misleading `A → B →
+													    C` — the glyphs render through KaTeX (the app's
+													    math engine), PROMINENT in the theme foreground
+													    (white), not the old dim gray. A lonely chip reads
+													    as a standalone proposition (no glyphs at all);
+													    the row's aria-label keeps the plain-text form. */}
+													<span onClick={() => onToggleChain(chain.id)} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 gap-y-1 text-[13px] leading-tight">
+														{memberIds.map((id, i) => {
+															const isConclusion = i === memberIds.length - 1;
+															return (
+																<span key={id} className="flex items-center">
+																	{i > 0 && (isConclusion ? (
+																		<LatexGlyph
+																			cmd="\implies"
+																			testid={`chain-implies-${chain.id}`}
+																			className="px-1.5 text-foreground"
+																		/>
+																	) : (
+																		<LatexGlyph
+																			cmd="\land"
+																			testid={`chain-and-${chain.id}-${i}`}
+																			className="px-1.5 text-foreground"
+																		/>
+																	))}
+																	<span
+																		data-testid={`prop-chip-${id}`}
+																		className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5"
+																	>
+																		{nameOf(id)}
+																	</span>
+																</span>
+															);
+														})}
+													</span>
+													<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
+														{memberIds.length}
+													</span>
+													<span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
+														{dateOf(chain.conclusion)}
+													</span>
+												</div>
+	
+												{/* The propositions — their STATEMENT text directly (owner
+												    ruling: names live in the line; a singleton reveals its
+												    one statement in one click). PLAIN rows: the derivation
+												    is already encoded in the chain line — no conclusion
+												    marker down here. Deepest indent. */}
+												{chainOpen &&
+													memberIds.map((id) => {
+														const node = byId.get(id);
+														if (!node) return null;
+														return (
+															<div
+																key={id}
+																data-testid={`prop-row-${id}`}
+																className="flex items-start gap-2 py-1 pl-16 pr-3 sm:pl-21"
+															>
+																<RowCheckbox
+																	checked={selection.has(id)}
+																	onToggle={(next) => onToggleNodes([id], next)}
+																	testid={`prop-checkbox-${id}`}
+																	label={`Select node ${node.name}`}
+																/>
+																<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+																	{node.statement}
+																</span>
+																<span className="hidden w-14 shrink-0 sm:block" />
+																<span className="hidden w-20 shrink-0 sm:block" />
+															</div>
+														);
+													})}
+											</div>
+										);
+									})}
+							</div>
+						);
+					};
 
 	return (
 		<div data-testid="chain-table" className="relative flex h-full min-h-0 flex-col">
@@ -289,6 +448,7 @@ export function ChainTableBody({
 					>
 						Name {dirIcon("name")}
 					</button>
+					{onGroupBy && <GroupByToggle value={groupBy} onChange={onGroupBy} />}
 					<button
 						type="button"
 						data-testid="sort-props"
@@ -315,171 +475,7 @@ export function ChainTableBody({
 					</div>
 				)}
 
-				{groups.map((group) => {
-					const open = searching || expandedClusters.has(group.key);
-					const selectedCount = group.nodeIds.filter((id) => selection.has(id)).length;
-					return (
-						<div
-							key={group.key}
-							data-testid={`cluster-group-${group.key}`}
-							// The horizontal rules (owner rulings, rounds 2 + 5): between
-							// cluster groups AND under the last one — the table is framed
-							// top (header) and bottom. Never on individual rows.
-							className="relative border-b border-border/60"
-						>
-							{/* The TREE THREAD (owner rounds 5–6): a vertical guide at the
-							    expander arrow's column (center 37px: pl-3 + checkbox 14 +
-							    gap 4 + half the 14px expander), BRACKETED by checkbox
-							    bottom edges — it starts at the cluster row's own checkbox
-							    bottom (top-[23px], leaving the arrow's stroke a visible
-							    gap, live-measured) and terminates exactly at the LAST
-							    checkbox bottom (bottom-[8px] = 9px from the border box minus the 1px group rule, measured). */}
-							{open && group.chains.length > 0 && (
-								<div
-									data-testid={`cluster-thread-${group.key}`}
-									className="pointer-events-none absolute bottom-[8px] left-[37px] top-[23px] w-px bg-border/50"
-								/>
-							)}
-							{/* The cluster row: birth-session group header. */}
-							<div className="flex items-center gap-1 px-3 py-1.5">
-								<RowCheckbox
-									checked={selectedCount === group.nodeIds.length && group.nodeIds.length > 0}
-									indeterminate={selectedCount > 0 && selectedCount < group.nodeIds.length}
-									onToggle={(next) => onToggleNodes(group.nodeIds, next)}
-									testid={`cluster-checkbox-${group.key}`}
-									label={`Select everything born in ${group.label ?? "unlabeled"}`}
-								/>
-								<Expander open={open} onClick={() => onToggleCluster(group.key)} testid={`cluster-toggle-${group.key}`} label={`Expand cluster ${group.label ?? "unlabeled"}`} />
-								<span className="flex shrink-0 items-center justify-center text-muted-foreground">
-									{open ? <FolderOpenIcon className="size-3.5" /> : <FolderIcon className="size-3.5" />}
-								</span>
-								<span onClick={() => onToggleCluster(group.key)} className="min-w-0 flex-1 truncate text-sm font-medium">
-									{group.label ?? <span className="text-muted-foreground/60">unlabeled</span>}
-									{group.kind === "notes" && <span className="ml-2 text-[11px] uppercase tracking-widest text-muted-foreground/60">notes</span>}
-								</span>
-								<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
-									{group.nodeIds.length}
-								</span>
-								<span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
-									{group.newestCreatedAt.slice(0, 10)}
-								</span>
-							</div>
-
-							{/* The chain rows — clearly indented under the folder
-							    (owner ruling); visible only when the cluster is open
-							    (searching auto-expands). */}
-							{open &&
-								group.chains.map((chain) => {
-									const memberIds = [...chain.premises, chain.conclusion];
-									const chainOpen = expandedChains.has(chain.id);
-									const selectedInChain = memberIds.filter((id) => selection.has(id)).length;
-									return (
-										<div key={chain.id} data-testid={`chain-block-${chain.id}`} className="relative">
-												{/* The chain's own thread (owner rounds 5–6): the same
-												    bracket law one level down — at the chain arrow's column
-												    (center 73px), from the chain row's checkbox bottom
-												    (top-[22px]) to the LAST statement row's checkbox bottom
-												    (bottom-[8px]) — live-measured anchors. */}
-												{chainOpen && memberIds.length > 0 && (
-													<div
-														data-testid={`chain-thread-${chain.id}`}
-														className="pointer-events-none absolute bottom-[8px] left-[57px] top-[22px] w-px bg-border/50 sm:left-[73px]"
-													/>
-												)}
-											<div
-												data-testid={`chain-row-${chain.id}`}
-												aria-label={formatChainLine(chain, Object.fromEntries([...byId.entries()].map(([id, n]) => [id, { name: n.name }])))}
-												className="flex items-center gap-1 py-1 pl-8 pr-3 sm:pl-12"
-											>
-												<RowCheckbox
-													checked={selectedInChain === memberIds.length && memberIds.length > 0}
-													indeterminate={selectedInChain > 0 && selectedInChain < memberIds.length}
-													onToggle={(next) => onToggleNodes(memberIds, next)}
-													testid={`chain-checkbox-${chain.id}`}
-													label={`Select chain ${nameOf(chain.conclusion)}`}
-												/>
-												<Expander open={chainOpen} onClick={() => onToggleChain(chain.id)} testid={`chain-toggle-${chain.id}`} label={`Expand chain ${nameOf(chain.conclusion)}`} />
-												{/* The chain line: proposition names as faint-outlined
-												    chips. THE LOGIC IS THE PAYLOAD (owner rulings,
-												    2026-09-30): premises join with the LaTeX LAND (∧),
-												    the conclusion separates by the LaTeX IMPLICATION
-												    (⟹) — `A ∧ B ⟹ C`, never the misleading `A → B →
-												    C` — the glyphs render through KaTeX (the app's
-												    math engine), PROMINENT in the theme foreground
-												    (white), not the old dim gray. A lonely chip reads
-												    as a standalone proposition (no glyphs at all);
-												    the row's aria-label keeps the plain-text form. */}
-												<span onClick={() => onToggleChain(chain.id)} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 gap-y-1 text-[13px] leading-tight">
-													{memberIds.map((id, i) => {
-														const isConclusion = i === memberIds.length - 1;
-														return (
-															<span key={id} className="flex items-center">
-																{i > 0 && (isConclusion ? (
-																	<LatexGlyph
-																		cmd="\implies"
-																		testid={`chain-implies-${chain.id}`}
-																		className="px-1.5 text-foreground"
-																	/>
-																) : (
-																	<LatexGlyph
-																		cmd="\land"
-																		testid={`chain-and-${chain.id}-${i}`}
-																		className="px-1.5 text-foreground"
-																	/>
-																))}
-																<span
-																	data-testid={`prop-chip-${id}`}
-																	className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5"
-																>
-																	{nameOf(id)}
-																</span>
-															</span>
-														);
-													})}
-												</span>
-												<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
-													{memberIds.length}
-												</span>
-												<span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
-													{dateOf(chain.conclusion)}
-												</span>
-											</div>
-
-											{/* The propositions — their STATEMENT text directly (owner
-											    ruling: names live in the line; a singleton reveals its
-											    one statement in one click). PLAIN rows: the derivation
-											    is already encoded in the chain line — no conclusion
-											    marker down here. Deepest indent. */}
-											{chainOpen &&
-												memberIds.map((id) => {
-													const node = byId.get(id);
-													if (!node) return null;
-													return (
-														<div
-															key={id}
-															data-testid={`prop-row-${id}`}
-															className="flex items-start gap-2 py-1 pl-16 pr-3 sm:pl-21"
-														>
-															<RowCheckbox
-																checked={selection.has(id)}
-																onToggle={(next) => onToggleNodes([id], next)}
-																testid={`prop-checkbox-${id}`}
-																label={`Select node ${node.name}`}
-															/>
-															<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
-																{node.statement}
-															</span>
-															<span className="hidden w-14 shrink-0 sm:block" />
-															<span className="hidden w-20 shrink-0 sm:block" />
-														</div>
-													);
-												})}
-										</div>
-									);
-								})}
-						</div>
-					);
-				})}
+				{groups.map((group) => renderGroup(group, 0))}
 			</div>
 
 			{/* The floating selection bar (owner ruling: never shifts layout —
@@ -613,12 +609,20 @@ export function ChainTableOverlay({
 	selectMode,
 	controlledSelection,
 	onSelectionChange,
+	groupBy,
+	onGroupBy,
+	nodeTopics,
+	documents,
 }: {
 	open: boolean;
 	nodes: GraphNode[];
 	chains: GraphChain[];
 	sessions: Record<string, string>;
 	fileSources: Record<string, string>;
+	groupBy?: GraphGroupBy;
+	onGroupBy?: (next: GraphGroupBy) => void;
+	nodeTopics?: Record<string, string[]>;
+	documents?: Record<string, SnapshotDocument>;
 	onClose: () => void;
 	selectMode?: boolean;
 	controlledSelection?: ReadonlySet<string>;
@@ -693,6 +697,10 @@ export function ChainTableOverlay({
 					chains={storedChains}
 					sessions={sessions}
 					fileSources={fileSources}
+					groupBy={groupBy}
+					onGroupBy={onGroupBy}
+					nodeTopics={nodeTopics}
+					documents={documents}
 					query={query}
 					onQuery={setQuery}
 					sort={sort}

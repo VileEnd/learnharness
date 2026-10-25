@@ -122,6 +122,7 @@ describe("sanitizeRenderSettings", () => {
 			clusterLabelSize: 20,
 			regions: DEFAULT_REGION_TUNING,
 			physics: DEFAULT_PHYSICS_TUNING,
+			groupBy: "topic",
 		};
 		assert.deepEqual(sanitizeRenderSettings(valid), valid); // every value a ladder member
 	});

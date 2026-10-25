@@ -13,6 +13,8 @@
  *                                      another line; readers merge)
  *   sessions.jsonl  SessionCheckpoint— emission checkpoints (foldedAt)
  *   coverage.jsonl  CoverageEntry    — per-message extraction coverage
+ *   topics.jsonl    TopicRow         — topic membership (PR H); the merger's
+ *                                      alone, like every ledger here
  *
  * CHAINS-PRIMARY (owner, 2026-09-30): there is NO edges ledger — the edge
  * view (implication nodes + untyped arrows) is derived in core/graph.ts on
@@ -34,7 +36,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { LEDGER_FILES, POSITIONS_FILE, SOURCES_FILE } from "../../config.ts";
+import { LEDGER_FILES, POSITIONS_FILE, SOURCES_FILE, TOPIC_ALIASES_FILE } from "../../config.ts";
 import { assertGraphFormat, ensureGraphFormat } from "./graph-format.ts";
 import type {
 	GraphChain,
@@ -45,6 +47,7 @@ import type {
 	ProvenancePoint,
 	CoverageEntry,
 	SessionCheckpoint,
+	TopicRow,
 } from "../core/contracts.ts";
 import type { GraphStore } from "../core/ports.ts";
 
@@ -126,6 +129,9 @@ const isCheckpoint = (v: unknown): v is SessionCheckpoint =>
 const isCoverageEntry = (v: unknown): v is CoverageEntry =>
 	isRecord(v) && isString(v.chatId) && isString(v.fp) && typeof v.tokens === "number" && isString(v.foldedAt);
 
+const isTopicRow = (v: unknown): v is TopicRow =>
+	isRecord(v) && isString(v.nodeId) && isString(v.topic) && v.topic.trim() !== "" && isString(v.sourceId) && isString(v.at);
+
 // ─── the port implementation ────────────────────────────────────────────────
 
 export const graphStore: GraphStore = {
@@ -160,6 +166,32 @@ export const graphStore: GraphStore = {
 	},
 	readCoverage(): CoverageEntry[] {
 		return readValid(LEDGER_FILES.coverage, isCoverageEntry);
+	},
+
+	appendTopic(row: TopicRow): void {
+		appendLine(LEDGER_FILES.topics, row);
+	},
+	readTopics(): TopicRow[] {
+		return readValid(LEDGER_FILES.topics, isTopicRow);
+	},
+
+	// ── the topic alias table (config.TOPIC_ALIASES_FILE — a JSON map) ──
+	readTopicAliases(): Record<string, string> {
+		assertGraphFormat();
+		try {
+			const parsed: unknown = JSON.parse(fs.readFileSync(TOPIC_ALIASES_FILE, "utf-8"));
+			if (!isRecord(parsed)) return {};
+			return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => isString(e[1]) && e[1].trim() !== ""));
+		} catch {
+			return {}; // no table yet, or unreadable: no aliases
+		}
+	},
+	writeTopicAliases(aliases: Record<string, string>): void {
+		fs.mkdirSync(path.dirname(TOPIC_ALIASES_FILE), { recursive: true });
+		ensureGraphFormat();
+		const tmp = `${TOPIC_ALIASES_FILE}.tmp-${crypto.randomUUID().slice(0, 8)}`;
+		fs.writeFileSync(tmp, JSON.stringify(aliases, null, "	"), "utf-8");
+		fs.renameSync(tmp, TOPIC_ALIASES_FILE);
 	},
 
 	// ── imported-notes bookkeeping (config.SOURCES_FILE — a JSON map) ──
@@ -204,12 +236,14 @@ export const graphStore: GraphStore = {
 		chains?: GraphChain[];
 		coverage?: CoverageEntry[];
 		checkpoints?: SessionCheckpoint[];
+		topics?: TopicRow[];
 	}): void {
 		const files = {
 			nodes: LEDGER_FILES.nodes,
 			chains: LEDGER_FILES.chains,
 			coverage: LEDGER_FILES.coverage,
 			checkpoints: LEDGER_FILES.sessions,
+			topics: LEDGER_FILES.topics,
 		} as const;
 		for (const [key, records] of Object.entries(next) as [keyof typeof files, unknown[]][]) {
 			const file = files[key];

@@ -61,6 +61,28 @@ describe("Add documents", () => {
 		assert.ok(render({ 3: "new" }).includes("3 to add, 1 skipped"));
 	});
 
+	it("an old import of the file is 'legacy': attach by default, re-extract or skip as alternatives", () => {
+		const legacy = { status: "legacy" as const, legacy: { sourceId: "src_d29e7ef2599a", importedAt: "2026-09-30T14:48:11.111Z", nodeCount: 42 } };
+		assert.match(statusLabel(legacy), /^Already in your graph · imported .+ · 42 nodes — add to library \(no re-extraction\)$/);
+		assert.deepEqual(choicesFor(legacy), ["attach", "new", "skip"]);
+		const only: Entry[] = [{ ...ready(1, "learn database.md", legacy), check: { ...ready(1, "learn database.md", legacy).check!, legacyEmpty: undefined } }];
+		assert.ok(willImport(only[0]!, {}), "attach is the default, so it is sent");
+		assert.ok(!willImport(only[0]!, { 1: "skip" }));
+		const html = renderToStaticMarkup(createElement(AddDocumentsBody, {
+			entries: only, decisions: {}, phase: "pick", results: [], onPick: () => {}, onRemove: () => {}, onDecide: () => {}, onClose: () => {}, onImport: () => {},
+		}));
+		assert.ok(html.includes("Add to library") && html.includes("Re-extract") && html.includes("Skip"));
+		assert.match(html, /aria-checked="true"[^>]*>Add to library/);
+	});
+
+	it("shows the hint when the old import of the file produced nothing", () => {
+		const e: Entry = { ...ready(1, "notes.pdf", { status: "new" }, "pdf"), check: { index: 1, name: "notes.pdf", kind: "pdf", verdict: { status: "new" }, legacyEmpty: { sourceId: "src_x", importedAt: "2026-09-30T00:00:00.000Z" } } };
+		const html = renderToStaticMarkup(createElement(AddDocumentsBody, {
+			entries: [e], decisions: {}, phase: "pick", results: [], onPick: () => {}, onRemove: () => {}, onDecide: () => {}, onClose: () => {}, onImport: () => {},
+		}));
+		assert.ok(html.includes("the old import of this file produced nothing"));
+	});
+
 	it("is the full-screen-on-phones frame", () => {
 		const html = render();
 		assert.ok(html.includes('role="dialog"') && html.includes("h-dvh") && html.includes("max-sm:pt-safe"));

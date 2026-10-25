@@ -115,8 +115,11 @@ export function attachImpToCommunities(
 	communities: Array<{ id: string; members: string[] }>,
 	propositions: ReadonlyArray<Pick<GraphNode, "id" | "provenance">>,
 	chains: ReadonlyArray<Pick<GraphChain, "id" | "premises" | "conclusion" | "provenance">>,
+	/** The cluster key of a proposition (default: its birth session; the
+	 *  topic grouping passes its own). */
+	keyOf: (node: Pick<GraphNode, "id" | "provenance">) => string | null = birthSessionOf,
 ): void {
-	const birthById = new Map(propositions.map((node) => [node.id, birthSessionOf(node)]));
+	const birthById = new Map(propositions.map((node) => [node.id, keyOf(node)]));
 	const live = new Set(propositions.map((node) => node.id));
 	for (const chain of chains) {
 		if (chain.premises.length < 2) continue;
