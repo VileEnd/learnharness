@@ -39,7 +39,7 @@ export const LIBRARY_ESCAPE_MESSAGE =
 	"Paths are relative to the library root (start with index.md); absolute paths and '..' are not allowed.";
 
 /** Options shared by the library tool factories. `beforeAccess` runs before
- *  every call (the freshness hook; unused until the bundle service wires it). */
+ *  every call (the bundle freshness hook, src/server/okf.ts). */
 export interface LibraryToolOptions {
 	beforeAccess?: () => Promise<void>;
 }

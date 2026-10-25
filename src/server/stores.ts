@@ -10,6 +10,7 @@ import { chatStore } from "../store/chats.ts";
 import { documentStore } from "../store/documents.ts";
 import { graphStore } from "../store/graph.ts";
 import { jobStore } from "../store/jobs.ts";
+import { okfBundleStore } from "../store/okf.ts";
 import { pushStore } from "../store/push.ts";
 import { settingsStore } from "../store/settings.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
@@ -19,6 +20,7 @@ export const stores = {
 	documentStore,
 	graphStore,
 	jobStore,
+	okfBundleStore,
 	pushStore,
 	settingsStore,
 };

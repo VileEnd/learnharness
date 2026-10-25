@@ -49,6 +49,8 @@ export interface PracticeToolContext {
 	documents?: DocumentToolDeps;
 	/** The library root the read/ls/find/grep tools are confined to. */
 	libraryRoot: string;
+	/** Runs before every library tool call (the bundle freshness hook). */
+	libraryBeforeAccess?: () => Promise<void>;
 }
 
 /** TURN-SCOPED GATE STATE (the BKT incident, 2026-10-05): the gates used
@@ -243,10 +245,10 @@ export function practiceTools(ctx: PracticeToolContext): Record<string, AgentToo
 	return healToolRecord({
 		problem: problemTool(gate, ctx.graphNodes),
 		conclude: concludeTool(gate),
-		read: readToolFor(ctx.libraryRoot),
-		ls: lsToolFor(ctx.libraryRoot),
-		find: findToolFor(ctx.libraryRoot),
-		grep: grepToolFor(ctx.libraryRoot),
+		read: readToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+		ls: lsToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+		find: findToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
+		grep: grepToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 		...(jobs?.research ? { research: jobs.research } : {}),
 		...(ctx.graph ? proberGraphTools(ctx.graph) : {}),
 		...(ctx.documents ? documentTools(ctx.documents) : {}),

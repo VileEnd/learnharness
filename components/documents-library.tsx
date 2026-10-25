@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { FileTextIcon, SearchIcon, UploadIcon } from "lucide-react";
+import { DownloadIcon, FileTextIcon, SearchIcon, UploadIcon } from "lucide-react";
 import type { DocSearchResult, DocumentSummary } from "@/src/core";
 import { AddDocumentsDialog } from "@/components/add-documents-dialog";
 import { useServerEvent } from "@/components/server-events";
@@ -108,6 +108,17 @@ export function DocumentsLibraryBody({
 						className="h-8 w-full rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring sm:w-56"
 					/>
 				</div>
+				<a
+					href="/api/okf/export"
+					download
+					data-testid="library-download-okf"
+					aria-label="Download as OKF"
+					title="Download the library as an Open Knowledge Format bundle (zip)"
+					className="flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border/70 bg-card/80 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground max-sm:w-8 max-sm:px-0"
+				>
+					<DownloadIcon className="size-3.5" />
+					<span className="hidden sm:inline">Download as OKF</span>
+				</a>
 				<button
 					type="button"
 					onClick={onAdd}

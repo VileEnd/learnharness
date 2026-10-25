@@ -28,6 +28,7 @@ import type {
 	NotesSource,
 } from "./contracts.ts";
 import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/documents.ts";
+import type { OkfFile } from "./contracts/okf.ts";
 import type { UserSettings } from "./settings.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -296,4 +297,24 @@ export interface DocumentStore {
 	readPendingBatches(): PendingBatch[];
 	/** Replace the whole pending list (atomic). */
 	writePendingBatches(batches: PendingBatch[]): void;
+}
+
+// ─── OkfBundleStore — the generated library bundle (data/okf) ───────────────
+
+/**
+ * The OKF bundle is a REGENERABLE CACHE of the ledgers, written ONLY through
+ * this port (src/server/okf.ts decides when; core/okf.ts renders what). The
+ * rebuild is atomic: the files are written into a sibling temp directory and
+ * renamed over the root, so a reader sees the previous complete bundle or the
+ * new complete one, never a half-written tree. The stamp (`<root>.stamp`, beside the bundle so agents never see it)
+ * records which source state the bundle was built from. Reads never throw
+ * and never create anything.
+ */
+export interface OkfBundleStore {
+	/** Replace the whole bundle atomically (the old stamp stays until writeStamp). */
+	replaceAll(files: OkfFile[]): void;
+	/** The stamp of the current bundle, or null when absent. */
+	readStamp(): string | null;
+	/** Record the source stamp (atomic; the bundle root must exist). */
+	writeStamp(stamp: string): void;
 }
