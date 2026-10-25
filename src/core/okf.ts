@@ -13,6 +13,8 @@
  *   documents/index.md, documents/<doc>.md, documents/<doc>/index.md,
  *     documents/<doc>/<sid>-<slug>.md
  *   concepts/index.md, concepts/<concept>.md
+ *   me/index.md, me/overview.md, me/topics/<topic>.md, me/concepts/<concept>.md
+ *     (the learner model; links INTO the library, concept files never hold learner state)
  *
  * Gates (the agent settings) remove gated content EVERYWHERE, cross-links
  * and counts included: documents:false -> no documents/ and no link to it;
@@ -27,12 +29,13 @@
 import { createHash } from "node:crypto";
 import type { DocumentMeta, DocumentSection } from "./contracts/documents.ts";
 import type { GraphChain, GraphNode } from "./contracts/graph.ts";
+import type { ConceptState, EvidenceEvent, LearnerSnapshot } from "./contracts/learner.ts";
 import type { OkfFile, OkfInput } from "./contracts/okf.ts";
 import { topicKey } from "./topic-key.ts";
 
 export const OKF_VERSION = "0.2";
 /** Bumped when the renderer changes what it writes; part of the freshness stamp, so a deploy rebuilds the bundle. */
-export const OKF_RENDER_REV = 1;
+export const OKF_RENDER_REV = 2;
 /** log.md keeps at most this many date headings (newest first); older days drop off. */
 export const LOG_MAX_DATES = 100;
 /** Index lines carry a description cut to this many characters. */
@@ -247,6 +250,210 @@ const headingOf = (sec: DocumentSection) => sec.headingPath.at(-1) ?? "";
 const sectionTitle = (sec: DocumentSection) => headingOf(sec) || "Introduction";
 const safeId = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "-");
 const isDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}/.test(s);
+
+// ─── me/ : the learner model, linking INTO the library ───────────────────────
+
+const ME_VERBS: Record<string, string> = {
+	correct: "answered correctly",
+	tentative: "answered correctly but unsure",
+	miss: "missed",
+	dontKnow: "didn't know",
+	partly: "partly right",
+	wrong: "got wrong",
+	solved: "solved",
+	solvedWithHints: "solved with hints",
+	movedOn: "moved on",
+	surrendered: "gave up",
+};
+/** The "Weakest foundations" and "Due now" lists show at most this many entries. */
+const ME_LIST_MAX = 15;
+const ME_DUE_MAX = 25;
+
+/** `YYYY-MM-DDTHH:mm:ssZ`, the form `stale_after` takes. */
+const isoZ = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+const cell = (s: string) => mdText(s).replace(/\|/g, "\\|");
+const dayOf = (iso: string) => (isDate(iso) ? iso.slice(0, 10) : iso);
+
+interface MeInput {
+	learner: LearnerSnapshot;
+	nodes: GraphNode[];
+	nodeById: Map<string, GraphNode>;
+	nodePath: Map<string, string>;
+	chains: GraphChain[];
+	topics: Array<{ label: string; path: string; nodes: string[] }>;
+	untagged: GraphNode[];
+	chatTitle: (chatId: string) => string | undefined;
+}
+
+const STATE_LABEL: Record<ConceptState["state"], string> = {
+	"not-yet-checked": "Not yet checked",
+	shaky: "Shaky",
+	learning: "Learning",
+	solid: "Solid",
+};
+
+/** Every file of me/ (paths already prefixed) and the one-line root-index description. */
+function renderMe(m: MeInput): Array<[string, string]> {
+	const out: Array<[string, string]> = [];
+	const stateOf = (id: string): ConceptState =>
+		m.learner.states[id] ?? { conceptId: id, state: "not-yet-checked", due: false, streak: 0, weakFoundation: false, last: [], history: [], openMisconceptions: [] };
+	const fileOf = (id: string) => m.nodePath.get(id)!.slice("concepts/".length);
+	const nameOf = (id: string) => m.nodeById.get(id)!.name;
+	const sessionOf = (e: EvidenceEvent) => {
+		const t = m.chatTitle(e.chatId);
+		return t ? `"${oneLine(t)}"` : "a session";
+	};
+	const noteOf = (e: EvidenceEvent) => (e.note ? `: ${cut(e.note, INDEX_DESC_MAX)}` : "");
+	const verbOf = (e: EvidenceEvent) => ME_VERBS[e.raw] ?? e.raw;
+	/** "missed 2026-10-20 in "Semaphores": confused P and V" */
+	const evidenceLine = (e: EvidenceEvent) => `${verbOf(e)} ${dayOf(e.at)} in ${sessionOf(e)}${noteOf(e)}`;
+	const stateLine = (s: ConceptState): string => {
+		const next = s.nextReviewAt ? dayOf(s.nextReviewAt) : "";
+		const lastE = s.last[0];
+		if (s.state === "shaky") return `Shaky - last result: ${lastE ? `${verbOf(lastE)} on ${dayOf(lastE.at)}` : "not clean"}.`;
+		if (s.state === "not-yet-checked") return "Not yet checked.";
+		const run = `${s.streak} clean ${s.streak === 1 ? "session" : "sessions"} in a row`;
+		return `${STATE_LABEL[s.state]} - ${run}${next ? `, ${s.due ? "due since" : "next review"} ${next}` : ""}.`;
+	};
+
+	// ── me/concepts/: only concepts with evidence ──
+	const withEvidence = m.nodes.filter((n) => stateOf(n.id).history.length > 0);
+	for (const n of withEvidence) {
+		const s = stateOf(n.id);
+		const path = `me/concepts/${fileOf(n.id)}`;
+		const fm: Record<string, OkfValue> = { type: "Learner Concept", title: oneLine(n.name), description: stateLine(s) };
+		if (s.openMisconceptions.length > 0) {
+			fm.not = s.openMisconceptions.map((x) => ({ term: x.term, ...(x.why ? { why: x.why } : {}), ...(x.instead ? { instead: x.instead } : {}) }));
+		}
+		if (s.nextReviewAt) fm.stale_after = isoZ(Date.parse(s.nextReviewAt));
+		const history = s.history.map((e) => `- ${dayOf(e.at)} - ${verbOf(e)} in ${sessionOf(e)}${noteOf(e)}`);
+		out.push([path, `${okfFrontmatter(fm)}${link(path, m.nodePath.get(n.id)!, n.name)}\n\n# History\n${history.join("\n")}\n`]);
+	}
+	const hasPage = new Set(withEvidence.map((n) => n.id));
+
+	// ── me/topics/ ──
+	interface Group {
+		label: string;
+		path: string;
+		ids: string[];
+	}
+	const groups: Group[] = m.topics
+		.filter((t) => t.nodes.length > 0)
+		.map((t) => ({ label: t.label, path: `me/topics/${t.path.slice("topics/".length)}`, ids: t.nodes }));
+	if (m.untagged.length > 0) {
+		groups.push({ label: "Untagged concepts", path: `me/topics/${okfSlug("Untagged concepts", "none")}.md`, ids: m.untagged.map((n) => n.id) });
+	}
+	const counts = (ids: string[]) => {
+		const c = { solid: 0, learning: 0, shaky: 0, due: 0, unchecked: 0 };
+		for (const id of ids) {
+			const s = stateOf(id);
+			if (s.state === "solid") c.solid++;
+			else if (s.state === "learning") c.learning++;
+			else if (s.state === "shaky") c.shaky++;
+			else c.unchecked++;
+			if (s.due) c.due++;
+		}
+		return c;
+	};
+	const countsText = (ids: string[]) => {
+		const c = counts(ids);
+		return `${c.solid} solid, ${c.learning} learning, ${c.shaky} shaky, ${c.due} due, ${c.unchecked} not yet checked`;
+	};
+	const byName = (a: string, b: string) => cmp(lc(nameOf(a)), lc(nameOf(b))) || cmp(a, b);
+	const byReview = (a: string, b: string) =>
+		(Date.parse(stateOf(a).nextReviewAt ?? "") || 0) - (Date.parse(stateOf(b).nextReviewAt ?? "") || 0) || byName(a, b);
+
+	for (const g of groups) {
+		const sections: Array<[string, string[], (a: string, b: string) => number]> = [
+			["Shaky", g.ids.filter((id) => stateOf(id).state === "shaky"), byName],
+			["Due for review", g.ids.filter((id) => stateOf(id).state !== "shaky" && stateOf(id).due), byReview],
+			["Learning", g.ids.filter((id) => stateOf(id).state === "learning" && !stateOf(id).due), byName],
+			["Solid", g.ids.filter((id) => stateOf(id).state === "solid" && !stateOf(id).due), byName],
+			["Not yet checked", g.ids.filter((id) => stateOf(id).state === "not-yet-checked"), byName],
+		];
+		const body: string[] = [];
+		for (const [heading, ids, sort] of sections) {
+			if (ids.length === 0) continue;
+			const lines = ids.sort(sort).map((id) => {
+				const s = stateOf(id);
+				const parts = [`- ${link(g.path, m.nodePath.get(id)!, nameOf(id))}`];
+				const bits: string[] = [];
+				if (s.last[0]) bits.push(evidenceLine(s.last[0]));
+				if (s.nextReviewAt && heading !== "Shaky") bits.push(`${s.due ? "due since" : "next review"} ${dayOf(s.nextReviewAt)}`);
+				if (s.weakFoundation) bits.push("rests on a shaky or due premise");
+				if (s.openMisconceptions.length > 0) bits.push(`open confusion: ${oneLine(s.openMisconceptions.map((x) => x.term).join("; "))}`);
+				if (bits.length > 0) parts.push(` - ${bits.join("; ")}`);
+				if (hasPage.has(id)) parts.push(` ([my record](${rel(g.path, `me/concepts/${fileOf(id)}`)}))`);
+				return parts.join("");
+			});
+			body.push(`# ${heading}\n${lines.join("\n")}`);
+		}
+		// stale_after: the earliest review among the learning/solid concepts.
+		const reviews = g.ids
+			.map(stateOf)
+			.filter((s) => (s.state === "learning" || s.state === "solid") && s.nextReviewAt)
+			.map((s) => Date.parse(s.nextReviewAt!))
+			.filter((t) => Number.isFinite(t));
+		const fm: Record<string, OkfValue> = { type: "Learner Topic", title: g.label, description: countsText(g.ids) };
+		if (reviews.length > 0) fm.stale_after = isoZ(Math.min(...reviews));
+		out.push([g.path, `${okfFrontmatter(fm)}${body.join("\n\n")}\n`]);
+	}
+
+	// ── me/overview.md ──
+	const allIds = m.nodes.map((n) => n.id);
+	const total = counts(allIds);
+	const rows = groups.map((g) => {
+		const c = counts(g.ids);
+		return `| ${link("me/overview.md", g.path, g.label)} | ${c.solid} | ${c.learning} | ${c.shaky} | ${c.due} | ${c.unchecked} |`;
+	});
+	const table = [
+		"| Topic | Solid | Learning | Shaky | Due | Not yet checked |",
+		"| --- | --- | --- | --- | --- | --- |",
+		...rows,
+		`| **All concepts** | ${total.solid} | ${total.learning} | ${total.shaky} | ${total.due} | ${total.unchecked} |`,
+	];
+	const conceptLink = (id: string) => link("me/overview.md", m.nodePath.get(id)!, nameOf(id));
+	const dueIds = allIds.filter((id) => stateOf(id).due).sort(byReview);
+	const dueLines = dueIds.slice(0, ME_DUE_MAX).map((id) => `- ${conceptLink(id)} - due since ${dayOf(stateOf(id).nextReviewAt!)}`);
+	if (dueIds.length > ME_DUE_MAX) dueLines.push(`- ... and ${dueIds.length - ME_DUE_MAX} more`);
+	// Weakest foundations: shaky or due premises, ranked by how many conclusions rest on them.
+	const dependents = new Map<string, Set<string>>();
+	for (const c of m.chains) {
+		for (const p of c.premises) {
+			const s = stateOf(p);
+			if (s.state !== "shaky" && !s.due) continue;
+			const set = dependents.get(p) ?? new Set<string>();
+			set.add(c.conclusion);
+			dependents.set(p, set);
+		}
+	}
+	const rank = (id: string) => (stateOf(id).state === "shaky" ? 0 : 1);
+	const weakest = [...dependents.entries()]
+		.sort((a, b) => b[1].size - a[1].size || rank(a[0]) - rank(b[0]) || byName(a[0], b[0]))
+		.slice(0, ME_LIST_MAX)
+		.map(([id, deps]) => {
+			const names = [...deps].sort(byName);
+			const shown = names.slice(0, 3).map(conceptLink).join(", ");
+			const more = names.length > 3 ? ` and ${names.length - 3} more` : "";
+			return `- ${conceptLink(id)} (${stateOf(id).state === "shaky" ? "shaky" : "due"}) - ${names.length} ${names.length === 1 ? "concept rests" : "concepts rest"} on it: ${shown}${more}`;
+		});
+	const asOf = m.learner.asOf;
+	const overviewBody = [
+		`As of ${isDate(asOf) ? `${asOf.slice(0, 10)} ${asOf.slice(11, 16)} UTC` : asOf}.`,
+		`# By topic\n${table.join("\n")}`,
+		`# Due now\n${dueLines.length > 0 ? dueLines.join("\n") : "Nothing is due."}`,
+		`# Weakest foundations\n${weakest.length > 0 ? weakest.join("\n") : "No shaky or due concept holds anything else up."}`,
+	];
+	const overviewFm = { type: "Learner Model", title: "What I know", description: `${countsText(allIds)}.` };
+	out.push(["me/overview.md", `${okfFrontmatter(overviewFm)}${overviewBody.join("\n\n")}\n`]);
+
+	// ── me/index.md ──
+	const entries: IndexEntry[] = [{ type: "Learner Model", title: "What I know", link: "overview.md", desc: overviewFm.description }];
+	for (const g of groups) entries.push({ type: "Learner Topic", title: g.label, link: g.path.slice("me/".length), desc: countsText(g.ids) });
+	for (const n of withEvidence) entries.push({ type: "Learner Concept", title: n.name, link: `concepts/${fileOf(n.id)}`, desc: stateLine(stateOf(n.id)) });
+	out.push(["me/index.md", indexText(entries)]);
+	return out;
+}
 
 export function renderOkfBundle(input: OkfInput): OkfFile[] {
 	const { gates } = input;
@@ -592,6 +799,23 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 	if (topicEntries.length > 0) put("topics/index.md", indexText(topicEntries));
 	if (nodes.length > 0) put("concepts/index.md", indexText(conceptEntries));
 
+	// ── me/ (the learner model; needs the graph gate, a snapshot and at least one concept) ──
+	const showMe = gates.graph && input.learner !== undefined && nodes.length > 0;
+	if (showMe) {
+		for (const [path, content] of renderMe({
+			learner: input.learner!,
+			nodes,
+			nodeById,
+			nodePath,
+			chains,
+			topics,
+			untagged,
+			chatTitle: (id) => chatById.get(id)?.title,
+		})) {
+			put(path, content);
+		}
+	}
+
 	// ── log.md ──
 	const byDate = new Map<string, string[]>();
 	const logLine = (date: string | undefined, line: string) => {
@@ -624,10 +848,12 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 	if (nodes.length > 0) subdirs.push({ type: "Subdirectories", title: "concepts", link: "concepts/index.md", desc: `${nodes.length} propositions with the reasoning chains between them` });
 	if (docs.length > 0 && gates.documents) subdirs.push({ type: "Subdirectories", title: "documents", link: "documents/index.md", desc: `${docs.length} imported ${docs.length === 1 ? "document" : "documents"}, split into sections` });
 	if (topicEntries.length > 0) subdirs.push({ type: "Subdirectories", title: "topics", link: "topics/index.md", desc: "the subjects, with their documents and concepts" });
+	if (showMe) subdirs.push({ type: "Subdirectories", title: "me", link: "me/index.md", desc: "what the learner knows: states, due reviews and open confusions per concept" });
 	const nav: string[] = ["# How to navigate", ""];
 	nav.push(topicEntries.length > 0 ? "* Start with topics/index.md, open a topic, then follow its links." : "* Start with the directories listed above.");
 	if (docs.length > 0 && gates.documents) nav.push("* A document's sections hold the full text with page markers; cite them as title, page.");
 	if (nodes.length > 0) nav.push("* A concept states one proposition and links the concepts it follows from and leads to.");
+	if (showMe) nav.push("* me/overview.md says what the learner knows and what is due; me/topics/ says it per topic.");
 	nav.push("* log.md lists what changed, newest first.");
 	put("index.md", `${okfFrontmatter({ okf_version: OKF_VERSION })}${subdirs.length > 0 ? `${indexText(subdirs)}\n` : ""}${nav.join("\n")}\n`);
 

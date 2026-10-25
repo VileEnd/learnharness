@@ -20,7 +20,17 @@
  */
 
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { AttributionRow, ChatRecord, CoverageEntry, EvidenceEvent, EvidenceResult } from "./contracts.ts";
+import type {
+	AttributionRow,
+	ChatRecord,
+	ConceptState,
+	ConceptStateName,
+	CoverageEntry,
+	EvidenceEvent,
+	EvidenceResult,
+	GraphChain,
+	LearnerSnapshot,
+} from "./contracts.ts";
 import { coverageOf } from "./coverage.ts";
 import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, type LhMessage } from "./native-messages.ts";
 import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
@@ -28,6 +38,11 @@ import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
 /** A correct answer at or below this stated confidence (the slider's active
  *  doubt) counts as tentative, not clean. The untouched default 50 is clean. */
 export const TENTATIVE_MAX_CONFIDENCE = 30;
+
+/** Days until the next review, by streak (1, 2, 3, 4 or more clean spaced sessions). */
+export const REVIEW_INTERVAL_DAYS = [3, 7, 21, 60] as const;
+/** A clean session advances the streak only this many hours after the previous counted one. */
+export const MIN_SPACING_HOURS = 20;
 
 const QUIZ_CALLS = ["quiz", "probe"] as const;
 const RECALL_CALLS = ["explain", "recall"] as const;
@@ -333,4 +348,98 @@ export function eligibleForAttribution<T extends { toolCallId: string }>(
 		if (idx < 0) return false;
 		return !uncovered.some((i) => i <= idx);
 	});
+}
+
+// ─── state (derived from the evidence) ───────────────────────────────────────
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+const atMs = (e: EvidenceEvent): number => {
+	const t = Date.parse(e.at);
+	return Number.isFinite(t) ? t : 0;
+};
+
+/** One concept's state from its own events (the foundation marker needs the others, so it is added after). */
+function stateOf(conceptId: string, all: readonly EvidenceEvent[], now: Date): ConceptState {
+	const history = [...all].sort((a, b) => atMs(a) - atMs(b)); // stable: ties keep ledger order
+	// A session's result is its LAST event on this concept.
+	const lastBySession = new Map<string, EvidenceEvent>();
+	for (const e of history) lastBySession.set(e.chatId, e);
+	const sessions = [...lastBySession.values()].sort((a, b) => atMs(a) - atMs(b));
+
+	let streak = 0;
+	let lastCounted: number | null = null;
+	let lastClean: number | null = null;
+	for (const s of sessions) {
+		const t = atMs(s);
+		if (s.result === "clean") {
+			lastClean = t;
+			if (lastCounted === null || t - lastCounted >= MIN_SPACING_HOURS * HOUR_MS) {
+				streak++;
+				lastCounted = t;
+			}
+		} else {
+			streak = 0;
+			lastCounted = null;
+		}
+	}
+
+	const latest = sessions.at(-1);
+	const state: ConceptStateName = !latest ? "not-yet-checked" : latest.result !== "clean" ? "shaky" : streak >= 2 ? "solid" : "learning";
+	let nextReviewAt: string | undefined;
+	if (lastCounted !== null && streak >= 1) {
+		const days = REVIEW_INTERVAL_DAYS[Math.min(streak, REVIEW_INTERVAL_DAYS.length) - 1]!;
+		nextReviewAt = new Date(lastCounted + days * DAY_MS).toISOString();
+	}
+	const due = state !== "shaky" && nextReviewAt !== undefined && now.getTime() >= Date.parse(nextReviewAt);
+
+	// Confusions still open: those exposed after the last clean session (all of them without one).
+	const open = new Map<string, ConceptState["openMisconceptions"][number]>();
+	for (const e of history) {
+		if (!e.misconception || (lastClean !== null && atMs(e) <= lastClean)) continue;
+		open.set(e.misconception.term, { ...e.misconception, at: e.at });
+	}
+
+	return {
+		conceptId,
+		state,
+		due,
+		streak,
+		...(nextReviewAt ? { nextReviewAt } : {}),
+		weakFoundation: false,
+		last: history.slice(-3).reverse(),
+		history,
+		openMisconceptions: [...open.values()],
+	};
+}
+
+/**
+ * The learner model at `now`: a ConceptState for every id in `nodeIds`.
+ * Per concept, a session (chat) result is its last event; a clean session
+ * advances the streak only at least MIN_SPACING_HOURS after the previous
+ * counted one, a weak or failed one resets it (shaky). The next review is
+ * REVIEW_INTERVAL_DAYS[min(streak, 4) - 1] days after the last counted
+ * session. A concept has a weak foundation when a premise of a chain that
+ * concludes it is shaky or due (one level; no recursion).
+ */
+export function deriveLearnerState(
+	events: readonly EvidenceEvent[],
+	chains: readonly GraphChain[],
+	nodeIds: readonly string[],
+	now: Date,
+): LearnerSnapshot {
+	const byConcept = new Map<string, EvidenceEvent[]>();
+	for (const e of events) {
+		const list = byConcept.get(e.conceptId) ?? [];
+		list.push(e);
+		byConcept.set(e.conceptId, list);
+	}
+	const states: Record<string, ConceptState> = {};
+	for (const id of nodeIds) states[id] = stateOf(id, byConcept.get(id) ?? [], now);
+	for (const c of chains) {
+		const target = states[c.conclusion];
+		if (!target || target.weakFoundation) continue;
+		if (c.premises.some((p) => p !== c.conclusion && (states[p]?.state === "shaky" || states[p]?.due === true))) target.weakFoundation = true;
+	}
+	return { asOf: now.toISOString(), states };
 }
