@@ -6,16 +6,15 @@ import { describe, it } from "node:test";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { expandBraces, globToRegex, matchGlob, walkFiles } from "../src/agent/tools/fs-shared.ts";
-import { findTool } from "../src/agent/tools/find.ts";
-import { grepTool } from "../src/agent/tools/grep.ts";
-import { lsTool } from "../src/agent/tools/ls.ts";
-import { readTool } from "../src/agent/tools/read.ts";
+import { findToolFor } from "../src/agent/tools/find.ts";
+import { grepToolFor } from "../src/agent/tools/grep.ts";
+import { lsToolFor } from "../src/agent/tools/ls.ts";
+import { readToolFor } from "../src/agent/tools/read.ts";
 
 /**
  * The learner-filesystem tools (sources v1, 2026-09-19): ls/find/grep as
- * pure-Node pi ports, read re-anchored to the home directory. All calls go
- * through absolute paths — the tools' relative resolution targets the real
- * home, which tests must not touch.
+ * pure-Node pi ports, rooted at the library (a tmpdir fixture here); all paths
+ * are relative to that root (escape cases live in library-fs.test.ts).
  *
  * Fixture tree (tmpdir):
  *   notes/calculus.md         "The derivative measures force…"
@@ -89,7 +88,7 @@ describe("glob helpers (fs-shared)", () => {
 describe("ls (pi port)", () => {
 	it("lists sorted, dirs suffixed, dotfiles included", async () => {
 		FIXTURE = await setup();
-		const out = await runText(lsTool, { path: FIXTURE });
+		const out = await runText(lsToolFor(FIXTURE), {});
 		assert.ok(out.includes("code/"));
 		assert.ok(out.includes("notes/"));
 		assert.ok(out.includes("binary.bin"));
@@ -100,14 +99,14 @@ describe("ls (pi port)", () => {
 	});
 
 	it("honors the entry limit with pi's truncation notice", async () => {
-		const out = await runText(lsTool, { path: FIXTURE, limit: 2 });
+		const out = await runText(lsToolFor(FIXTURE), { limit: 2 });
 		assert.match(out, /\[Truncated: 2 entries limit\]/);
 	});
 
 	it("missing path and non-directory throw (the model sees the error)", async () => {
-		await assert.rejects(async () => lsTool.execute!("c", { path: "/nonexistent/xyz" }), /Path not found/);
+		await assert.rejects(async () => lsToolFor(FIXTURE).execute!("c", { path: "nonexistent/xyz" }), /Path not found/);
 		await assert.rejects(
-			async () => lsTool.execute!("c", { path: path.join(FIXTURE, "binary.bin") }),
+			async () => lsToolFor(FIXTURE).execute!("c", { path: "binary.bin" }),
 			/Not a directory/,
 		);
 	});
@@ -115,31 +114,31 @@ describe("ls (pi port)", () => {
 
 describe("find (pi port)", () => {
 	it("finds by glob, relativized to the search root", async () => {
-		const out = await runText(findTool, { pattern: "*.md", path: FIXTURE });
+		const out = await runText(findToolFor(FIXTURE), { pattern: "*.md" });
 		assert.ok(out.includes("notes/calculus.md"));
 		assert.ok(out.includes("notes/sub/hidden.md"));
 		assert.ok(!out.includes(FIXTURE), "paths are relative, not absolute");
 	});
 
 	it("never enters node_modules or Library", async () => {
-		const out = await runText(findTool, { pattern: "*.txt", path: FIXTURE });
+		const out = await runText(findToolFor(FIXTURE), { pattern: "*.txt" });
 		assert.ok(!out.includes("node_modules"));
 		assert.ok(!out.includes("Library"));
 		assert.ok(out.includes("notes/linear.txt"));
 	});
 
 	it("result limit carries pi's notice", async () => {
-		const out = await runText(findTool, { pattern: "*", path: FIXTURE, limit: 2 });
+		const out = await runText(findToolFor(FIXTURE), { pattern: "*", limit: 2 });
 		assert.match(out, /\[2 results limit reached\]/);
 	});
 
 	it("no-match message matches pi", async () => {
-		const out = await runText(findTool, { pattern: "*.nomatch", path: FIXTURE });
+		const out = await runText(findToolFor(FIXTURE), { pattern: "*.nomatch" });
 		assert.equal(out, "No files found matching pattern");
 	});
 
 	it("slash patterns match paths, not basenames", async () => {
-		const out = await runText(findTool, { pattern: "notes/**/*.md", path: FIXTURE });
+		const out = await runText(findToolFor(FIXTURE), { pattern: "notes/**/*.md" });
 		assert.ok(out.includes("notes/sub/hidden.md"));
 		assert.ok(!out.includes("code/"));
 	});
@@ -149,7 +148,7 @@ describe("grep (pi port)", () => {
 	it("formats matches pi-style: rel:line: text", async () => {
 		// case-sensitive: the lowercase "eigenvector" hits main.ts but NOT
 		// linear.txt's capital-E "Eigenvectors" (that case lives below).
-		const out = await runText(grepTool, { pattern: "eigenvector", path: FIXTURE });
+		const out = await runText(grepToolFor(FIXTURE), { pattern: "eigenvector" });
 		assert.equal(out, "code/main.ts:2: const eigenvector = 'here';");
 		assert.ok(!out.includes("node_modules"), "excluded dirs are not searched");
 		assert.ok(!out.includes("Library"));
@@ -157,42 +156,42 @@ describe("grep (pi port)", () => {
 	});
 
 	it("ignoreCase and literal flags", async () => {
-		const icase = await runText(grepTool, { pattern: "EIGENVECTOR", path: FIXTURE, ignoreCase: true });
+		const icase = await runText(grepToolFor(FIXTURE), { pattern: "EIGENVECTOR", ignoreCase: true });
 		assert.match(icase, /linear\.txt:1:/);
-		const literal = await runText(grepTool, { pattern: "e.gen", literal: true, path: path.join(FIXTURE, "code") });
+		const literal = await runText(grepToolFor(FIXTURE), { pattern: "e.gen", literal: true, path: "code" });
 		assert.equal(literal, "No matches found", "dots are literal when literal=true");
 	});
 
 	it("context lines use the dash format", async () => {
-		const out = await runText(grepTool, { pattern: "scaling", path: FIXTURE, context: 1 });
+		const out = await runText(grepToolFor(FIXTURE), { pattern: "scaling", context: 1 });
 		assert.match(out, /notes\/linear\.txt:2: only scaling remains/, "the match line uses colons");
 		assert.match(out, /notes\/linear\.txt-1- Eigenvectors keep their direction/, "context before uses dashes");
 		assert.match(out, /notes\/linear\.txt-3- $/, "context after (empty line) uses dashes");
 	});
 
 	it("glob filter restricts files", async () => {
-		const out = await runText(grepTool, { pattern: "eigenvector", path: FIXTURE, glob: "*.ts" });
+		const out = await runText(grepToolFor(FIXTURE), { pattern: "eigenvector", glob: "*.ts" });
 		assert.match(out, /main\.ts:2:/);
 		assert.ok(!out.includes("linear.txt"));
 	});
 
 	it("single-file search prints basename; match limit notices pi-style", async () => {
-		const file = path.join(FIXTURE, "notes", "calculus.md");
-		const out = await runText(grepTool, { pattern: "e", path: file });
+		const file = "notes/calculus.md";
+		const out = await runText(grepToolFor(FIXTURE), { pattern: "e", path: file });
 		assert.match(out, /^calculus\.md:1: /, "basename for a single-file search");
-		const limited = await runText(grepTool, { pattern: "e", path: file, limit: 1 });
+		const limited = await runText(grepToolFor(FIXTURE), { pattern: "e", path: file, limit: 1 });
 		assert.match(limited, /\[1 matches limit reached\]/);
 	});
 
 	it("no-match message matches pi", async () => {
-		const out = await runText(grepTool, { pattern: "zzzz", path: FIXTURE });
+		const out = await runText(grepToolFor(FIXTURE), { pattern: "zzzz" });
 		assert.equal(out, "No matches found");
 	});
 });
 
-describe("read (home-anchored re-port)", () => {
+describe("read (library-rooted)", () => {
 	it("reads a fixture file verbatim through the shared slice machinery", async () => {
-		const out = await runText(readTool, { path: path.join(FIXTURE, "notes", "linear.txt") });
+		const out = await runText(readToolFor(FIXTURE), { path: "notes/linear.txt" });
 		assert.match(out, /Eigenvectors keep their direction/);
 	});
 });
@@ -221,14 +220,14 @@ describe("abort plumbing (the 2026-09-19 cascade fix)", () => {
 		FIXTURE = await setup();
 		const ac = new AbortController();
 		ac.abort();
-		const out = await runText(findTool, { pattern: "*.md" }, ac.signal);
+		const out = await runText(findToolFor(FIXTURE), { pattern: "*.md" }, ac.signal);
 		assert.equal(out, "Operation aborted");
 	});
 
 	it("grep honors a pre-aborted signal without scanning", async () => {
 		const ac = new AbortController();
 		ac.abort();
-		const out = await runText(grepTool, { pattern: "eigenvector" }, ac.signal);
+		const out = await runText(grepToolFor(FIXTURE), { pattern: "eigenvector" }, ac.signal);
 		assert.equal(out, "Operation aborted");
 	});
 
@@ -245,7 +244,7 @@ describe("abort plumbing (the 2026-09-19 cascade fix)", () => {
 		const ac = new AbortController();
 		setTimeout(() => ac.abort(), 1);
 		const started = Date.now();
-		const out = await runText(grepTool, { pattern: "needle", path: root }, ac.signal);
+		const out = await runText(grepToolFor(root), { pattern: "needle" }, ac.signal);
 		assert.match(out, /aborted/);
 		assert.ok(Date.now() - started < 5_000, "returned promptly");
 	});

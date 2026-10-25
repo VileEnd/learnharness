@@ -8,7 +8,7 @@
  * Model slots (model-slots wave, 2026-09-20, owner ruling: SLOTS ONLY —
  * the six per-role rows disappeared; per-role overrides remain in the
  * schema for a future advanced surface): Strong = Prober + Teacher, Cheap
- * = the five workhorse roles, Vision = Visual maker + PDF reader. Each
+ * = the five workhorse roles, Vision = Visual maker. Each
  * slot row carries the shared dropdown (fuzzy search, arrow-walk, Enter
  * pick — ModelMenuList/ThinkingMenuList from ./model-menu.tsx) over the
  * FEDERATED catalog (/api/models serves only keyed providers, fresh per
@@ -31,9 +31,9 @@
  * grays whole-row (a choice without a key would only BLOCK the other
  * engine's auto-activation).
  *
- * Tools — the owner's final list (2026-09-19): research, demo, visual, pdf.
+ * Tools — the owner's final list (2026-09-19): research, demo, visual.
  * Absent key = enabled in the schema; the UI writes explicit booleans for
- * all four (simpler to reason about, sanitize-equivalent).
+ * all three (simpler to reason about, sanitize-equivalent).
  *
  * Prompts: GET /api/settings/prompts segments — THREE SECTIONS in the
  * owner's ruled order (2026-09-26 overhaul): Teacher first, Prober, then
@@ -79,7 +79,7 @@ import { ModelMenuList, ThinkingMenuList } from "./model-menu";
 const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 	strong: { label: "Strong", roster: "The main model for your sessions" },
 	cheap: { label: "Cheap", roster: "The assistants that research, build demos, and grade your work" },
-	vision: { label: "Vision", roster: "The assistants that draw and read PDFs" },
+	vision: { label: "Vision", roster: "The assistant that draws figures" },
 };
 
 /** The search engines this wave ships (src/core/search.ts) + their labels. */
@@ -87,7 +87,7 @@ const SEARCH_ENGINES = ["tavily", "brave"] as const;
 
 /** The owner's final toggleable-tool list (confirm with the user before
  *  changing — the Teacher stream settled this 2026-09-19). */
-export const TOGGLE_TOOLS = ["research", "demo", "visual", "pdf"] as const;
+export const TOGGLE_TOOLS = ["research", "demo", "visual"] as const;
 
 const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 

@@ -22,7 +22,7 @@ export interface JobToolContext {
 	/** Fire the background runner for a fresh job — fire-and-forget. The
 	 *  input rides along because the spawn happens MID-STREAM, before
 	 *  onFinish persists the tool part — a transcript scan would race it. */
-	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
+	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput) => void;
 	/** Search-provider availability, retained for existing composition seams.
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
@@ -57,15 +57,6 @@ export const visualInputSchema = Type.Object({
 	}),
 });
 
-export const pdfInputSchema = Type.Object({
-	path: Type.String({ description: "Path to the learner's PDF (relative or absolute), exactly as they gave it." }),
-	question: Type.String({
-		description:
-			"What you need from the document — the specific content, explanation, or answer to extract and brief. " +
-			"The reader sees NOTHING else of the lesson.",
-	}),
-});
-
 /**
  * The per-call dispatch: create the job (idempotent by toolCallId), fire the
  * runner, and return the ack. Shared by all three tools — only kind differs.
@@ -75,7 +66,7 @@ function dispatch(
 	kind: JobRecord["kind"],
 	toolCallId: string,
 	ack: string,
-	input: ResearchInput | DemoInput | VisualInput | PdfInput,
+	input: ResearchInput | DemoInput | VisualInput,
 ): string {
 	const existing = ctx.jobStore.findJobByToolCallId(ctx.chatId, toolCallId);
 	const job = existing ?? ctx.jobStore.createJob({ kind, chatId: ctx.chatId, toolCallId });
@@ -92,9 +83,6 @@ const DEMO_ACK =
 const VISUAL_ACK =
 	"This call is fire-and-forget: continue your turn and keep teaching — do not wait, poll, or mention waiting. " +
 	"The verified figure arrives as a new message when ready and is rendered in the lesson; reference it then.";
-const PDF_ACK =
-	"This call is fire-and-forget: continue your turn and keep teaching — do not wait, poll, or mention waiting. " +
-	"The document brief arrives as a new message when ready; weave it into the lesson and cite its pages.";
 
 const RESEARCH_DESCRIPTION =
 	"Dispatch a background web-research agent: fact verification, current data, or niche specifics you are not certain about. " +
@@ -113,12 +101,6 @@ const VISUAL_DESCRIPTION =
 	"function plots, physical layouts. For flows/relations/taxonomies write mermaid inline instead. " +
 	"The call is ASYNC and fire-and-forget — it resolves immediately and your turn continues; the verified figure arrives later " +
 	"as a new message.";
-const PDF_DESCRIPTION =
-	"Dispatch a background sub-agent that READS a learner-provided PDF on your behalf (triage, targeted extraction, visual page " +
-	"reading for equations and diagrams) and returns a brief with page citations. Use it when the learner gives you a PDF path " +
-	"and you need its CONTENT for the lesson. The call is ASYNC and fire-and-forget — it resolves immediately and your turn " +
-	"continues; the brief arrives later as a new message. For quick looks at plain text or image files, use the read tool " +
-	"directly instead of dispatching.";
 
 /**
  * Per-request job tool registry: each tool closes over the composition root's
@@ -155,17 +137,9 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 				dispatch(ctx, "visual", toolCallId, VISUAL_ACK, input),
 			),
 		},
-		pdf: {
-			name: "pdf",
-			label: "pdf",
-			description: PDF_DESCRIPTION,
-			parameters: pdfInputSchema,
-			execute: serverExecute("pdf", pdfInputSchema, (input, { toolCallId }) => dispatch(ctx, "pdf", toolCallId, PDF_ACK, input)),
-		},
 	};
 }
 
 export type ResearchInput = Static<typeof researchInputSchema>;
 export type DemoInput = Static<typeof demoInputSchema>;
 export type VisualInput = Static<typeof visualInputSchema>;
-export type PdfInput = Static<typeof pdfInputSchema>;

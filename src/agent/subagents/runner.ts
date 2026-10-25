@@ -9,8 +9,6 @@ import {
 	type JobKind,
 	type JobRecord,
 	type JobUsage,
-	type PdfResult,
-	type PdfToolInput,
 	type ResearchResult,
 	type ResearchToolInput,
 	type SteerMessage,
@@ -26,7 +24,6 @@ import type { ModelRole } from "../../../config.ts";
 import { ROLE_SLOT, modelsNotConfigured, type ModelSlotName, type ProviderKeyMissing } from "../../core/settings.ts";
 import type { ChatStore, JobStore } from "../../core/ports.ts";
 import { runDemoBuilder } from "./demo-builder.ts";
-import { runPdfReaderAgent } from "./pdf-reader.ts";
 import { runResearcherAgent } from "./researcher.ts";
 import { runVisualMaker } from "./visual-maker.ts";
 
@@ -58,10 +55,9 @@ import { runVisualMaker } from "./visual-maker.ts";
 export const researchModelOverride: { current?: PiEngine } = {};
 export const demoModelOverride: { current?: PiEngine } = {};
 export const visualModelOverride: { current?: PiEngine } = {};
-export const pdfModelOverride: { current?: PiEngine } = {};
 
 /** The dispatch-time tool input (from src/agent/tools/jobs.ts schemas). */
-type JobToolInput = ResearchToolInput | DemoToolInput | VisualToolInput | PdfToolInput;
+type JobToolInput = ResearchToolInput | DemoToolInput | VisualToolInput;
 
 export interface JobRunnerDeps {
 	chatStore: ChatStore;
@@ -117,11 +113,10 @@ interface LoopContext {
 
 /** The kind→role table (model slots wave, 2026-09-20): which ModelRole's
  * engine each sub-agent kind runs — the engineFor injection key. */
-const KIND_ROLE: Record<JobKind, ModelRole> = {
+const KIND_ROLE: Partial<Record<JobKind, ModelRole>> = {
 	research: "researcher",
 	demo: "demoBuilder",
 	visual: "visualMaker",
-	pdf: "pdfReader",
 };
 
 export function createJobRunner(deps: JobRunnerDeps): JobRunner {
@@ -172,19 +167,21 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 			researcher: researchModelOverride,
 			demoBuilder: demoModelOverride,
 			visualMaker: visualModelOverride,
-			pdfReader: pdfModelOverride,
 		};
-		return testOverride[KIND_ROLE[kind]]?.current ?? deps.engineFor?.(KIND_ROLE[kind]);
+		const role = KIND_ROLE[kind];
+		if (!role) return undefined;
+		return testOverride[role]?.current ?? deps.engineFor?.(role);
 	}
 
-	const KIND_RUNNERS: Record<
+	const KIND_RUNNERS: Partial<
+		Record<
 		JobKind,
 		(jobId: string, engine: PiEngine, input: JobToolInput | undefined, loop: LoopContext) => Promise<void>
+		>
 	> = {
 		research: (jobId, engine, input, loop) => runResearchJob(jobId, engine, input, loop),
 		demo: (jobId, engine, input, loop) => runDemoJob(jobId, engine, input, loop),
 		visual: (jobId, engine, input, loop) => runVisualJob(jobId, engine, input, loop),
-		pdf: (jobId, engine, input, loop) => runPdfJob(jobId, engine, input, loop),
 	};
 
 	async function runJob(jobId: string, input?: JobToolInput): Promise<void> {
@@ -195,7 +192,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		}
 		if (job.status !== "running") return; // already finished / re-run after crash recovery
 		const run = KIND_RUNNERS[job.kind];
-		if (!run) {
+		const role = KIND_ROLE[job.kind];
+		// A retired kind (an old "pdf" job still marked running) lands here too.
+		if (!run || !role) {
 			console.error(`[job ${jobId}] unknown kind: ${job.kind}`);
 			jobStore.updateJob(jobId, { status: "error", error: `unknown kind ${job.kind}`, activity: "failed" });
 			return;
@@ -215,10 +214,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 				| ResearchToolInput
 				| DemoToolInput
 				| VisualToolInput
-				| PdfToolInput
 				| undefined;
-			const pdf = resolved as PdfToolInput | undefined;
-			const failure: ResearchResult | DemoResult | VisualResult | PdfResult =
+			const failure: ResearchResult | DemoResult | VisualResult =
 				job.kind === "research"
 					? { brief: `Research failed: ${reason}`, sources: [] }
 					: job.kind === "demo"
@@ -228,19 +225,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 								tested: true,
 								notes: `FAILED: ${reason}`,
 							}
-						: job.kind === "visual"
-							? { svg: "", notes: `FAILED: ${reason}` }
-							: {
-									path: typeof pdf?.path === "string" ? pdf.path : "",
-									question: typeof pdf?.question === "string" ? pdf.question : "",
-									brief: `PDF failed: ${reason}`,
-									pagesRead: [],
-									pagesConsulted: [],
-								};
+						: { svg: "", notes: `FAILED: ${reason}` };
 			await finishJob(jobId, failure);
 		};
 		if (!engine) {
-			const tier = ROLE_SLOT[KIND_ROLE[job.kind]];
+			const tier = ROLE_SLOT[role];
 			const envelope = modelsNotConfigured([tier]);
 			console.info(`[job ${jobId}] refused — ${JSON.stringify(envelope)}`);
 			await refuse(`${envelope.error} (missing: ${tier})`);
@@ -251,7 +240,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		// convention (the injected check reads the key store; absent in
 		// engine-injecting tests).
 		const keyRefusal =
-			deps.providerKeyMissing?.(engine.model.provider, ROLE_SLOT[KIND_ROLE[job.kind]]) ?? null;
+			deps.providerKeyMissing?.(engine.model.provider, ROLE_SLOT[role]) ?? null;
 		if (keyRefusal) {
 			console.info(`[job ${jobId}] refused — ${JSON.stringify(keyRefusal)}`);
 			await refuse(keyRefusal.error);
@@ -300,7 +289,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 	 * actually resumed — until then the job reads "running" so the client's
 	 * activity card keeps polling and re-syncs once, at the end.
 	 */
-	async function finishJob(jobId: string, result: ResearchResult | DemoResult | VisualResult | PdfResult): Promise<void> {
+	async function finishJob(jobId: string, result: ResearchResult | DemoResult | VisualResult): Promise<void> {
 		const job = jobStore.getJob(jobId);
 		if (!job) return;
 		// Aborted mid-run or mid-delivery (abortJob flips the record before
@@ -470,45 +459,6 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		}
 	}
 
-	// ─── pdf reading (sources v0) ────────────────────────────────────────────
-
-	async function runPdfJob(
-		jobId: string,
-		model: PiEngine | undefined,
-		passedInput: JobToolInput | undefined,
-		loop: LoopContext,
-	): Promise<void> {
-		const ctx = jobContext(jobId);
-		if (!ctx) return;
-		const { job } = ctx;
-
-		const input = (passedInput ?? resolveInput(job, passedInput)) as PdfToolInput | undefined;
-		const path = typeof input?.path === "string" && input.path.trim() ? input.path.trim() : "";
-		const question = typeof input?.question === "string" ? input.question : "";
-
-		try {
-			jobStore.updateJob(jobId, { activity: "reading pdf" });
-			const result = await runPdfReaderAgent(
-				{ path, question },
-			{
-				engine: model,
-				abortSignal: loop.abortSignal,
-				chatId: loop.chatId,
-				onUsage: (usage) => loop.onUsage(piUsageToStep(usage)),
-				onActivity: (line) => jobStore.updateJob(jobId, { activity: line }),
-			},
-			);
-			if (isPdfFailure(result) && stillRunning(jobId))
-				jobStore.updateJob(jobId, { error: result.brief.replace(/^PDF failed:\s*/i, "") });
-			await finishJob(jobId, result);
-		} catch (err) {
-			if (loop.abortSignal.aborted) return;
-			const reason = err instanceof Error ? err.message : String(err);
-			if (stillRunning(jobId)) jobStore.updateJob(jobId, { error: reason });
-			await finishJob(jobId, { path, question, brief: `PDF failed: ${reason}`, pagesRead: [], pagesConsulted: [] });
-		}
-	}
-
 	return { runJob };
 }
 
@@ -521,11 +471,6 @@ function isDemoFailure(result: DemoResult): boolean {
 
 function isVisualFailure(result: VisualResult): boolean {
 	return typeof result.svg !== "string" || result.svg.length === 0;
-}
-
-/** The pdf-reader's failure brief (mirrors the research failure shape). */
-function isPdfFailure(result: PdfResult): boolean {
-	return /^PDF failed:/i.test(result.brief);
 }
 
 /** The activity line shown in the UI: `web_search: "query"` / `web_fetch: host`. */
