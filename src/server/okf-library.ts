@@ -23,6 +23,7 @@ export const library: Library = ((globalThis as LibraryGlobal).__lhLibrary ??= (
 		graphStore: stores.graphStore,
 		documentStore: stores.documentStore,
 		chatStore: stores.chatStore,
+		learnerStore: stores.learnerStore,
 		settings: () => stores.settingsStore.readSettings(),
 	});
 	if (process.env.NODE_ENV !== "test" && process.env.NEXT_PHASE !== "phase-production-build") void lib.ensureFresh();

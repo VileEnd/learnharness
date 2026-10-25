@@ -12,6 +12,7 @@ import { after, describe, it } from "node:test";
 import { crc32, inflateRawSync } from "node:zlib";
 import type { OkfFile } from "../src/core/contracts/okf.ts";
 import type { GraphNode } from "../src/core/contracts/graph.ts";
+import { quiz } from "./learner-helpers.ts";
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "lh-okf-store-"));
 process.env.LH_DATA_DIR = TMP;
@@ -129,6 +130,46 @@ describe("Library", () => {
 		const gated = (() => ({ version: 1, agent: { graphTools: { enabled: false } } })) as () => never;
 		await lib(okfBundleStore, gated).ensureFresh();
 		assert.ok(!fs.existsSync(path.join(PATHS.okf, "concepts")));
+	});
+});
+
+
+describe("Library learner model", () => {
+	it("builds me/ from the chats and the attribution ledger, in the bundle and in the export", async () => {
+		fs.rmSync(PATHS.okf, { recursive: true, force: true });
+		graphStore.appendNode(node("n_cccccc33", "Tagged concept"));
+		graphStore.appendNode(node("n_dddddd44", "Attributed concept"));
+		const c = chatStore.createChat("Evidence session");
+		chatStore.saveMessages(c.id, [
+			...quiz("q1", { pick: 2, thinking: "mixed them up", concepts: ["n_cccccc33"] }),
+			...quiz("q2", { pick: 1 }),
+		]);
+		const ledger = { chatId: c.id, toolCallId: "q2", conceptIds: ["n_dddddd44"], at: "2026-10-25T09:00:00.000Z" };
+		const learnerStore = { readAttributions: () => [ledger] };
+		const library = createLibrary({
+			okfStore: okfBundleStore,
+			graphStore,
+			documentStore,
+			chatStore,
+			learnerStore,
+			settings: () => null as never,
+			force: true,
+			now: () => new Date("2026-10-25T12:00:00Z"),
+		});
+		await library.ensureFresh();
+		const page = fs.readdirSync(path.join(PATHS.okf, "me", "concepts"));
+		assert.equal(page.length, 2);
+		const tagged = fs.readFileSync(path.join(PATHS.okf, "me", "concepts", page.find((p) => p.includes("cccccc"))!), "utf-8");
+		assert.match(tagged, /not:\n  - term: "P increments"/);
+		assert.match(fs.readFileSync(path.join(PATHS.okf, "me", "concepts", page.find((p) => p.includes("dddddd"))!), "utf-8"), /description: "Learning - 1 clean session/);
+		const exported = library.renderExport();
+		assert.ok(exported.some((f) => f.path === "me/overview.md"));
+		assert.deepEqual(checkOkfConformance(exported.filter((f) => f.path !== "viz.html")), []);
+		// graph off: no me/ for the agents
+		const gated = (() => ({ version: 1, agent: { graphTools: { enabled: false } } })) as () => never;
+		fs.rmSync(PATHS.okf, { recursive: true, force: true });
+		await createLibrary({ okfStore: okfBundleStore, graphStore, documentStore, chatStore, learnerStore, settings: gated, force: true }).ensureFresh();
+		assert.ok(!fs.existsSync(path.join(PATHS.okf, "me")));
 	});
 });
 
