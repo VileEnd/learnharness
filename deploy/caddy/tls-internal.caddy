@@ -1,0 +1,2 @@
+# Caddy's local CA (volumes/caddy/data/caddy/pki/authorities/local/root.crt).
+local_certs

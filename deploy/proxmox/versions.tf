@@ -6,6 +6,10 @@ terraform {
       source  = "bpg/proxmox"
       version = "~> 0.118"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.28"
+    }
   }
 
   # The state is committed to the repo, encrypted client-side (OpenTofu).
@@ -32,3 +36,6 @@ terraform {
 # Endpoint and API token come from the environment (PROXMOX_VE_ENDPOINT,
 # PROXMOX_VE_API_TOKEN, PROXMOX_VE_INSECURE) — see tofu.sh.
 provider "proxmox" {}
+
+# CLOUDFLARE_API_TOKEN from the environment (Zone → DNS → Edit, moyjak.com).
+provider "cloudflare" {}
