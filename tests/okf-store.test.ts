@@ -45,8 +45,10 @@ describe("OkfBundleStore", () => {
 		okfBundleStore.writeStamp("s1");
 		assert.equal(okfBundleStore.readStamp(), "s1");
 		okfBundleStore.replaceAll([{ path: "b.md", content: "b\n" }, { path: "sub/c.md", content: "c\n" }]);
-		assert.deepEqual(fs.readdirSync(PATHS.okf).sort(), ["b.md", "sub"]);
-		assert.equal(okfBundleStore.readStamp(), null, "the stamp goes with the old tree");
+		assert.deepEqual(fs.readdirSync(PATHS.okf).sort(), ["b.md", "sub"], "no .stamp inside the bundle");
+		assert.ok(fs.existsSync(`${PATHS.okf}.stamp`));
+		fs.rmSync(PATHS.okf, { recursive: true });
+		assert.equal(okfBundleStore.readStamp(), null, "a missing bundle never counts as fresh");
 		assert.deepEqual(tmpDirs(), []);
 	});
 
@@ -85,7 +87,8 @@ describe("Library", () => {
 		assert.equal(calls.length, 1);
 		assert.deepEqual(checkOkfConformance(calls[0]!), []);
 		assert.ok(fs.existsSync(path.join(PATHS.okf, "index.md")));
-		assert.ok(fs.existsSync(path.join(PATHS.okf, ".stamp")));
+		assert.ok(fs.existsSync(`${PATHS.okf}.stamp`));
+		assert.ok(!fs.existsSync(path.join(PATHS.okf, ".stamp")));
 
 		graphStore.appendNode(node("n_bbbbbb22", "Second"));
 		await library.ensureFresh();

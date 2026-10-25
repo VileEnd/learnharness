@@ -143,8 +143,9 @@ test("trust and lifecycle fields", () => {
 	assert.ok(!concept(files, "n_111111aa").content.includes("verified"));
 	const orphan = input({ nodes: [node("n_444444dd", "Orphan", [{ chatId: "deleted-chat", messageId: "m" }])], chains: [] });
 	assert.match(concept(renderOkfBundle(orphan), "n_444444dd").content, /status: "deprecated"/);
-	const legacy = input({ nodes: [node("n_555555ee", "Legacy import", [{ chatId: "src_d29e7ef2599a", messageId: "" }])], chains: [] });
-	assert.match(concept(renderOkfBundle(legacy), "n_555555ee").content, /status: "stable"/);
+	const legacy = (id: string) => input({ nodes: [node("n_555555ee", "Legacy import", [{ chatId: id, messageId: "" }])], chains: [], noteSources: ["src_y"] });
+	assert.match(concept(renderOkfBundle(legacy("src_x")), "n_555555ee").content, /status: "deprecated"/);
+	assert.match(concept(renderOkfBundle(legacy("src_y")), "n_555555ee").content, /status: "stable"/);
 });
 
 test("index files use the reference format", () => {

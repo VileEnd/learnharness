@@ -17,7 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { LEDGER_FILES, PATHS, SETTINGS_FILE, TOPIC_ALIASES_FILE } from "../../config.ts";
+import { LEDGER_FILES, PATHS, SETTINGS_FILE, SOURCES_FILE, TOPIC_ALIASES_FILE } from "../../config.ts";
 import type { LearnerSnapshot, OkfFile } from "../core/contracts/okf.ts";
 import { getGraph } from "../core/graph.ts";
 import { OKF_RENDER_REV, renderOkfBundle } from "../core/okf.ts";
@@ -74,7 +74,7 @@ export function createLibrary(deps: LibraryDeps): Library {
 	/** Everything the bundle derives from, as a hash of mtime+size lines. */
 	function sourceStamp(): string {
 		const lines: string[] = [`rev:${OKF_RENDER_REV}`];
-		for (const f of [LEDGER_FILES.nodes, LEDGER_FILES.chains, LEDGER_FILES.topics, TOPIC_ALIASES_FILE, SETTINGS_FILE]) {
+		for (const f of [LEDGER_FILES.nodes, LEDGER_FILES.chains, LEDGER_FILES.topics, TOPIC_ALIASES_FILE, SOURCES_FILE, SETTINGS_FILE]) {
 			lines.push(statLine(f));
 		}
 		for (const id of listDir(PATHS.documents)) lines.push(statLine(path.join(PATHS.documents, id, "meta.json")));
@@ -108,6 +108,7 @@ export function createLibrary(deps: LibraryDeps): Library {
 			topics: deps.graphStore.readTopics(),
 			aliases: deps.graphStore.readTopicAliases(),
 			documents,
+			noteSources: deps.graphStore.readSources().map((s) => s.id),
 			chats: deps.chatStore.listChats().map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt })),
 			...(deps.learner ? { learner: deps.learner() } : {}),
 			gates,
@@ -120,6 +121,7 @@ export function createLibrary(deps: LibraryDeps): Library {
 	async function rebuildIfStale(): Promise<void> {
 		await Promise.resolve(); // let a concurrent caller see `inflight` before any work
 		try {
+			const started = Date.now();
 			const stamp = sourceStamp();
 			if (deps.okfStore.readStamp() === stamp) return;
 			const effective = resolveSettings(deps.settings());
@@ -128,6 +130,7 @@ export function createLibrary(deps: LibraryDeps): Library {
 			);
 			deps.okfStore.replaceAll(files);
 			deps.okfStore.writeStamp(stamp);
+			console.info(`[okf] rebuilt library: ${files.length} files in ${Date.now() - started} ms`);
 		} catch (err) {
 			// The previous complete bundle (or "being built") keeps serving; the next call retries.
 			console.error("[okf] bundle rebuild failed:", err);

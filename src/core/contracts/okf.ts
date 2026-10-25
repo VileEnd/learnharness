@@ -46,6 +46,8 @@ export interface OkfInput {
 	aliases: Record<string, string>;
 	documents: OkfDocumentInput[];
 	chats: OkfChatInput[];
+	/** Ids of the registered imported-notes sources (GraphStore.readSources); absent = none. */
+	noteSources?: string[];
 	/** Absent = no me/ directory. */
 	learner?: LearnerSnapshot;
 	gates: OkfGates;

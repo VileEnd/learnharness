@@ -241,11 +241,10 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 	}
 	const docBySource = new Map(docs.map((d) => [d.meta.sourceId, d]));
 	const chatById = new Map(input.chats.map((c) => [c.id, c]));
+	const noteSourceIds = new Set(input.noteSources ?? []);
 	/** A provenance source "exists" when it is a chat or a stored document (gates aside).
-	 *  "src_" ids are imported-notes sources from before the document library: the graph's own
-	 *  record of that import, which only a graph deletion removes (and that purges the
-	 *  provenance too), so they count as existing - otherwise every old import would read as deprecated. */
-	const sourceExists = (id: string) => chatById.has(id) || docBySource.has(id) || id.startsWith("src_");
+	 *  A registered imported-notes source (graph sources registry) exists too. */
+	const sourceExists = (id: string) => chatById.has(id) || docBySource.has(id) || noteSourceIds.has(id);
 
 	// ── nodes, chains ──
 	const nodes: GraphNode[] = [];
