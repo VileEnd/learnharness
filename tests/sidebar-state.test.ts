@@ -8,9 +8,9 @@ describe("sidebar state", () => {
 		assert.equal(resolveSidebarOpen(null, false), false);
 	});
 
-	it("a stored value wins on either width", () => {
+	it("desktop restores its stored state; the phone drawer always starts closed", () => {
 		assert.equal(resolveSidebarOpen("0", true), false);
-		assert.equal(resolveSidebarOpen("1", false), true);
+		assert.equal(resolveSidebarOpen("1", false), false);
 	});
 
 	it("phone and desktop use different keys, desktop's unchanged", () => {

@@ -15,10 +15,12 @@ export function sidebarStorageKey(wide: boolean): string {
 	return wide ? WIDE_KEY : NARROW_KEY;
 }
 
-/** No stored value: open on wide screens only (first run introduces the
- *  sidebar on desktop; on a phone it would cover the app). */
+/** Wide screens restore the stored state (default open: the first run
+ *  introduces the sidebar). On a phone the drawer covers the whole app, so
+ *  every page load starts with it closed. */
 export function resolveSidebarOpen(stored: string | null, wide: boolean): boolean {
-	return stored === null ? wide : stored === "1";
+	if (!wide) return false;
+	return stored === null ? true : stored === "1";
 }
 
 /** The on-screen keyboard is up when the visible viewport has lost a big
