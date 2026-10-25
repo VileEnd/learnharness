@@ -20,7 +20,8 @@
  */
 
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { AttributionRow, ChatRecord, EvidenceEvent, EvidenceResult } from "./contracts.ts";
+import type { AttributionRow, ChatRecord, CoverageEntry, EvidenceEvent, EvidenceResult } from "./contracts.ts";
+import { coverageOf } from "./coverage.ts";
 import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, type LhMessage } from "./native-messages.ts";
 import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
 
@@ -307,4 +308,29 @@ export function unattributedItems(chat: ChatRecord, attributions: readonly Attri
 	return gradedItems(chat).filter(
 		(item) => item.kind !== "practice" && item.tags.length === 0 && !done.has(attributionKey(chat.id, item.toolCallId)),
 	);
+}
+
+/** The items ready for attribution: every teacher-prose message of the chat up
+ *  to and including the message carrying the item's tool call has been
+ *  extracted (covered in the coverage ledger, the same selection and
+ *  fingerprints extraction uses). Until then the concepts the question is
+ *  about may not exist yet, so the item stays pending (no ledger row). An
+ *  item with no teacher prose before it (a probe-phase question about prior
+ *  knowledge) is eligible at once. */
+export function eligibleForAttribution<T extends { toolCallId: string }>(
+	chat: ChatRecord,
+	items: readonly T[],
+	coverage: readonly CoverageEntry[],
+): T[] {
+	const view = coverageOf(chat.messages, coverage, chat.id);
+	const uncovered = view.uncovered;
+	const carrier = (id: string): number =>
+		chat.messages.findIndex(
+			(m) => (m as { role?: string }).role === "assistant" && (m as AssistantMessage).content.some((b) => b.type === "toolCall" && b.id === id),
+		);
+	return items.filter((item) => {
+		const idx = carrier(item.toolCallId);
+		if (idx < 0) return false;
+		return !uncovered.some((i) => i <= idx);
+	});
 }

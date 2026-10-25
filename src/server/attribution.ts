@@ -18,7 +18,7 @@
  */
 
 import { getGraph } from "../core/graph.ts";
-import { unattributedItems } from "../core/learner.ts";
+import { eligibleForAttribution, unattributedItems } from "../core/learner.ts";
 import type { ChatStore, GraphStore, LearnerStore } from "../core/ports.ts";
 import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 import type { Attributor } from "../agent/subagents/attribution.ts";
@@ -28,7 +28,7 @@ export const ATTRIBUTION_DEBOUNCE_MS = 30_000;
 
 export interface AttributionDeps {
 	chatStore: Pick<ChatStore, "getChat">;
-	graphStore: Pick<GraphStore, "readNodes" | "readChains">;
+	graphStore: Pick<GraphStore, "readNodes" | "readChains" | "readCoverage">;
 	learnerStore: LearnerStore;
 	attributor: Attributor;
 	now?: () => Date;
@@ -52,7 +52,9 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 		try {
 			const record = deps.chatStore.getChat(chatId);
 			if (!record) return 0;
-			const items = unattributedItems(record, deps.learnerStore.readAttributions());
+			// Only items whose preceding teaching has been extracted: a premature
+			// (possibly empty) row would be final.
+			const items = eligibleForAttribution(record, unattributedItems(record, deps.learnerStore.readAttributions()), deps.graphStore.readCoverage());
 			if (items.length === 0) return 0;
 			const graph = getGraph(deps.graphStore);
 			const concepts = graph.nodes
