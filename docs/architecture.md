@@ -314,22 +314,27 @@ sequenceDiagram
 
 ### 5.1 The wake pipeline (Workbench → Classroom)
 
-On sub-agent completion the runner builds a **steer message** — a user-role `UIMessage` whose text part is the model-facing result and whose `data-subagent-artifact` part carries the full result for the client (provider conversion drops data parts) — and hands it to the wake pipeline:
+**Worker completion and session delivery are separate lifecycles.** Dispatch persists the tool input on the job (`JobRecord.input`) before spawning. When a research, demo (including a failed Chromium verification, which lands as a failure result) or visual worker finishes, the runner saves the result, the terminal worker status (`done`/`error`) and `delivery: {kind: "result", status: "pending"}` in one job-record update, then queues the native custom steer message without awaiting delivery. The marker's content is the model-facing text; its details carry the UI artifact. The worker's abort registration is released at that point, so the Background agents row disappears even if an unanswered question holds the result. Dispatch cards read "finished", not "delivered". Only computing workers can be aborted; an abort saves its own pending abort notice. Retired `pdf` job records still load; they are never replayed.
 
 ```mermaid
 flowchart TB
-    R["job runner finishes sub-agent"] -->|"deliver(steer) — injectable seam"| ENQ["enqueue steer in per-chat queue (globalThis)"]
-    ENQ --> PUMP["pump(chatId) — one loop per chat (pumping set serializes)"]
-    PUMP --> GATE{"turn-free AND no pending question? (400ms poll)"}
-    GATE -->|no| PUMP
-    GATE -->|yes| REFRESH["re-fetch fresh record, re-check steerDelivered (claim race)"]
-    REFRESH --> RUN["turnRunner(chatId, record + steer) — the SAME handleChatRequest path"]
-    RUN -->|"200"| FIN["finalizeSteer → finalizeJob (done/error)<br/>— status flips only after the wake turn persists"]
-    RUN -->|"409"| BACKOFF["backoff 500→1000→2000→5000ms → retry"]
-    CRASH["crash recovery: listJobs → recoverStaleJobs (stale >15min)<br/>re-deliver results / respawn via setJobRespawn"] --> PUMP
+    R["save worker outcome + pending delivery; release worker"] --> ENQ["one registry entry per steer ID, including wake cargo"]
+    ENQ --> LIVE{"live agent?"}
+    LIVE -->|yes| STEER["pi steering at native boundaries; the answer run takes parked results"]
+    LIVE -->|no| GATE["wait for turn-free, question-free, undismissed session"]
+    GATE --> RUN["idle wake through the normal turn composition"]
+    RUN -->|"409"| BACKOFF["existing backoff 500→1000→2000→5000ms"]
+    BACKOFF --> GATE
+    RUN -->|"other failed start"| QUIET["stays pending; next learner run or restart recovery"]
+    RUN --> SAVE["canonical marker persistence, not merely HTTP 200"]
+    STEER --> SAVE
+    SAVE --> FIN["acknowledge delivery; worker outcome unchanged"]
+    CRASH["lazy recovery + live-agent registration restore known pending jobs"] --> ENQ
 ```
 
-Job status flips done/error only after the wake turn persists. Delivery is **exactly-once**: deterministic steer ids (`steer_<jobId>`, `steer_probe_<chatId>`), `steerDelivered` checks at every claim point, and `claimSteers` finalizing in-transcript steers instead of re-appending. The client adopts the wake turn through the same `turnInFlight` machinery as returning mid-stream (busy shimmer, composer gate, append-only `mergeAdopted` adoption) and renders steers as artifacts — never a bubble.
+The per-chat registry keeps one entry per deterministic steer id (`steer_<jobId>`) across live handoff, idle-wake flight and a 409 return, so repeated submissions share it. A saved marker with that id in the conversation completes delivery; streaming visibility or HTTP 200 alone does not. A failed acknowledgement cannot replay a saved marker, and a later teaching failure does not reopen delivery. A failed wake start leaves the result durably pending with no new error UI or timer, until the next learner run or a process restart. Normal question and dismissal waits are not failures: the dismissal pause still holds every marker until the learner's next send. A completed delivery fires the job push notification (side channel).
+
+Recovery reads saved job input before the legacy transcript lookup; a missing research question fails honestly without invoking the researcher. Legacy running jobs that hold a saved result become finished workers with pending delivery; legacy terminal jobs without delivery metadata are left untouched rather than guessed to owe a delivery. Pending result and abort notices are restored when a new agent registers, before its first steering poll, even without a preceding jobs-feed read. Deleting a session discards its pending obligations; only live turns and computing workers block deletion. This rests on the existing JSON storage and a single-process registry, not a transactional queue.
 
 Sub-agents **verify, never one-shot**: the demo-builder headlessly executes its HTML in system Chrome before delivery; the visual-maker renders each SVG and looks at it (needs a vision-capable model — the `vision` slot in settings).
 
