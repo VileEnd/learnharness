@@ -969,6 +969,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 	// ── search ────────────────────────────────────────────────────────────────
 
 	function candidateDocs(q: DocSearchQuery): IndexedDoc[] {
+		if (q.conceptsOnly) return [];
 		return [...docs.values()].filter(
 			(d) => (!q.topic || topicMatches(d.topics, q.topic)) && (!q.document || documentMatches(d, q.document)),
 		);

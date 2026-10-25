@@ -39,7 +39,7 @@ function setup(steps: FauxResponseStep[], opts: { nodes?: GraphNode[] } = {}) {
 	const rows: AttributionRow[] = [];
 	const nodes = opts.nodes ?? [node("n1", "c1"), node("n2", "c1"), node("n3", "c1"), node("n9", "other")];
 	const service = createAttributionService({
-		chatStore: { getChat: (id) => (id === "c1" ? record : null) },
+		chatStore: { getChat: (id) => (id === "c1" ? record : null), listChats: () => [] },
 		graphStore: { readNodes: () => nodes, readChains: () => [], readCoverage: () => [] },
 		learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
 		attributor: attributorWith(steps),
@@ -111,7 +111,7 @@ describe("attribution", () => {
 		const rows: AttributionRow[] = [];
 		const record = chat("c1", quiz("q1", { pick: 1 }));
 		const service = createAttributionService({
-			chatStore: { getChat: () => record },
+			chatStore: { getChat: () => record, listChats: () => [] },
 			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => [] },
 			learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
 			attributor: createAttributor({ engineFor: () => engine }),
@@ -127,17 +127,11 @@ describe("attribution", () => {
 		assert.equal(service.hasPendingItems("c1"), true, "the item stays pending for the next trigger");
 	});
 
-	it("a chat without propositions of its own appends nothing and calls no model", async () => {
-		const { service, rows } = setup([], { nodes: [node("n9", "other")] });
-		assert.equal(await service.attributeChat("c1"), 0);
-		assert.deepEqual(rows, []);
-	});
-
 	it("an unconfigured cheap slot skips quietly", async () => {
 		const rows: AttributionRow[] = [];
 		const record = chat("c1", quiz("q1", { pick: 1 }));
 		const service = createAttributionService({
-			chatStore: { getChat: () => record },
+			chatStore: { getChat: () => record, listChats: () => [] },
 			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => [] },
 			learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
 			attributor: createAttributor({ engineFor: () => undefined }),
@@ -159,38 +153,117 @@ describe("attribution", () => {
 		assert.equal(rows.length, 2);
 	});
 
-	it("an item whose preceding teaching is not yet covered is not sent and gets no row; coverage lets the next run attribute it", async () => {
-		const p1 = prose("Semaphores make P and V atomic.");
-		const record = chat("c1", [p1, ...quiz("q1", { pick: 1 })]);
-		const coverage: CoverageEntry[] = [];
+	it("an item whose preceding teaching is not yet covered is linked at once when the model finds a concept (no coverage wait)", async () => {
+		const record = chat("c1", [prose("Semaphores make P and V atomic."), ...quiz("q1", { pick: 1 })]);
 		const rows: AttributionRow[] = [];
-		const faux = createFauxCore({});
-		let prompt = "";
-		faux.setResponses([
-			(context) => {
-				prompt = JSON.stringify((context as { messages: unknown }).messages);
-				return call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ["n1"] }] });
-			},
-		]);
-		const engine: PiEngine = { model: faux.getModel(), streamFn: faux.streamSimple };
 		const service = createAttributionService({
-			chatStore: { getChat: () => record },
-			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => coverage },
+			chatStore: { getChat: () => record, listChats: () => [] },
+			graphStore: { readNodes: () => [node("n1", "c1")], readChains: () => [], readCoverage: () => [] },
 			learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
-			attributor: createAttributor({ engineFor: () => engine }),
+			attributor: attributorWith([() => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ["n1"] }] })]),
 		});
-		assert.equal(await service.attributeChat("c1"), 0);
-		assert.equal(rows.length, 0, "no row, not even an empty one");
-		assert.equal(service.hasPendingItems("c1"), true);
-		coverage.push({ chatId: "c1", fp: messageFingerprint(p1), tokens: 8, foldedAt: "t" });
 		assert.equal(await service.attributeChat("c1"), 1);
 		assert.deepEqual(rows.map((r) => [r.toolCallId, r.conceptIds]), [["q1", ["n1"]]]);
-		assert.match(prompt, /q1/);
 	});
 
 	it("a probe item with no prior teacher prose is eligible once the chat has provenance", async () => {
 		const { service, rows } = setup([() => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: [] }, { toolCallId: "q2", conceptIds: [] }] })]);
 		assert.equal(await service.attributeChat("c1"), 2);
 		assert.equal(rows.length, 2);
+	});
+
+	describe("library search", () => {
+		const libNode = (id: string): GraphNode => ({ ...node(id, "other"), name: `Lib ${id}`, statement: `Library statement ${id}` });
+		const harness = (opts: {
+			steps: FauxResponseStep[];
+			messages: ReturnType<typeof chat>["messages"];
+			coverage?: CoverageEntry[];
+			extractionEnabled?: boolean;
+			found?: string[];
+			queries?: string[];
+		}) => {
+			const record = chat("c1", opts.messages);
+			const rows: AttributionRow[] = [];
+			const service = createAttributionService({
+				chatStore: { getChat: () => record, listChats: () => [{ id: "c1", kind: "teach" } as never] },
+				// no provenance in c1 at all: only the library can supply candidates
+				graphStore: { readNodes: () => [libNode("L1"), libNode("L2"), libNode("L3")], readChains: () => [], readCoverage: () => opts.coverage ?? [] },
+				learnerStore: { appendAttribution: (r) => void rows.push(r), readAttributions: () => [...rows] },
+				attributor: attributorWith(opts.steps),
+				searchConcepts: async (q) => {
+					opts.queries?.push(q);
+					return opts.found ?? [];
+				},
+				...(opts.extractionEnabled !== undefined ? { extractionEnabled: () => opts.extractionEnabled! } : {}),
+			});
+			return { service, rows };
+		};
+		const pick = (...ids: string[]) => () => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ids }] });
+
+		it("links an untagged quiz in a chat with no provenance or coverage to a library concept", async () => {
+			const queries: string[] = [];
+			const { service, rows } = harness({ steps: [pick("L2")], messages: quiz("q1", { pick: 1 }), found: ["L1", "L2"], queries });
+			assert.equal(await service.attributeChat("c1"), 1);
+			assert.deepEqual(rows.map((r) => [r.toolCallId, r.conceptIds]), [["q1", ["L2"]]]);
+			assert.match(queries[0]!, /Q q1 P decrements/, "query = question + correct option label");
+		});
+
+		it("no match and not coverage-eligible appends nothing; eligible (or extraction off) appends an empty row", async () => {
+			const p1 = prose("Teaching not yet extracted.");
+			const messages = [p1, ...quiz("q1", { pick: 1 })];
+			const none = () => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: [] }] });
+			const pending = harness({ steps: [none], messages, found: ["L1"] });
+			assert.equal(await pending.service.attributeChat("c1"), 0);
+			assert.equal(pending.rows.length, 0);
+			assert.equal(pending.service.hasPendingItems("c1"), true);
+
+			const eligible = harness({ steps: [none], messages, found: ["L1"], coverage: [{ chatId: "c1", fp: messageFingerprint(p1), tokens: 8, foldedAt: "t" }] });
+			assert.equal(await eligible.service.attributeChat("c1"), 1);
+			assert.deepEqual(eligible.rows.map((r) => r.conceptIds), [[]]);
+
+			const off = harness({ steps: [none], messages, found: ["L1"], extractionEnabled: false });
+			assert.equal(await off.service.attributeChat("c1"), 1);
+			assert.deepEqual(off.rows.map((r) => r.conceptIds), [[]]);
+		});
+
+		it("an unmatched, non-eligible item is sent once; again only after a new merge", async () => {
+			const p1 = prose("Teaching not yet extracted.");
+			const queries: string[] = [];
+			const coverage: CoverageEntry[] = [];
+			const none = () => call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: [] }] });
+			const { service, rows } = harness({ steps: [none, none], messages: [p1, ...quiz("q1", { pick: 1 })], found: ["L1"], coverage, queries });
+			assert.equal(await service.attributeChat("c1"), 0);
+			assert.equal(await service.attributeChat("c1"), 0);
+			assert.equal(queries.length, 1, "second run: not searched, not sent");
+			coverage.push({ chatId: "c1", fp: "some-other-message", tokens: 8, foldedAt: "t" });
+			assert.equal(await service.attributeChat("c1"), 0);
+			assert.equal(queries.length, 2, "after a merge it is tried again");
+			assert.equal(rows.length, 0);
+		});
+
+		it("refuses concept ids outside the item's candidates", async () => {
+			let second = "";
+			const { service, rows } = harness({
+				steps: [
+					pick("L3"), // in the library but not among this item's candidates
+					(context) => {
+						second = JSON.stringify((context as { messages: unknown }).messages);
+						return call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ["L1"] }] });
+					},
+				],
+				messages: quiz("q1", { pick: 1 }),
+				found: ["L1", "L2"],
+			});
+			assert.equal(await service.attributeChat("c1"), 1);
+			assert.match(second, /is not in the CONCEPTS list of item/);
+			assert.deepEqual(rows.map((r) => r.conceptIds), [["L1"]]);
+		});
+
+		it("the backfill attributes every pending chat once; a second call appends nothing", async () => {
+			const { service, rows } = harness({ steps: [pick("L1")], messages: quiz("q1", { pick: 1 }), found: ["L1"] });
+			assert.deepEqual(await service.attributePending(), { chats: 1, rows: 1 });
+			assert.deepEqual(await service.attributePending(), { chats: 0, rows: 0 });
+			assert.equal(rows.length, 1);
+		});
 	});
 });
