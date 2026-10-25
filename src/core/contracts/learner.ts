@@ -64,3 +64,9 @@ export interface LearnerSnapshot {
 	asOf: string;
 	states: Record<string, ConceptState>;
 }
+
+/** What GET /api/learner returns: the snapshot plus the titles of the sessions its evidence
+ *  cites (chat id -> title), so the client can name them. A chat that is gone has no entry. */
+export interface LearnerView extends LearnerSnapshot {
+	sessions: Record<string, string>;
+}

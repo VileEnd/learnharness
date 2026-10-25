@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerEvent, useServerResync } from "@/components/server-events";
-import type { LearnerSnapshot } from "@/src/core";
+import type { LearnerView } from "@/src/core";
 
 /**
  * The learner model on the client: GET /api/learner, refetched whenever the
@@ -12,8 +12,8 @@ import type { LearnerSnapshot } from "@/src/core";
  * graph's own refetch triggers. Disabled = no request, last value kept.
  * A failed fetch keeps the previous snapshot (the overlay is cosmetic).
  */
-export function useLearnerSnapshot(enabled: boolean, tick = 0): LearnerSnapshot | null {
-	const [snapshot, setSnapshot] = useState<LearnerSnapshot | null>(null);
+export function useLearnerSnapshot(enabled: boolean, tick = 0): LearnerView | null {
+	const [snapshot, setSnapshot] = useState<LearnerView | null>(null);
 	const [bump, setBump] = useState(0);
 	const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const schedule = useCallback(() => {
@@ -35,7 +35,7 @@ export function useLearnerSnapshot(enabled: boolean, tick = 0): LearnerSnapshot 
 		if (!enabled) return;
 		let cancelled = false;
 		fetch("/api/learner")
-			.then((res) => (res.ok ? (res.json() as Promise<LearnerSnapshot>) : null))
+			.then((res) => (res.ok ? (res.json() as Promise<LearnerView>) : null))
 			.then((data) => {
 				if (!cancelled && data) setSnapshot(data);
 			})
