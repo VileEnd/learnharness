@@ -7,6 +7,8 @@
 
 import { createDescriber } from "../agent/subagents/describe.ts";
 import { extraction, resolveEngine } from "./chat-handler.ts";
+import type { DocumentStore } from "../core/ports.ts";
+import { docIndex } from "./doc-index.ts";
 import { createDocumentService } from "./documents.ts";
 import { providerKeyPresent } from "./keys.ts";
 import { providerKeyMissing } from "../core/settings.ts";
@@ -20,8 +22,23 @@ const describer = createDescriber({
 	providerKeyMissing: (provider, tier) => (providerKeyPresent(provider) ? null : providerKeyMissing(provider, [tier])),
 });
 
+/** The store the service writes through: every save/remove also updates the
+ *  search index (BM25 now, embeddings in the background - PR I). */
+const indexedStore: DocumentStore = {
+	...stores.documentStore,
+	save(meta, markdown) {
+		stores.documentStore.save(meta, markdown);
+		docIndex.indexDocument(meta.id);
+	},
+	remove(id) {
+		const removed = stores.documentStore.remove(id);
+		docIndex.removeDocument(id);
+		return removed;
+	},
+};
+
 export const documents = createDocumentService({
-	store: stores.documentStore,
+	store: indexedStore,
 	// Looked up per call: tests and dev swap extraction.importNotes on the shared instance.
 	importNotes: (input) => extraction.importNotes(input),
 	describe: (text, signal) => describer.describe(text, signal),
