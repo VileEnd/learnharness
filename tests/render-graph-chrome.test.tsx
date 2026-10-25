@@ -25,20 +25,19 @@ const PROPS = {
 	query: "",
 	onQuery: () => {},
 	noMatch: false,
-	importing: false,
 	searchInputRef: ref,
-	fileInputRef: ref,
-	onImportFiles: () => {},
+	onAddDocuments: () => {},
 	settings: {} as GraphRenderSettings,
 	changeSettings: () => {},
 	onOpenChains: () => {},
 };
 
 describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => {
-	it("EMPTY graph: Import Notes renders (the entry point), search + settings absent", () => {
+	it("EMPTY graph: Add documents renders (the entry point), search + settings absent", () => {
 		const html = renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, isEmpty: true }));
 		assert.ok(html.includes('data-testid="import-notes"'));
-		assert.ok(html.includes("Import notes…"));
+		assert.ok(html.includes("Add documents…"));
+		assert.ok(html.includes('href="/documents"'), "the library link rides beside it");
 		assert.ok(!html.includes("Search nodes…"), "search is a lie on an empty graph");
 		// the settings gear is the lucide-settings svg (tooltip wave: its old
 		// native title is gone — the styled tooltip carries the label now)
@@ -53,7 +52,7 @@ describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => 
 		assert.ok(html.includes("Search nodes…"));
 		assert.ok(html.includes("lucide-settings"), "the settings gear renders");
 		assert.ok(html.includes('data-testid="open-chain-table"'), "the chains entry renders");
-		// the appear-once fade rides exactly the three gated controls, never Import Notes
+		// the appear-once fade rides exactly the three gated controls, never Add documents
 		assert.equal(html.split("graph-chrome-fade-in").length - 1, 3, "three fade carriers: search + chains + settings");
 	});
 

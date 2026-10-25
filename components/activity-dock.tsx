@@ -67,9 +67,18 @@ export interface FeedExtraction {
 	startedAt: number;
 }
 
+/** A running PDF scan (document library); the title carries page progress. */
+export interface FeedScan {
+	id: string;
+	title: string;
+	startedAt: number;
+}
+
 export interface ActivityFeed {
 	jobs: FeedJob[];
 	extractions: FeedExtraction[];
+	/** Absent on older payloads. */
+	scans?: FeedScan[];
 }
 
 const EMPTY_FEED: ActivityFeed = { jobs: [], extractions: [] };
@@ -109,7 +118,7 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
 				if (res.ok) {
 					const data = (await res.json()) as Partial<ActivityFeed>;
 					if (alive)
-						setFeed({ jobs: data.jobs ?? [], extractions: data.extractions ?? [] });
+						setFeed({ jobs: data.jobs ?? [], extractions: data.extractions ?? [], scans: data.scans ?? [] });
 				}
 			} catch {
 				// transport blip: keep the last feed, announce again next event
@@ -169,7 +178,7 @@ export interface ActivityBlob {
 	/** job.id, or the extraction job's row id (source id, or "src#i" for
 	 *  chunk jobs — unique per row, per-chunk jobs owner 2026-09-28). */
 	id: string;
-	process: "job" | "extraction";
+	process: "job" | "extraction" | "scan";
 	/** Sub-agent kind for jobs (extraction blobs have none). */
 	jobKind?: JobKind;
 	/** Extraction phase (extracting/auditing/merging/embedding); jobs carry none. */
@@ -248,6 +257,18 @@ export function toBlobs(feed: ActivityFeed): ActivityBlob[] {
 			chatId: run.chatId,
 			startedAt: run.startedAt,
 			cost: null, // extraction runs don't ride the money channel (v1)
+			context: null,
+			activity: "",
+		});
+	}
+	for (const scan of feed.scans ?? []) {
+		blobs.push({
+			id: scan.id,
+			process: "scan",
+			title: scan.title,
+			chatId: "",
+			startedAt: scan.startedAt,
+			cost: null, // OCR spend is recorded on the document, not the money channel (v1)
 			context: null,
 			activity: "",
 		});
@@ -389,9 +410,12 @@ function ActivityBlobRow({
 	abortState: AbortState | undefined;
 	onAbort: () => void;
 }) {
-	const Icon = blob.process === "extraction" ? WaypointsIcon : (blob.jobKind && KIND_ICON[blob.jobKind]) || BotIcon;
+	const Icon =
+		blob.process === "scan" ? FileTextIcon : blob.process === "extraction" ? WaypointsIcon : (blob.jobKind && KIND_ICON[blob.jobKind]) || BotIcon;
 	const label =
-		blob.process === "extraction"
+		blob.process === "scan"
+			? "Scanning"
+			: blob.process === "extraction"
 			? `Extraction — ${blob.phase ?? "running"}`
 			: blob.jobKind === "research"
 				? "Researcher"
@@ -491,8 +515,8 @@ function ActivityBlobRow({
 								<span className="tabular-nums text-card-foreground">{blob.steps}</span>
 							</div>
 						)}
-						<a href={`/chat/${blob.chatId}`} className="text-primary hover:underline">
-							Open session →
+						<a href={blob.process === "scan" ? "/documents" : `/chat/${blob.chatId}`} className="text-primary hover:underline">
+							{blob.process === "scan" ? "Open documents →" : "Open session →"}
 						</a>
 					</div>
 					<div className="mt-2 text-muted-foreground/80">
