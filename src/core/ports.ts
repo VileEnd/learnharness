@@ -26,6 +26,7 @@ import type {
 	TurnUsage,
 	NotesSource,
 } from "./contracts.ts";
+import type { DocumentMeta } from "./contracts/documents.ts";
 import type { UserSettings } from "./settings.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -252,4 +253,25 @@ export interface PushStore {
 	/** The key pair, or null until first use generates it. */
 	readVapid(): VapidKeys | null;
 	writeVapid(keys: VapidKeys): void;
+}
+
+// ─── DocumentStore — the document library (data/documents) ──────────────────
+
+/**
+ * Imported source documents: `<docId>/document.md` (the full markdown) plus
+ * `<docId>/meta.json`. src/server/documents.ts is the only writer. Reads
+ * never throw: unknown ids and corrupt files read as absent. Writes are
+ * atomic (temp + rename), document first and meta last, so a meta only ever
+ * points at a complete document.
+ */
+export interface DocumentStore {
+	/** Every document's meta (sketch included), newest import first. */
+	listMetas(): DocumentMeta[];
+	getMeta(id: string): DocumentMeta | null;
+	/** The stored markdown, or null. */
+	readMarkdown(id: string): string | null;
+	/** Create or replace a document (same id = same document). */
+	save(meta: DocumentMeta, markdown: string): void;
+	/** Remove a document entirely (false when unknown). */
+	remove(id: string): boolean;
 }
