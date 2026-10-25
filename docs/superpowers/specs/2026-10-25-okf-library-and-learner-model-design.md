@@ -238,6 +238,21 @@ me/topics/<topic>.md      type: Learner Topic — concepts grouped by state, eac
 
 ---
 
+## Adopted from Google's OKF reference (owner, 2026-10-25)
+
+Source: `GoogleCloudPlatform/open-knowledge-format` (Apache-2.0), formerly `knowledge-catalog/okf`.
+
+- **Index format** (always). Every `index.md` follows the reference generator: one `# <Type>` section per type, sorted, with entries `* [Title](link) - description`; subdirectories are listed under `# Subdirectories`.
+- **Trust and lifecycle fields on concepts:**
+  - `verified: [{ by: learnharness/auditor, at }]`, one entry per additional distinct source the auditor linked to the node. This means corroborated by an independent source; the auditor no longer fact-checks content.
+  - `status: stable`, or `status: deprecated` when none of the node's provenance sources exists any more (deleted document or chat).
+  - Agents are told that unverified means "one source", and that deprecated concepts are history.
+- **Misconceptions as OKF `not:` entries** (`term`, `why`, `instead`). They live on the learner side only, so concept files stay objective. Each concept with evidence gets `me/concepts/<concept>.md` (`type: Learner Concept`) with its evidence history and a `not:` list of his **open** misconceptions.
+  - **Sources:** a quiz/probe miss gives term = the option he picked, instead = the correct option, why = his note if any. `grade` gains optional `misconception: { term, instead, why? }` for free answers. Practice verdicts don't state the correction, so they give term only.
+  - **Lifecycle:** a misconception closes when the concept's next session result is clean (it stays in the history, not in `not:`).
+  - The prober and teacher read `not:` and target exactly that confusion. `me/topics/<topic>.md` links to these pages.
+- **Graph viewer in the download.** The export zip includes `viz.html`, a TypeScript port of the reference `viewer/generator.py` plus its `viz.html` template, `viz.js` and `viz.css`, vendored with the Apache-2.0 notice. It loads cytoscape and marked from jsDelivr as upstream does, so it needs internet when opened. It is generated only for the export, not for the agents' bundle.
+
 ## Build order (one PR each: Sonnet implements in a worktree, Opus reviews and verifies on VM 104 with real data)
 
 1. **Rooted tools.** Factories rooted at `LH_LIBRARY_DIR` for `ls/find/grep/read` (realpath containment); the `pdf` job removed (security, standalone).
