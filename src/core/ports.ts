@@ -26,7 +26,7 @@ import type {
 	TurnUsage,
 	NotesSource,
 } from "./contracts.ts";
-import type { DocumentMeta } from "./contracts/documents.ts";
+import type { DocumentMeta, DocumentVectors } from "./contracts/documents.ts";
 import type { UserSettings } from "./settings.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -274,4 +274,10 @@ export interface DocumentStore {
 	save(meta: DocumentMeta, markdown: string): void;
 	/** Remove a document entirely (false when unknown). */
 	remove(id: string): boolean;
+	/** The stored embeddings (vectors.f32 + chunks.json), or null when absent,
+	 *  torn or stale (computed from other text than the document holds now). */
+	readVectors(id: string): DocumentVectors | null;
+	/** Persist embeddings (atomic, vectors first, chunks.json last). The
+	 *  search index asks the store to write - it never touches files itself. */
+	writeVectors(id: string, vectors: DocumentVectors): void;
 }

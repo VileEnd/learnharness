@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PATHS } from "../../config.ts";
-import type { DocumentMeta } from "../core/contracts/documents.ts";
+import type { DocumentChunkRef, DocumentMeta, DocumentVectors } from "../core/contracts/documents.ts";
 import type { DocumentStore } from "../core/ports.ts";
 
 const ID = /^doc_[0-9a-f]{12,64}$/;
@@ -48,6 +48,31 @@ function getMeta(id: string): DocumentMeta | null {
 	}
 }
 
+function writeAtomicBytes(file: string, data: Uint8Array): void {
+	const tmp = `${file}.tmp-${process.pid}`;
+	fs.writeFileSync(tmp, data);
+	fs.renameSync(tmp, file);
+}
+
+interface ChunksFile {
+	model: string;
+	dims: number;
+	contentHash: string;
+	chunks: DocumentChunkRef[];
+}
+
+function isChunksFile(v: unknown): v is ChunksFile {
+	const c = v as ChunksFile | null;
+	return (
+		!!c &&
+		typeof c.model === "string" &&
+		Number.isInteger(c.dims) &&
+		c.dims > 0 &&
+		typeof c.contentHash === "string" &&
+		Array.isArray(c.chunks)
+	);
+}
+
 export const documentStore: DocumentStore = {
 	listMetas() {
 		let ids: string[];
@@ -83,5 +108,32 @@ export const documentStore: DocumentStore = {
 		if (!ID.test(id) || !fs.existsSync(dirOf(id))) return false;
 		fs.rmSync(dirOf(id), { recursive: true, force: true });
 		return true;
+	},
+	readVectors(id) {
+		const meta = getMeta(id);
+		if (!meta) return null;
+		try {
+			const raw: unknown = JSON.parse(fs.readFileSync(path.join(dirOf(id), "chunks.json"), "utf-8"));
+			if (!isChunksFile(raw) || raw.contentHash !== meta.contentHash) return null;
+			const bytes = fs.readFileSync(path.join(dirOf(id), "vectors.f32"));
+			if (bytes.length !== raw.chunks.length * raw.dims * 4) return null; // torn write
+			const vectors = new Float32Array(bytes.length / 4);
+			for (let i = 0; i < vectors.length; i++) vectors[i] = bytes.readFloatLE(i * 4);
+			return { model: raw.model, dims: raw.dims, contentHash: raw.contentHash, chunks: raw.chunks, vectors };
+		} catch {
+			return null;
+		}
+	},
+	writeVectors(id, v) {
+		if (!ID.test(id)) throw new Error(`invalid document id ${id}`);
+		const dir = dirOf(id);
+		if (!fs.existsSync(dir)) return; // removed meanwhile
+		if (v.vectors.length !== v.chunks.length * v.dims) throw new Error("vectors do not match chunks x dims");
+		const bytes = Buffer.alloc(v.vectors.length * 4);
+		for (let i = 0; i < v.vectors.length; i++) bytes.writeFloatLE(v.vectors[i]!, i * 4);
+		// Little-endian regardless of the host; chunks.json last, so it only ever points at complete vectors.
+		writeAtomicBytes(path.join(dir, "vectors.f32"), bytes);
+		const chunks: ChunksFile = { model: v.model, dims: v.dims, contentHash: v.contentHash, chunks: v.chunks };
+		writeAtomic(path.join(dir, "chunks.json"), `${JSON.stringify(chunks)}\n`);
 	},
 };

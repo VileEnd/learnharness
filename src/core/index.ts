@@ -79,3 +79,6 @@ export * from "./session-markdown.ts";
 // document-pages.ts (PR G): page splitting for the document reader - pure, browser-safe.
 // core/documents.ts (sha256) is deliberately NOT here; the server imports it directly.
 export * from "./document-pages.ts";
+// doc-search.ts (PR I): the search result shapes the library UI renders. The scoring itself is
+// browser-safe too but only the server index and the agent tools run it, so just the types ship.
+export type { DocSearchHit, DocSearchResult, DocSearchQuery, DocListEntry, DocReadResult, DocReadQuery } from "./doc-search.ts";

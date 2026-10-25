@@ -61,3 +61,28 @@ export interface DuplicateVerdict {
 
 /** What the learner decided for one non-new file. */
 export type DocumentDecision = "skip" | "replace" | "new";
+
+// ─── search (PR I) ───────────────────────────────────────────────────────────
+
+/** One retrieval unit's location, as persisted in chunks.json (the text is
+ *  re-sliced from document.md by offset - never stored twice). */
+export interface DocumentChunkRef {
+	sectionId: string;
+	/** Char offsets into the stored markdown (end exclusive). */
+	start: number;
+	end: number;
+	pageFrom?: number;
+	pageTo?: number;
+}
+
+/** The embeddings of one document: vectors.f32 (little-endian float32,
+ *  chunks.length x dims, row-major) + chunks.json. `contentHash` ties them
+ *  to the text they were computed from - a replaced document invalidates
+ *  them on read. */
+export interface DocumentVectors {
+	model: string;
+	dims: number;
+	contentHash: string;
+	chunks: DocumentChunkRef[];
+	vectors: Float32Array;
+}

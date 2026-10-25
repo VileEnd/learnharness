@@ -259,6 +259,10 @@ export interface AgentSettings {
 	 *  tool-toggles map. Absent = enabled (the toggle discipline); the
 	 *  effective gate composes graph.enabled AND this switch. */
 	graphTools?: { enabled?: boolean };
+	/** Document tools (PR I): search_documents / read_document / list_documents
+	 *  for the prober, teacher and practice agents over the learner's library.
+	 *  Absent = enabled (the toggle discipline). */
+	documentTools?: { enabled?: boolean };
 	/** System-prompt override SWITCHES keyed by segment path (absent key =
 	 *  off). Switch-on requires the override file to exist (enforced by the
 	 *  route); the switch is explicit so users keep a file on disk but run
@@ -358,6 +362,20 @@ export interface CompactionSettings {
 	thresholdTokens?: number;
 }
 
+/** Document library settings (PR I). */
+export interface DocumentsSettings {
+	/** The OpenRouter embedding model behind hybrid document search. Absent =
+	 *  DEFAULT_EMBEDDING_MODEL. Changing it re-embeds the library in the
+	 *  background (search stays keyword-only for a document until then). */
+	embeddingModel?: string;
+}
+
+/** bge-m3: multilingual (100+ languages, German included), 1024 dims, 8k
+ *  context, $0.01 per million tokens on OpenRouter - a few cents embed a
+ *  whole library. Free embedding models exist but may retain and train on
+ *  the learner's documents, so they are not the default. */
+export const DEFAULT_EMBEDDING_MODEL = "baai/bge-m3";
+
 /** THE record. Every section optional (delta); unknown top-level keys are
  *  preserved verbatim by the sanitizer (forward-compat with newer records). */
 export interface UserSettings {
@@ -369,6 +387,7 @@ export interface UserSettings {
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
+	documents?: DocumentsSettings;
 	[key: string]: unknown;
 }
 
@@ -394,6 +413,7 @@ export interface FactorySettings {
 	};
 	graph: Required<GraphSettings>;
 	compaction: Required<CompactionSettings>;
+	documents: Required<DocumentsSettings>;
 }
 
 export const FACTORY_SETTINGS: FactorySettings = {
@@ -409,6 +429,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
 	compaction: { thresholdTokens: 150_000 },
+	documents: { embeddingModel: DEFAULT_EMBEDDING_MODEL },
 };
 
 /** The chunk budget's validated floor (GraphSettings.extractionChunkTokens
@@ -530,6 +551,12 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 		if (enabled === undefined) out.graphTools = {};
 		else if (typeof enabled === "boolean") out.graphTools = { enabled };
 	}
+	// Document tools (PR I): same lenient read as graphTools.
+	if (raw.documentTools !== null && typeof raw.documentTools === "object" && !Array.isArray(raw.documentTools)) {
+		const enabled = (raw.documentTools as Record<string, unknown>).enabled;
+		if (enabled === undefined) out.documentTools = {};
+		else if (typeof enabled === "boolean") out.documentTools = { enabled };
+	}
 	return out;
 }
 
@@ -602,6 +629,18 @@ function sanitizeCompaction(raw: Record<string, unknown>): CompactionSettings {
 	return out;
 }
 
+/** A model id as OpenRouter spells it ("vendor/name[:variant]"): trimmed, no
+ *  whitespace; anything else drops (the default resolves at read time). */
+export const EMBEDDING_MODEL_PATTERN = /^[A-Za-z0-9][\w.-]*\/[\w.:-]+$/;
+
+function sanitizeDocuments(raw: Record<string, unknown>): DocumentsSettings {
+	const out: DocumentsSettings = {};
+	if (typeof raw.embeddingModel === "string" && EMBEDDING_MODEL_PATTERN.test(raw.embeddingModel.trim())) {
+		out.embeddingModel = raw.embeddingModel.trim();
+	}
+	return out;
+}
+
 /**
  * Coerce arbitrary JSON (disk file, network body) into a valid delta record:
  * known fields validated strictly (invalid ones drop/clamp per module doc),
@@ -632,6 +671,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 		if (r.compaction !== undefined && r.compaction !== null && typeof r.compaction === "object") {
 			out.compaction = sanitizeCompaction(r.compaction as Record<string, unknown>);
 		}
+	}
+	if (r.documents !== null && typeof r.documents === "object" && !Array.isArray(r.documents)) {
+		out.documents = sanitizeDocuments(r.documents as Record<string, unknown>);
 	}
 	// Unknown top-level keys ride along untouched (forward-compat). One
 	// known-DEAD key is stripped instead of riding: `chat` (the old

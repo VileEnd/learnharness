@@ -18,6 +18,7 @@ import type { JobStore } from "../core/ports.ts";
 import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
+import { documentTools, type DocumentToolDeps } from "./tools/documents.ts";
 import { proberGraphTools } from "./tools/graph.ts";
 import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
@@ -276,6 +277,10 @@ export interface ProberToolContext extends ProbeDoneContext {
 	 *  master switch AND the agent.graphTools toggle (settings-resolution).
 	 *  Absent = the gate is closed, no map tools (tests drive this seam). */
 	graphStore?: GraphStore;
+	/** The document library tools (PR I): present = search_documents /
+	 *  read_document / list_documents are registered. The composition root
+	 *  passes it only when documentToolsEnabled(effective). */
+	documents?: DocumentToolDeps;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -339,6 +344,7 @@ export function createProberTools(
 				...(ctx.graphStore
 					? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore })
 					: {}),
+				...(ctx.documents ? documentTools(ctx.documents) : {}),
 				...done,
 			},
 				withoutMechanics(enabled),
@@ -400,6 +406,8 @@ export interface TeacherToolContext extends PlanToolContext {
 	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
+	/** The document library tools (PR I), gated like the prober's. */
+	documents?: DocumentToolDeps;
 }
 
 /**
@@ -459,6 +467,7 @@ export function createTeacherTools(
 			grep: grepTool,
 			...planTools(ctx),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
+			...(ctx.documents ? documentTools(ctx.documents) : {}),
 		},
 		withoutMechanics(enabled),
 		),
