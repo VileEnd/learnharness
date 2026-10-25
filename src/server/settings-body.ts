@@ -18,12 +18,13 @@ import type {
 	AppearanceSettings,
 	BackgroundModelRole,
 	CompactionSettings,
+	DocumentsSettings,
 	GeneralSettings,
 	GraphSettings,
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 
 /** Parsed-or-rejected — `ok: false` carries the 400's error message. */
@@ -194,6 +195,15 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 			return { ok: false, error: "graphTools.enabled must be a boolean" };
 		}
 		settings.graphTools = graphTools.enabled === undefined ? {} : { enabled: graphTools.enabled };
+	}
+	// Document tools (PR I): the same strict subsection shape. Absent = ON.
+	if (raw.documentTools !== undefined) {
+		const documentTools = asRecord(raw.documentTools);
+		if (!documentTools) return { ok: false, error: "documentTools must be an object" };
+		if (documentTools.enabled !== undefined && typeof documentTools.enabled !== "boolean") {
+			return { ok: false, error: "documentTools.enabled must be a boolean" };
+		}
+		settings.documentTools = documentTools.enabled === undefined ? {} : { enabled: documentTools.enabled };
 	}
 	return { ok: true, settings };
 }
@@ -375,6 +385,23 @@ export function parseCompactionSettingsBody(body: unknown): SettingsBodyResult<C
 	return { ok: true, settings };
 }
 
+/** documents (PR I): the embedding model behind hybrid search. Strict write
+ *  side: a present embeddingModel must look like an OpenRouter model id;
+ *  empty/absent = the default. Replace-whole, like every section. */
+export function parseDocumentsSettingsBody(body: unknown): SettingsBodyResult<DocumentsSettings> {
+	const raw = asRecord(body);
+	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	const settings: DocumentsSettings = {};
+	if (raw.embeddingModel !== undefined && raw.embeddingModel !== "") {
+		const model = typeof raw.embeddingModel === "string" ? raw.embeddingModel.trim() : "";
+		if (!EMBEDDING_MODEL_PATTERN.test(model)) {
+			return { ok: false, error: 'embeddingModel must be an OpenRouter model id like "baai/bge-m3"' };
+		}
+		settings.embeddingModel = model;
+	}
+	return { ok: true, settings };
+}
+
 /** The section→parser map for PUT /api/settings/[section] (the route also
  *  carries the special prompts sub-resource). */
 export const SETTINGS_SECTIONS = {
@@ -384,6 +411,7 @@ export const SETTINGS_SECTIONS = {
 	appearance: parseAppearanceSettingsBody,
 	graph: parseGraphSettingsBody,
 	compaction: parseCompactionSettingsBody,
+	documents: parseDocumentsSettingsBody,
 	models: parseModelsSettingsBody,
 } as const;
 

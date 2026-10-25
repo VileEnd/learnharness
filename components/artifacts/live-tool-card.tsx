@@ -37,6 +37,8 @@ export function LiveToolCard({ part }: ArtifactPartProps) {
 	if (typeof inp.path === "string" && inp.path) arg = inp.path;
 	else if (typeof inp.pattern === "string" && inp.pattern) arg = inp.pattern;
 	else if (typeof inp.session === "string" && inp.session) arg = inp.session;
+	else if (typeof inp.query === "string" && inp.query) arg = inp.query; // search_documents
+	else if (typeof inp.document === "string" && inp.document) arg = inp.document; // read_document
 
 	const hasInput = p.input != null && Object.keys(inp).length > 0;
 
