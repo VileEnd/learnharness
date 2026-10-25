@@ -24,6 +24,7 @@ import { chatStore } from "../store/chats.ts";
 import { graphRevision } from "./graph.ts";
 import { catalogContextLimits } from "./model-catalog.ts";
 import { listJobs } from "./jobs.ts";
+import { scanStatuses } from "./documents.ts";
 import { jobCost } from "./pricing.ts";
 import type { JobRecord } from "../core/contracts.ts";
 
@@ -56,6 +57,14 @@ export interface ActivityExtraction {
 	startedAt: number;
 }
 
+/** One running PDF scan (document library): the title already carries the
+ *  page progress ("Scanning <title> · 3/12 pages"). Abortable by id. */
+export interface ActivityScan {
+	id: string;
+	title: string;
+	startedAt: number;
+}
+
 /** The dock's whole world in one payload: every running process, every view.
  *  Jobs are RUNNING-ONLY — finished jobs belong to their chat's transcript;
  *  the blob disappears when the process ends. Costs are joined here through
@@ -69,6 +78,7 @@ export interface ActivityExtraction {
 export function activityFeed(): {
 	jobs: ActivityJob[];
 	extractions: ActivityExtraction[];
+	scans: ActivityScan[];
 	graphRevision: number;
 } {
 	const chats = chatStore.listChats();
@@ -104,6 +114,7 @@ export function activityFeed(): {
 	return {
 		jobs,
 		extractions: extractions.sort((a, b) => a.startedAt - b.startedAt),
+		scans: scanStatuses(),
 		graphRevision: graphRevision(),
 	};
 }

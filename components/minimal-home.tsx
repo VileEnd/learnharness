@@ -18,11 +18,12 @@
  * The practice pick flow mirrors GraphView's contract verbatim (home
  * lifts the pick set; the chip opens the overlay in select mode).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ListTreeIcon, UploadIcon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { LibraryIcon, ListTreeIcon, UploadIcon } from "lucide-react";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { GraphCostControl } from "@/components/graph-view.tsx";
-import { NotesImportErrors, useNotesImport } from "@/components/notes-import.tsx";
+import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import { Hint } from "@/components/ui/hint";
 import type { ChatSummary, GraphCostSummary, GraphSnapshot } from "@/src/core";
 
@@ -97,7 +98,6 @@ export function MinimalHome({
 	const [costs, setCosts] = useState<GraphCostSummary | null>(null);
 	const [chats, setChats] = useState<ChatSummary[]>([]);
 	const [chainsOpen, setChainsOpen] = useState(false);
-	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const readState = useCallback(() => {
 		fetch("/api/graph")
@@ -123,26 +123,16 @@ export function MinimalHome({
 		if (chainSelectOpen) setChainsOpen(true);
 	}, [chainSelectOpen]);
 
-	// Refetch even after incomplete imports: earlier writes and spend remain.
-	const notesImport = useNotesImport({ onFinish: readState });
-	const { importing, onImportFiles } = notesImport;
+	// Add documents: the dialog posts the import; refetch once it is accepted
+	// (the runs themselves live in the dock, which also refetches on finish).
+	const [addOpen, setAddOpen] = useState(false);
 
 	const teachSessions = chats.filter((c) => c.kind === "teach").length;
 	const practiceSessions = chats.filter((c) => c.kind === "practice").length;
 
 	return (
 		<div className="relative h-full">
-			<input
-				ref={fileInputRef}
-				type="file"
-				multiple
-				accept=".md,.markdown,.txt,text/markdown,text/x-markdown,text/plain"
-				className="hidden"
-				onChange={(e) => {
-					onImportFiles(e.target.files);
-					e.target.value = ""; // allow re-picking the same file
-				}}
-			/>
+			<AddDocumentsDialog open={addOpen} onClose={() => setAddOpen(false)} onImported={readState} />
 
 			{/* The quiet summary — centered, biased up off the composer. */}
 			<div className="pointer-events-none flex h-full items-center justify-center pb-40">
@@ -176,22 +166,32 @@ export function MinimalHome({
 							</button>
 						</Hint>
 					</div>
-					<div className="shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
-						<Hint label="Import notes into the graph" side="bottom">
+					<div className="flex shrink-0 items-center rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+						<Hint label="Add documents to the graph" side="bottom">
 							<button
 								type="button"
-								disabled={importing}
-								onClick={() => fileInputRef.current?.click()}
+								onClick={() => setAddOpen(true)}
 								data-testid="import-notes"
-								className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
+								aria-label="Add documents"
+								className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent sm:w-auto sm:justify-start sm:px-2.5"
 							>
 								<UploadIcon className="size-3" />
-								{importing ? "Importing…" : "Import notes…"}
+								<span className="hidden sm:inline">Add documents…</span>
 							</button>
+						</Hint>
+						<Hint label="Your document library" side="bottom">
+							<Link
+								href="/documents"
+								data-testid="open-documents"
+								aria-label="Documents"
+								className="flex h-7 w-7 items-center justify-center gap-1.5 rounded-lg px-0 text-xs text-muted-foreground transition-colors hover:bg-accent sm:w-auto sm:justify-start sm:px-2.5"
+							>
+								<LibraryIcon className="size-3" />
+								<span className="hidden sm:inline">Documents</span>
+							</Link>
 						</Hint>
 					</div>
 				</div>
-				<NotesImportErrors errors={notesImport.errors} />
 				{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
 			</div>
 

@@ -132,7 +132,7 @@ setTurnRunner(async (chatId, input) => {
  *  the chain (role override → slot → NOTHING) may end empty, and undefined
  *  flows through to the per-need refusal gates (runner/extraction), read
  *  FRESH so a settings PUT between dispatch and spawn lands. */
-function resolveEngine(role: ModelRole): PiEngine | undefined {
+export function resolveEngine(role: ModelRole): PiEngine | undefined {
 	const spec = resolveRoleSpec(role, stores.settingsStore.readSettings());
 	return spec ? piEngineForSpec(spec) : undefined;
 }

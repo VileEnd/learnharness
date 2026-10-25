@@ -747,6 +747,14 @@ export interface NotesImportInput {
 	filePath: string;
 	/** The file's raw content, VERBATIM — any format. */
 	text: string;
+	/** A library document's source id (its docId): replaces the path-hash
+	 *  identity, so extraction provenance points at the document. */
+	id?: string;
+	/** A library document's TITLE: shown instead of `filePath` in the
+	 *  extractor's view, the activity row, the source record and pushes -
+	 *  the filename never reaches the model. `filePath` is then only the
+	 *  caller's alias. */
+	title?: string;
 }
 
 /** A notes import did not finish. Earlier graph writes and billed usage are
@@ -1320,7 +1328,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	// The notes auditor is the SAME identity-linker as the chat one (one
 	// schema now that attribution is gone) — audit() above, verbatim.
 
-	async function runNotesExtraction(input: { id: string; filePath: string; text: string; importedAt: string }): Promise<EmissionStats> {
+	async function runNotesExtraction(input: { id: string; filePath: string; reportAs: string; text: string; importedAt: string }): Promise<EmissionStats> {
 		const { id } = input;
 		// importNotes owns the source exclusion, including metadata and cleanup.
 		const t0 = performance.now();
@@ -1421,11 +1429,11 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				`[extraction ${id}] merged: ${stats.nodes} nodes, ${stats.chains ?? 0} chains ` +
 					`(${Math.round(performance.now() - t0)}ms total, ${chunks.length} chunk job(s))`,
 			);
-			if (stats.nodes > 0 || (stats.chains ?? 0) > 0) reportRun(path.basename(input.filePath), "done");
+			if (stats.nodes > 0 || (stats.chains ?? 0) > 0) reportRun(input.reportAs, "done");
 			return stats;
 		} catch (err) {
 			console.error(`[extraction ${id}] notes pipeline failed (${Math.round(performance.now() - t0)}ms):`, err);
-			if (isReportable(err)) reportRun(path.basename(input.filePath), "error");
+			if (isReportable(err)) reportRun(input.reportAs, "error");
 			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
 			throw new NotesImportError(err instanceof Error && err.name === "AbortError" ? "aborted" : "failed", mergedStats,
 				err instanceof Error ? err.message : String(err), { cause: err });
@@ -1437,14 +1445,25 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	/** Every explicit import processes the whole file. Identity, source digest,
 	 * auditor and usage history remain source-scoped; this is not exactly-once. */
 	async function importNotes(input: NotesImportInput): Promise<EmissionStats> {
-		const id = `src_${crypto.createHash("sha256").update(input.filePath).digest("hex").slice(0, 12)}`;
+		// A library document brings its own content-derived id and shows its
+		// TITLE everywhere the file path would be (the extractor's view, the
+		// activity row, the source record, the push); a bare path keeps the
+		// legacy path-hash identity.
+		const id = input.id ?? `src_${crypto.createHash("sha256").update(input.filePath).digest("hex").slice(0, 12)}`;
+		const label = input.title ?? input.filePath;
 		// Acquire BEFORE source upsert: overlapping contents must not alter metadata.
 		if (inFlight.has(id)) throw new NotesImportError("busy", { nodes: 0, chains: 0 }, "This file is already being imported. Try again when it finishes.");
 		inFlight.add(id);
 		try {
 			const importedAt = new Date().toISOString();
-			graphStore.upsertSource({ id, filePath: input.filePath, importedAt });
-			return await runNotesExtraction({ id, ...input, importedAt });
+			graphStore.upsertSource({ id, filePath: label, importedAt });
+			return await runNotesExtraction({
+				id,
+				filePath: label,
+				reportAs: input.title ?? path.basename(input.filePath),
+				text: input.text,
+				importedAt,
+			});
 		} catch (err) {
 			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
 			throw new NotesImportError("failed", { nodes: 0, chains: 0 }, err instanceof Error ? err.message : String(err), { cause: err });

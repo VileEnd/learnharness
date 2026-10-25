@@ -1632,6 +1632,31 @@ describe("the notes front door (importNotes — format-agnostic)", () => {
 		assert.equal(ledgers.readNodes().length, 3);
 	});
 
+	it("a library document brings its own source id and TITLE: the extractor view never carries the file path", async () => {
+		// The pipeline itself still processes whatever it is handed (the
+		// duplicate check lives in the document service above it).
+		const ledgers = memoryLedgers();
+		const views: string[] = [];
+		const extractor = fauxEngine([
+			(context) => {
+				views.push(capturedView(context));
+				return fauxAssistantMessage([fauxToolCall("submit_findings", NOTES_FINDINGS as unknown as ToolCall["arguments"])], { stopReason: "toolUse" });
+			},
+		]);
+		const pipeline = createExtractionPipeline({
+			chatStore,
+			graphStore: ledgers,
+			engineFor: (role) => (role === "extractor" ? extractor : submitModel("submit_review", NOTES_VERDICT)),
+		});
+		await pipeline.importNotes({ id: "doc_0123456789ab", title: "Vim modes", filePath: "secret-name.md", text: NOTES_TEXT });
+		assert.match(views[0]!, /Vim modes/);
+		assert.doesNotMatch(views[0]!, /secret-name/);
+		const [source] = ledgers.readSources();
+		assert.equal(source!.id, "doc_0123456789ab");
+		assert.equal(source!.filePath, "Vim modes", "the detail card shows the title");
+		assert.deepEqual(ledgers.readNodes()[0]!.provenance, [{ chatId: "doc_0123456789ab", messageId: "" }]);
+	});
+
 	it("aborts like a chat run: true cancellation, nothing merged, partial usage in the source record", async () => {
 		const ledgers = memoryLedgers();
 		const pipeline = createExtractionPipeline({

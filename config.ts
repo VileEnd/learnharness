@@ -27,6 +27,8 @@ export const PATHS = {
 	graph: path.join(DATA_ROOT, "graph"),
 	/** Web Push: subscriptions.json + vapid.json (src/store/push.ts). */
 	push: path.join(DATA_ROOT, "push"),
+	/** The document library: data/documents/<docId>/{document.md,meta.json} (src/store/documents.ts). */
+	documents: path.join(DATA_ROOT, "documents"),
 	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */
 	debug: path.join(DATA_ROOT, "debug"),
@@ -53,7 +55,8 @@ export type ModelRole =
 	| "visualMaker"
 	| "pdfReader"
 	| "extractor"
-	| "auditor";
+	| "auditor"
+	| "describer";
 
 /**
  * The LIVE graph store (src/store/graph.ts) — owned by the app's extraction
