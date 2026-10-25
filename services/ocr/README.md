@@ -1,0 +1,89 @@
+# PDF → Markdown (OCR via OpenRouter)
+
+Drop a batch of PDFs (lecture slides, exams, scripts, handwritten notes) into a local web page and get one markdown file per PDF, ready to import into a database or hand to AI agents.
+
+## Run
+
+```bash
+echo 'OPENROUTER_API_KEY=sk-or-...' > .env && chmod 600 .env   # once
+./run.sh                                                       # then open http://localhost:8000
+```
+
+From WSL, the Windows browser reaches `http://localhost:8000` directly. Results land in `out/<job>/` and can also be downloaded as a zip.
+
+You can drop more PDFs while a run is going: each Convert starts a run of its own that goes on alongside the others, with its own progress, results and downloads. All runs share one limit of `workers` parallel requests, of which at most `ocr_workers` go to Mistral OCR, which rate-limits early. Rate-limited requests are retried with growing waits; a page that still fails is marked, and the run's "Retry failed pages" button redoes only those pages (finished pages come from the cache).
+
+The right side of the page shows every API request live: page, step (OCR or vision), model, state, duration, tokens and cost. Click a row (or a page cell on the left) to see the page image that was sent and the model's answer.
+
+The Batch API is deliberately not used: it does not accept base64 images (the pages would have to be uploaded to a public URL), its discount does not apply to the per-page OCR fee, the `-1017` DeepSeek snapshot has no batch variant, and results can take up to 24 hours.
+
+## How each page is handled
+
+Every page is classified locally (free): plain text, text with figures, or handwritten/scanned. What happens next depends on `strategy` in `config.toml`:
+
+The page lets you pick per run; `strategy` in `config.toml` sets the default.
+
+| `strategy` | What is sent | Measured cost |
+|---|---|---|
+| `"vision"` (Cheapest) | every page as an image to the vision model, which transcribes text, LaTeX, tables, diagrams (Mermaid) and handwriting in one call | ~$0.0006 / page |
+| `"ocr+vision"` (Best quality, default) | printed text to Mistral OCR; figure pages also to the vision model for figures and handwriting; handwritten pages only to the vision model | ~$0.003 / page |
+
+On the test PDFs both strategies produced equally complete text, with LaTeX intact; `"vision"` was 6x cheaper and 4x faster. Switch to `"ocr+vision"` if printed math ever comes out wrong. Thinking is off by default (`vision_reasoning`); `{ effort = "low" }` costs about 4x more and did not read handwriting better in tests.
+
+Crossed-out content is kept as ~~strikethrough~~; on messy corrections treat that as a hint. Logos and icons (images under 3% of the page) do not count as figures.
+
+## Output
+
+```
+out/<job>/
+  <Course_Type-NN_Topic>.md   one per PDF, named after its content; YAML front matter (title, summary,
+                              topics, source, ...), then <!-- page N --> markers per page
+  <pdf-name>/manifest.json    page kinds, failed pages, API calls, cost
+```
+
+Page images are only rendered to send pages to the vision model and are deleted after the run; diagrams and handwriting live in the markdown as Mermaid, descriptions and transcriptions. Set `keep_page_images = true` to keep the images of pages with figures or handwriting and link them from the markdown.
+
+The page lists all earlier runs from `out/` with their files, Copy buttons and downloads; reloading the page during a run reconnects to it.
+
+All markdown files of a run sit side by side in the job folder, so they can be copied in one go. The page shows that folder's Windows path, a Copy button per file, and a zip of all markdown files.
+
+Diagrams are drawn as Mermaid with quoted labels plus a one- or two-sentence explanation in the document's language. Common Mermaid syntax slips (empty or unquoted edge labels) are repaired automatically; on the test material 111 of 112 diagrams parse.
+
+## Cost and re-runs
+
+The page shows an estimate before converting. Every API result is cached in `.cache/`, so re-running the same PDF is free. A page that fails (rate limit, provider error, out of credits) is marked in the markdown and in `manifest.failed_pages`; it is not cached, so re-running the PDF retries only the failed pages.
+
+## Configure
+
+`config.toml`: models, PDF engine (`mistral-ocr`, or the free `cloudflare-ai` for plain text), reasoning effort for the vision model, parallel workers, render DPI, and prices for the estimate. After changing a vision prompt in `app/pipeline.py`, bump `PROMPT_VERSION` so cached results are not reused.
+
+## Service mode (used by LearnHarness)
+
+The same app runs as a sidecar container (`Dockerfile`, `deploy/compose.yaml`: service `ocr`, internal network only, no published port).
+
+| Env | Meaning | Default |
+|---|---|---|
+| `OUT_DIR` | results (`<job>/...`, `job.json` done marker) | `./out` (`/data/out` in the image) |
+| `CACHE_DIR` | cached API results | `./.cache` (`/data/cache`) |
+| `CONFIG_PATH` | `config.toml` | `./config.toml` |
+| `OPENROUTER_API_KEY` | fallback key when a request sends none | unset |
+| `OCR_TOKEN` | when set, every `/api/*` request needs header `X-OCR-Token: <token>` (else 401) | unset (open) |
+
+Headers: `X-OpenRouter-Key` on `POST /api/run` and `POST /api/jobs/{id}/retry` is used for that job's API calls (never logged, not kept after the job ends). `/healthz` is always open.
+
+Endpoints beyond the browser UI's:
+
+- `GET /healthz` returns `{"ok": true}`.
+- `POST /api/run` (multipart `files`, optional `strategy`) returns `{"job": id}` at once. PDFs over 50 MB get 413; PDFs over 300 pages or unreadable get 422.
+- `GET /api/jobs/{id}` returns `{id, status: running|done|failed, strategy, usd, files: [{name, sha256, status: queued|running|done|failed, pages, done_pages, failed_pages, markdown, title, summary, topics, cost_usd, error}]}`. `markdown` is a file name inside the job; fetch it from `GET /api/jobs/{id}/files/{markdown}`. It also works for jobs found only on disk after a restart: `done` if `job.json` exists, else `failed` (interrupted). The job is `failed` only when every file failed; look at the per-file status.
+- `GET /api/by-sha/{sha256}` returns `{job, markdown, title, summary, topics, pages, cost_usd}` for the newest complete conversion of that exact PDF, else 404.
+
+Finished jobs leave memory after an hour (the disk is the source of truth). The uploaded bytes are dropped when a job ends, except for files that still have failed pages (needed for "retry").
+
+Documents are named from their content only, never from the file name; if naming fails, the first heading (or text line) becomes the title.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest -q
+```

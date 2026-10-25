@@ -1,7 +1,7 @@
 # LearnHarness self-hosted stack (docs/self-hosting.md).
 #
 #   browser ──HTTPS──▶ caddy ──forward_auth──▶ oauth2-proxy ──OIDC──▶ keycloak
-#                        └──────────────────────▶ learnharness (no auth of its own)
+#                        └──────────────────────▶ learnharness (no auth of its own) ──▶ ocr (internal, token)
 #
 # Only Caddy publishes ports. Hostnames come from .env (see .env.example).
 name: learnharness
@@ -15,6 +15,23 @@ services:
       # /data/data = LH_DATA_DIR (chats, graph, settings), /data/auth.json = API keys.
       # The entrypoint hands the files to the app user (uid 1000) on start.
       - ./volumes/learnharness:/data
+    environment:
+      # PDF scanning sidecar (services/ocr): internal only, shared secret on every call.
+      OCR_URL: http://ocr:8000
+      OCR_TOKEN: ${OCR_TOKEN}
+    networks: [internal]
+
+  ocr:
+    # PDF -> markdown service (services/ocr). No published port and no Caddy route:
+    # only the app reaches it, with the OCR_TOKEN header. The OpenRouter key comes
+    # per request from the app's settings; /data holds out/ (results) and cache/.
+    build: ../services/ocr
+    image: learnharness-ocr:local
+    restart: unless-stopped
+    environment:
+      OCR_TOKEN: ${OCR_TOKEN:?set OCR_TOKEN in .env}
+    volumes:
+      - ./volumes/ocr:/data
     networks: [internal]
 
   caddy:
