@@ -1,0 +1,17 @@
+The files viz.html, viz.js and viz.css in this directory are copied verbatim
+from the Open Knowledge Format reference implementation (Google Cloud Platform
+"open-knowledge-format" repository on GitHub):
+
+  src/reference_agent/viewer/templates/viz.html
+  src/reference_agent/viewer/static/viz.js
+  src/reference_agent/viewer/static/viz.css
+
+Copyright 2026 Google LLC
+Licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0). Each file keeps its license header.
+
+src/core/okf-viz.ts is a TypeScript port of the reference viewer/generator.py
+(graph building and template injection), also under the Apache License 2.0.
+src/core/okf-viz/assets.ts is generated from the three files above by
+scripts/gen-okf-viz-assets.mjs (the Next standalone build cannot read them from
+disk at runtime); regenerate it after touching them.
