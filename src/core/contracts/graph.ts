@@ -251,11 +251,13 @@ export interface ExtractedProposition {
 	 *  undefined → messageId "" (chat-level), so NO persisted shape or
 	 *  format version changes (GraphNode / ProvenancePoint untouched). */
 	messageId?: string;
-	/** DOCUMENT PATH ONLY (PR H): the topics this proposition belongs to
-	 *  (the document's own topics preferred) and the id of the document
-	 *  section it came from. The merger maps topics through the alias table
-	 *  into the topics ledger; section (+ the pages the pipeline looked up
-	 *  from it) rides the provenance point. */
+	/** The topics this proposition belongs to (documents: the document's own
+	 *  topics preferred; sessions: proposed by the extractor, canonicalised
+	 *  onto existing topics before the merge) and, on the document path only,
+	 *  the id of the section it came from. The merger maps topics through the
+	 *  alias table into the topics ledger (sourceId = the chat or document
+	 *  id); section (+ the pages the pipeline looked up from it) rides the
+	 *  provenance point. */
 	topics?: string[];
 	section?: string;
 	pageFrom?: number;
@@ -311,7 +313,8 @@ export interface AuditVerdicts {
 export interface TopicRow {
 	nodeId: string;
 	topic: string;
-	/** The graph source (document) whose extraction or tagging assigned it. */
+	/** The graph source (document id, or chat id for session extraction)
+	 *  whose extraction or tagging assigned it. */
 	sourceId: string;
 	at: string;
 }

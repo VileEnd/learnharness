@@ -67,3 +67,68 @@ export function topicsByNode(rows: readonly TopicRow[]): Map<string, string[]> {
 export function knownTopics(rows: readonly TopicRow[]): string[] {
 	return normalizeTopics(rows.map((r) => r.topic));
 }
+
+// ── canonicalise-and-store, under ONE alias lock ──
+//
+// The alias table is a single file replaced whole. Document imports and
+// session extractions (different sources run in parallel) both extend it, so
+// every read-modify-write goes through this async mutex: the (slow) model
+// call runs OUTSIDE it, the table is re-read INSIDE it, so two concurrent
+// canonicalisations always keep both aliases.
+
+interface AliasLock {
+	tail: Promise<void>;
+}
+const LOCK_KEY = "__lhTopicAliasLock";
+function aliasLock(): AliasLock {
+	const g = globalThis as { [LOCK_KEY]?: AliasLock };
+	return (g[LOCK_KEY] ??= { tail: Promise.resolve() });
+}
+
+/** Run `fn` exclusively with respect to every other alias read-modify-write. */
+export async function withTopicAliasLock<T>(fn: () => T | Promise<T>): Promise<T> {
+	const lock = aliasLock();
+	const prev = lock.tail;
+	let release!: () => void;
+	lock.tail = new Promise<void>((resolve) => (release = resolve));
+	await prev;
+	try {
+		return await fn();
+	} finally {
+		release();
+	}
+}
+
+export interface AliasPorts {
+	readTopics(): TopicRow[];
+	readTopicAliases(): Record<string, string>;
+	writeTopicAliases(aliases: Record<string, string>): void;
+}
+
+/** Map proposed topics onto the library's existing ones (the optional
+ *  `canonicalize` is the cheap-slot topicist), persist the mapping in the alias
+ *  table under the lock, and return the canonical topics. Best effort: with no
+ *  model or on any failure the topics are only folded through the aliases that
+ *  already exist. `alsoExisting` adds labels the ledger does not hold yet. */
+export async function canonicalizeAndStoreTopics(
+	ports: AliasPorts,
+	topics: readonly string[],
+	canonicalize?: (newTopics: readonly string[], existing: readonly string[], signal?: AbortSignal) => Promise<Record<string, string>>,
+	alsoExisting: readonly string[] = [],
+	signal?: AbortSignal,
+): Promise<string[]> {
+	if (topics.length === 0) return [];
+	try {
+		const existing = normalizeTopics([...alsoExisting, ...knownTopics(ports.readTopics())]);
+		const mapping = canonicalize ? await canonicalize(topics, existing, signal) : {};
+		return await withTopicAliasLock(() => {
+			const before = ports.readTopicAliases();
+			const after = addAliases(before, mapping);
+			if (JSON.stringify(after) !== JSON.stringify(before)) ports.writeTopicAliases(after);
+			return canonicalTopics(topics, after);
+		});
+	} catch (err) {
+		console.info(`[topics] canonicalisation skipped: ${err instanceof Error ? err.message : err}`);
+		return canonicalTopics(topics, ports.readTopicAliases());
+	}
+}

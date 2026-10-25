@@ -6,11 +6,11 @@
  */
 
 import { createDescriber } from "../agent/subagents/describe.ts";
-import { createTopicist } from "../agent/subagents/topics.ts";
-import { extraction, resolveEngine } from "./chat-handler.ts";
+import { extraction, resolveEngine, topicist } from "./chat-handler.ts";
 import type { DocumentStore } from "../core/ports.ts";
 import { docIndex } from "./doc-index.ts";
-import { createDocumentService } from "./documents.ts";
+import { createDocumentService, withActivityRow } from "./documents.ts";
+import { createTopicBackfill } from "./topic-backfill.ts";
 import { providerKeyPresent } from "./keys.ts";
 import { providerKeyMissing } from "../core/settings.ts";
 import { ocr } from "./ocr-client.ts";
@@ -24,8 +24,6 @@ const cheapDeps = {
 		providerKeyPresent(provider) ? null : providerKeyMissing(provider, [tier]),
 };
 const describer = createDescriber(cheapDeps);
-// The topic canonicaliser and tagger ride the describer's cheap-slot role.
-const topicist = createTopicist(cheapDeps);
 
 /** The store the service writes through: every save/remove also updates the
  *  search index (BM25 now, embeddings in the background - PR I). */
@@ -53,4 +51,13 @@ export const documents = createDocumentService({
 	applyTopicRows: (input) => extraction.applyTopicRows(input),
 	ocr,
 	notify: (event) => notify(event),
+});
+
+/** The one-off topic backfill for session concepts (POST /api/graph/topics/backfill). */
+export const topicBackfill = createTopicBackfill({
+	graph: stores.graphStore,
+	tagOpen: (nodes, existing, signal) => topicist.tagOpen(nodes, existing, signal),
+	canonicalize: (topics, existing, signal) => topicist.canonicalize(topics, existing, signal),
+	applyTopicRows: (input) => extraction.applyTopicRows(input),
+	activityRow: (title, run) => withActivityRow("topic-backfill", title, run),
 });
