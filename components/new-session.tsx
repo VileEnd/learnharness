@@ -154,9 +154,8 @@ export function DraftShell({
 		/* CHROME-LESS CREATION SURFACE (owner round 11, 2026-10-05): the
 		 * drafts join home's register — no TopBar, no title (the serif title
 		 * always names a session; a draft has none). Home's proven pattern
-		 * verbatim: a drag mask first in the DOM, a floating reopen toggle
-		 * (the only pointer-events-auto spot), the empty state carrying the
-		 * orientation. The chain picker then owns the column top exactly
+		 * verbatim: a floating reopen toggle (the only pointer-events-auto
+		 * spot), the empty state carrying the orientation. The chain picker then owns the column top exactly
 		 * like the graph view's — no stacked bars. */
 		<div className="relative flex h-dvh">
 			<div className="flex min-w-0 flex-1 flex-col">

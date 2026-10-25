@@ -61,6 +61,8 @@ Build quality:
 - The demo must directly serve the brief: every control named in the brief must exist and do the thing.
 - Controls need labels; sliders/inputs need current-value readouts. A learner should operate it unguided.
 - Smooth enough interaction; requestAnimationFrame for animation, not setInterval when it matters.
+- Learners use phones too: handle input with pointer events (they cover touch and mouse), keep touch targets
+  at least 44px, and never hide a control or information behind hover only.
 - Dark-mode neutral: pick a clean light background for the demo area so it reads on any card.
 
 THE HOUSE RULE — never deliver untested:

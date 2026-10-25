@@ -3,7 +3,9 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fitGraphView, fitZoomFor, zoomedGraphView, type Viewport } from "@/components/pan-zoom";
+import { useBackDismiss } from "@/components/use-back-dismiss";
+import { useCoarsePointer } from "@/components/use-coarse-pointer";
+import { fitGraphView, fitZoomFor, pinchView, zoomedGraphView, type Pt, type Viewport } from "@/components/pan-zoom";
 import { renderMermaid } from "@/components/mermaid-render";
 import { MermaidError } from "@/components/mermaid-error";
 import { Hint } from "@/components/ui/hint";
@@ -109,6 +111,9 @@ export function MermaidOverlay({
 		};
 	}, [rawSvg, chart, attempt]);
 
+	// The back gesture (Android back, iOS edge swipe) closes the overlay.
+	useBackDismiss(true, onClose);
+
 	// Esc closes — claimed at the document level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): one Esc, one action; the window chain
 	// (dictation → abort) never fires under a surfaced layer.
@@ -172,16 +177,38 @@ export function MermaidOverlay({
 	}, [fitZoom, box, size]);
 
 	const dragRef = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
+	const pointersRef = useRef(new Map<number, Pt>());
+	const coarse = useCoarsePointer();
 	const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
 		if (e.button !== 0) return;
 		if ((e.target as HTMLElement).closest("button")) return;
+		// Track every finger: a second one turns the drag into a pinch.
+		const r = e.currentTarget.getBoundingClientRect();
+		pointersRef.current.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+		e.currentTarget.setPointerCapture(e.pointerId);
+		if (pointersRef.current.size > 1) {
+			dragRef.current = null;
+			setPanning(true);
+			return;
+		}
 		if (atFloor) return;
 		dragRef.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
 		setPanning(true);
 		e.currentTarget.classList.add("cursor-grabbing");
-		e.currentTarget.setPointerCapture(e.pointerId);
 	};
 	const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+		const pts = pointersRef.current;
+		if (pts.has(e.pointerId)) {
+			const r = e.currentTarget.getBoundingClientRect();
+			const prev = [...pts.values()];
+			pts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+			if (pts.size === 2) {
+				const next = [...pts.values()];
+				setView((v) => pinchView(v, [prev[0]!, prev[1]!], [next[0]!, next[1]!], fitZoom, box, size));
+				userAdjustedRef.current = true;
+				return;
+			}
+		}
 		const d = dragRef.current;
 		if (!d) return;
 		d.moved = true;
@@ -190,6 +217,7 @@ export function MermaidOverlay({
 		);
 	};
 	const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+		pointersRef.current.delete(e.pointerId);
 		const d = dragRef.current;
 		if (d) {
 			dragRef.current = null;
@@ -211,11 +239,14 @@ export function MermaidOverlay({
 	return (
 		<div
 			data-testid="mermaid-overlay"
-			// SESSION-SCOPED (not fixed): mounts absolute inside the chat
-			// page's session-area div — below the drag bar, right of the
-			// sidebar. 80% + blur: the transcript ghosts through (owner
-			// decision, 2026-09-19).
-			className="absolute inset-0 z-40 flex flex-col bg-background/80 p-4 backdrop-blur-sm"
+			// SESSION-SCOPED on md+: mounts absolute inside the chat page's
+			// session-area div, right of the sidebar. 80% + blur: the
+			// transcript ghosts through (owner decision, 2026-09-19).
+			className={cn(
+				"flex flex-col bg-background/80 p-4 backdrop-blur-sm md:absolute md:inset-0 md:z-40",
+				// Phones: a full-screen sheet above the bottom tabs, inside the safe areas.
+				"max-md:fixed max-md:inset-0 max-md:z-50 max-md:bg-background/95 max-md:pt-[max(1rem,env(safe-area-inset-top))] max-md:pb-[max(1rem,env(safe-area-inset-bottom))]",
+			)}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Diagram focus"
@@ -229,7 +260,7 @@ export function MermaidOverlay({
 					onClick={onClose}
 					aria-label="Close"
 					data-testid="mermaid-overlay-close"
-					className="ml-auto rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className="ml-auto rounded-lg p-1.5 pointer-coarse:p-3 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 				>
 					<XIcon className="size-4" />
 				</button>
@@ -287,14 +318,14 @@ export function MermaidOverlay({
 							/>
 						</div>
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
-							<span className="text-xs text-muted-foreground/60">Drag to pan · scroll to zoom</span>
+							<span className="text-xs text-muted-foreground/60">{coarse ? "Drag to pan · pinch to zoom" : "Drag to pan · scroll to zoom"}</span>
 							<div className="flex gap-1">
 								<Hint label="Zoom out" side="bottom">
 <button
 									type="button"
 									aria-label="Zoom out"
 									onClick={() => stepZoom(1 / 1.25)}
-									className="pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+									className="pointer-events-auto flex size-7 pointer-coarse:size-11 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
 								>
 									<MinusIcon className="size-3.5" />
 								</button>
@@ -304,7 +335,7 @@ export function MermaidOverlay({
 									type="button"
 									aria-label="Fit diagram to view"
 									onClick={fitView}
-									className="pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+									className="pointer-events-auto flex size-7 pointer-coarse:size-11 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
 								>
 									<MaximizeIcon className="size-3.5" />
 								</button>
@@ -314,7 +345,7 @@ export function MermaidOverlay({
 									type="button"
 									aria-label="Zoom in"
 									onClick={() => stepZoom(1.25)}
-									className="pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+									className="pointer-events-auto flex size-7 pointer-coarse:size-11 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
 								>
 									<PlusIcon className="size-3.5" />
 								</button>
