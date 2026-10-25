@@ -60,6 +60,7 @@ import {
 	CLUSTER_PULL_STRENGTH,
 	createGraphSimulation,
 	DEFAULT_PHYSICS_TUNING,
+	DEFAULT_RENDER_SETTINGS,
 	DEFAULT_REGION_TUNING,
 	sanitizePhysicsTuning,
 	sanitizeRegionTuning,
@@ -324,6 +325,8 @@ const FIT_INSET_TOP = 56; // overlaid top controls
 const FIT_INSET_BOTTOM = 140; // the composer dock on phones
 /** Node labels below this on-screen size are illegible smudges (touch). */
 const LABEL_MIN_PX = 6;
+/** Always-on labels (the "My knowledge" view) are scaled up to at least this many CSS px on screen. */
+const MIN_ALWAYS_LABEL_PX = 10;
 const LABEL_FULL_PX = 8;
 const COARSE_DPR_CAP = 2;
 
@@ -625,6 +628,145 @@ function drawNameLines(
 	}
 }
 
+// ─── Label-aware fit (pure) ─────────────────────────────────────────────────
+
+/** One node for the label-aware fit: its world position and its label's world-unit size. */
+export interface FitLabelNode {
+	x: number;
+	y: number;
+	/** The widest line of the label, world units (0 = no label). */
+	ww: number;
+	/** The label block height, world units. */
+	hh: number;
+}
+
+/** The on-screen scale of an always-on label at zoom z: world-scaled, but never smaller than
+ *  MIN_ALWAYS_LABEL_PX on screen (boosted up to 4x). Mirrors the draw pass. */
+export const alwaysLabelScale = (labelSize: number, z: number): number =>
+	z * Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (labelSize * z), 1), 4);
+
+/**
+ * The camera that puts every node disc AND its label box (below or above: the larger extent
+ * is assumed on both sides) inside a viewport minus a margin. Closed form, no iteration on the
+ * layout: the two axes are independent. For a fixed centre c every node gives a bound on the
+ * zoom (|p - c| * z + extent(z) <= available / 2, extent being the larger of the disc and the
+ * label, which itself depends on z through the readable-size clamp), so the largest feasible z is
+ * found by bisection (feasibility only shrinks as z grows); the centre that maximises that z is
+ * found by ternary search (the bound is the minimum of pieces rising and falling in c). Returns
+ * the transform: screen = world * k + (x, y).
+ */
+export function fitLabelCamera(args: {
+	nodes: readonly FitLabelNode[];
+	nodeR: number;
+	labelSize: number;
+	labelGap: number;
+	/** Viewport size and the space the fit keeps clear of overlaid chrome at the top and bottom. */
+	viewW: number;
+	viewH: number;
+	insetTop: number;
+	insetBottom: number;
+	margin: number;
+	maxZoom: number;
+}): { k: number; x: number; y: number } {
+	const { nodes, nodeR, labelSize, labelGap, margin } = args;
+	const availW = Math.max(args.viewW - 2 * margin, 1);
+	const availH = Math.max(args.viewH - args.insetTop - args.insetBottom - 2 * margin, 1);
+	const MIN_Z = 0.02;
+	const extX = (n: FitLabelNode, z: number) => Math.max(nodeR * z, (n.ww / 2) * alwaysLabelScale(labelSize, z));
+	const extY = (n: FitLabelNode, z: number) => Math.max(nodeR * z, (nodeR + labelGap + n.hh) * alwaysLabelScale(labelSize, z));
+	const feasible = (coords: readonly number[], ext: (n: FitLabelNode, z: number) => number, half: number, c: number, z: number) =>
+		coords.every((v, i) => Math.abs(v - c) * z + ext(nodes[i]!, z) <= half + 1e-9);
+	const zAt = (coords: readonly number[], ext: (n: FitLabelNode, z: number) => number, half: number, c: number): number => {
+		if (feasible(coords, ext, half, c, args.maxZoom)) return args.maxZoom;
+		let lo = MIN_Z;
+		let hi = args.maxZoom;
+		for (let i = 0; i < 40; i++) {
+			const mid = (lo + hi) / 2;
+			if (feasible(coords, ext, half, c, mid)) lo = mid;
+			else hi = mid;
+		}
+		return lo;
+	};
+	const best = (coords: readonly number[], ext: (n: FitLabelNode, z: number) => number, half: number): { c: number; z: number } => {
+		let lo = Math.min(...coords);
+		let hi = Math.max(...coords);
+		for (let i = 0; i < 40; i++) {
+			const m1 = lo + (hi - lo) / 3;
+			const m2 = hi - (hi - lo) / 3;
+			if (zAt(coords, ext, half, m1) < zAt(coords, ext, half, m2)) lo = m1;
+			else hi = m2;
+		}
+		const z = zAt(coords, ext, half, (lo + hi) / 2);
+		// At that zoom every centre in [max(v - room), min(v + room)] fits; take the middle so
+		// the content sits centred (when z hits maxZoom the search alone lands on an edge).
+		let cLo = -Infinity;
+		let cHi = Infinity;
+		coords.forEach((v, i) => {
+			const room = (half - ext(nodes[i]!, z)) / z;
+			cLo = Math.max(cLo, v - room);
+			cHi = Math.min(cHi, v + room);
+		});
+		const c = cLo <= cHi ? (cLo + cHi) / 2 : (lo + hi) / 2;
+		return { c, z };
+	};
+	if (nodes.length === 0) return { k: 1, x: 0, y: 0 };
+	const bx = best(nodes.map((n) => n.x), extX, availW / 2);
+	const by = best(nodes.map((n) => n.y), extY, availH / 2);
+	const k = Math.max(Math.min(bx.z, by.z, args.maxZoom), MIN_Z);
+	return {
+		k,
+		x: args.viewW / 2 - bx.c * k,
+		y: args.insetTop + margin + availH / 2 - by.c * k,
+	};
+}
+
+// ─── Always-on label placement (pure) ───────────────────────────────────────
+
+/** One always-on label in SCREEN pixels: its node's centre, the distance from the
+ *  centre to the label's near edge, and the label box size. */
+export interface LabelCandidate {
+	id: string;
+	x: number;
+	y: number;
+	off: number;
+	w: number;
+	h: number;
+}
+export type LabelSide = "below" | "above";
+export interface LabelRect {
+	x0: number;
+	y0: number;
+	x1: number;
+	y1: number;
+}
+
+/** The box of a label on one side of its node. */
+export function labelRect(c: LabelCandidate, side: LabelSide): LabelRect {
+	const y0 = side === "below" ? c.y + c.off : c.y - c.off - c.h;
+	return { x0: c.x - c.w / 2, x1: c.x + c.w / 2, y0, y1: y0 + c.h };
+}
+
+const rectsOverlap = (a: LabelRect, b: LabelRect, pad: number): boolean =>
+	a.x0 < b.x1 + pad && b.x0 < a.x1 + pad && a.y0 < b.y1 + pad && b.y0 < a.y1 + pad;
+
+/** Greedy collision avoidance. `candidates` arrive in priority order; each takes
+ *  the space below its node if free, else above, else is skipped (absent from the
+ *  result). Boxes keep `pad` px apart. */
+export function placeLabels(candidates: readonly LabelCandidate[], pad = 2): Map<string, LabelSide> {
+	const placed: LabelRect[] = [];
+	const out = new Map<string, LabelSide>();
+	for (const c of candidates) {
+		for (const side of ["below", "above"] as const) {
+			const r = labelRect(c, side);
+			if (placed.some((q) => rectsOverlap(r, q, pad))) continue;
+			placed.push(r);
+			out.set(c.id, side);
+			break;
+		}
+	}
+	return out;
+}
+
 // ─── The renderer ───────────────────────────────────────────────────────────
 
 export class GraphCanvasRenderer {
@@ -653,6 +795,14 @@ export class GraphCanvasRenderer {
 	private visible: ReadonlySet<string> | null = null;
 	/** The learner overlay; null = the uniform neutral rendering. */
 	private knowledge: CanvasKnowledge | null = null;
+	/** Labels that ignore the zoom gate ("all", or a set of ids); null = the gate rules. */
+	private alwaysLabels: ReadonlySet<string> | "all" | null = null;
+	/** Priority order of the always-on labels (first wins a collision). */
+	private labelOrder: string[] = [];
+	private layoutFrozen = false;
+	private placement: { key: string; sides: Map<string, LabelSide> } | null = null;
+	/** Fit insets override (a view whose chrome differs from the home graph's); null = the home graph's. */
+	private insetsOverride: { top: number; bottom: number } | null = null;
 
 	// ── Live physics ──
 	// One d3-force sim shared with the server settle (createGraphSimulation
@@ -840,7 +990,7 @@ export class GraphCanvasRenderer {
 			const wy = (prevH / 2 - ty) / k;
 			this.syncSize();
 			if (!this.hasFit) this.fit(); // first real size → fit once
-			else if (this.fitNarrow && !this.userMoved && this.viewW >= NARROW_VIEW) {
+			else if (!this.userMoved && ((this.fitNarrow && this.viewW >= NARROW_VIEW) || this.insetsOverride !== null)) {
 				// The first fit happened in a narrow view (tiny k): refit now it widened.
 				this.fit();
 			} else {
@@ -907,6 +1057,8 @@ export class GraphCanvasRenderer {
 
 	setSettings(settings: GraphRenderSettings): void {
 		this.settings = settings;
+		// Label sizes feed the label-inclusive fit: reframe while the camera is still untouched.
+		if (this.insetsOverride !== null && this.hasFit && !this.userMoved) this.fit();
 		this.geoVersion++; // sizes/wrap width changed → rebuild geometry
 		this.markDirty();
 	}
@@ -939,11 +1091,18 @@ export class GraphCanvasRenderer {
 		// state, so mode toggles (off/vertical/radial) visibly RE-FORM the
 		// graph instead of waiting for the next drag. Mid-drag is safe —
 		// buildSim preserved the pinned node's fx/fy.
-		if (this.sim) {
+		if (this.sim && !this.layoutFrozen) {
 			this.sim.alpha(1);
 			this.simActive = true;
 		}
 		this.markDirty();
+	}
+
+	/** Keep the supplied layout as is: a tuning change no longer re-anneals the nodes (only a
+	 *  drag moves them). The "My knowledge" view frames its precomputed layout once; a live
+	 *  re-anneal after that would move the nodes out from under the fit. */
+	setLayoutFrozen(frozen: boolean): void {
+		this.layoutFrozen = frozen;
 	}
 
 	/** Label-only channel (rename-shuffle fix, 2026-09-23): live
@@ -996,6 +1155,20 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Labels shown at every zoom ("all", or just these ids; the rest keep the zoom
+	 *  gate). On touch the on-screen size gate still applies. */
+	setAlwaysLabels(labels: ReadonlySet<string> | "all" | null, order: readonly string[] = []): void {
+		this.alwaysLabels = labels;
+		this.labelOrder = [...order];
+		this.placement = null;
+		this.markDirty();
+	}
+
+	/** Space the first fit keeps clear of overlaid chrome, on every width (call before setData). */
+	setFitInsets(insets: { top: number; bottom: number } | null): void {
+		this.insetsOverride = insets;
+	}
+
 	/** The node whose detail card is open: it keeps a persistent glow (touch
 	 *  has no hover, so the glow is the only "this is what you tapped"). */
 	setSelected(id: string | null): void {
@@ -1004,9 +1177,30 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Centre the camera on a node (deep link from the "My knowledge" overview),
+	 *  zooming in to at least 1.5x the fit zoom, and return the node's canvas-relative
+	 *  screen position (the detail card's anchor). Null while the canvas has no size
+	 *  yet or the node is unknown: the caller retries next frame. The camera move
+	 *  reports through onCameraMove like any other, and counts as the user's own
+	 *  (no refit over it). */
+	focusNode(id: string): Pt | null {
+		const node = this.nodeById.get(id);
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		if (!node || w < 10 || h < 10) return null;
+		if (!this.hasFit) this.fit();
+		const k = Math.max(this.transform.k, this.kFit * 1.5);
+		const x = w / 2 - node.x * k;
+		const y = h / 2 - node.y * k;
+		this.userMoved = true;
+		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(x, y).scale(k));
+		return { x: w / 2, y: h / 2 };
+	}
+
 	/** Space the fit keeps clear of overlaid chrome: phones only (desktop
 	 *  frames the full canvas exactly as before). */
 	private fitInsets(w: number): { top: number; bottom: number } {
+		if (this.insetsOverride) return this.insetsOverride;
 		return w < NARROW_VIEW ? { top: FIT_INSET_TOP, bottom: FIT_INSET_BOTTOM } : { top: 0, bottom: 0 };
 	}
 
@@ -1018,7 +1212,7 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40, this.fitInsets(w));
+		const t = this.computeFit(w, h);
 		this.kFit = t.k;
 		this.hasFit = true;
 		this.fitNarrow = w < NARROW_VIEW;
@@ -1035,7 +1229,101 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40, this.fitInsets(w)).k;
+		if (w >= 10 && h >= 10) this.kFit = this.computeFit(w, h).k;
+	}
+
+	/** The camera that frames the graph. Without always-on labels: the node box, as ever.
+	 *  With them (the "My knowledge" view): every placed label must lie fully inside the
+	 *  canvas too, at the zoom the fit lands on. The labels' on-screen size depends on that
+	 *  zoom (a readable minimum), so it iterates: measure the nodes + placed labels at the
+	 *  current zoom, shrink by what overhangs the node box, repeat until it fits. */
+	private computeFit(w: number, h: number): { x: number; y: number; k: number } {
+		const box = this.worldBBox!;
+		const insets = this.fitInsets(w);
+		const base = fitTransform(box, w, h, 40, insets);
+		const data = this.data;
+		if (this.alwaysLabels === null || !data) return base;
+		const s = this.settings ?? DEFAULT_RENDER_SETTINGS;
+		const metrics = this.labelMetrics();
+		const labelled = new Map(metrics.map((m) => [m.id, m]));
+		const nodes = data.nodes
+			.filter((n) => !isImpNodeId(n.id))
+			.map((n) => ({ x: n.x, y: n.y, ww: labelled.get(n.id)?.ww ?? 0, hh: labelled.get(n.id)?.hh ?? 0 }));
+		if (nodes.length === 0) return base;
+		const t = fitLabelCamera({
+			nodes,
+			nodeR: s.nodeSize,
+			labelSize: s.labelSize,
+			labelGap: LABEL_GAP,
+			viewW: w,
+			viewH: h,
+			insetTop: insets.top,
+			insetBottom: insets.bottom,
+			margin: 8,
+			maxZoom: base.k,
+		});
+		return { k: t.k, x: t.x, y: t.y };
+	}
+
+	/** World-unit label sizes of the always-on labels, in priority order. */
+	private labelMetrics(): Array<{ id: string; x: number; y: number; ww: number; hh: number }> {
+		const data = this.data;
+		const always = this.alwaysLabels;
+		if (!data || always === null) return [];
+		const size = (this.settings ?? DEFAULT_RENDER_SETTINGS).labelSize;
+		const ctx = this.ctx;
+		const prevFont = ctx.font;
+		ctx.font = `${LABEL_WEIGHT} ${size}px ${data.fontFamily}`;
+		const maxW = LABEL_MAX_WIDTH * (size / LABEL_SIZE);
+		const byId = new Map<string, { id: string; x: number; y: number; ww: number; hh: number }>();
+		for (const n of data.nodes) {
+			if (isImpNodeId(n.id) || (this.visible && !this.visible.has(n.id))) continue;
+			if (always !== "all" && !always.has(n.id)) continue;
+			const lines = wrapLabel(ctx, n.label, maxW);
+			byId.set(n.id, {
+				id: n.id,
+				x: n.x,
+				y: n.y,
+				ww: Math.max(0, ...lines.map((l) => ctx.measureText(l).width)),
+				hh: lines.length * size * LABEL_LINE_HEIGHT,
+			});
+		}
+		ctx.font = prevFont;
+		const ordered = this.labelOrder.flatMap((id) => byId.get(id) ?? []);
+		const seen = new Set(this.labelOrder);
+		for (const m of byId.values()) if (!seen.has(m.id)) ordered.push(m);
+		return ordered;
+	}
+
+	/** The always-on labels as screen boxes at zoom k (positions relative to (ox, oy) in world units). */
+	private screenCandidates(
+		metrics: ReadonlyArray<{ id: string; x: number; y: number; ww: number; hh: number }>,
+		k: number,
+		ox: number,
+		oy: number,
+	): LabelCandidate[] {
+		const s = this.settings ?? DEFAULT_RENDER_SETTINGS;
+		// A readable minimum on screen: the label is scaled up about its node.
+		const boost = Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (s.labelSize * k), 1), 4);
+		const f = k * boost;
+		return metrics.map((m) => ({
+			id: m.id,
+			x: (m.x - ox) * k,
+			y: (m.y - oy) * k,
+			off: (s.nodeSize + LABEL_GAP) * f,
+			w: m.ww * f,
+			h: m.hh * f,
+		}));
+	}
+
+	/** Where each always-on label goes at zoom k (cached until the zoom, the geometry or the order moves). */
+	private placementAt(k: number): Map<string, LabelSide> {
+		const key = `${k}|${this.geoVersion}`;
+		if (this.placement?.key === key) return this.placement.sides;
+		const metrics = this.labelMetrics();
+		const sides = placeLabels(this.screenCandidates(metrics, k, 0, 0));
+		this.placement = { key, sides };
+		return sides;
 	}
 
 	destroy(): void {
@@ -1943,15 +2231,36 @@ export class GraphCanvasRenderer {
 		// with the graph (they grow as you zoom in, Obsidian-style).
 		// On touch the labels also need legible on-screen size (a phone's fit
 		// zoom puts them at 2-3px).
-		const labelsAlpha = this.coarse ? nodeAlpha * labelSizeAlpha(this.world.labelSize, k) : nodeAlpha;
-		if (labelsAlpha > 0.01) {
+		const sizeAlpha = this.coarse ? labelSizeAlpha(this.world.labelSize, k) : 1;
+		const labelsAlpha = nodeAlpha * sizeAlpha;
+		const always = this.alwaysLabels;
+		if (labelsAlpha > 0.01 || always !== null) {
 			ctx.save();
-			ctx.globalAlpha = labelsAlpha;
 			ctx.font = this.worldLabelFont;
+			// An always-on name never drops below MIN_ALWAYS_LABEL_PX on screen (it is scaled up about
+			// its node instead of hidden) and avoids the always-on names placed before it (below its
+			// node, else above, else skipped); the zoom-gated labels keep the home graph's rules.
+			const boost = Math.min(Math.max(MIN_ALWAYS_LABEL_PX / (this.world.labelSize * k), 1), 4);
+			const sides = always !== null ? this.placementAt(k) : null;
+			const { nodeR, labelGap, labelSize } = this.world;
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
 				if (!n) continue;
-				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
+				const isAlways = always === "all" || always?.has(id) === true;
+				const side = isAlways ? sides?.get(id) : undefined;
+				if (isAlways && !side) continue; // collided both ways: the node stays clickable
+				ctx.globalAlpha = isAlways ? 1 : labelsAlpha;
+				if (!isAlways && labelsAlpha <= 0.01) continue;
+				if (isAlways) {
+					ctx.save();
+					ctx.translate(n.x, n.y);
+					ctx.scale(boost, boost);
+					const blockH = lines.length * labelSize * LABEL_LINE_HEIGHT;
+					drawNameLines(ctx, 0, side === "above" ? -2 * (nodeR + labelGap) - blockH : 0, lines, this.world, data.colors.label);
+					ctx.restore();
+				} else {
+					drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
+				}
 			}
 			ctx.restore();
 		}

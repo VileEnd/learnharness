@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useServerEvent, useServerResync } from "@/components/server-events";
+import { useEffect, useState } from "react";
+import { useSettledBump } from "@/components/use-settled-bump";
 import type { LearnerView } from "@/src/core";
 
 /**
@@ -14,23 +14,7 @@ import type { LearnerView } from "@/src/core";
  */
 export function useLearnerSnapshot(enabled: boolean, tick = 0): LearnerView | null {
 	const [snapshot, setSnapshot] = useState<LearnerView | null>(null);
-	const [bump, setBump] = useState(0);
-	const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const schedule = useCallback(() => {
-		if (debounce.current) clearTimeout(debounce.current);
-		debounce.current = setTimeout(() => {
-			debounce.current = undefined;
-			setBump((b) => b + 1);
-		}, 400);
-	}, []);
-	useServerEvent("turn-settled", schedule);
-	useServerResync(schedule);
-	useEffect(
-		() => () => {
-			if (debounce.current) clearTimeout(debounce.current);
-		},
-		[],
-	);
+	const bump = useSettledBump();
 	useEffect(() => {
 		if (!enabled) return;
 		let cancelled = false;

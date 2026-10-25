@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, LibraryIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { BrainIcon, DumbbellIcon, LibraryIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -844,15 +844,7 @@ function SessionsSidebar() {
 					    New session — quiet, bottom-pinned, opens the centered
 					    dialog (also mod+, in the keyboard registry). */}
 					<div className="flex flex-col items-start px-3 pb-3 pt-1">
-						{/* The document library (PR G): imported notes and scanned PDFs. */}
-						<Link
-							href="/documents"
-							data-testid="documents-entry"
-							className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-						>
-							<LibraryIcon className="size-3" />
-							Documents
-						</Link>
+						<SidebarLibraryLinks pathname={pathname} />
 						<Hint label="Settings" action="open-settings" side="right">
 							<button
 								type="button"
@@ -942,6 +934,31 @@ function SessionsSidebar() {
 					onDeleted={onDeleted}
 				/>
 			</aside>
+		</>
+	);
+}
+
+/** The two library entries above Settings: the document library (PR G: imported notes and
+ *  scanned PDFs) and "My knowledge" (/knowledge: what the learner has shown, as a graph and
+ *  an overview). Same row style; the current page reads as foreground. Pure of its props. */
+export function SidebarLibraryLinks({ pathname }: { pathname: string }) {
+	const row = (active: boolean) =>
+		cn(
+			"flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider transition-colors hover:bg-accent hover:text-foreground",
+			active ? "text-foreground" : "text-muted-foreground",
+		);
+	const onDocuments = pathname === "/documents" || pathname.startsWith("/documents/");
+	const onKnowledge = pathname === "/knowledge";
+	return (
+		<>
+			<Link href="/documents" data-testid="documents-entry" aria-current={onDocuments ? "page" : undefined} className={row(onDocuments)}>
+				<LibraryIcon className="size-3" />
+				Documents
+			</Link>
+			<Link href="/knowledge" data-testid="knowledge-entry" aria-current={onKnowledge ? "page" : undefined} className={row(onKnowledge)}>
+				<BrainIcon className="size-3" />
+				My knowledge
+			</Link>
 		</>
 	);
 }
