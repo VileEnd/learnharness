@@ -70,7 +70,8 @@ import { FileTextIcon, LibraryIcon, ListTreeIcon, Loader2Icon, SearchIcon, Setti
 import { documentCitation, incrementalLayout, learnerNodeStyle, LEARNER_DUE_RING, LEARNER_STATE_STYLES, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { GroupByToggle } from "@/components/group-by-toggle";
 import { LearnerLegend } from "@/components/learner-legend";
-import { NodeKnowledge } from "@/components/node-knowledge";
+import { NodeCardBody, useCardPlacement, type CardSelection } from "@/components/graph-node-card";
+import { tokenHex } from "@/components/css-color";
 import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
 import { costLabel } from "@/components/usage-format";
 import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
@@ -196,39 +197,9 @@ export function seedMissingNodePositions(
 	return positions;
 }
 
-// ---- Color helpers (canvas wants hex, not oklch) ---------------------------
-
-/** Resolve a CSS variable (oklch in this app) to #rrggbb via the canvas. */
-function cssColorToHex(css: string): string {
-	const canvas = document.createElement("canvas");
-	canvas.width = 1;
-	canvas.height = 1;
-	const ctx = canvas.getContext("2d");
-	if (!ctx) return "#888888";
-	ctx.fillStyle = css;
-	ctx.fillRect(0, 0, 1, 1);
-	const { data } = ctx.getImageData(0, 0, 1, 1);
-	return `#${[data[0]!, data[1]!, data[2]!]
-		.map((v) => v.toString(16).padStart(2, "0"))
-		.join("")}`;
-}
-
-function tokenHex(cssVar: string): string {
-	const value = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
-	return value ? cssColorToHex(value) : "#888888";
-}
-
 // ---- Component ------------------------------------------------------------
 
-interface Selection {
-	node: GraphNode;
-	/** The sources that touched this node: chat ids (deep-linkable sessions)
-	 *  and notes-source ids ("src_…" — imported files, static entries). */
-	sourceIds: string[];
-	/** Node position in container pixels (at click time; camera moves
-	 *  dismiss the card, so it never needs re-anchoring). */
-	anchor: { x: number; y: number };
-}
+type Selection = CardSelection;
 
 /** One labeled range row for the rendering-settings panel. */
 /** Compact size display for the log sliders: "2", "1.6", "0.75". */
@@ -995,9 +966,9 @@ export function GraphView({
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const cardRef = useRef<HTMLDivElement | null>(null);
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
 	const [selected, setSelected] = useState<Selection | null>(null);
+	const cardRef = useCardPlacement(selected, containerRef);
 	// The latest snapshot for the renderer's click callbacks (they are
 	// constructed once, so they read through this ref, never a closure).
 	const snapshotRef = useRef<GraphSnapshot | null>(null);
@@ -1507,30 +1478,6 @@ export function GraphView({
 		rendererRef.current?.setSelected(selected?.node.id ?? null);
 	}, [selected, isEmpty]);
 
-	// Position the detail card: below the clicked node, flipped above near
-	// the bottom edge, clamped horizontally. Imperative (ref + layout effect,
-	// before paint) because the flip needs the card's measured height.
-	useLayoutEffect(() => {
-		const card = cardRef.current;
-		const container = containerRef.current;
-		if (!selected || !card || !container) return;
-		const width = card.offsetWidth;
-		const height = card.offsetHeight;
-		const margin = 8;
-		const gap = 12;
-		const left = Math.min(
-			Math.max(selected.anchor.x - width / 2, margin),
-			Math.max(container.clientWidth - width - margin, margin),
-		);
-		let top = selected.anchor.y + gap;
-		if (top + height > container.clientHeight - margin) {
-			top = Math.max(selected.anchor.y - gap - height, margin);
-		}
-		card.style.left = `${left}px`;
-		card.style.top = `${top}px`;
-		card.style.visibility = "visible";
-	}, [selected]);
-
 	return (
 		<div className="relative h-full w-full">
 			{isEmpty ? (
@@ -1684,69 +1631,18 @@ export function GraphView({
 					style={{ visibility: "hidden", left: 0, top: 0 }}
 					className="absolute z-10 max-h-[min(60dvh,28rem)] w-80 max-w-[calc(100%-1rem)] overflow-y-auto rounded-xl border bg-card p-4 text-left shadow-lg"
 				>
-					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
-					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
-					{settings.showKnowledge && (
-						<NodeKnowledge state={learner?.states[selected.node.id]} sessions={{ ...snapshot?.sessions, ...learner?.sessions }} />
-					)}
-					{selected.sourceIds.length > 0 ? (
-						<div className="mt-3 flex flex-col gap-1">
-							<div className="text-xs text-muted-foreground">Sessions</div>
-							{selected.sourceIds.map((sourceId) => {
-								// A stored DOCUMENT (PR H): "<title> · §section · p.N", linked
-								// to the reader at the page anchor. One line per distinct
-								// place the node came up in.
-								const doc = snapshot?.documents?.[sourceId];
-								if (doc) {
-									const cites = new Map<string, { label: string; page?: number }>();
-									for (const pt of selected.node.provenance) {
-										if (pt.chatId !== sourceId) continue;
-										const cite = documentCitation(doc, pt);
-										cites.set(cite.label, cite);
-									}
-									if (cites.size === 0) cites.set(doc.title, { label: doc.title });
-									return [...cites.values()].map((cite) => (
-										<div key={`${sourceId}:${cite.label}`} className="flex items-center gap-1.5">
-											<FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-											<Link
-												href={`/documents/${doc.id}${cite.page !== undefined ? `#p-${cite.page}` : ""}`}
-												data-testid="card-document-link"
-												className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
-											>
-												{cite.label}
-											</Link>
-										</div>
-									));
-								}
-								// An imported-notes file: a STATIC entry — the path,
-								// plain text, never a link (no session to open).
-								if (snapshot?.fileSources?.[sourceId] !== undefined) {
-									return (
-										<div key={sourceId} className="flex items-center gap-1.5">
-											<FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-											<span className="min-w-0 flex-1 truncate px-2 py-1.5 text-sm text-muted-foreground">
-												{snapshot.fileSources[sourceId]}
-											</span>
-										</div>
-									);
-								}
-								// A real session: deep-linkable provenance.
-								return (
-									<div key={sourceId} className="flex items-center gap-1.5">
-										<Link
-											href={propositionSessionHref(selected.node, sourceId)}
-											scroll={false}
-											className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
-										>
-											{snapshot?.sessions[sourceId] ?? sourceId}
-										</Link>
-									</div>
-								);
-							})}
-						</div>
-					) : (
-						<div className="mt-3 text-xs text-muted-foreground">No sessions recorded.</div>
-					)}
+					<NodeCardBody
+						node={selected.node}
+						sourceIds={selected.sourceIds}
+						sessions={snapshot?.sessions ?? {}}
+						fileSources={snapshot?.fileSources ?? {}}
+						documents={snapshot?.documents}
+						knowledge={
+							settings.showKnowledge
+								? { state: learner?.states[selected.node.id], sessions: { ...snapshot?.sessions, ...learner?.sessions } }
+								: undefined
+						}
+					/>
 					{/* The touch path to node delete (iOS never fires contextmenu):
 					    the same DeleteNodeDialog flow as the context menu's Delete. */}
 					<button

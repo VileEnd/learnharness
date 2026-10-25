@@ -1004,6 +1004,26 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Centre the camera on a node (deep link from the "My knowledge" overview),
+	 *  zooming in to at least 1.5x the fit zoom, and return the node's canvas-relative
+	 *  screen position (the detail card's anchor). Null while the canvas has no size
+	 *  yet or the node is unknown: the caller retries next frame. The camera move
+	 *  reports through onCameraMove like any other, and counts as the user's own
+	 *  (no refit over it). */
+	focusNode(id: string): Pt | null {
+		const node = this.nodeById.get(id);
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		if (!node || w < 10 || h < 10) return null;
+		if (!this.hasFit) this.fit();
+		const k = Math.max(this.transform.k, this.kFit * 1.5);
+		const x = w / 2 - node.x * k;
+		const y = h / 2 - node.y * k;
+		this.userMoved = true;
+		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(x, y).scale(k));
+		return { x: w / 2, y: h / 2 };
+	}
+
 	/** Space the fit keeps clear of overlaid chrome: phones only (desktop
 	 *  frames the full canvas exactly as before). */
 	private fitInsets(w: number): { top: number; bottom: number } {
