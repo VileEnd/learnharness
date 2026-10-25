@@ -80,9 +80,16 @@ export function describedByFrontMatter(
 	const title = typeof data.title === "string" ? data.title.trim() : "";
 	if (title === "") return null;
 	const topics = Array.isArray(data.topics) ? data.topics.filter((t): t is string => typeof t === "string") : [];
+	const summary = typeof data.summary === "string" ? data.summary.trim() : "";
+	// Early OCR runs (before their naming step) wrote the FILENAME as the
+	// title and nothing else. That is no content description: let the
+	// describe step read the document instead.
+	const source = typeof data.source === "string" ? data.source.trim() : "";
+	const sourceStem = source.replace(/\.[^./]+$/, "");
+	if (sourceStem !== "" && title === sourceStem) return null;
 	return {
 		title,
-		summary: typeof data.summary === "string" ? data.summary.trim() : "",
+		summary,
 		topics: normalizeTopics(topics),
 		...(typeof data.pages === "number" && Number.isInteger(data.pages) ? { pages: data.pages } : {}),
 		...(typeof data.sha256 === "string" && /^[0-9a-f]{64}$/.test(data.sha256) ? { sha256: data.sha256 } : {}),
