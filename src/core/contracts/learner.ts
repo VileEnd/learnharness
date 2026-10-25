@@ -5,6 +5,8 @@
  * (src/core/contracts/). Pure types.
  */
 
+import type { GraphSnapshot } from "./graph.ts";
+
 /** How an evidence event counts: a clean success, a weak one (tentative,
  *  hinted, partly right) or a failure. */
 export type EvidenceResult = "clean" | "weak" | "failed";
@@ -69,4 +71,66 @@ export interface LearnerSnapshot {
  *  cites (chat id -> title), so the client can name them. A chat that is gone has no entry. */
 export interface LearnerView extends LearnerSnapshot {
 	sessions: Record<string, string>;
+}
+
+// ─── the "My knowledge" view (GET /api/knowledge) ────────────────────────────
+
+/** One checked concept as the overview lists it. */
+export interface KnowledgeConceptRef {
+	id: string;
+	name: string;
+	state: Exclude<ConceptStateName, "not-yet-checked">;
+	due: boolean;
+	nextReviewAt?: string;
+}
+
+/** One topic of the overview: how much of it has been checked, and the
+ *  checked concepts by state. A concept in several topics appears in each. */
+export interface KnowledgeTopicGroup {
+	/** The canonical topic label; null = concepts without any topic ("Untagged"). */
+	label: string | null;
+	/** Concepts with this topic (checked or not). */
+	total: number;
+	/** Of those, the ones with evidence (state is not "not-yet-checked"). */
+	checked: number;
+	/** Evidence events across the topic's concepts: the ordering key. */
+	activity: number;
+	solid: KnowledgeConceptRef[];
+	learning: KnowledgeConceptRef[];
+	shaky: KnowledgeConceptRef[];
+}
+
+export interface KnowledgeConfusion {
+	conceptId: string;
+	conceptName: string;
+	term: string;
+	instead?: string;
+	why?: string;
+	at: string;
+}
+
+/** The Overview tab, computed server-side (core/knowledge.ts). */
+export interface KnowledgeOverview {
+	/** Concepts with evidence: 0 = the empty state. */
+	checkedCount: number;
+	/** Learning/solid concepts that are due, oldest due first. */
+	due: KnowledgeConceptRef[];
+	/** Every open confusion of a checked concept, newest first. */
+	confusions: KnowledgeConfusion[];
+	/** Topics with at least one checked concept, most evidence activity first (ties by name; Untagged last among ties). */
+	topics: KnowledgeTopicGroup[];
+}
+
+/** The Graph tab's data: the checked concepts only (+ derived implication nodes),
+ *  edges from the chains among them, and the provenance the detail card cites. */
+export type KnowledgeGraph = Pick<
+	GraphSnapshot,
+	"nodes" | "edges" | "logicalEdges" | "impLinks" | "sessions" | "fileSources" | "nodeSessions" | "documents"
+>;
+
+/** What GET /api/knowledge returns. */
+export interface KnowledgeView {
+	learner: LearnerView;
+	overview: KnowledgeOverview;
+	graph: KnowledgeGraph;
 }
