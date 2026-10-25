@@ -260,7 +260,23 @@ Each PR passes typecheck, tests, lint and build, plus golden fixtures where the 
 - **Rooting covers dev runs too**; the `pdf` job is removed; `read_document`, `list_documents` and the prober's `list_sessions`/`list_propositions` are retired in favour of the bundle.
 - **Settings gates are applied when the bundle is generated** (they're global), so nothing leaks via cross-links.
 - **Session provenance** uses `learnharness:chat/<id>` URIs in `sources`.
-- **Kept:** the prober's `list_sessions`/`list_propositions` and practice's picked list stay.
+- **Kept:** practice's picked-propositions block.
+- **Export is the full bundle:** `GET /api/okf/export` renders on demand with only `graph.enabled` and document presence applied (the agent gates are about agents, not his download); `data/okf/` itself stays agent-gated.
+- **Thresholds start as named constants in core** (confidence ≤ 30, intervals 3/7/21/60, same-day gap below); they move into settings only after tuning on real data.
+- **`grade` shows as a quiet chip** in the chat ("counted as: partly"), so he can see how an answer counted. An answered explain/recall without a `grade` produces no evidence. `grade` stays registered while an ungraded item is pending, even if `tools.explain` was switched off.
+- **Session order and spacing:** a concept's session results are ordered by that session's last evidence timestamp on the concept. A clean session advances the streak only if it is **at least 20 hours** after the previous counted clean session; sooner, it just confirms the current state (spacing is the point). `stale_after` is a full UTC instant (`YYYY-MM-DDTHH:mm:ssZ`), omitted when a topic has no learning/solid concept.
+
+## Compatibility and builder notes
+
+- **Old transcripts must keep rendering.** Golden fixtures (`chats/chat_mv27rrra_feff23b6.json`, `jobs/job_mv28tfii_2a54290a.json`) and real VM chats contain `pdf`, `read_document`, `list_documents`, `list_sessions` and `list_propositions` parts.
+  - **Remove** the retired tools from the agent registries, `runner.ts` dispatch, `TOGGLEABLE_TOOLS` (`core/pending.ts`), the settings toggles and `SLOT_META.vision` (`components/settings/agent-section.tsx`) and the `pdfReader` model role (`config.ts`).
+  - **Keep** read-side tolerance: `JobKind` `"pdf"`, the artifact card mappings (`PdfJobCard`, `DocumentCard`, `ToolCallCard`) and `ACTIVITY_LABELS`.
+- **Delete `subagents/pdf-reader.ts`, keep `subagents/pdf-ops.ts`.** The researcher's sandboxed `pdf-read.ts` and `headless.ts` import it.
+- **Staging.** PR 1 roots the tools before the bundle exists. A missing root returns a clean "the library is empty" result; no `realpath` on a missing root and no `mkdir` on read (golden byte-identity). **PRs 1–3 deploy together** on VM 104, so live agents never see the old prompt against an empty root.
+- **Stable references.**
+  - Document and topic paths can change (`redescribe` renames titles, aliases merge topics). Search hits and tool details keep `docId` / `sectionId` / `conceptId` beside `path`, so `DocumentCard` links in saved transcripts never rot.
+  - Topic slugs get a short hash suffix (`c-plus-plus-3fa1`), because "C++" and "C#" would collide.
+- **Untagged bucket.** Concepts with no topic (before the one-off pass, or when extraction yields none) are listed under "Untagged" in `concepts/index.md`, `topics/` and `me/`, so they stay reachable.
 
 ## Left to the builder
 
