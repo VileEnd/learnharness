@@ -386,7 +386,12 @@ describe("agent.documentTools", () => {
 	});
 
 	it("the embedding model setting: default, strict write, lenient read", () => {
-		assert.equal(resolveSettings(null).documents.embeddingModel, "baai/bge-m3");
+		assert.equal(resolveSettings(null).documents.embeddingModel, "google/gemini-embedding-2");
+		assert.equal(resolveSettings(null).documents.embeddingBatch, true);
+		assert.equal(resolveSettings({ version: 1, documents: { embeddingBatch: false } }).documents.embeddingBatch, false);
+		assert.equal(parseDocumentsSettingsBody({ embeddingBatch: "yes" }).ok, false);
+		assert.deepEqual(parseDocumentsSettingsBody({ embeddingBatch: false }), { ok: true, settings: { embeddingBatch: false } });
+		assert.deepEqual(sanitizeUserSettings({ version: 1, documents: { embeddingBatch: "x" } })?.documents, {});
 		assert.equal(resolveSettings({ version: 1, documents: { embeddingModel: "openai/text-embedding-3-small" } }).documents.embeddingModel, "openai/text-embedding-3-small");
 		assert.deepEqual(parseDocumentsSettingsBody({ embeddingModel: " baai/bge-m3 " }), { ok: true, settings: { embeddingModel: "baai/bge-m3" } });
 		assert.deepEqual(parseDocumentsSettingsBody({}), { ok: true, settings: {} });

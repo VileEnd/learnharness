@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PATHS } from "../../config.ts";
-import type { DocumentChunkRef, DocumentMeta, DocumentVectors } from "../core/contracts/documents.ts";
+import type { DocumentChunkRef, DocumentMeta, DocumentVectors, PendingBatch } from "../core/contracts/documents.ts";
 import type { DocumentStore } from "../core/ports.ts";
 
 const ID = /^doc_[0-9a-f]{12,64}$/;
@@ -70,6 +70,21 @@ function isChunksFile(v: unknown): v is ChunksFile {
 		c.dims > 0 &&
 		typeof c.contentHash === "string" &&
 		Array.isArray(c.chunks)
+	);
+}
+
+const PENDING_FILE = () => path.join(PATHS.documents, "pending-batches.json");
+
+function isPending(v: unknown): v is PendingBatch {
+	const p = v as PendingBatch | null;
+	return (
+		!!p &&
+		typeof p.batchId === "string" &&
+		typeof p.model === "string" &&
+		typeof p.submittedAt === "number" &&
+		!!p.docs &&
+		typeof p.docs === "object" &&
+		Object.values(p.docs).every((d) => typeof d?.contentHash === "string" && Number.isInteger(d.units))
 	);
 }
 
@@ -135,5 +150,17 @@ export const documentStore: DocumentStore = {
 		writeAtomicBytes(path.join(dir, "vectors.f32"), bytes);
 		const chunks: ChunksFile = { model: v.model, dims: v.dims, contentHash: v.contentHash, chunks: v.chunks };
 		writeAtomic(path.join(dir, "chunks.json"), `${JSON.stringify(chunks)}\n`);
+	},
+	readPendingBatches() {
+		try {
+			const raw: unknown = JSON.parse(fs.readFileSync(PENDING_FILE(), "utf-8"));
+			return Array.isArray(raw) ? raw.filter(isPending) : [];
+		} catch {
+			return [];
+		}
+	},
+	writePendingBatches(batches) {
+		fs.mkdirSync(PATHS.documents, { recursive: true });
+		writeAtomic(PENDING_FILE(), `${JSON.stringify(batches)}\n`);
 	},
 };
