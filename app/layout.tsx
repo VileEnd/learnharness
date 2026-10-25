@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Source_Sans_3 } from "next/font/google";
 import "katex/dist/katex.min.css";
 import "./globals.css";
@@ -6,7 +6,6 @@ import { AppShell, SidebarProvider } from "@/components/sidebar";
 import { ActivityProvider } from "@/components/activity-dock";
 import { ServerEventsProvider } from "@/components/server-events";
 import { AppearanceProvider } from "@/components/settings/appearance";
-import UpdateBanner from "@/components/update-banner";
 
 // Chrome = JetBrains Mono, teaching prose = Source Sans 3, titles = CMU
 // Serif (the bundled lh-cmu @font-face in globals.css — no CDN).
@@ -16,6 +15,12 @@ const prose = Source_Sans_3({ subsets: ["latin"], variable: "--font-sans3" });
 export const metadata: Metadata = {
 	title: "Learning Harness",
 	description: "A teacher agent with a memory — sessions, quizzes, and a knowledge graph of what you know.",
+	// Installed to an iOS home screen (the manifest covers everyone else).
+	appleWebApp: { capable: true, title: "LearnHarness", statusBarStyle: "black" },
+};
+
+export const viewport: Viewport = {
+	themeColor: "#141414",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -33,8 +38,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 					</SidebarProvider>
 				</AppearanceProvider>
 			</ServerEventsProvider>
-			{/* Auto-update banner (Wave C): fixed card, Electron-only pushes. */}
-			<UpdateBanner />
 		</body>
 		</html>
 	);

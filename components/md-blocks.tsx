@@ -45,10 +45,9 @@ import { Hint } from "@/components/ui/hint";
 
 // ─── The one affordance: the hover-reveal corner copy ────────────────────────
 
-/** Clipboard write with a fallback: navigator.clipboard needs the
- *  `clipboard-sanitized-write` permission, which Electron's deny-by-default
- *  handler (electron/main.cjs) must grant from the loopback origin — and
- *  browsers with a stale/absent API reject too. The hidden-textarea
+/** Clipboard write with a fallback: navigator.clipboard needs a secure
+ *  context and a granted permission — browsers with a stale/absent API
+ *  reject too. The hidden-textarea
  *  execCommand path is the belt under that: a failed write would otherwise
  *  be a silent no-op, which is exactly what the owner saw. Returns whether
  *  the copy landed (drives the Copied pill). */

@@ -16,3 +16,7 @@ auth.json
 
 # dev-fresh launcher scratch (fresh-user sim): disposable per launch
 .fresh-data/
+
+# self-hosting stack: secrets and runtime state, never committed
+deploy/.env
+deploy/volumes/

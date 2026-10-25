@@ -9,7 +9,7 @@
 <p align="center"><strong>An agent harness for learning.</strong></p>
 
 <p align="center">
-  <a href="https://learnharness.ai">Download</a> ·
+  <a href="docs/self-hosting.md">Self-hosting</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="docs/development.md">Documentation</a> ·
   <a href="https://github.com/amosblomqvist/learnharness/issues">Issues</a>
@@ -40,22 +40,24 @@ Future teaching sessions can read the graph instead of starting from scratch. Pr
 
 ![LearnHarness knowledge graph](docs/assets/knowledge-graph.png)
 
-## Download and get started
+## Run it (self-hosted, in the browser)
 
-**[Download from learnharness.ai](https://learnharness.ai)** · [GitHub Releases](https://github.com/amosblomqvist/learnharness/releases)
+This fork runs LearnHarness as a **browser-only app in Docker** on your own server, behind a Keycloak login, reachable from any device on your network. It can be installed as an app (PWA). There is no desktop app.
 
-- **macOS (Apple Silicon):** signed and notarized DMG. Drag the app to Applications.
-- **Windows (x64):** run the installer. It is currently unsigned; Windows may show an “unknown publisher” or SmartScreen warning.
-- **Linux (x64):** make the AppImage executable and open it, or install the Debian/Ubuntu `.deb`.
+```bash
+git clone https://github.com/VileEnd/learnharness.git && cd learnharness/deploy
+cp .env.example .env   # hostnames + secrets
+docker compose up -d --build
+```
+
+The full guide covers the VM, HTTPS with a local CA, Keycloak users, and migrating data from the old desktop app: [docs/self-hosting.md](docs/self-hosting.md).
 
 Add your provider API key and choose your models, then start a session with what you want to understand. LearnHarness supports 30+ provider options, including OpenAI, Anthropic, Google, DeepSeek, and OpenRouter. Optional dictation and web search use separate service keys.
-
-All three platforms support in-app updates.
 
 ## Your keys, your data
 
 - **Your keys and models.** No LearnHarness subscription or markup. You pay your providers for usage; a live cost meter shows model costs.
-- **Local storage.** Your chats, graph, settings, and API keys live on your machine. Learning records are plain files you can inspect.
+- **Your server.** Your chats, graph, settings, and API keys live on your own server's data volume. Learning records are plain files you can inspect.
 - **External services.** Models run through your configured providers. Model requests send the context needed for the task; web research and dictation also contact external services. Local storage does not mean offline processing.
 - **Inspectable behavior.** System prompts are visible and editable. The app is open source under the AGPL-3.0 license.
 
@@ -67,7 +69,7 @@ npm run dev        # http://localhost:3000
 npm test           # deterministic, no LLM, no network
 ```
 
-See the [development guide](docs/development.md), [architecture](docs/architecture.md), and [desktop release guide](docs/desktop-release.md).
+See the [development guide](docs/development.md), [architecture](docs/architecture.md), and [self-hosting guide](docs/self-hosting.md).
 
 Questions, bug reports, and feature requests: [GitHub Issues](https://github.com/amosblomqvist/learnharness/issues).
 

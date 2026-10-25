@@ -1,13 +1,14 @@
 /**
  * Import the demo dependency graph from ONLY a standalone payload. With --browser,
- * also drive the packaged app's own --browser-service (never system Chrome).
- * No server, model, keys, installed app UI, or production diagnostic route needed.
+ * also launch the system Chromium (CHROME_PATH, as the demo builder does) and
+ * drive one interactive page through it.
+ * No server, model, keys, app UI, or production diagnostic route needed.
  *
- * node scripts/smoke-demo-runtime.mjs --standalone <dir> --runtime <electron binary> [--browser]
- * --runtime defaults to host Node for the import-only gate.
+ * node scripts/smoke-demo-runtime.mjs --standalone <dir> [--runtime <node binary>] [--browser]
+ * --runtime defaults to host Node.
  */
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import * as os from "node:os";
@@ -52,7 +53,7 @@ export function verifyDemoRuntime(standalone, runtime = process.execPath, browse
 		fs.writeFileSync(path.join(home, "auth.json"), "{}\n", { mode: 0o600 });
 		const result = spawnSync(runtime, [fileURLToPath(import.meta.url), "--probe", path.resolve(standalone), ...(browser ? ["--browser"] : [])], {
 			cwd: home,
-			env: { ...probeEnv(process.env, home), ELECTRON_RUN_AS_NODE: "1" },
+			env: probeEnv(process.env, home),
 			encoding: "utf8", timeout: 60_000, maxBuffer: 128 * 1024,
 		});
 		if (result.status !== 0 || result.error) {
@@ -98,80 +99,19 @@ async function importPayload(standalone) {
 	}
 }
 
-// Explicit IPC disconnect can omit ChildProcess 'close' even after Electron
-// exits. Wait for actual exit, boundedly; never infer shutdown intent from
-// Node's automatic stdin cleanup after an unexpected child exit.
-/** @returns {Promise<{code: number | null, signal: NodeJS.Signals | null, requested: boolean}>} */
-export async function stopBrowserService(helper) {
-	if (!helper.pid || helper.exitCode !== null || helper.signalCode !== null) {
-		return { code: helper.exitCode, signal: helper.signalCode, requested: false };
-	}
-	let onExit, onError;
-	const exited = new Promise((resolve, reject) => {
-		onExit = (code, signal) => resolve({ code, signal });
-		onError = reject;
-		helper.once("exit", onExit);
-		helper.once("error", onError);
-	});
-	const wait = async (ms) => {
-		let timer;
-		try {
-			return await Promise.race([exited, new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); })]);
-		} finally { clearTimeout(timer); }
-	};
-	try {
-		const requested = helper.connected;
-		if (requested) {
-			console.log("[smoke-demo-runtime] requesting parent IPC disconnect");
-			helper.disconnect();
-		}
-		const result = await wait(5000);
-		if (!result) {
-			helper.kill("SIGKILL");
-			if (!await wait(3000)) throw new Error("browser-service did not exit after forced cleanup");
-			throw new Error("browser-service did not exit after IPC disconnect; force-killed");
-		}
-		return { ...result, requested };
-	} finally {
-		helper.removeListener("exit", onExit);
-		helper.removeListener("error", onError);
-	}
-}
-
 async function browserProbe(puppeteer) {
-	assert.ok(process.versions.electron, "--browser requires a packaged Electron --runtime binary");
+	const executablePath = process.env.CHROME_PATH;
+	assert.ok(executablePath, "--browser requires CHROME_PATH (the image's Chromium)");
 	const home = process.env.HOME;
-	const env = { ...process.env };
-	delete env.ELECTRON_RUN_AS_NODE;
-	delete env.LH_DEV_URL;
-	const helper = spawn(process.execPath, [
-		"--browser-service", `--user-data-dir=${path.join(home, "browser-profile")}`,
-		"--disable-background-networking", "--disable-component-update", "--no-proxy-server",
-		// Hosted Linux runners disallow Chromium's unprivileged sandbox.
-		...(process.platform === "linux" ? ["--no-sandbox"] : []),
-	], { cwd: home, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
-	let output = "";
-	let errors = "";
-	helper.stderr.on("data", (chunk) => { errors = (errors + chunk).slice(-16_000); });
-	let browser;
-	let failed = false;
+	const browser = await puppeteer.launch({
+		headless: true,
+		executablePath,
+		userDataDir: path.join(home, "browser-profile"),
+		// The same flags the demo builder launches with (src/agent/subagents/headless.ts).
+		args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+	});
 	try {
-		const port = await new Promise((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error("browser-service handshake timed out")), 15_000);
-			helper.once("error", (err) => { clearTimeout(timer); reject(err); });
-			helper.once("exit", (code) => { clearTimeout(timer); reject(new Error(`browser-service exited early: ${code}`)); });
-			helper.stdout.on("data", (chunk) => {
-				output = (output + chunk).slice(-16_000);
-				const match = output.match(/^BROWSER_SERVICE_CDP (\d+)\r?$/m);
-				if (match) { clearTimeout(timer); resolve(Number(match[1])); }
-			});
-		});
-		const info = await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(5000) })).json();
-		browser = await puppeteer.connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null, protocolTimeout: 10_000 });
-		// Electron CDP has no Target.createTarget: use the helper's existing page.
-		const pages = await browser.pages();
-		const page = pages.find((candidate) => candidate.target().type() === "page");
-		assert.ok(page, "browser-service has no page target");
+		const page = await browser.newPage();
 		const failures = [];
 		page.on("console", (msg) => { if (msg.type() === "error") failures.push(msg.text()); });
 		page.on("pageerror", (err) => failures.push(String(err)));
@@ -187,27 +127,10 @@ async function browserProbe(puppeteer) {
 		assert.equal(await page.$eval("#count", (element) => element.textContent), "0");
 		await page.click("#increment");
 		assert.equal(await page.$eval("#count", (element) => element.textContent), "1");
-		await page.goto("about:blank");
-		assert.equal(await page.$("#increment"), null, "page state was not cleared");
 		assert.deepEqual(failures, [], "demo console/page/network errors");
-		console.log("[smoke-demo-runtime] packaged browser-service: JS button 0 → 1, clean console/page, page reset ok (no Chrome fallback)");
-	} catch (err) {
-		failed = true;
-		throw new Error(`browser-service probe failed at local CDP/browser interaction\n--- browser-service output ---\n${output}\n${errors}`, { cause: err });
+		console.log(`[smoke-demo-runtime] ${executablePath}: JS button 0 → 1, clean console/page`);
 	} finally {
-		browser?.disconnect();
-		try {
-			const { code, signal, requested } = await stopBrowserService(helper);
-			if (requested) console.log(`[smoke-demo-runtime] observed helper exit after requested IPC disconnect: code=${code}, signal=${signal} (no resident helper)`);
-			else console.log(`[smoke-demo-runtime] helper already exited/disconnected before cleanup: code=${code}, signal=${signal}; no shutdown requested`);
-			if (!failed) {
-				assert.ok(requested, "browser-service exited/disconnected before requested cleanup");
-				assert.deepEqual({ code, signal }, { code: 0, signal: null }, "browser-service shutdown failed");
-			}
-		} catch (error) {
-			if (!failed) throw error;
-			console.error(`[smoke-demo-runtime] cleanup also failed: ${formatProbeError(error)}`);
-		}
+		await browser.close().catch(() => {});
 	}
 }
 

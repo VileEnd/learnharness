@@ -68,7 +68,7 @@ import { NotesImportErrors, useNotesImport } from "@/components/notes-import.tsx
 import Link from "next/link";
 import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
-import { planCostLabel } from "@/components/usage-format";
+import { costLabel } from "@/components/usage-format";
 import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { useActivity } from "@/components/activity-dock";
@@ -295,18 +295,14 @@ function timeAgo(startedAt: number): string {
 
 /** Run/stage cost at 3 decimals (pipeline pennies are real money at this
  *  scale); headline totals use 2. Null (unpriced model) renders "—". */
-function fmtRunCost(dollars: number | null, providers: readonly string[] = []): string {
-	return planCostLabel(dollars, providers, (value) => `$${value.toFixed(3)}`);
-}
-function graphProviders(value: { subscriptionRuns?: number; subscriptionProviders?: string[] }): string[] {
-	return value.subscriptionProviders ?? ((value.subscriptionRuns ?? 0) > 0 ? ["ChatGPT"] : []);
+function fmtRunCost(dollars: number | null): string {
+	return costLabel(dollars, (value) => `$${value.toFixed(3)}`);
 }
 function graphUsageLabel(costs: Pick<GraphCostSummary, "stages">): string {
 	const stages = [costs.stages.extraction, costs.stages.audit];
-	const providers = [...new Set(stages.flatMap(graphProviders))];
-	const priced = stages.some((stage) => stage.runs - stage.unpricedRuns - (stage.subscriptionRuns ?? 0) > 0);
+	const priced = stages.some((stage) => stage.runs - stage.unpricedRuns > 0);
 	const dollars = displayCostTotals(costs).totalDollars;
-	return planCostLabel(priced ? dollars : null, providers, (value) => `$${value.toFixed(2)}`);
+	return costLabel(priced ? dollars : null, (value) => `$${value.toFixed(2)}`);
 }
 
 /**
@@ -408,8 +404,8 @@ function GraphCostPanel({ costs }: { costs: GraphCostSummary }) {
 					<div key={label} className="flex items-baseline justify-between gap-2 text-[11px]">
 						<span className="shrink-0 text-muted-foreground">{label}</span>
 						<span className="min-w-0 text-right tabular-nums">
-							{fmtRunCost(stage.runs - stage.unpricedRuns - (stage.subscriptionRuns ?? 0) <= 0 ? null : stage.dollars, graphProviders(stage))}
-							{stage.unpricedRuns > 0 && (stage.runs - stage.unpricedRuns - (stage.subscriptionRuns ?? 0) > 0 || (stage.subscriptionRuns ?? 0) > 0) && (
+							{fmtRunCost(stage.runs - stage.unpricedRuns <= 0 ? null : stage.dollars)}
+							{stage.unpricedRuns > 0 && stage.runs - stage.unpricedRuns > 0 && (
 								<span className="text-muted-foreground"> +{stage.unpricedRuns} unpriced</span>
 							)}
 							<span className="text-muted-foreground">
@@ -433,7 +429,7 @@ function GraphCostPanel({ costs }: { costs: GraphCostSummary }) {
 									</span>
 								)}
 							</span>
-							<span className="shrink-0 tabular-nums">{fmtRunCost(run.dollars, graphProviders(run))}{run.dollars === null && run.subscriptionRuns === 1 ? " +1 unpriced" : ""}</span>
+							<span className="shrink-0 tabular-nums">{fmtRunCost(run.dollars)}</span>
 						</div>
 					))}
 			</div>
@@ -1576,11 +1572,7 @@ export function GraphView({
 			    Coverage renders even when the graph is EMPTY — an empty
 			    graph with unextracted sessions is exactly when it matters
 			    (extract → the graph gains nodes).
-			    lh-no-drag (2026-09-17): home.tsx's floating drag strip
-			    underlays this row — Electron's drag mask ignores z-index,
-			    so without an explicit carve-out the controls were
-			    unclickable in the desktop app (owner report). The old
-			    flex-wrap (narrow-window wave, 2026-09-17) folded the row
+			    The old flex-wrap (narrow-window wave, 2026-09-17) folded the row
 			    onto two lines below the sidebar threshold — owner rejected
 			    it (2026-09-20): one row always, the search shrinks (see
 			    the header-band comment on the column below). */}
@@ -1591,7 +1583,7 @@ export function GraphView({
 			    against the full-bleed parent) — the row NEVER wraps (owner
 			    rejected the two-row fold); in narrow windows the search is
 			    the flexible element and shrinks instead. */}
-			<div className="lh-no-drag lh-wco-floating absolute right-2 top-2 z-10 flex max-w-[calc(100%-5.5rem)] flex-col items-end gap-2">
+			<div className="absolute right-2 top-2 z-10 flex max-w-[calc(100%-5.5rem)] flex-col items-end gap-2">
 			{/* z-20 (2026-09-20): the row paints above the cost number below
 			    it — without this, the later-in-DOM cost control layered over
 			    the settings/coverage dropdowns (owner report), still hoverable
@@ -1643,10 +1635,7 @@ export function GraphView({
 					// Positioned imperatively in the layout effect above; hidden
 					// until placed so the flip never flashes in the wrong spot.
 					style={{ visibility: "hidden", left: 0, top: 0 }}
-					// lh-no-drag: the card is placed anywhere on the canvas —
-					// when it lands in the top strip it must stay interactive
-					// over home.tsx's drag surface (2026-09-17).
-					className="lh-no-drag absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
+					className="absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
 				>
 					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
 					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
@@ -1689,15 +1678,7 @@ export function GraphView({
 			    ABSOLUTE INSIDE the graph area (the session-overlay idiom —
 			    never a body portal) so the app chrome stays sharp and
 			    reachable; the overlay itself is read-only toward the graph
-			    and owns its selection.
-			    LAST CHILD OF THE ROOT, DELIBERATELY (owner, 2026-09-29
-			    night): app-region subtraction resolves by DOM order, not
-			    z-index — mounted earlier, the chrome's lh-no-drag column
-			    punched dead zones through the overlay's TopBar drag band
-			    (over the counts, around the search field). A full-bleed
-			    surface covering a drag band must paint AFTER everything it
-			    covers. (DeleteNodeDialog is body-portaled — DOM-irrelevant
-			    here.) */}
+			    and owns its selection. */}
 			<ChainTableOverlay
 				open={chainsOpen && !isEmpty}
 				nodes={snapshot?.propositions ?? []}
