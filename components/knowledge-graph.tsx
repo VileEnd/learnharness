@@ -135,6 +135,12 @@ export function KnowledgeGraph({
 	useEffect(() => {
 		const renderer = rendererRef.current;
 		if (!renderer || !hasNodes) return;
+		renderer.setAlwaysLabels(
+			alwaysLabelIds(
+				nodes.map((n) => n.id),
+				view.learner.states,
+			),
+		);
 		renderer.setData({
 			nodes: nodes.map((n) => ({ id: n.id, x: positions.get(n.id)?.x ?? 0, y: positions.get(n.id)?.y ?? 0, label: shortLabel(n.name) })),
 			edges: edges.map((e) => ({ from: e.from, to: e.to })),
@@ -151,12 +157,6 @@ export function KnowledgeGraph({
 		});
 		const byNode = new Map<string, { color: string; due: boolean }>();
 		for (const [id, st] of Object.entries(view.learner.states)) byNode.set(id, learnerNodeStyle(st));
-		renderer.setAlwaysLabels(
-			alwaysLabelIds(
-				nodes.map((n) => n.id),
-				view.learner.states,
-			),
-		);
 		renderer.setKnowledge({
 			byNode,
 			fallback: LEARNER_STATE_STYLES["not-yet-checked"].color,
