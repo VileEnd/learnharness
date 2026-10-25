@@ -31,6 +31,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { useBackDismiss } from "@/components/use-back-dismiss";
 import {
 	CURRENT_SETTINGS_VERSION,
 	type AgentSettings,
@@ -116,6 +117,7 @@ function SettingsDialog({
 	initialRow: string | null;
 }) {
 	const backdropDismiss = useBackdropDismiss(onClose);
+	useBackDismiss(true, onClose);
 	// Plain dim backdrop (no blur — nothing decorative); a genuine
 	// backdrop click closes, the dialog body stops propagation.
 	return createPortal(

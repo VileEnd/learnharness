@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { useBackDismiss } from "@/components/use-back-dismiss";
 
 /** The 409 extraction_running line (owner phrasing, node interlude):
  *  the server's error names the extraction; the ACTIVITY DOCK is the
@@ -109,7 +110,7 @@ export function DeleteNodeBody({
 					data-testid="node-delete-cancel"
 					onClick={onClose}
 					disabled={busy}
-					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
 				>
 					Cancel
 				</button>
@@ -121,7 +122,7 @@ export function DeleteNodeBody({
 					// Destructive red (owner, polish round) — the
 					// app's established destructive pair (chat's
 					// refusal banner): border + text, fill on hover.
-					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
+					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
 				>
 					{busy ? "Deleting…" : "Delete"}
 				</button>
@@ -148,6 +149,9 @@ export function DeleteNodeDialog({
 }) {
 	const [busy, setBusy] = useState(false);
 	const backdropDismiss = useBackdropDismiss(() => {
+		if (!busy) onClose();
+	});
+	useBackDismiss(!!nodes && nodes.length > 0, () => {
 		if (!busy) onClose();
 	});
 	const [failure, setFailure] = useState<{ code: string; error: string } | null>(null);

@@ -57,6 +57,19 @@ export function buttonKeepsNativeEnter(el: HTMLElement): boolean {
 	return !!el.closest(OVERLAY_ROOTS);
 }
 
+/** Does this keydown send? Desktop: Enter sends, Shift+Enter is a newline,
+ *  ⌘/Ctrl+Enter also sends. Touch (`coarse`, owner decision): Return always
+ *  inserts a newline, only the send/submit button sends; ⌘/Ctrl+Enter still
+ *  works for a hardware keyboard. Pure so the tests can pin it. */
+export function enterSends(
+	e: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+	coarse: boolean,
+): boolean {
+	if (e.key !== "Enter") return false;
+	if (e.metaKey || e.ctrlKey) return true;
+	return !coarse && !e.shiftKey;
+}
+
 /** Mount-scoped: while the dock is mounted (a problem/question is active),
  *  plain Enter anywhere outside a typing surface or button submits it. */
 export function useEnterSubmits(submit: () => void): void {

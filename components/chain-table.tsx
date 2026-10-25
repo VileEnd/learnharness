@@ -55,6 +55,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useBackDismiss } from "@/components/use-back-dismiss";
 import {
 	ChevronDownIcon,
 	ChevronRightIcon,
@@ -655,6 +656,9 @@ export function ChainTableOverlay({
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
 	}, [open, deleteOpen, onClose]);
+
+	// The back gesture closes the table (the delete dialog above it has its own entry).
+	useBackDismiss(open, onClose);
 
 	if (!open) return null;
 

@@ -196,10 +196,7 @@ export function MinimalHome({
 			</div>
 
 			{/* The chain table — the STANDARD overlay, unchanged, behind its
-			    button. LAST CHILD OF THE ROOT, DELIBERATELY (the graph view's
-			    DOM-order drag law): app-region subtraction resolves by DOM
-			    order, so a full-bleed surface covering the drag band must
-			    paint after everything it covers. */}
+			    button. Last child of the root so it paints above everything. */}
 			<ChainTableOverlay
 				open={chainsOpen && (snapshot?.propositions.length ?? 0) > 0}
 				nodes={snapshot?.propositions ?? []}

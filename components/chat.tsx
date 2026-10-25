@@ -67,6 +67,7 @@ import {
 } from "@/components/compaction-divider";
 import { CoverageRing } from "@/components/extraction-coverage";
 import { ChatOverflowMenu } from "@/components/chat-overflow-menu";
+import { useCoarsePointer } from "@/components/use-coarse-pointer";
 import {
 	activeProblemOf,
 	dismissedAnswer,
@@ -102,7 +103,8 @@ const DOCK = "mx-auto w-full max-w-[46rem] px-4";
 const DOCK_W = 46 * 16;
 const MARGIN_GAP = 16;
 const MARGIN_MIN_W = 220;
-// The dock overlay's gradient band (h-24) — part of the reserved tail.
+// The dock overlay's gradient band (h-24, h-8 below sm) — part of the reserved
+// tail; the live height is measured, this is the desktop fallback.
 const GRADIENT_H = 96;
 // Fold thresholds (owner, scroll round 1, tuned round 3): pixel distance
 // from the bottom — position, not velocity. Leave the bottom → the box
@@ -687,6 +689,7 @@ export function Chat({
 	 * kind, nothing active, nothing in flight, and at least one problem
 	 * has ever been posed (the fresh session's opening turn is owed, not
 	 * the move-on). Enter-on-empty and the Next chip both key on it. */
+	const coarse = useCoarsePointer();
 	const nextReady =
 		kind === "practice" &&
 		!pending &&
@@ -1659,7 +1662,13 @@ export function Chat({
 							// applies.
 							nextProblem={nextReady}
 							onNext={sendNext}
-							placeholder={nextReady ? "Ask anything, or press Enter for the next one." : undefined}
+							placeholder={
+								nextReady
+									? coarse
+										? "Ask anything, or tap Next problem."
+										: "Ask anything, or press Enter for the next one."
+									: undefined
+							}
 						/>
 					}
 					onSubmitAnswer={(output) => {
@@ -2025,11 +2034,20 @@ function DockOverlay({
 		if (!el) return;
 		const measure = () => {
 			setSbInset(Math.round((el.offsetWidth - el.clientWidth) / 2));
-			setDockMaxH(Math.max(el.clientHeight - 32, 160));
+			// Below md the cap also feeds the WHOLE question dock, so leave room
+			// for the stats row and padding under the shell.
+			const narrow = !window.matchMedia("(min-width: 768px)").matches;
+			setDockMaxH(Math.max(el.clientHeight - (narrow ? 96 : 32), 160));
 		};
 		measure();
+		// The keyboard resizes only the visual viewport (no window resize on iOS).
+		const vv = window.visualViewport;
 		window.addEventListener("resize", measure);
-		return () => window.removeEventListener("resize", measure);
+		vv?.addEventListener("resize", measure);
+		return () => {
+			window.removeEventListener("resize", measure);
+			vv?.removeEventListener("resize", measure);
+		};
 	}, [scrollRef]);
 
 	// GROWTH MUTE (owner round, 2026-10-05 — the generation churn): during a
@@ -2079,7 +2097,38 @@ function DockOverlay({
 			el.scrollTop += e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1);
 		};
 		root.addEventListener("wheel", onWheel, { passive: false });
-		return () => root.removeEventListener("wheel", onWheel);
+		// Touch drags that start on the dock scroll the transcript the same
+		// way: when nothing under the finger can scroll, the move is forwarded
+		// (preventDefault stops the page from rubber-banding instead).
+		let lastY: number | null = null;
+		let native = false;
+		const onTouchStart = (e: TouchEvent) => {
+			lastY = e.touches.length === 1 ? e.touches[0]!.clientY : null;
+			// Sliders and fields own their drags (the confidence thumb, text selection).
+			native = !!(e.target as HTMLElement | null)?.closest?.("input, select");
+		};
+		const onTouchMove = (e: TouchEvent) => {
+			if (lastY === null || e.touches.length !== 1) return;
+			const y = e.touches[0]!.clientY;
+			const dy = lastY - y; // finger up = content down, like wheel deltaY > 0
+			lastY = y;
+			if (dy === 0 || native) return;
+			for (let n = e.target as HTMLElement | null; n && n !== root; n = n.parentElement) {
+				if (n instanceof HTMLElement && canScroll(n, dy)) {
+					native = true; // an inner scroller owns this whole gesture
+					return;
+				}
+			}
+			if (e.cancelable) e.preventDefault();
+			el.scrollTop += dy;
+		};
+		root.addEventListener("touchstart", onTouchStart, { passive: true });
+		root.addEventListener("touchmove", onTouchMove, { passive: false });
+		return () => {
+			root.removeEventListener("wheel", onWheel);
+			root.removeEventListener("touchstart", onTouchStart);
+			root.removeEventListener("touchmove", onTouchMove);
+		};
 	}, [scrollRef]);
 
 	// ── The reserve: the spacer's height, reported upward ──
@@ -2090,8 +2139,9 @@ function DockOverlay({
 	// harmless in-flow behavior; nothing auto-expands there).
 	const reserveRef = useRef(0);
 	const blockRef = useRef<HTMLDivElement>(null);
+	const gradientRef = useRef<HTMLDivElement>(null);
 	const offer = (blockH: number) => {
-		const next = blockH + GRADIENT_H;
+		const next = blockH + (gradientRef.current?.offsetHeight ?? GRADIENT_H);
 		if (next <= reserveRef.current + 0.5 && pendingRef.current) return; // fold immunity
 		// Reserve GROWTH is the phantom-scroll SOURCE (flicker round,
 		// 2026-09-26): the spacer's height lands in this commit, the smooth
@@ -2272,8 +2322,8 @@ function DockOverlay({
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
-			<div ref={blockRef} className="relative bg-background pb-5" style={{ "--dock-max-h": dockMaxH ? `${dockMaxH}px` : undefined } as React.CSSProperties}>
+			<div ref={gradientRef} className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent max-sm:h-8" />
+			<div ref={blockRef} className="relative bg-background pb-5 max-sm:pb-[max(0.5rem,env(safe-area-inset-bottom))]" style={{ "--dock-max-h": dockMaxH ? `${dockMaxH}px` : undefined } as React.CSSProperties}>
 				<div className={DOCK}>
 					{setupCta}
 					{/* The queued-steer indicator (owner spec 2026-10-03): quiet
