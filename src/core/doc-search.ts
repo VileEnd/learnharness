@@ -22,7 +22,17 @@ import type { DocumentSection } from "./contracts/documents.ts";
 // ─── shared result shapes (index <-> tools <-> API <-> UI) ───────────────────
 
 export interface DocSearchHit {
+	/** "section": a passage of a stored document; "concept": a knowledge-graph
+	 *  concept (docId and sectionId are "", conceptId is set). Persisted tool
+	 *  parts from before concepts joined the search lack `kind` and `path`:
+	 *  readers treat a missing kind as "section". */
+	kind: "section" | "concept";
+	/** Where the hit lives in the library bundle (OKF), relative to its root:
+	 *  `documents/<doc>/<sNN>-<slug>.md` or `concepts/<slug>.md`. */
+	path: string;
 	docId: string;
+	conceptId?: string;
+	/** The document title, or the concept's name. */
 	title: string;
 	sectionId: string;
 	headingPath: string[];
@@ -44,9 +54,12 @@ export interface DocSearchResult {
 
 export interface DocSearchQuery {
 	topic?: string;
-	/** A docId or (part of) a title. */
+	/** A docId or (part of) a title. Concepts match only when their provenance
+	 *  is a matching document. */
 	document?: string;
 	limit?: number;
+	/** false = document passages only (the /documents page has no reader for a concept). Default true. */
+	includeConcepts?: boolean;
 }
 
 export interface DocListEntry {

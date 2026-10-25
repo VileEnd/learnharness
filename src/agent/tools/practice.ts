@@ -23,7 +23,6 @@ import { findToolFor } from "./find.ts";
 import { grepToolFor } from "./grep.ts";
 import { jobTools, type JobToolContext } from "./jobs.ts";
 import { documentTools, type DocumentToolDeps } from "./documents.ts";
-import { proberGraphTools, type GraphToolContext } from "./graph.ts";
 import { activeProblemOf } from "../../core/native-messages.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import { concludeResult, invalidInputResult, problemResult } from "../tool-execute.ts";
@@ -39,11 +38,8 @@ export interface PracticeToolContext {
 	 *  not just the session's picks, so pickless sessions and future
 	 *  graph-tools poses stay valid. Absent (tests) = no validation. */
 	graphNodes?: () => ReadonlyArray<Pick<import("../../core/contracts/graph.ts").GraphNode, "id" | "name">>;
-	/** THE RARELY-NEEDED SET (owner round 10, 2026-10-05): the map readers
-	 *  behind the SAME settings gate as the prober's (graphToolsEnabled at
-	 *  the composition root); the research job (keyless).
-	 *  Each absent context (tests) = absent from the registry. */
-	graph?: GraphToolContext;
+	/** THE RARELY-NEEDED SET (owner round 10, 2026-10-05): the research job
+	 *  (keyless). Each absent context (tests) = absent from the registry. */
 	jobs?: JobToolContext;
 	/** The document library tools (PR I), behind agent.documentTools. */
 	documents?: DocumentToolDeps;
@@ -233,9 +229,8 @@ export function practiceTools(ctx: PracticeToolContext): Record<string, AgentToo
 	// THE RARELY-NEEDED SET (owner round 10): read/ls/find/grep over the
 	// library (always — the same read-only set the teacher and
 	// prober carry), the research job (available without search
-	// keys; demo/visual stay teach-only), and
-	// the prober's map readers when the settings gate opened. None are
-	// toggle-filtered: problem/conclude are the session; these are
+	// keys; demo/visual stay teach-only), and search_documents when the
+	// document gate opened. None are toggle-filtered: problem/conclude are the session; these are
 	// exceptions the doctrine says to reach for rarely.
 	const jobs = ctx.jobs ? jobTools(ctx.jobs) : null;
 	// healToolRecord (owner, 2026-10-09 — the whitehead generalization):
@@ -250,7 +245,6 @@ export function practiceTools(ctx: PracticeToolContext): Record<string, AgentToo
 		find: findToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 		grep: grepToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 		...(jobs?.research ? { research: jobs.research } : {}),
-		...(ctx.graph ? proberGraphTools(ctx.graph) : {}),
 		...(ctx.documents ? documentTools(ctx.documents) : {}),
 	});
 }

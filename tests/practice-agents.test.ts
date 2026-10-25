@@ -204,18 +204,17 @@ describe("the practice agent", () => {
 		);
 	});
 
-	it("THE RARELY-NEEDED SET (owner round 10): jobs + map readers compose in when their roots are passed", () => {
+	it("THE RARELY-NEEDED SET (owner round 10): the research job composes in when its root is passed", () => {
 		const jobs = { chatId: "c1", jobStore: null as never, spawn: (() => {}) as never, searchAvailable: () => false };
-		const graph = { chatStore: null as never, graphStore: null as never };
-		const tools = practiceTools({ ...ctxOf([]), jobs, graph });
-		// Both jobs remain available keylessly; the prober's two map
-		// readers stay behind their existing settings gate. Practice does
-		// not apply the teacher/prober user tool-toggle filter.
+		const tools = practiceTools({ ...ctxOf([]), jobs });
+		// Research remains available keylessly; the names-only map readers are
+		// retired (the library replaces them). Practice does not apply the
+		// teacher/prober user tool-toggle filter.
 		assert.deepEqual(
 			Object.keys(tools).sort(),
-			["conclude", "find", "grep", "list_propositions", "list_sessions", "ls", "problem", "read", "research"],
+			["conclude", "find", "grep", "ls", "problem", "read", "research"],
 		);
-		const withSearch = practiceTools({ ...ctxOf([]), jobs: { ...jobs, searchAvailable: () => true }, graph });
+		const withSearch = practiceTools({ ...ctxOf([]), jobs: { ...jobs, searchAvailable: () => true } });
 		assert.ok(withSearch.research, "a live engine also keeps research");
 	});
 

@@ -23,8 +23,8 @@ const result: DocSearchResult = {
 	query: "lock",
 	note: "Keyword search only: no OpenRouter key is set, so documents are not embedded.",
 	hits: [
-		{ docId: "doc_aaaaaaaaaaaa", title: "Blatt 7", sectionId: "s2", headingPath: ["Mutex", "Aufgabe 3"], pageFrom: 2, pageTo: 3, snippet: "Warum braucht lock() ein unlock()?", score: 0.03 },
-		{ docId: "doc_bbbbbbbbbbbb", title: "Notizen", sectionId: "s1", headingPath: [], snippet: "ohne Seiten", score: 0.02 },
+		{ kind: "section", path: "documents/blatt-7-aaaaaa/s2-aufgabe-3.md", docId: "doc_aaaaaaaaaaaa", title: "Blatt 7", sectionId: "s2", headingPath: ["Mutex", "Aufgabe 3"], pageFrom: 2, pageTo: 3, snippet: "Warum braucht lock() ein unlock()?", score: 0.03 },
+		{ kind: "section", path: "documents/notizen-bbbbbb/s1-intro.md", docId: "doc_bbbbbbbbbbbb", title: "Notizen", sectionId: "s1", headingPath: [], snippet: "ohne Seiten", score: 0.02 },
 	],
 };
 
@@ -64,6 +64,15 @@ describe("document tool cards", () => {
 		assert.ok(html.includes("Searched documents: lock · 2 hits"));
 		assert.ok(html.includes('href="/documents/doc_aaaaaaaaaaaa#p-2"'));
 		assert.equal(documentSummary("search_documents", {}, { ...details, hits: [result.hits[0]!] } as never), "Searched documents: lock · 1 hit");
+	});
+
+	it("renders a concept hit as 'Concept · title' with no reader link, and an old hit without kind as a section", () => {
+		const concept = { kind: "concept", path: "concepts/semaphore-p-v-atomic-aaaaa1.md", conceptId: "n_aaaaaa1", docId: "", title: "Semaphore P/V atomic", sectionId: "", headingPath: [], snippet: "P und V sind atomar." };
+		const old = { docId: "doc_aaaaaaaaaaaa", title: "Blatt 7", sectionId: "s2", headingPath: ["Mutex"], pageFrom: 2, pageTo: 2, snippet: "alt" };
+		const html = card("search_documents", { query: "atomar" }, { kind: "search", query: "atomar", mode: "keyword", hits: [concept, old] });
+		assert.ok(html.includes("Concept · Semaphore P/V atomic"));
+		assert.ok(!html.includes('href="/documents/"'), "a concept has no reader link");
+		assert.ok(html.includes('href="/documents/doc_aaaaaaaaaaaa#p-2"'), "a part saved before kind existed still links to its page");
 	});
 
 	it("read: 'Read <title> § … p.N' and 'pages 3-4', linking to the reader", () => {
