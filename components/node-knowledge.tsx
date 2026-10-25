@@ -56,12 +56,13 @@ export function NodeKnowledge({
 				</div>
 			)}
 			{state.openMisconceptions.length > 0 && (
-				<div data-testid="node-knowledge-confusions" className="mt-1 flex flex-col gap-0.5 text-xs">
+				<div data-testid="node-knowledge-confusions" className="mt-1 flex flex-col gap-2 text-xs">
 					<div className="text-muted-foreground">Open confusions</div>
 					{state.openMisconceptions.map((m) => (
-						<div key={m.term} className="leading-relaxed">
-							{m.term}
-							{m.instead ? ` → ${m.instead}` : ""}
+						<div key={m.term} data-testid="node-knowledge-confusion" className="flex flex-col gap-0.5 leading-relaxed">
+							<div>You thought: {m.term}</div>
+							{m.instead && <div>Instead: {m.instead}</div>}
+							{m.why && <div className="text-muted-foreground">Why: {m.why}</div>}
 						</div>
 					))}
 				</div>

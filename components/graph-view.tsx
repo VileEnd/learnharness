@@ -1687,7 +1687,7 @@ export function GraphView({
 					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
 					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
 					{settings.showKnowledge && (
-						<NodeKnowledge state={learner?.states[selected.node.id]} sessions={snapshot?.sessions ?? {}} />
+						<NodeKnowledge state={learner?.states[selected.node.id]} sessions={{ ...snapshot?.sessions, ...learner?.sessions }} />
 					)}
 					{selected.sourceIds.length > 0 ? (
 						<div className="mt-3 flex flex-col gap-1">

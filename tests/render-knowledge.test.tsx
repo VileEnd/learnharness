@@ -69,13 +69,15 @@ describe("NodeKnowledge (the detail card block)", () => {
 			due: false,
 			nextReviewAt: "2026-10-23T10:00:00.000Z",
 			last: [ev({ note: "confused P and V" })],
-			openMisconceptions: [{ term: "P increments", instead: "P decrements", at: "2026-10-20T10:00:00.000Z" }],
+			openMisconceptions: [{ term: "P increments", instead: "P decrements", why: "P is wait", at: "2026-10-20T10:00:00.000Z" }],
 		});
 		const html = renderToStaticMarkup(<NodeKnowledge state={state} sessions={{ chat1: "Semaphores" }} />);
 		assert.ok(html.includes("Shaky"));
 		assert.ok(html.includes("missed 2026-10-20 in &quot;Semaphores&quot;: confused P and V"));
 		assert.ok(html.includes("Next review 2026-10-23"));
-		assert.ok(html.includes("P increments → P decrements"));
+		assert.ok(html.includes("You thought: P increments"));
+		assert.ok(html.includes("Instead: P decrements"));
+		assert.ok(html.includes("Why: P is wait"));
 	});
 
 	it("shows at most 3 evidence lines, newest first, and no next-review line when there is none", () => {
