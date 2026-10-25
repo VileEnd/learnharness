@@ -32,6 +32,8 @@ export const PATHS = {
 	/** The OKF library bundle the agents' read/ls/find/grep tools are rooted at.
 	 *  Never created by the tools; absent = "the library is being built". */
 	okf: process.env.LH_LIBRARY_DIR ?? path.join(DATA_ROOT, "okf"),
+	/** The learner model's ledgers: data/learner/attributions.jsonl (src/store/learner.ts). */
+	learner: path.join(DATA_ROOT, "learner"),
 	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */
 	debug: path.join(DATA_ROOT, "debug"),

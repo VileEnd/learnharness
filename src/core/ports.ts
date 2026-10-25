@@ -29,6 +29,7 @@ import type {
 } from "./contracts.ts";
 import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/documents.ts";
 import type { OkfFile } from "./contracts/okf.ts";
+import type { AttributionRow } from "./contracts/learner.ts";
 import type { UserSettings } from "./settings.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -338,4 +339,17 @@ export interface OkfBundleStore {
 	readStamp(): string | null;
 	/** Record the source stamp (atomic; the bundle root must exist). */
 	writeStamp(stamp: string): void;
+}
+
+// ─── LearnerStore — the learner model's ledger (data/learner) ───────────────
+
+/**
+ * The attribution ledger: which concepts a graded-but-untagged question
+ * belongs to (data/learner/attributions.jsonl). Append-only, written only
+ * through this port (the attribution stage is the sole caller). Reads never
+ * throw and never create anything: an absent or torn ledger reads as empty.
+ */
+export interface LearnerStore {
+	appendAttribution(row: AttributionRow): void;
+	readAttributions(): AttributionRow[];
 }

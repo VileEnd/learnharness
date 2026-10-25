@@ -892,6 +892,10 @@ export interface ExtractionModels {
 }
 
 export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
+	/** A merge for a CHAT just landed (after each batch). A side channel (the
+	 *  learner model's attribution trigger): a throwing callback is swallowed
+	 *  and never touches the run. */
+	onChatMerged?: (chatId: string) => void;
 	/** The chunk budget — the transcript-token share of the extractor's
 	 *  context; batches fill to it (the trigger fires on the same number,
 	 *  read fresh per turn by the composition root). OPTIONAL with the
@@ -1431,6 +1435,11 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 								console.info(
 									`[extraction ${jobKey}] merged: ${batchStats.nodes} nodes, ${batchStats.chains ?? 0} chains`,
 								);
+								try {
+									deps.onChatMerged?.(chatId);
+								} catch (err) {
+									console.error(`[extraction ${jobKey}] onChatMerged failed:`, err);
+								}
 								return batchStats;
 							});
 						}),
