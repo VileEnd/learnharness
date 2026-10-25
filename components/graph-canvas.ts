@@ -653,6 +653,10 @@ export class GraphCanvasRenderer {
 	private visible: ReadonlySet<string> | null = null;
 	/** The learner overlay; null = the uniform neutral rendering. */
 	private knowledge: CanvasKnowledge | null = null;
+	/** Labels that ignore the zoom gate ("all", or a set of ids); null = the gate rules. */
+	private alwaysLabels: ReadonlySet<string> | "all" | null = null;
+	/** Fit insets override (a view whose chrome differs from the home graph's); null = the home graph's. */
+	private insetsOverride: { top: number; bottom: number } | null = null;
 
 	// ── Live physics ──
 	// One d3-force sim shared with the server settle (createGraphSimulation
@@ -996,6 +1000,18 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Labels shown at every zoom ("all", or just these ids; the rest keep the zoom
+	 *  gate). On touch the on-screen size gate still applies. */
+	setAlwaysLabels(labels: ReadonlySet<string> | "all" | null): void {
+		this.alwaysLabels = labels;
+		this.markDirty();
+	}
+
+	/** Space the first fit keeps clear of overlaid chrome, on every width (call before setData). */
+	setFitInsets(insets: { top: number; bottom: number } | null): void {
+		this.insetsOverride = insets;
+	}
+
 	/** The node whose detail card is open: it keeps a persistent glow (touch
 	 *  has no hover, so the glow is the only "this is what you tapped"). */
 	setSelected(id: string | null): void {
@@ -1027,6 +1043,7 @@ export class GraphCanvasRenderer {
 	/** Space the fit keeps clear of overlaid chrome: phones only (desktop
 	 *  frames the full canvas exactly as before). */
 	private fitInsets(w: number): { top: number; bottom: number } {
+		if (this.insetsOverride) return this.insetsOverride;
 		return w < NARROW_VIEW ? { top: FIT_INSET_TOP, bottom: FIT_INSET_BOTTOM } : { top: 0, bottom: 0 };
 	}
 
@@ -1963,14 +1980,18 @@ export class GraphCanvasRenderer {
 		// with the graph (they grow as you zoom in, Obsidian-style).
 		// On touch the labels also need legible on-screen size (a phone's fit
 		// zoom puts them at 2-3px).
-		const labelsAlpha = this.coarse ? nodeAlpha * labelSizeAlpha(this.world.labelSize, k) : nodeAlpha;
-		if (labelsAlpha > 0.01) {
+		const sizeAlpha = this.coarse ? labelSizeAlpha(this.world.labelSize, k) : 1;
+		const labelsAlpha = nodeAlpha * sizeAlpha;
+		const always = this.alwaysLabels;
+		if (labelsAlpha > 0.01 || (always !== null && sizeAlpha > 0.01)) {
 			ctx.save();
-			ctx.globalAlpha = labelsAlpha;
 			ctx.font = this.worldLabelFont;
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
 				if (!n) continue;
+				const a = always === "all" || always?.has(id) ? sizeAlpha : labelsAlpha;
+				if (a <= 0.01) continue;
+				ctx.globalAlpha = a;
 				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
 			}
 			ctx.restore();

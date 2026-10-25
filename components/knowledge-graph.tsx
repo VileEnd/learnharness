@@ -25,6 +25,28 @@ import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts
  * are the home graph's saved settings, read only.
  */
 
+/** The fit keeps clear of the legend overlaid at the top-left. */
+const FIT_INSET_TOP = 44;
+/** Up to this many concepts, every name is always shown. */
+export const ALWAYS_LABELS_MAX_NODES = 80;
+const LABEL_MAX_CHARS = 28;
+
+/** A concept name for the canvas: long names are cut with an ellipsis (the card has the full one). */
+export function shortLabel(name: string): string {
+	return name.length > LABEL_MAX_CHARS ? `${name.slice(0, LABEL_MAX_CHARS - 1).trimEnd()}\u2026` : name;
+}
+
+/** Which names are always on: all of them for a small subset, else only the solid, shaky and due
+ *  concepts (the rest follow the zoom gate). Implication nodes never label. */
+export function alwaysLabelIds(
+	ids: readonly string[],
+	states: Readonly<Record<string, { state: string; due: boolean }>>,
+): ReadonlySet<string> | "all" {
+	const concepts = ids.filter((id) => !id.startsWith("arg_"));
+	if (concepts.length <= ALWAYS_LABELS_MAX_NODES) return "all";
+	return new Set(concepts.filter((id) => states[id]?.state === "solid" || states[id]?.state === "shaky" || states[id]?.due === true));
+}
+
 interface Open {
 	id: string;
 	anchor: { x: number; y: number };
@@ -99,6 +121,9 @@ export function KnowledgeGraph({
 			},
 			null,
 		);
+		// This view has no composer dock: only the legend sits over the canvas (the header and
+		// the phone tab bar are outside it), so the fit keeps clear of the legend alone.
+		renderer.setFitInsets({ top: FIT_INSET_TOP, bottom: 0 });
 		rendererRef.current = renderer;
 		return () => {
 			rendererRef.current = null;
@@ -111,7 +136,7 @@ export function KnowledgeGraph({
 		const renderer = rendererRef.current;
 		if (!renderer || !hasNodes) return;
 		renderer.setData({
-			nodes: nodes.map((n) => ({ id: n.id, x: positions.get(n.id)?.x ?? 0, y: positions.get(n.id)?.y ?? 0, label: n.name })),
+			nodes: nodes.map((n) => ({ id: n.id, x: positions.get(n.id)?.x ?? 0, y: positions.get(n.id)?.y ?? 0, label: shortLabel(n.name) })),
 			edges: edges.map((e) => ({ from: e.from, to: e.to })),
 			logicalEdges: view.graph.logicalEdges.map((e) => ({ from: e.from, to: e.to })),
 			impLinks: view.graph.impLinks,
@@ -126,6 +151,12 @@ export function KnowledgeGraph({
 		});
 		const byNode = new Map<string, { color: string; due: boolean }>();
 		for (const [id, st] of Object.entries(view.learner.states)) byNode.set(id, learnerNodeStyle(st));
+		renderer.setAlwaysLabels(
+			alwaysLabelIds(
+				nodes.map((n) => n.id),
+				view.learner.states,
+			),
+		);
 		renderer.setKnowledge({
 			byNode,
 			fallback: LEARNER_STATE_STYLES["not-yet-checked"].color,
