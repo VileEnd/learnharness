@@ -394,3 +394,29 @@ describe("agent.documentTools", () => {
 		assert.deepEqual(sanitizeUserSettings({ version: 1, documents: { embeddingModel: "junk" } })?.documents, {});
 	});
 });
+
+describe("openRouterEmbedder retries", () => {
+	it("retries a 429 (honouring Retry-After) and then succeeds", async () => {
+		const { openRouterEmbedder, retryDelayMs } = await import("../src/server/doc-index.ts");
+		assert.equal(retryDelayMs(0, "0"), 0);
+		let calls = 0;
+		const fetchFn = (async () => {
+			calls++;
+			if (calls === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+			return Response.json({ data: [{ index: 0, embedding: [1, 0] }] });
+		}) as unknown as typeof fetch;
+		const out = await openRouterEmbedder("k", "m", fetchFn).embed(["x"]);
+		assert.equal(calls, 2);
+		assert.equal(out[0]!.length, 2);
+	});
+	it("does not retry a 400", async () => {
+		const { openRouterEmbedder } = await import("../src/server/doc-index.ts");
+		let calls = 0;
+		const fetchFn = (async () => {
+			calls++;
+			return new Response("bad", { status: 400 });
+		}) as unknown as typeof fetch;
+		await assert.rejects(openRouterEmbedder("k", "m", fetchFn).embed(["x"]), /400/);
+		assert.equal(calls, 1);
+	});
+});
