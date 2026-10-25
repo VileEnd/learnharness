@@ -410,6 +410,7 @@ flowchart LR
         KC["Keycloak (+ Postgres) — users, OIDC"]
         NEXT["LearnHarness image: standalone Next server<br/>ALL app logic: turns · extraction · jobs · graph<br/>+ Chromium (demo verification)"]
         DISK["/data volume — data/ ledgers (LH_DATA_DIR) · auth.json (LH_AUTH_FILE)"]
+        OCR["ocr sidecar (services/ocr) — PDF → markdown<br/>internal only, X-OCR-Token · own volume out/ + cache/"]
     end
     subgraph OUTSIDE["outside"]
         OR["LLM providers (BYOK keys from auth.json, reflected into env)"]
@@ -422,9 +423,13 @@ flowchart LR
     CADDY -->|"authorized requests (SSE unbuffered)"| NEXT
     NEXT --> DISK
     NEXT --> OR
+    NEXT -->|"PDFs + per-job OpenRouter key"| OCR
+    OCR --> OR
     NEXT --> GCSE
     BROWSER --> DG
 ```
+
+The `ocr` sidecar is a separate Python container on the internal network only (no port, no Caddy route); the app calls it with the shared `OCR_TOKEN` and forwards the OpenRouter key from Settings per job, so the sidecar holds no provider key of its own.
 
 The app server has **no authentication of its own**: every `/api/*` route trusts whoever reaches it, so it publishes no port — only Caddy does, and Caddy forwards a request only after oauth2-proxy has accepted the Keycloak session (the PWA manifest and its icons are the one public exception: browsers fetch them without cookies). All app data lives on the mounted `/data` volume through the `LH_DATA_DIR` / `LH_AUTH_FILE` seams (also the test seam — `data-dir-seam.test.ts`). The image build hard-fails if repo `data/` or keys would leak into the payload or if prompt assets fall out of the trace (`scripts/build-server.mjs`), boots the server once (`scripts/smoke-server.mjs`), and drives a demo page through the image's Chromium (`scripts/smoke-demo-runtime.mjs --browser`).
 

@@ -1,0 +1,15 @@
+[project]
+name = "ocrscanning"
+version = "0.1.0"
+description = "Drop PDFs in a local web page, get markdown with LaTeX, tables and described diagrams (OpenRouter)"
+requires-python = ">=3.11"
+dependencies = ["fastapi", "uvicorn[standard]", "httpx", "pymupdf", "python-multipart"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::DeprecationWarning"]
