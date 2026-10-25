@@ -15,15 +15,15 @@ import {
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import type { JobRecord } from "../core/contracts.ts";
 import type { JobStore } from "../core/ports.ts";
-import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
+import { jobTools, type DemoInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
 import { documentTools, type DocumentToolDeps } from "./tools/documents.ts";
 import { proberGraphTools } from "./tools/graph.ts";
-import { readTool } from "./tools/read.ts";
-import { lsTool } from "./tools/ls.ts";
-import { findTool } from "./tools/find.ts";
-import { grepTool } from "./tools/grep.ts";
+import { readToolFor } from "./tools/read.ts";
+import { lsToolFor } from "./tools/ls.ts";
+import { findToolFor } from "./tools/find.ts";
+import { grepToolFor } from "./tools/grep.ts";
 import { healToolRecord } from "./tools/heal.ts";
 import type { GraphStore } from "../core/ports.ts";
 
@@ -263,12 +263,12 @@ export const probeExplainTool: AgentTool<typeof explainInputBase> = {
 
 /** The prober's registry context: the probe's own needs (probe_done —
  *  ProbeDoneContext) PLUS the job-dispatch wiring, since the owner ruling
- *  (2026-09-20) puts research + pdf in the probe phase's registry too. */
+ *  (2026-09-20) puts research in the probe phase's registry too. */
 export interface ProberToolContext extends ProbeDoneContext {
 	/** Creates the job record (deduped by toolCallId). */
 	jobStore: JobStore;
 	/** Fire the background runner for a freshly created job. */
-	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
+	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
 	/** The prober's graph-map reader (wave 7): present = the two map tools
@@ -281,6 +281,8 @@ export interface ProberToolContext extends ProbeDoneContext {
 	 *  read_document / list_documents are registered. The composition root
 	 *  passes it only when documentToolsEnabled(effective). */
 	documents?: DocumentToolDeps;
+	/** The library root the read/ls/find/grep tools are confined to. */
+	libraryRoot: string;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -327,18 +329,17 @@ export function createProberTools(
 				// The learner-filesystem set is always-on (user-decided 2026-09,
 				// sources v1): the prober inspects and LOCATES learner-referenced
 				// files while assessing the edge. Read-only by construction.
-				read: readTool,
-				ls: lsTool,
-				find: findTool,
-				grep: grepTool,
+				read: readToolFor(ctx.libraryRoot),
+				ls: lsToolFor(ctx.libraryRoot),
+				find: findToolFor(ctx.libraryRoot),
+				grep: grepToolFor(ctx.libraryRoot),
 				// Job dispatch in the probe phase (owner ruling, 2026-09-20):
-				// research + pdf are ALWAYS available in every phase — the
-				// prober can verify facts or read learner PDFs while assessing.
+				// research is ALWAYS available in every phase — the
+				// prober can verify facts while assessing.
 				// demo/visual stay teach-phase-only (they need the lesson's plan
 				// context). Same user-toggle filtering as the teacher; research
 				// remains available without a search-provider key.
 				...(jobs.research ? { research: jobs.research } : {}),
-				pdf: jobs.pdf!,
 				// The map reader (wave 7): present only when the settings gate
 				// opened.
 				...(ctx.graphStore
@@ -403,11 +404,13 @@ export interface TeacherToolContext extends PlanToolContext {
 	/** Fire the background runner for a freshly created job. The tool input
 	 *  rides along — the spawn fires mid-stream, before the tool part is
 	 *  persisted to the transcript (a transcript scan would race it). */
-	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
+	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
 	/** The document library tools (PR I), gated like the prober's. */
 	documents?: DocumentToolDeps;
+	/** The library root the read/ls/find/grep tools are confined to. */
+	libraryRoot: string;
 }
 
 /**
@@ -461,10 +464,10 @@ export function createTeacherTools(
 			// sources v1): the teacher locates and reads learner-referenced
 			// files on its own terms — nothing auto-injects. Read-only by
 			// construction (fs-shared.ts).
-			read: readTool,
-			ls: lsTool,
-			find: findTool,
-			grep: grepTool,
+			read: readToolFor(ctx.libraryRoot),
+			ls: lsToolFor(ctx.libraryRoot),
+			find: findToolFor(ctx.libraryRoot),
+			grep: grepToolFor(ctx.libraryRoot),
 			...planTools(ctx),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
 			...(ctx.documents ? documentTools(ctx.documents) : {}),

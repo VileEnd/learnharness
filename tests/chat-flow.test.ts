@@ -1221,7 +1221,7 @@ it("explain tool call persists as a pending part; the free-text answer reveals t
 
 	// Free-recall armed: the mechanic swap is the ONLY change to the registry.
 	const tools = createTeacherTools(
-		{ chatId: chat.id, chatStore, jobStore, spawn: () => {} },
+		{ chatId: chat.id, chatStore, jobStore, spawn: () => {}, libraryRoot: "/nonexistent-library" },
 		{ explain: true },
 	);
 	assert.ok(tools.explain && !tools.quiz, "explain armed, quiz dropped — one quizzing tool");

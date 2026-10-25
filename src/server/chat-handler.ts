@@ -9,7 +9,7 @@ import {
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
-import type { ModelRole } from "../../config.ts";
+import { PATHS, type ModelRole } from "../../config.ts";
 import {
 	deliverJobResult,
 	noteSteerVisible,
@@ -345,7 +345,7 @@ export async function handleChatInput(
 	// CROSS-STREAM SEAM (P2 reconciliation, 2026-09-19): `toolToggles`
 	// rides the build opts as the user-level DELTA map (absent key =
 	// enabled). The definitive toggleable set is TOGGLEABLE_TOOLS — the
-	// sub-agent JOB tools (research/demo/visual/pdf; adjudicated with the
+	// sub-agent JOB tools (research/demo/visual; adjudicated with the
 	// user: quiz/ask/fs/plan/probe_done are always-on).
 	const agentOpts: AgentBuildOptions = {
 		engine,
@@ -377,7 +377,7 @@ export async function handleChatInput(
 						// proposition, not just the session's picks (pickless sessions
 						// and future graph-tools poses stay valid).
 						graphNodes: () => stores.graphStore.readNodes(),
-						// THE RARELY-NEEDED SET (owner round 10): research + pdf jobs
+						// THE RARELY-NEEDED SET (owner round 10): research job
 						// (same runner/gating as the teacher's — research honestly
 						// absent when no engine is live) and the map readers behind
 						// the SAME settings gate as the prober's.
@@ -387,6 +387,7 @@ export async function handleChatInput(
 							spawn: (job, input) => void jobRunner.runJob(job.id, input),
 							searchAvailable,
 						},
+						libraryRoot: PATHS.okf,
 						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
@@ -403,6 +404,7 @@ export async function handleChatInput(
 						// The registry drop's signal (2026-09-20): no live engine
 						// = no research tool in the teacher's registry.
 						searchAvailable,
+						libraryRoot: PATHS.okf,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -412,12 +414,13 @@ export async function handleChatInput(
 						chatId,
 						chatStore: stores.chatStore,
 						deliver: (steer) => void deliverJobResult(steer),
-						// Fix wave (2026-09-20): the prober carries research + pdf
+						// Fix wave (2026-09-20): the prober carries research
 						// dispatch (owner ruling — phase-omnipresent), so its ctx
 						// needs the same job wiring as the teacher's.
 						jobStore: stores.jobStore,
 						spawn: (job, input) => void jobRunner.runJob(job.id, input),
 						searchAvailable,
+						libraryRoot: PATHS.okf,
 						// The map reader (wave 7): the prober reads the learner's
 						// knowledge graph through tools when the gate opens —
 						// graph master switch AND the agent.graphTools toggle.

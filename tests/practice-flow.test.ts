@@ -108,7 +108,7 @@ async function drainTurn(req: Request, factory: Parameters<typeof handleChatRequ
 
 /** The practice agent factory (the handler's kind branch, test-shaped). */
 function practiceFactory(chatId: string, engine: PiEngine): Parameters<typeof handleChatRequest>[1] {
-	return (opts) => createPracticeAgent({ chatId, chatStore }, { engine, messages: opts.messages });
+	return (opts) => createPracticeAgent({ chatId, chatStore, libraryRoot: "/nonexistent-library" }, { engine, messages: opts.messages });
 }
 
 /** Each step records the prompt it received — the transcript the model
