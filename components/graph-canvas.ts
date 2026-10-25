@@ -696,8 +696,18 @@ export function fitLabelCamera(args: {
 			if (zAt(coords, ext, half, m1) < zAt(coords, ext, half, m2)) lo = m1;
 			else hi = m2;
 		}
-		const c = (lo + hi) / 2;
-		return { c, z: zAt(coords, ext, half, c) };
+		const z = zAt(coords, ext, half, (lo + hi) / 2);
+		// At that zoom every centre in [max(v - room), min(v + room)] fits; take the middle so
+		// the content sits centred (when z hits maxZoom the search alone lands on an edge).
+		let cLo = -Infinity;
+		let cHi = Infinity;
+		coords.forEach((v, i) => {
+			const room = (half - ext(nodes[i]!, z)) / z;
+			cLo = Math.max(cLo, v - room);
+			cHi = Math.min(cHi, v + room);
+		});
+		const c = cLo <= cHi ? (cLo + cHi) / 2 : (lo + hi) / 2;
+		return { c, z };
 	};
 	if (nodes.length === 0) return { k: 1, x: 0, y: 0 };
 	const bx = best(nodes.map((n) => n.x), extX, availW / 2);
