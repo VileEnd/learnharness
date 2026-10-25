@@ -108,8 +108,8 @@ export const METER_CELLS = 48;
 export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
 
 /** The client-authored KEYLESS line (zero-keys wave, owner 2026-09-25):
- * the token route's raw 503 message is dev-speak ("add it to auth.json
- * (desktop) or .env.local (dev)") — the surface says the short truth
+ * the token route's raw 503 message is dev-speak ("add it in Settings →
+ * Providers, or .env.local (dev)") — the surface says the short truth
  * instead. Exported for pins; the errored idle button's click recognizes
  * it and deep-links Settings → Keys → the Deepgram row. */
 export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
@@ -437,9 +437,8 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		// Mitigation D: the warm token (pre-minted at mount / after the last
 		// run) resolves ~instantly; a cold/keyless mint surfaces below. The
 		// mic is the long pole (macOS HAL + APM init) and gates everything —
-		// the token runs concurrently with it. 127.0.0.1 is a secure
-		// context, so getUserMedia works without TLS; macOS TCC prompts on
-		// first use.
+		// the token runs concurrently with it. getUserMedia needs a secure
+		// context: localhost in dev, HTTPS (Caddy) when served on the LAN.
 		const tokenPromise = warmTokens.mint();
 		tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
 		const micPromise = navigator.mediaDevices.getUserMedia({

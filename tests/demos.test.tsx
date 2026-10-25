@@ -900,6 +900,7 @@ describe("demo/visual job runners", () => {
 		createdJobs.push(job.id);
 
 		visualModelOverride.current = scriptedModel([{ text: "cannot" }]);
+		headlessOverride.current = fakeHeadless();
 		const { steers, runner } = testRunner();
 		try {
 			await runner.runJob(job.id);

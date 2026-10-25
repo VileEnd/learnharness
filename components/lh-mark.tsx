@@ -5,8 +5,7 @@
  * consumer's job. The gray path is the harness spiral; the white ring is
  * the mark's own stroke on dark backgrounds.
  *
- * Replaces the "LH" wordmark text in the sidebar band (also the traffic-light
- * gutter's resident in the merged desktop chrome).
+ * Replaces the "LH" wordmark text in the sidebar band.
  */
 export function LhMark({ className = "" }: { className?: string }) {
 	return (

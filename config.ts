@@ -5,14 +5,13 @@ import { fileURLToPath } from "node:url";
 export const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * THE data-location seam (the Electron contract, 2026-09-17): LH_DATA_DIR
- * relocates every MUTABLE record — chat sessions, graph ledgers, the
- * embedding model cache — when set. The desktop shell points it at
- * userData so nothing is written inside the read-only .app bundle
- * (macOS translocation guarantees the bundle is read-only anyway).
+ * THE data-location seam (2026-09-17): LH_DATA_DIR relocates every
+ * MUTABLE record — chat sessions, graph ledgers, the embedding model
+ * cache — when set. The Docker image points it at the mounted data volume
+ * (/data/data) so nothing is written inside the image's /app.
  * Unset (plain web dev / repo work) it resolves to the repo's data/,
  * byte-for-byte as before. Read-only assets (prompts) stay ROOT-anchored
- * on purpose: they ship inside the app bundle by design.
+ * on purpose: they ship inside the image by design.
  */
 const DATA_ROOT = process.env.LH_DATA_DIR
 	? path.resolve(process.env.LH_DATA_DIR)
@@ -128,10 +127,10 @@ export const PROMPTS_OVERRIDE_DIR = path.join(DATA_ROOT, "prompts");
 
 /**
  * THE AUTH/KEY STORE (auth-keys wave, 2026-09-19): BYOK provider keys in a
- * flat {VAR: value} JSON map — the SAME file the Electron app has always
- * hand-edited (owner decision: option A, zero migration). Desktop main.cjs
- * passes LH_AUTH_FILE pointing at userData/auth.json (mode 0600); in dev
- * (no Electron) the default is the repo-root auth.json (gitignored, same
+ * flat {VAR: value} JSON map — the SAME file the app has always
+ * hand-edited (owner decision: option A, zero migration). The Docker image
+ * sets LH_AUTH_FILE to /data/auth.json on the data volume (mode 0600); in
+ * dev the default is the repo-root auth.json (gitignored, same
  * pattern as .env.local — a worktree may symlink it to the master copy).
  * The SERVER reads/writes this file directly at call time (no restart to
  * change a key); it reflects the values into process.env at boot with

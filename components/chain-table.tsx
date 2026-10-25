@@ -5,8 +5,8 @@
  * every reasoning chain of the graph in one FULL-BLEED surface — the blur
  * + translucent background IS the surface, no inner card. The top bar is
  * THE shared TopBar (standardization ruling: one element, every surface —
- * h-15, lh-drag with carve-outs, select-none, sidebar reopen, traffic-
- * light gutter; born from this overlay's hand-rolled bar breaking every
+ * h-15, select-none, sidebar reopen; born from this overlay's
+ * hand-rolled bar breaking every
  * rule at once). The overlay (z-40) covers home's floating header while
  * open, so the TopBar's own SidebarToggle is the reopen path.
  *
@@ -237,13 +237,11 @@ export function ChainTableBody({
 
 	return (
 		<div data-testid="chain-table" className="relative flex h-full min-h-0 flex-col">
-			{/* THE shared top bar (standardization ruling): drag mechanics,
-			    sidebar reopen, traffic-light gutter — the same element as every
-			    chat surface. NO TITLE (owner round 11, 2026-10-05): the serif
+			{/* THE shared top bar (standardization ruling): sidebar reopen —
+			    the same element as every chat surface. NO TITLE (owner round 11, 2026-10-05): the serif
 			    title register is RESERVED — it always names a session; the
 			    chain table names nothing, so its bar carries counts + search +
-			    close only. Search + close carve out with lh-no-drag (the mask
-			    law: later in the DOM). */}
+			    close only. */}
 			<TopBar>
 				<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
 					{chains.length} {chains.length === 1 ? "chain" : "chains"} · {nodes.length} {nodes.length === 1 ? "node" : "nodes"}
@@ -257,7 +255,7 @@ export function ChainTableBody({
 						placeholder="Search nodes…"
 						aria-label="Search nodes"
 						spellCheck={false}
-						className="lh-no-drag h-8 w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+						className="h-8 w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 					/>
 				</div>
 			<button
@@ -265,7 +263,7 @@ export function ChainTableBody({
 					data-testid="chain-table-close"
 					onClick={onClose}
 					aria-label="Close chains"
-					className="lh-no-drag flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card/80 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card/80 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 				>
 					<XIcon className="size-4" />
 				</button>
