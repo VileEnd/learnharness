@@ -68,7 +68,7 @@ export function documentTools(deps: DocumentToolDeps): Record<string, AgentTool<
 				const result = await deps.search(input);
 				const header = `${result.hits.length} hit(s) for "${result.query}" (${result.mode === "hybrid" ? "keyword + semantic" : "keyword only"})${result.note ? ` - ${result.note}` : ""}`;
 				const lines = result.hits.map((h, i) => {
-					if (h.kind === "concept") return `${i + 1}. Concept · ${h.title}\n   ${h.path}\n   ${h.snippet}`;
+					if (h.kind === "concept") return `${i + 1}. Concept · ${h.title}\n   ${h.path}${h.conceptId ? `\n   id: ${h.conceptId}` : ""}\n   ${h.snippet}`;
 					const where = [h.headingPath.length > 0 ? `§ ${h.headingPath.join(" > ")}` : "", pageLabel(h.pageFrom, h.pageTo)].filter(Boolean).join(" · ");
 					return `${i + 1}. ${h.title}${where ? ` · ${where}` : ""}\n   ${h.path}\n   ${h.snippet}`;
 				});

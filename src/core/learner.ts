@@ -67,6 +67,8 @@ export interface GradedItem {
 	/** For the attribution agent: what was asked and what came back. */
 	question: string;
 	answer: string;
+	/** The correct answer in words (quiz: the correct option labels; explain/recall: the committed `correctAnswer`); "" when unknown. */
+	correct: string;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -174,7 +176,9 @@ const labelsOf = (answer: QuestionAnswerData, indices: readonly number[]): strin
 function quizItem(chat: ChatRecord, call: ToolCallBlock, answer: QuestionAnswerData, result: ToolResultMessage): GradedItem | null {
 	const at = str(answer.answeredAt) ?? iso(result.timestamp);
 	const note = str(answer.thinking) ?? str(answer.note);
+	const correct = labelsOf(answer, Array.isArray(answer.correctIndices) ? answer.correctIndices : []).join("; ");
 	const base = {
+		correct,
 		chatId: chat.id,
 		toolCallId: call.id,
 		kind: call.name as "quiz" | "probe",
@@ -245,6 +249,7 @@ export function gradedItems(chat: ChatRecord): GradedItem[] {
 				...(g.misconception ? { misconception: g.misconception } : {}),
 				tags: strings(call.arguments.concepts),
 				question: str(call.arguments.question) ?? "",
+				correct: str(call.arguments.correctAnswer) ?? "",
 				answer: str(answer.text) ?? str(answer.other) ?? (answer.dontKnow ? "I don't know" : ""),
 			});
 			continue;
@@ -269,6 +274,7 @@ export function gradedItems(chat: ChatRecord): GradedItem[] {
 				...(failed && verdict ? { misconception: { term: verdict } } : {}),
 				tags: strings(problem?.target),
 				question: str(problem?.statement) ?? "",
+				correct: "",
 				answer: verdict ?? "",
 			});
 		}
