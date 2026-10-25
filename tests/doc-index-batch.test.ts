@@ -70,7 +70,7 @@ const vec = (text: string) => [(text.length % 5) + 1, 1, 2];
 function stubOpenRouter() {
 	const batches = new Map<string, StubBatch>();
 	const calls: string[] = [];
-	const state = { maxRequests: Infinity, submitStatus: 0, n: 0, submits: [] as string[] };
+	const state = { maxRequests: Infinity, maxDocs: Infinity, submitStatus: 0, n: 0, submits: [] as string[] };
 	const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 	const fetchFn = async (url: string, init: RequestInit) => {
 		const method = init.method ?? "GET";
@@ -81,7 +81,8 @@ function stubOpenRouter() {
 			const body = JSON.parse(init.body as string) as StubBatch["body"];
 			assert.deepEqual(Object.keys(body), ["endpoint", "model", "requests"], "requests last");
 			if (state.submitStatus) return json({ error: { message: `status ${state.submitStatus}` } }, state.submitStatus);
-			if (body.requests.length > state.maxRequests) return json({ error: { message: "too many requests" } }, 413);
+			const docsIn = new Set(body.requests.map((r: BatchRequest) => r.custom_id.slice(0, r.custom_id.lastIndexOf("~"))));
+			if (body.requests.length > state.maxRequests || docsIn.size > state.maxDocs) return json({ error: { message: "too many requests" } }, 413);
 			const batchId = `batch_${++state.n}`;
 			batches.set(batchId, { body, status: "validating", results: null, error: null });
 			state.submits.push(batchId);
@@ -108,7 +109,7 @@ function stubOpenRouter() {
 							error: null,
 							response: {
 								status_code: 200,
-								body: { data: r.body.input.map((t, index) => ({ object: "embedding", index, embedding: vec(t) })).reverse() },
+								body: { data: [{ object: "embedding", index: 0, embedding: vec(r.body.input) }] },
 							},
 						},
 			)
@@ -137,9 +138,10 @@ const pendingFile = () => documentStore.readPendingBatches();
 describe("batch request building", () => {
 	it("packs up to 64 texts per request with custom_id docId~offset", () => {
 		const reqs = buildBatchRequests("doc_x", Array.from({ length: 150 }, (_, i) => `t${i}`));
-		assert.deepEqual(reqs.map((r) => r.custom_id), ["doc_x~0", "doc_x~64", "doc_x~128"]);
-		assert.deepEqual(reqs.map((r) => r.body.input.length), [64, 64, 22]);
-		assert.equal(reqs[1]!.body.input[0], "t64");
+		// One text per request (Vertex rejects multi-input embedding batches).
+		assert.equal(reqs.length, 150);
+		assert.deepEqual(reqs.slice(0, 2).map((r) => r.custom_id), ["doc_x~0", "doc_x~1"]);
+		assert.equal(reqs[64]!.body.input, "t64");
 		assert.equal(reqs[0]!.body.encoding_format, "float");
 	});
 });
@@ -160,7 +162,7 @@ describe("batch indexing", () => {
 		assert.deepEqual([sent.body.endpoint, sent.body.model], ["/v1/embeddings", `${MODEL}:batch`]);
 		assert.deepEqual(new Set(sent.body.requests.map((r) => r.custom_id.split("~")[0])), new Set([mutex.id, sema.id]));
 		assert.deepEqual(pendingFile().map((p) => [p.batchId, p.model, Object.keys(p.docs).sort()]), [["batch_1", MODEL, [mutex.id, sema.id].sort()]]);
-		assert.equal(pendingFile()[0]!.docs[mutex.id]!.units, JSON.parse(JSON.stringify(sent.body.requests)).filter((r: BatchRequest) => r.custom_id.startsWith(mutex.id)).reduce((n: number, r: BatchRequest) => n + r.body.input.length, 0));
+		assert.equal(pendingFile()[0]!.docs[mutex.id]!.units, JSON.parse(JSON.stringify(sent.body.requests)).filter((r: BatchRequest) => r.custom_id.startsWith(mutex.id)).length);
 		assert.match([...scanRows().values()].map((r) => r.title).join(), /Indexing documents \(batch\) · waiting for OpenRouter · 2 documents/);
 
 		await index.tick(); // same minute: no poll, and the documents are not submitted twice
@@ -176,7 +178,7 @@ describe("batch indexing", () => {
 		await index.tick();
 		assert.deepEqual(or.calls.slice(2), ["GET batch_1", "DELETE batch_1"]);
 		const stored = documentStore.readVectors(mutex.id)!;
-		assert.deepEqual([stored.model, stored.dims, stored.chunks.length], [MODEL, 3, sent.body.requests.filter((r) => r.custom_id.startsWith(mutex.id)).reduce((n, r) => n + r.body.input.length, 0)]);
+		assert.deepEqual([stored.model, stored.dims, stored.chunks.length], [MODEL, 3, sent.body.requests.filter((r) => r.custom_id.startsWith(mutex.id)).length]);
 		const norm = Math.hypot(...stored.vectors.subarray(0, 3));
 		assert.ok(Math.abs(norm - 1) < 1e-5, "L2-normalised");
 		assert.equal(documentStore.readVectors(sema.id)?.model, MODEL);
@@ -270,7 +272,7 @@ describe("batch indexing", () => {
 		const mutex = put("Mutex", MUTEX);
 		const sema = put("Sema", SEMA);
 		const { or, clock, make } = setup();
-		or.state.maxRequests = 1;
+		or.state.maxDocs = 1; // the provider's cap fits one document's requests, not two
 		const index = make();
 		await index.tick();
 		clock.t += 2 * MINUTE;
