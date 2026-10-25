@@ -32,7 +32,7 @@ export function TopBar({
 	return (
 		<header
 			onMouseDown={onMouseDown}
-			className="flex h-15 select-none items-center gap-3 border-b border-border px-3"
+			className="flex h-15 box-content select-none items-center gap-3 border-b border-border px-3 pt-safe md:box-border"
 		>
 			<SidebarToggle />
 			{children}
