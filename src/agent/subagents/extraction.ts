@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import * as path from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type Static, type TSchema } from "typebox";
@@ -732,6 +733,12 @@ export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
 	 *  callers wire the live effective settings (extraction-UX redesign,
 	 *  2026-09-24). */
 	getChunkTokens?: () => number;
+	/** A top-level run ended in a way the learner should hear about while
+	 *  away (push notifications; the composition root wires it). Fired for
+	 *  notes imports that merged something or failed, and for chat runs that
+	 *  failed - never for aborts, refusals, or routine chat runs. A side
+	 *  channel: a throwing callback is swallowed. */
+	onRunFinished?: (run: { label: string; status: "done" | "error" }) => void;
 }
 
 export interface NotesImportInput {
@@ -857,6 +864,20 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		runningExtractions.delete(jobKey);
 		emit("activity-changed", {});
 	}
+
+	/** Report a notable run outcome (see ExtractionPipelineDeps.onRunFinished). */
+	function reportRun(label: string, status: "done" | "error"): void {
+		try {
+			deps.onRunFinished?.({ label, status });
+		} catch {
+			/* side channel - never touches the run */
+		}
+	}
+
+	/** Failures worth a notification: not the learner's abort, not a config refusal. */
+	const isReportable = (err: unknown): boolean =>
+		!(err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) &&
+		!(err instanceof Error && err.name === "AbortError");
 
 	/** Accumulate one billed step into the run's registry entry (live). */
 	function recordStep(jobKey: string, stage: "extractor" | "auditor", usage: CallUsage, model: string): void {
@@ -1222,6 +1243,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			// job — merged batches stay covered, partial usage persists per
 			// job, the aggregate returns what actually merged.
 			console.error(`[extraction ${chatId}] pipeline failed (${Math.round(performance.now() - t0)}ms):`, err);
+			if (isReportable(err)) reportRun(chatStore.getChat(chatId)?.title || "Session", "error");
 			throw err;
 		} finally {
 			inFlight.delete(chatId);
@@ -1399,9 +1421,11 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				`[extraction ${id}] merged: ${stats.nodes} nodes, ${stats.chains ?? 0} chains ` +
 					`(${Math.round(performance.now() - t0)}ms total, ${chunks.length} chunk job(s))`,
 			);
+			if (stats.nodes > 0 || (stats.chains ?? 0) > 0) reportRun(path.basename(input.filePath), "done");
 			return stats;
 		} catch (err) {
 			console.error(`[extraction ${id}] notes pipeline failed (${Math.round(performance.now() - t0)}ms):`, err);
+			if (isReportable(err)) reportRun(path.basename(input.filePath), "error");
 			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
 			throw new NotesImportError(err instanceof Error && err.name === "AbortError" ? "aborted" : "failed", mergedStats,
 				err instanceof Error ? err.message : String(err), { cause: err });

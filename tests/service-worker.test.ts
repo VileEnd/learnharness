@@ -31,3 +31,27 @@ it("caches static assets, guards navigations, and leaves the API, auth and strea
 	assert.equal(route("/chat/abc", { headers: { rsc: "1" } }), "pass");
 	assert.equal(route("https://auth.example/realms/x", { mode: "navigate" }), "pass");
 });
+
+it("shows a tagged notification on push and routes the click", async () => {
+	const handlers: Record<string, (e: unknown) => void> = {};
+	const shown: unknown[][] = [];
+	const calls: string[] = [];
+	const win = { focus: async () => calls.push("focus"), navigate: async (u: string) => calls.push(`navigate ${u}`) };
+	const sw = {
+		addEventListener: (type: string, fn: (e: unknown) => void) => void (handlers[type] = fn),
+		registration: { showNotification: async (...args: unknown[]) => void shown.push(args) },
+		clients: { matchAll: async () => [win], openWindow: async (u: string) => calls.push(`open ${u}`) },
+	};
+	vm.runInNewContext(fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8"), { self: sw, URL });
+	let pending: Promise<unknown> = Promise.resolve();
+	const waitUntil = (p: Promise<unknown>) => void (pending = p);
+	const payload = { title: "Algebra", body: "Your teacher replied", url: "/chat/c1", tag: "chat:c1" };
+	handlers.push!({ data: { json: () => payload }, waitUntil });
+	await pending;
+	const [title, opts] = shown[0] as [string, { tag: string; renotify: boolean; data: { url: string } }];
+	assert.equal(title, "Algebra");
+	assert.deepEqual([opts.tag, opts.renotify, opts.data.url], ["chat:c1", true, "/chat/c1"]);
+	handlers.notificationclick!({ notification: { close: () => calls.push("close"), data: opts.data }, waitUntil });
+	await pending;
+	assert.deepEqual(calls, ["close", "focus", "navigate /chat/c1"]);
+});
