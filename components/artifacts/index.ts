@@ -5,6 +5,7 @@ import { JobCard, PdfJobCard } from "@/components/artifacts/job-card";
 import { VisualCard } from "@/components/artifacts/visual-card";
 import { ProbeDoneCard } from "@/components/artifacts/probe-done-card";
 import { DocumentCard } from "@/components/artifacts/document-card";
+import { GradeChip } from "@/components/artifacts/grade-chip";
 import { ToolCallCard } from "@/components/artifacts/tool-call-card";
 import { ProblemCard, ConcludeCard } from "@/components/practice-cards";
 
@@ -51,6 +52,8 @@ export const artifactRenderers: Record<string, ComponentType<ArtifactPartProps>>
 	// discipline (their results are pre-formatted strings too).
 	list_sessions: ToolCallCard,
 	list_propositions: ToolCallCard,
+	// The free-recall grade (learner model): a quiet "counted as: partly" chip.
+	grade: GradeChip,
 	// The document library tools (PR I): one quiet card each, linking into the reader.
 	search_documents: DocumentCard,
 	read_document: DocumentCard,
