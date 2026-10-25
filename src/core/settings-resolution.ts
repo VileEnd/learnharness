@@ -223,6 +223,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		},
 		documents: {
 			embeddingModel: record?.documents?.embeddingModel ?? FACTORY_SETTINGS.documents.embeddingModel,
+			embeddingBatch: record?.documents?.embeddingBatch ?? FACTORY_SETTINGS.documents.embeddingBatch,
 		},
 	};
 }

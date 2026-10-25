@@ -27,7 +27,7 @@ import type {
 	TurnUsage,
 	NotesSource,
 } from "./contracts.ts";
-import type { DocumentMeta, DocumentVectors } from "./contracts/documents.ts";
+import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/documents.ts";
 import type { UserSettings } from "./settings.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -291,4 +291,9 @@ export interface DocumentStore {
 	/** Persist embeddings (atomic, vectors first, chunks.json last). The
 	 *  search index asks the store to write - it never touches files itself. */
 	writeVectors(id: string, vectors: DocumentVectors): void;
+	/** Embedding batches submitted to OpenRouter and not yet read back
+	 *  (data/documents/pending-batches.json); [] when absent or corrupt. */
+	readPendingBatches(): PendingBatch[];
+	/** Replace the whole pending list (atomic). */
+	writePendingBatches(batches: PendingBatch[]): void;
 }
