@@ -123,8 +123,18 @@ describe("sanitizeRenderSettings", () => {
 			regions: DEFAULT_REGION_TUNING,
 			physics: DEFAULT_PHYSICS_TUNING,
 			groupBy: "topic",
+			showKnowledge: false,
 		};
 		assert.deepEqual(sanitizeRenderSettings(valid), valid); // every value a ladder member
+	});
+
+	test("showKnowledge defaults on and sanitizes", () => {
+		assert.equal(sanitizeRenderSettings({}).showKnowledge, true);
+		assert.equal(DEFAULT_RENDER_SETTINGS.showKnowledge, true);
+		assert.equal(sanitizeRenderSettings({ showKnowledge: "no" } as never).showKnowledge, true);
+		assert.equal(sanitizeRenderSettings({ showKnowledge: 0 } as never).showKnowledge, true);
+		assert.equal(sanitizeRenderSettings({ showKnowledge: false }).showKnowledge, false);
+		assert.equal(sanitizeRenderSettings({ showKnowledge: true }).showKnowledge, true);
 	});
 
 	test("supports settings are GONE (chains-primary, 2026-09-30): stale keys silently drop", () => {

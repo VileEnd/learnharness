@@ -67,8 +67,11 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import Link from "next/link";
 import { FileTextIcon, LibraryIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
-import { documentCitation, incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
+import { documentCitation, incrementalLayout, learnerNodeStyle, LEARNER_DUE_RING, LEARNER_STATE_STYLES, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { GroupByToggle } from "@/components/group-by-toggle";
+import { LearnerLegend } from "@/components/learner-legend";
+import { NodeKnowledge } from "@/components/node-knowledge";
+import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
 import { costLabel } from "@/components/usage-format";
 import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
@@ -497,6 +500,18 @@ function GraphSettingsControl({
 								onChange={(groupBy) => changeSettings((cur) => ({ ...cur, groupBy }))}
 								className="justify-between"
 							/>
+							{/* "Show my knowledge": colour nodes by the learner's state
+							    (a ring when due); off = the neutral rendering. */}
+							<label className="flex cursor-pointer items-center justify-between text-[11px] text-muted-foreground">
+								<span>Show my knowledge</span>
+								<input
+									type="checkbox"
+									data-testid="show-knowledge-toggle"
+									checked={settings.showKnowledge}
+									onChange={(e) => changeSettings((cur) => ({ ...cur, showKnowledge: e.target.checked }))}
+									className="accent-primary"
+								/>
+							</label>
 							{/* Size/zoom/region sliders: LADDER-mapped 0-100, step 10 (11
 							    stops, every DEFAULT dead-center at 50, every value a nice
 							    number — src/core/render-settings.ts). Physics keeps the
@@ -1081,6 +1096,10 @@ export function GraphView({
 	// The chain table overlay (chains-overlay plan, 2026-09-29) —
 	// component-local: a browsing surface, not graph state.
 	const [chainsOpen, setChainsOpen] = useState(false);
+	// The learner model: fetched while the overlay is on or the practice
+	// picker (which suggests shaky/due concepts) is open; it refetches with
+	// the graph (refreshTick) and on settled turns (see the hook).
+	const learner = useLearnerSnapshot(settings.showKnowledge || chainsOpen, refreshTick);
 	// PRACTICE SELECT (2026-10-04): the parent's chip drives the select
 	// mode; closing (either the picker's confirm or its X) reports back so
 	// the chip's open state and the table's never disagree.
@@ -1434,6 +1453,24 @@ export function GraphView({
 		});
 	}, [snapshot, isEmpty]);
 
+	// Feed #1b — the knowledge overlay: node fills by learner state (+ a due
+	// ring). Off or not loaded yet = null = the neutral rendering.
+	useEffect(() => {
+		const renderer = rendererRef.current;
+		if (!renderer) return;
+		if (!settings.showKnowledge || !learner) {
+			renderer.setKnowledge(null);
+			return;
+		}
+		const byNode = new Map<string, { color: string; due: boolean }>();
+		for (const [id, st] of Object.entries(learner.states)) byNode.set(id, learnerNodeStyle(st));
+		renderer.setKnowledge({
+			byNode,
+			fallback: LEARNER_STATE_STYLES["not-yet-checked"].color,
+			ringColor: LEARNER_DUE_RING.color,
+		});
+	}, [learner, settings.showKnowledge, snapshot, isEmpty]);
+
 	// Feed #2 — settings: just marks the frame dirty. No rebuild, no
 	// re-layout, no camera touch (the whole point of the new renderer).
 	const deferredSettings = useDeferredValue(settings);
@@ -1509,6 +1546,11 @@ export function GraphView({
 				</div>
 			) : (
 				<div ref={containerRef} className="relative h-full w-full">
+					{/* The knowledge key: under the sidebar toggle (top-left), clear of
+					    the top-right controls and the bottom composer dock. */}
+					{settings.showKnowledge && learner && (
+						<LearnerLegend className="absolute left-2 top-12 z-10 max-w-[calc(100%-1rem)]" />
+					)}
 					{/* THE single canvas: every layer (hulls, edges, nodes, both
 					    label systems, hover) draws into it, once per frame. */}
 					<canvas ref={canvasRef} className="block h-full w-full touch-none" />
@@ -1644,6 +1686,9 @@ export function GraphView({
 				>
 					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
 					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
+					{settings.showKnowledge && (
+						<NodeKnowledge state={learner?.states[selected.node.id]} sessions={{ ...snapshot?.sessions, ...learner?.sessions }} />
+					)}
 					{selected.sourceIds.length > 0 ? (
 						<div className="mt-3 flex flex-col gap-1">
 							<div className="text-xs text-muted-foreground">Sessions</div>
@@ -1734,6 +1779,7 @@ export function GraphView({
 					onChainSelectClose?.();
 				}}
 				selectMode={chainSelectOpen}
+				learner={learner}
 				controlledSelection={practiceSelection}
 				onSelectionChange={(ids) => {
 					// Resolve ids → nodes against the live snapshot; the

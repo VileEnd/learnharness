@@ -119,6 +119,14 @@ export interface CanvasColors {
 	hoverText: string;
 }
 
+/** "Show my knowledge": per-node fill colour (+ a due ring) in place of the
+ *  uniform node colour. Nodes absent from `byNode` keep `fallback`. */
+export interface CanvasKnowledge {
+	byNode: ReadonlyMap<string, { color: string; due: boolean }>;
+	fallback: string;
+	ringColor: string;
+}
+
 export interface CanvasData {
 	nodes: CanvasNode[];
 	edges: CanvasEdge[];
@@ -158,6 +166,10 @@ export interface RendererCallbacks {
 }
 
 // ─── Constants (ported verbatim from the sigma view) ────────────────────────
+
+/** The due ring sits this many node radii out; its stroke is this fraction of a radius. */
+const RING_SCALE = 1.7;
+const RING_WIDTH_SCALE = 0.28;
 
 const LABEL_SIZE = 12; // the reference label size the wrap-width ratio is taken against
 const LABEL_WEIGHT = "500";
@@ -639,6 +651,8 @@ export class GraphCanvasRenderer {
 	private nodeById = new Map<string, CanvasNode>();
 	private settings: GraphRenderSettings | null = null;
 	private visible: ReadonlySet<string> | null = null;
+	/** The learner overlay; null = the uniform neutral rendering. */
+	private knowledge: CanvasKnowledge | null = null;
 
 	// ── Live physics ──
 	// One d3-force sim shared with the server settle (createGraphSimulation
@@ -717,6 +731,9 @@ export class GraphCanvasRenderer {
 	private geoVersion = 0; // bump = geometry inputs changed
 	private builtVersion = -1; // version the cache was built at
 	private nodesPath: Path2D | null = null;
+	/** Knowledge overlay: one Path2D per fill colour + the due rings. */
+	private colorPaths: Array<{ color: string; path: Path2D }> = [];
+	private ringPath: Path2D | null = null;
 	private shaftsPath: Path2D = new Path2D();
 	private headsPath: Path2D = new Path2D();
 	private regionCanvas: HTMLCanvasElement | null = null;
@@ -968,6 +985,14 @@ export class GraphCanvasRenderer {
 	setVisible(visible: ReadonlySet<string> | null): void {
 		this.visible = visible;
 		this.geoVersion++; // member visibility changes hulls + paths
+		this.markDirty();
+	}
+
+	/** Colour nodes by the learner's state (null = neutral). A geometry
+	 *  change (the per-colour paths are cached with the rest). */
+	setKnowledge(knowledge: CanvasKnowledge | null): void {
+		this.knowledge = knowledge;
+		this.geoVersion++;
 		this.markDirty();
 	}
 
@@ -1448,6 +1473,31 @@ export class GraphCanvasRenderer {
 			nodesPath.arc(n.x, n.y, nodeR, 0, Math.PI * 2);
 		}
 		this.nodesPath = nodesPath;
+		// Knowledge overlay: the same discs, split by fill colour; due nodes
+		// also get a ring just outside the disc.
+		this.colorPaths = [];
+		this.ringPath = null;
+		const k = this.knowledge;
+		if (k) {
+			const byColor = new Map<string, Path2D>();
+			const rings = new Path2D();
+			const ringR = nodeR * RING_SCALE;
+			for (const n of data.nodes) {
+				if (!isVisible(n.id) || isImpNodeId(n.id)) continue;
+				const style = k.byNode.get(n.id);
+				const color = style?.color ?? k.fallback;
+				let path = byColor.get(color);
+				if (!path) byColor.set(color, (path = new Path2D()));
+				path.moveTo(n.x + nodeR, n.y);
+				path.arc(n.x, n.y, nodeR, 0, Math.PI * 2);
+				if (style?.due) {
+					rings.moveTo(n.x + ringR, n.y);
+					rings.arc(n.x, n.y, ringR, 0, Math.PI * 2);
+				}
+			}
+			this.colorPaths = [...byColor].map(([color, path]) => ({ color, path }));
+			this.ringPath = rings;
+		}
 
 		// Edge shafts + arrowheads (rendering arc, owner 2026-09-30): all
 		// arrows are PLAIN single shafts — the old double-shaft glyph is
@@ -1875,8 +1925,19 @@ export class GraphCanvasRenderer {
 		}
 
 		// 4. Nodes: one cached Path2D, one fill.
-		ctx.fillStyle = data.colors.node;
-		ctx.fill(this.nodesPath);
+		if (this.knowledge && this.ringPath) {
+			for (const { color, path } of this.colorPaths) {
+				ctx.fillStyle = color;
+				ctx.fill(path);
+			}
+			// Due ring on top of the state colour: a thin world-unit stroke.
+			ctx.strokeStyle = this.knowledge.ringColor;
+			ctx.lineWidth = nodeR * RING_WIDTH_SCALE;
+			ctx.stroke(this.ringPath);
+		} else {
+			ctx.fillStyle = data.colors.node;
+			ctx.fill(this.nodesPath);
+		}
 
 		// 6. Node labels — one global gate, faded together. World-scaled
 		// with the graph (they grow as you zoom in, Obsidian-style).
