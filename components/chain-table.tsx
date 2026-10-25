@@ -246,7 +246,7 @@ export function ChainTableBody({
 				<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
 					{chains.length} {chains.length === 1 ? "chain" : "chains"} · {nodes.length} {nodes.length === 1 ? "node" : "nodes"}
 				</span>
-				<div className="relative shrink-0">
+				<div className="relative min-w-0 max-w-56 flex-1 sm:w-auto sm:flex-none sm:shrink-0">
 					<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 					<input
 						value={query}
@@ -255,7 +255,7 @@ export function ChainTableBody({
 						placeholder="Search nodes…"
 						aria-label="Search nodes"
 						spellCheck={false}
-						className="h-8 w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+						className="h-8 w-full rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring sm:w-56"
 					/>
 				</div>
 			<button
@@ -275,7 +275,7 @@ export function ChainTableBody({
 			    two-column steps — chains pl-12 aligned with the folder icon,
 			    statements pl-21 where a chain icon would sit).
 			    All three columns sort, small chevron on active. */}
-			<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className={`min-h-0 flex-1 overflow-y-auto${selection.size > 0 ? " pb-24" : ""}`}>
 				{/* The TOP rule (owner round 5: the table is framed — a line under
 			    the header, a line under the last group, lines between groups). */}
 				<div className="sticky top-0 z-10 flex items-center gap-1 border-b border-border/60 bg-background/80 px-3 py-1.5 text-[11px] uppercase tracking-widest text-muted-foreground/70 backdrop-blur">
@@ -293,7 +293,7 @@ export function ChainTableBody({
 						data-testid="sort-props"
 						onClick={() => onSort("props")}
 						aria-sort={sort.col === "props" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-						className="flex w-14 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
+						className="hidden w-14 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground sm:flex"
 					>
 						Props {dirIcon("props")}
 					</button>
@@ -302,7 +302,7 @@ export function ChainTableBody({
 						data-testid="sort-created"
 						onClick={() => onSort("created")}
 						aria-sort={sort.col === "created" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-						className="flex w-20 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
+						className="hidden w-20 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground sm:flex"
 					>
 						Created {dirIcon("created")}
 					</button>
@@ -352,14 +352,14 @@ export function ChainTableBody({
 								<span className="flex shrink-0 items-center justify-center text-muted-foreground">
 									{open ? <FolderOpenIcon className="size-3.5" /> : <FolderIcon className="size-3.5" />}
 								</span>
-								<span className="min-w-0 flex-1 truncate text-sm font-medium">
+								<span onClick={() => onToggleCluster(group.key)} className="min-w-0 flex-1 truncate text-sm font-medium">
 									{group.label ?? <span className="text-muted-foreground/60">unlabeled</span>}
 									{group.kind === "notes" && <span className="ml-2 text-[11px] uppercase tracking-widest text-muted-foreground/60">notes</span>}
 								</span>
-								<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+								<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
 									{group.nodeIds.length}
 								</span>
-								<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+								<span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
 									{group.newestCreatedAt.slice(0, 10)}
 								</span>
 							</div>
@@ -382,13 +382,13 @@ export function ChainTableBody({
 												{chainOpen && memberIds.length > 0 && (
 													<div
 														data-testid={`chain-thread-${chain.id}`}
-														className="pointer-events-none absolute bottom-[8px] left-[73px] top-[22px] w-px bg-border/50"
+														className="pointer-events-none absolute bottom-[8px] left-[57px] top-[22px] w-px bg-border/50 sm:left-[73px]"
 													/>
 												)}
 											<div
 												data-testid={`chain-row-${chain.id}`}
 												aria-label={formatChainLine(chain, Object.fromEntries([...byId.entries()].map(([id, n]) => [id, { name: n.name }])))}
-												className="flex items-center gap-1 py-1 pl-12 pr-3"
+												className="flex items-center gap-1 py-1 pl-8 pr-3 sm:pl-12"
 											>
 												<RowCheckbox
 													checked={selectedInChain === memberIds.length && memberIds.length > 0}
@@ -408,7 +408,7 @@ export function ChainTableBody({
 												    (white), not the old dim gray. A lonely chip reads
 												    as a standalone proposition (no glyphs at all);
 												    the row's aria-label keeps the plain-text form. */}
-												<span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 gap-y-1 text-[13px] leading-tight">
+												<span onClick={() => onToggleChain(chain.id)} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 gap-y-1 text-[13px] leading-tight">
 													{memberIds.map((id, i) => {
 														const isConclusion = i === memberIds.length - 1;
 														return (
@@ -436,10 +436,10 @@ export function ChainTableBody({
 														);
 													})}
 												</span>
-												<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+												<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
 													{memberIds.length}
 												</span>
-												<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+												<span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
 													{dateOf(chain.conclusion)}
 												</span>
 											</div>
@@ -457,7 +457,7 @@ export function ChainTableBody({
 														<div
 															key={id}
 															data-testid={`prop-row-${id}`}
-															className="flex items-start gap-2 py-1 pl-21 pr-3"
+															className="flex items-start gap-2 py-1 pl-16 pr-3 sm:pl-21"
 														>
 															<RowCheckbox
 																checked={selection.has(id)}
@@ -468,8 +468,8 @@ export function ChainTableBody({
 															<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
 																{node.statement}
 															</span>
-															<span className="w-14 shrink-0" />
-															<span className="w-20 shrink-0" />
+															<span className="hidden w-14 shrink-0 sm:block" />
+															<span className="hidden w-20 shrink-0 sm:block" />
 														</div>
 													);
 												})}
@@ -485,10 +485,10 @@ export function ChainTableBody({
 			    the Google-Photos pattern). Appears only when something is
 			    selected; floats over the table's bottom edge. */}
 			{selection.size > 0 && (
-				<div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-4">
+				<div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-2 pb-4">
 					<div
 						data-testid="chain-selection-bar"
-						className="pointer-events-auto flex items-center gap-3 rounded-full border bg-card px-4 py-2 shadow-lg"
+						className="pointer-events-auto mb-[env(safe-area-inset-bottom)] flex max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full border bg-card px-4 py-2 shadow-lg"
 					>
 						<span data-testid="chain-selected-summary" className="text-xs font-medium">
 							{selection.size} {selection.size === 1 ? "node" : "nodes"} →{" "}
@@ -549,7 +549,7 @@ function Expander({ open, onClick, testid, label }: { open: boolean; onClick: ()
 			onClick={onClick}
 			aria-label={label}
 			aria-expanded={open}
-			className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+			className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground pointer-coarse:relative pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-2 pointer-coarse:after:content-['']"
 		>
 			<ChevronRightIcon className={`size-3.5 transition-transform ${open ? "rotate-90" : ""}`} />
 		</button>
@@ -572,17 +572,22 @@ function RowCheckbox({
 	label: string;
 }) {
 	return (
-		<input
-			type="checkbox"
-			checked={checked}
-			ref={(el) => {
-				if (el) el.indeterminate = indeterminate;
-			}}
-			data-testid={testid}
-			aria-label={label}
-			onChange={(e) => onToggle(e.target.checked)}
-			className="size-3.5 shrink-0 accent-primary"
-		/>
+		// The label wrapper widens the touch target (padding, cancelled by
+		// the negative margin so the row geometry never moves); on fine
+		// pointers it adds nothing.
+		<label className="flex shrink-0 pointer-coarse:-m-1 pointer-coarse:p-1">
+			<input
+				type="checkbox"
+				checked={checked}
+				ref={(el) => {
+					if (el) el.indeterminate = indeterminate;
+				}}
+				data-testid={testid}
+				aria-label={label}
+				onChange={(e) => onToggle(e.target.checked)}
+				className="size-3.5 shrink-0 accent-primary"
+			/>
+		</label>
 	);
 }
 
