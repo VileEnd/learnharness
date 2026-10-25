@@ -115,18 +115,28 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 	// Per-job launch, close on the way out.
 	const puppeteer = (await import("puppeteer-core")).default;
 	const executablePath = resolveChromeExecutablePath();
-	const browser = await puppeteer.launch({
-		headless: true,
-		// Explicit path when we found one; otherwise let puppeteer resolve the
-		// system Chrome install itself via the "chrome" channel.
-		...(executablePath ? { executablePath } : { channel: "chrome" as const }),
-		args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
-	});
+	// Own writable profile per launch: in the container the server runs as the
+	// node user with HOME=/root, where Chromium cannot create its profile or
+	// crashpad database and dies at launch (seen on the VM, 2026-10-25).
+	const profile = tempDir("lh-chrome-");
 	try {
-		const page = await browser.newPage();
-		return await fn(page);
+		const browser = await puppeteer.launch({
+			headless: true,
+			// Explicit path when we found one; otherwise let puppeteer resolve the
+			// system Chrome install itself via the "chrome" channel.
+			...(executablePath ? { executablePath } : { channel: "chrome" as const }),
+			userDataDir: profile,
+			env: { ...process.env, HOME: profile },
+			args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+		});
+		try {
+			const page = await browser.newPage();
+			return await fn(page);
+		} finally {
+			await browser.close().catch(() => {});
+		}
 	} finally {
-		await browser.close().catch(() => {});
+		fs.rmSync(profile, { recursive: true, force: true });
 	}
 }
 

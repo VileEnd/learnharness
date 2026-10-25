@@ -6,6 +6,8 @@ set -eu
 if [ "$(id -u)" = "0" ]; then
 	mkdir -p /data
 	find /data ! -user node -exec chown node:node {} +
+	# setpriv keeps root's HOME; tools that write under HOME (Chromium) need the node user's own.
+	export HOME=/home/node
 	exec setpriv --reuid=node --regid=node --init-groups "$@"
 fi
 exec "$@"
