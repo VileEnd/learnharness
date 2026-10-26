@@ -67,6 +67,8 @@ import {
 	type ModelCatalogEntry,
 	type ModelSlotName,
 	type ModelsSettings,
+	resolveQuizMechanic,
+	type QuizMechanic,
 } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
@@ -115,13 +117,12 @@ export function composeTool(agent: AgentSettings | undefined, id: string, on: bo
 	return { ...agent, tools: { ...agent?.tools, [id]: on } };
 }
 
-/** The quizzing mechanics (owner 2026-09-27): a segmented control, not a
- *  toggle — exactly one mechanic is ever active. `explain: true` arms
- *  free-recall (explain in, quiz out); anything else is multiple choice.
- *  `quiz` itself is never written (mechanics-managed — see quizMechanics
- *  in agent/tools.ts). Pure — exported for tests. */
-export function composeQuizMechanics(agent: AgentSettings | undefined, mechanics: "choice" | "free"): AgentSettings {
-	return { ...agent, tools: { ...agent?.tools, explain: mechanics === "free" } };
+/** The quizzing mechanics: a segmented control, not a toggle — exactly one
+ *  mechanic is ever active. Writes `quizMechanic` and leaves `tools.explain`
+ *  as stored (the explicit mechanic wins in resolveQuizMechanic). Pure —
+ *  exported for tests. */
+export function composeQuizMechanics(agent: AgentSettings | undefined, mechanics: QuizMechanic): AgentSettings {
+	return { ...agent, quizMechanic: mechanics };
 }
 
 /** Compose the prober graph-tools toggle (wave 7): its own key in the
@@ -781,7 +782,7 @@ export function AgentSection({
 				    quizzing tool BOTH agents carry (prober checks + teach checks).
 				    Persisted as agent.tools.explain; absent = Multiple choice. */}
 				{(() => {
-					const free = agent?.tools?.explain === true;
+					const current = resolveQuizMechanic(agent);
 					return (
 						<SettingsRow
 							label="Quizzing"
@@ -793,8 +794,8 @@ export function AgentSection({
 								aria-label="Quizzing mechanics"
 								className="flex rounded-lg border border-border/60 bg-muted/30 p-0.5"
 								>
-								{(["choice", "free"] as const).map((m) => {
-									const active = m === "free" ? free : !free;
+								{(["mixed", "choice", "free"] as const).map((m) => {
+									const active = m === current;
 									return (
 										<button
 											key={m}
@@ -808,7 +809,7 @@ export function AgentSection({
 												active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
 											)}
 										>
-											{m === "choice" ? "Multiple choice" : "Free recall"}
+											{m === "mixed" ? "Mixed" : m === "choice" ? "Multiple choice" : "Free recall"}
 										</button>
 									);
 								})}

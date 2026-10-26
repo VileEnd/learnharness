@@ -17,6 +17,7 @@ import {
 import { practiceTools, type PracticeToolContext } from "./tools/practice.ts";
 import { healToolRecord } from "./tools/heal.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
+import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
 import { toLlmMessages } from "../core/native-messages.ts";
 
@@ -110,6 +111,9 @@ export interface AgentBuildOptions {
 	 *  THE DEFINITIVE toggleable set is TOGGLEABLE_TOOLS (job tools only);
 	 *  the filtering is generic, but writes validate against the list). */
 	toolToggles?: EnabledTools;
+	/** The resolved quizzing mechanic (effective.agent.quizMechanic). Absent =
+	 *  derived from the toggles, else Mixed (resolveQuizMechanic). */
+	quizMechanic?: QuizMechanic;
 	/** Per-segment system-prompt override SWITCHES (the settings record's
 	 *  agent.prompts map, absent key = off — same keys the settings routes
 	 *  and effectivePromptSegments use). Provided → the prompt composes
@@ -234,7 +238,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
  * handler keys teacher construction on.
  */
 export function createProberAgent(ctx: ProberToolContext, opts: AgentBuildOptions = {}) {
-	return baseAgentOptions("prober", opts, Object.values(createProberTools(ctx, opts.toolToggles)));
+	return baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, ...ctx }, opts.toolToggles)));
 }
 
 /**
@@ -250,7 +254,7 @@ export function createTeacherAgent(
 	ctx?: TeacherToolContext,
 	opts: AgentBuildOptions = {},
 ) {
-	const tools = opts.tools ?? (ctx ? createTeacherTools(ctx, opts.toolToggles) : bareQuestionTools());
+	const tools = opts.tools ?? (ctx ? createTeacherTools({ quizMechanic: opts.quizMechanic, ...ctx }, opts.toolToggles) : bareQuestionTools());
 	return baseAgentOptions("teacher", opts, Object.values(tools));
 }
 

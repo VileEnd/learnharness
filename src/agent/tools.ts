@@ -12,6 +12,8 @@ import {
 	quizInputObject,
 	quizInputProblems,
 } from "../core/question-core.ts";
+import type { QuizMechanic } from "../core/settings.ts";
+import { resolveQuizMechanic } from "../core/settings-resolution.ts";
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import { resolveTargetId } from "../core/chains.ts";
 import { ungradedAnsweredRecalls } from "../core/learner.ts";
@@ -323,6 +325,9 @@ export interface ProberToolContext extends ProbeDoneContext {
 	/** The whole-graph node list the questions' `concepts` tags validate
 	 *  against (read fresh per call). Absent = tags are not validated. */
 	graphNodes?: ConceptNodes;
+	/** The resolved quizzing mechanic. Absent = derived from `enabled`
+	 *  (legacy tools.explain), else Mixed. */
+	quizMechanic?: QuizMechanic;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -351,15 +356,16 @@ export function createProberTools(
 	// the settings arm. ask stays always-on. The registry keys are the
 	// PHASE names (probe/recall, owner 2026-10-09) — distinct from the
 	// teach tools so the schema boundary is visible to the model.
-	const mechanics = quizMechanics(enabled);
+	const mechanics = ctx.quizMechanic ?? resolveQuizMechanic({ tools: enabled as Record<string, boolean> });
 	// The armed quizzing tool, widened to the registry's heterogeneous
 	// AgentTool record BEFORE the filter (a conditional spread of two
 	// differently-typed literals makes the whole object's type a union —
 	// unusable as Record<string, AgentTool<any>> downstream).
 	const quizzing: Record<string, AgentTool<any>> =
-		mechanics === "free"
-			? { recall: probeExplainToolFor({ graphNodes: ctx.graphNodes }) }
-			: { probe: probeQuizToolFor({ graphNodes: ctx.graphNodes }) };
+		{
+			...(mechanics !== "free" ? { probe: probeQuizToolFor({ graphNodes: ctx.graphNodes }) } : {}),
+			...(mechanics !== "choice" ? { recall: probeExplainToolFor({ graphNodes: ctx.graphNodes }) } : {}),
+		};
 	// healToolRecord (owner, 2026-10-09 — the whitehead generalization):
 	// the standard argument heal over the WHOLE registry — every tool,
 	// not just the one the latest wobble incident landed on.
@@ -456,6 +462,9 @@ export interface TeacherToolContext extends PlanToolContext {
 	/** The whole-graph node list the questions' `concepts` tags validate
 	 *  against (read fresh per call). Absent = tags are not validated. */
 	graphNodes?: ConceptNodes;
+	/** The resolved quizzing mechanic. Absent = derived from `enabled`
+	 *  (legacy tools.explain), else Mixed. */
+	quizMechanic?: QuizMechanic;
 }
 
 /**
@@ -469,15 +478,12 @@ export interface TeacherToolContext extends PlanToolContext {
  * future toggleables (question-tool variants, …) need no change here.
  * Absent/undefined = enabled — tests and old records see today's set.
  */
-/** The quizzing mechanics (owner 2026-09-27): `tools.explain === true` in
- *  the resolved settings ⇒ free-recall checks (explain armed, quiz dropped)
- *  — anything else ⇒ multiple choice, exactly today's set. Mechanics-
- *  managed, NOT individually toggleable: quiz/explain never pass through
- *  filterEnabledTools (the 2026-09-19 wedge ruling stands — a quiz-less
- *  prober collapses its assessment flow). */
-export function quizMechanics(enabled?: EnabledTools): "choice" | "free" {
-	return enabled?.explain === true ? "free" : "choice";
-}
+/** The quizzing mechanics: choice = the quiz, free = explain (+ grade),
+ *  mixed = both instruments (+ grade). Resolved by resolveQuizMechanic and
+ *  carried on the tool contexts. Mechanics-managed, NOT individually
+ *  toggleable: quiz/explain never pass through filterEnabledTools (the
+ *  2026-09-19 wedge ruling stands — a quiz-less prober collapses its
+ *  assessment flow). */
 
 /** Strip the mechanics keys so filterEnabledTools can never drop the
  *  quizzing tools (the derivation above is their only switch). */
@@ -488,15 +494,15 @@ function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
 }
 
 /** The `grade` tool's registration law: present whenever the free-recall
- *  mechanic is armed, OR an answered explain/recall in the record still
+ *  or mixed mechanic is armed, OR an answered explain/recall in the record still
  *  waits for its grade (the mechanic may have been switched off mid-session,
  *  and a pending answer must stay gradeable). Read from the live record at
  *  registry construction (one registry per turn). */
 function gradeFor(
 	ctx: { chatId: string; chatStore: ChatStore },
-	mechanics: "choice" | "free",
+	mechanics: QuizMechanic,
 ): Record<string, AgentTool<any>> {
-	if (mechanics !== "free") {
+	if (mechanics === "choice") {
 		// Optional chain: partial test contexts carry no store (no record = nothing pending).
 		const record = ctx.chatStore?.getChat?.(ctx.chatId);
 		if (!record || ungradedAnsweredRecalls(record.messages).length === 0) return {};
@@ -511,11 +517,14 @@ export function createTeacherTools(
 	// Quizzing mechanics (owner 2026-09-27): free-recall swaps the teach
 	// quiz for the teach explain — one quizzing tool at a time, whichever
 	// the settings arm. ask stays always-on.
-	const mechanics = quizMechanics(enabled);
+	const mechanics = ctx.quizMechanic ?? resolveQuizMechanic({ tools: enabled as Record<string, boolean> });
 	// Same widening as the prober's (see above) — the conditional spread of
 	// two differently-typed literals collapses into an unusable union type.
 	const quizzing: Record<string, AgentTool<any>> =
-		mechanics === "free" ? { explain: teachExplainToolFor(ctx) } : { quiz: teachQuizToolFor(ctx) };
+		{
+			...(mechanics !== "free" ? { quiz: teachQuizToolFor(ctx) } : {}),
+			...(mechanics !== "choice" ? { explain: teachExplainToolFor(ctx) } : {}),
+		};
 	// healToolRecord — same standard as the prober's registry (above).
 	return healToolRecord(
 		filterEnabledTools(
