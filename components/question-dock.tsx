@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
-import { MessageResponse } from "@/components/ai-elements/message";
+import { ToolContentResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import {
 	buildAnswer,
+	repairMathForDisplay,
 	normalizeQuizType,
 	CONFIDENCE_STOPS,
 	DEFAULT_CONFIDENCE_INDEX,
@@ -175,7 +176,7 @@ export function QuestionDock({
 
 /** A plain-text teaser of a question for the collapsed bar: unwrap math, flatten common LaTeX. */
 function teaserText(q: string): string {
-	return q
+	return repairMathForDisplay(q)
 		.replace(/\\\(([\s\S]*?)\\\)/g, "$1") // \(...\) inline math
 		.replace(/\\\[([\s\S]*?)\\\]/g, "$1") // \[...\] display math
 		.replace(/\$\$?([^$]*)\$\$?/g, "$1") // standard $...$/$$...$$ math
@@ -585,11 +586,11 @@ function QuestionDockForm({
 					{qd.mode === "multi-select" && " · select all that apply"}
 				</div>
 				<div className="mb-3 font-medium">
-					<MessageResponse>{qd.question}</MessageResponse>
+					<ToolContentResponse>{qd.question}</ToolContentResponse>
 				</div>
 				{qd.context && (
 					<div className="mb-3 text-sm text-muted-foreground">
-						<MessageResponse>{qd.context}</MessageResponse>
+						<ToolContentResponse>{qd.context}</ToolContentResponse>
 					</div>
 				)}
 
@@ -625,7 +626,7 @@ function QuestionDockForm({
 										)}
 									</span>
 									<span>
-										<MessageResponse>{opt.label}</MessageResponse>
+										<ToolContentResponse>{opt.label}</ToolContentResponse>
 										{kind !== "quiz" && opt.description && (
 											// Option subtext renders in Source Sans 3 (owner's mockup);
 											// the "I don't know" copy stays JetBrains Mono. QUIZ options render
@@ -634,9 +635,9 @@ function QuestionDockForm({
 											// records must not leak either. Same MessageResponse path as the
 											// label (owner, 2026-10-12): descriptions are full markdown —
 											// LaTeX included — not plain text.
-											<MessageResponse className="lh-prose block text-xs text-muted-foreground">
+											<ToolContentResponse className="lh-prose block text-xs text-muted-foreground">
 												{opt.description}
-											</MessageResponse>
+											</ToolContentResponse>
 										)}
 									</span>
 								</button>
