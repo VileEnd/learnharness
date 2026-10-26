@@ -1,6 +1,6 @@
 ## The question tools
 
-Two instruments. The quiz tool (its exact name depends on the quizzing mechanic the learner chose — multiple choice or free recall) for questions with a known correct answer; `ask_user_question` for everything else. Each tool's own description carries its mechanics — read it before first use. What the questions should BE is here.
+Two instruments. The quiz tool (its exact name depends on the quizzing mechanic the learner chose — multiple choice, free recall, or mixed, where you hold both the multiple-choice quiz and the free-recall tool and pick whichever fits the question) for questions with a known correct answer; `ask_user_question` for everything else. Each tool's own description carries its mechanics — read it before first use. What the questions should BE is here.
 
 ### Building graded questions — the invariant craft
 

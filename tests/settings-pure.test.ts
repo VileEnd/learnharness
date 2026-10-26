@@ -377,14 +377,12 @@ describe("sectionedSegments — the prompts overhaul (2026-09-26)", () => {
 // ─── the quizzing-mechanics segmented control (owner 2026-09-27) ───────────
 
 describe("composeQuizMechanics (the segmented control's write)", () => {
-	it("free recall writes explain:true; multiple choice writes explain:false — nothing else moves", () => {
-		const before: AgentSettings = { tools: { research: false }, prompts: { teacher: true } } as AgentSettings;
-		const free = composeQuizMechanics(before, "free");
-		assert.equal(free.tools?.explain, true);
-		const choice = composeQuizMechanics(before, "choice");
-		assert.equal(choice.tools?.explain, false);
-		for (const after of [free, choice]) {
-			assert.equal(after.tools?.research, false, "the research toggle carries verbatim");
+	it("writes quizMechanic and leaves tools.explain and the rest as stored", () => {
+		const before: AgentSettings = { tools: { research: false, explain: true }, prompts: { teacher: true } } as AgentSettings;
+		for (const m of ["mixed", "choice", "free"] as const) {
+			const after = composeQuizMechanics(before, m);
+			assert.equal(after.quizMechanic, m);
+			assert.deepEqual(after.tools, before.tools, "tools carry verbatim");
 			assert.deepEqual(after.prompts, before.prompts, "the prompts map carries verbatim");
 		}
 	});
