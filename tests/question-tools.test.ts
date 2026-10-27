@@ -24,6 +24,7 @@ import {
 	quizExampleBody,
 	teachExplainToolFor,
 	teachQuizToolFor,
+	type ProberToolContext,
 	type TeacherToolContext,
 } from "../src/agent/tools.ts";
 import { TOGGLEABLE_TOOLS } from "../src/core/pending.ts";
@@ -199,7 +200,7 @@ describe("the prober's quiz: no nodeId field at all", () => {
 
 	it("the prober's tool registry carries the nodeId-less quiz, probe_done, and the learner-filesystem set", () => {
 		const chatId = newChat("Prober: registry");
-		const tools = createProberTools({ chatId, chatStore, deliver: () => {}, jobStore, spawn: () => {}, libraryRoot: "/nonexistent-library" });
+		const tools = createProberTools({ chatId, chatStore, deliver: () => {}, jobStore, spawn: () => {}, libraryRoot: "/nonexistent-library", quizMechanic: "choice" });
 		// Fix wave (2026-09-20): the owner ruling adds research dispatch
 		// to the probe phase's registry (demo/visual stay teach-only).
 		assert.deepEqual(Object.keys(tools).sort(), [
@@ -265,10 +266,12 @@ describe("tool toggles (core/pending.ts + factories)", () => {
 
 	it("createProberTools: absent record = full set; explicit false drops exactly that tool; probe_done survives everything", () => {
 		const chatId = newChat("Prober: toggles");
-		const ctx = { chatId, chatStore, deliver: () => {}, jobStore, spawn: () => {}, libraryRoot: "/nonexistent-library" };
+		const ctx: ProberToolContext = { chatId, chatStore, deliver: () => {}, jobStore, spawn: () => {}, libraryRoot: "/nonexistent-library" };
+		// Absent mechanic = Mixed: both instruments (+ grade).
 		assert.deepEqual(Object.keys(createProberTools(ctx)).sort(), [
-			"ask_user_question", "find", "grep", "ls", "probe", "probe_done", "read", "research",
+			"ask_user_question", "find", "grade", "grep", "ls", "probe", "probe_done", "read", "recall", "research",
 		]);
+		ctx.quizMechanic = "choice";
 
 		const noAsk = createProberTools(ctx, { ask_user_question: false });
 		assert.deepEqual(Object.keys(noAsk).sort(), ["find", "grep", "ls", "probe", "probe_done", "read", "research"]);
@@ -281,6 +284,7 @@ describe("tool toggles (core/pending.ts + factories)", () => {
 		assert.deepEqual(Object.keys(noQuiz).sort(), ["ask_user_question", "find", "grep", "ls", "probe", "probe_done", "read", "research"]);
 		// The mechanic switch (owner 2026-09-27): tools.explain === true arms
 		// free-recall — explain in, quiz out, exactly one quizzing tool.
+		delete ctx.quizMechanic;
 		const free = createProberTools(ctx, { explain: true });
 		assert.deepEqual(Object.keys(free).sort(), ["ask_user_question", "find", "grade", "grep", "ls", "probe_done", "read", "recall", "research"]);
 		assert.ok(createProberTools(ctx, { probe_done: false }).probe_done, "probe_done always-on");
@@ -295,15 +299,17 @@ describe("tool toggles (core/pending.ts + factories)", () => {
 			spawn: () => {},
 			libraryRoot: "/nonexistent-library",
 		};
-		const full = Object.keys(createTeacherTools(ctx)).sort();
+		// Absent mechanic = Mixed: quiz + explain (+ grade).
+		assert.deepEqual(Object.keys(createTeacherTools(ctx)).sort(), ["ask_user_question", "demo", "explain", "find", "grade", "grep", "ls", "plan_init", "quiz", "read", "research", "visual"]);
+		const full = Object.keys(createTeacherTools(ctx, { explain: false })).sort();
 		assert.deepEqual(full, ["ask_user_question", "demo", "find", "grep", "ls", "plan_init", "quiz", "read", "research", "visual"]);
 
-		const noResearch = Object.keys(createTeacherTools(ctx, { research: false })).sort();
+		const noResearch = Object.keys(createTeacherTools(ctx, { research: false, explain: false })).sort();
 		assert.deepEqual(noResearch, ["ask_user_question", "demo", "find", "grep", "ls", "plan_init", "quiz", "read", "visual"]);
 
 		// absent = enabled: an empty record and undefined behave identically
 		assert.deepEqual(
-			Object.keys(createTeacherTools(ctx, {})).sort(),
+			Object.keys(createTeacherTools(ctx, { explain: false })).sort(),
 			full,
 			"absent keys mean enabled — old records behave exactly as today",
 		);

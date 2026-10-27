@@ -15,6 +15,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { isHexColor, type ChatSettings } from "../core";
 import type {
 	AgentSettings,
+	QuizMechanic,
 	AppearanceSettings,
 	BackgroundModelRole,
 	CompactionSettings,
@@ -24,7 +25,7 @@ import type {
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 
 /** Parsed-or-rejected — `ok: false` carries the 400's error message. */
@@ -170,6 +171,12 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 			}
 		}
 		settings.tools = tools.map;
+	}
+	if (raw.quizMechanic !== undefined) {
+		if (typeof raw.quizMechanic !== "string" || !(QUIZ_MECHANICS as readonly string[]).includes(raw.quizMechanic)) {
+			return { ok: false, error: `quizMechanic must be one of: ${QUIZ_MECHANICS.join(", ")}` };
+		}
+		settings.quizMechanic = raw.quizMechanic as QuizMechanic;
 	}
 	const prompts = parseBooleanMap(raw.prompts, "prompts");
 	if (prompts.error) return { ok: false, error: prompts.error };

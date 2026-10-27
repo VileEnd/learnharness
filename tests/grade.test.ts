@@ -134,13 +134,13 @@ describe("grade", () => {
 		const answered = explain("e1");
 		const base = { jobStore: {} as never, spawn: () => {}, libraryRoot: "/nonexistent-library" };
 		const teacherCtx = (messages: LhMessage[]): TeacherToolContext => ({ chatId: "c1", chatStore: storeOf(messages), ...base });
-		assert.ok(createTeacherTools(teacherCtx(answered)).grade, "teacher: ungraded explain pending");
-		assert.equal(createTeacherTools(teacherCtx([...answered, ...grade("g1", "e1", "correct")])).grade, undefined, "teacher: nothing pending");
-		assert.equal(createTeacherTools(teacherCtx([])).grade, undefined, "teacher: choice mechanic, nothing pending");
+		assert.ok(createTeacherTools(teacherCtx(answered), { explain: false }).grade, "teacher: ungraded explain pending");
+		assert.equal(createTeacherTools(teacherCtx([...answered, ...grade("g1", "e1", "correct")]), { explain: false }).grade, undefined, "teacher: nothing pending");
+		assert.equal(createTeacherTools(teacherCtx([]), { explain: false }).grade, undefined, "teacher: choice mechanic, nothing pending");
 		assert.ok(createTeacherTools(teacherCtx([]), { explain: true }).grade, "teacher: free recall armed");
 		const proberCtx = (messages: LhMessage[]) => ({ chatId: "c1", chatStore: storeOf(messages), deliver: () => {}, ...base });
-		assert.ok(createProberTools(proberCtx(explain("e1", { tool: "recall" }))).grade, "prober: ungraded recall pending");
-		assert.equal(createProberTools(proberCtx([])).grade, undefined);
+		assert.ok(createProberTools(proberCtx(explain("e1", { tool: "recall" })), { explain: false }).grade, "prober: ungraded recall pending");
+		assert.equal(createProberTools(proberCtx([]), { explain: false }).grade, undefined);
 		assert.ok(createProberTools(proberCtx([]), { explain: true }).grade);
 	});
 });

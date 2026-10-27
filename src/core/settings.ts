@@ -236,8 +236,16 @@ export interface GeneralSettings {
 	autoUpdate?: boolean;
 }
 
+/** The quizzing mechanic: Mixed holds both instruments (quiz + explain,
+ *  probe + recall), Multiple choice only the quiz, Free recall only the recall. */
+export type QuizMechanic = "mixed" | "choice" | "free";
+export const QUIZ_MECHANICS: readonly QuizMechanic[] = ["mixed", "choice", "free"];
+
 /** Agent settings — everything about the non-conversation machinery. */
 export interface AgentSettings {
+	/** The quizzing mechanic. Absent: legacy `tools.explain` decides
+	 *  (true = free, false = choice), else Mixed (see resolveQuizMechanic). */
+	quizMechanic?: QuizMechanic;
 	/** Background-role model/thinking overrides (absent role = config pin). */
 	models?: Partial<Record<BackgroundModelRole, RoleModelOverride>>;
 	/** Tool toggles keyed by tool id (absent key = enabled). User-level
@@ -545,6 +553,9 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 	}
 	const prompts = sanitizeBooleanMap(raw.prompts);
 	if (prompts) out.prompts = prompts;
+	if (typeof raw.quizMechanic === "string" && (QUIZ_MECHANICS as readonly string[]).includes(raw.quizMechanic)) {
+		out.quizMechanic = raw.quizMechanic as QuizMechanic;
+	}
 	// Search preference: lenient read side (an unknown engine id drops;
 	// the write side's parser is strict — a stale client can't brick the
 	// record, it just loses the pin and auto-detection resumes).

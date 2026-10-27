@@ -1,6 +1,6 @@
 ## The question tools
 
-Two instruments. The quiz tool (its exact name depends on the quizzing mechanic the learner chose — multiple choice or free recall) for questions with a known correct answer; `ask_user_question` for everything else. Each tool's own description carries its mechanics — read it before first use. What the questions should BE is here.
+Two instruments. The quizzing tools for questions with a known correct answer; `ask_user_question` for everything else. The quizzing tools come in two roles: the **multiple-choice** tool (he picks among your options; graded for you) and the **free-recall** tool (he answers in his own words; you grade it with `grade`). Which you hold is the quizzing mechanic the learner chose: multiple choice arms only the first, free recall only the second, Mixed arms both — and then your own doctrine says which one each question gets. Each tool's own description carries its exact name and its mechanics — read it before first use. What the questions should BE is here.
 
 ### Building graded questions — the invariant craft
 
