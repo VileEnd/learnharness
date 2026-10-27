@@ -5,7 +5,8 @@
  *  1. IDENTICAL-FAILURE BREAKER. Within one turn, the same tool failing with
  *     the same canonicalized arguments for the 3rd time gets a final refusal;
  *     the tool is then refused immediately for the rest of the turn. Two more
- *     calls to it anyway end the turn cleanly (the same finishTurn "end" path
+ *     calls to it in LATER steps (after the model saw the refusal) end the
+ *     turn cleanly (the same finishTurn "end" path
  *     the question stopper uses). Precedent: GUARD_MAX_REFUSALS (tools.ts).
  *  2. PER-TURN SPEND CAP. The cost of each assistant step (the injected
  *     `stepCost`, which the handler binds to the money channel's callCost)
@@ -16,7 +17,9 @@
  * it covers every failure kind (schema validation errors never reach a tool's
  * execute). The state lives in this closure: per turn, never persisted - the
  * agents are stateless and rebuilt per turn. Successes are never counted and
- * reset nothing, so a long run of successful calls is untouched.
+ * reset nothing, so a long run of successful calls is untouched; a
+ * non-error result is never rewritten (a refused call never counts as a
+ * success in any fold, and a success is never shown as a refusal).
  */
 import type { Usage } from "@earendil-works/pi-ai";
 import { canonicalJson } from "../core/canvas-core.ts";
@@ -72,21 +75,28 @@ export function createTurnGuard(opts: TurnGuardOptions = {}) {
 		 *  (a posed question) ends the turn, so no notice is raised. */
 		finishTurn(turn: GuardTurn, alreadyEnding = false): boolean {
 			const byId = new Map(turn.toolResults.map((r) => [r.toolCallId, r]));
+			// Snapshot: only a tool dropped in an EARLIER step was refused before
+			// this step ran (beforeToolCall), so only those calls count toward the
+			// stop. A tool dropped mid-message must not touch the calls after it in
+			// the same message: they already ran, and the model has not yet seen
+			// the refusal.
+			const droppedBefore = new Set(dropped);
 			let hadCalls = false;
 			for (const block of turn.message.content) {
 				if (block.type !== "toolCall" || block.name === undefined || block.id === undefined) continue;
 				hadCalls = true;
 				const result = byId.get(block.id);
-				if (!result) continue;
+				// A non-error result is never rewritten and never counted: every
+				// fold (annotationsOf, gradesOf) reads it as the success it was.
+				if (!result || result.isError !== true) continue;
 				const refuse = () => {
 					result.content = [{ type: "text", text: finalRefusal(block.name!) }];
 				};
-				if (dropped.has(block.name)) {
+				if (droppedBefore.has(block.name)) {
 					droppedCalls++;
 					refuse();
 					continue;
 				}
-				if (result.isError !== true) continue;
 				const key = `${block.name}\u0000${canonicalJson(block.arguments ?? {})}`;
 				const n = (failures.get(key) ?? 0) + 1;
 				failures.set(key, n);
