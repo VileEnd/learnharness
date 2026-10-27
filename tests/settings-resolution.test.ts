@@ -13,6 +13,7 @@ import {
 	extractionEnabled,
 	graphToolsEnabled,
 	renderingEnabled,
+	resolveCanvasModel,
 	resolveConversationSpec,
 	resolveModelSpec,
 	resolveRoleSpec,
@@ -280,5 +281,55 @@ describe("legacy pdf settings (the pdf job was retired)", () => {
 		});
 		assert.deepEqual(loaded?.agent?.tools, { research: false });
 		assert.equal(loaded?.agent?.models, undefined);
+	});
+});
+
+describe("resolveCanvasModel (canvas slot, owner 2026-10-27)", () => {
+	const GLM = { provider: "openrouter", id: "z-ai/glm-5.3-flash" };
+	const keys = (...providers: string[]) => (p: string) => providers.includes(p);
+	const slots = (record: UserSettings) => resolveSettings(record).models;
+	const none = { version: 1 as const };
+
+	it("an unset slot with an OpenRouter key resolves to GLM 5.3 Flash", () => {
+		const got = resolveCanvasModel(slots(none), keys("openrouter"));
+		assert.deepEqual(got && { provider: got.provider, id: got.id }, GLM);
+	});
+
+	it("an unset slot, no OpenRouter key, an allowlisted strong slot: the strong slot", () => {
+		const record: UserSettings = { version: 1, models: { strong: { model: { provider: "anthropic", id: "claude-sonnet-5-5" }, thinkingLevel: "low" } } };
+		assert.deepEqual(resolveCanvasModel(slots(record), keys("anthropic")), { provider: "anthropic", id: "claude-sonnet-5-5", thinkingLevel: "low" });
+	});
+
+	it("neither: none (unvetted strong, no key, or no strong)", () => {
+		assert.equal(resolveCanvasModel(slots(none), keys()), null);
+		assert.equal(resolveCanvasModel(slots(none), keys("openrouter", "anthropic")) === null, false, "sanity: the default needs only the OpenRouter key");
+		const unvetted: UserSettings = { version: 1, models: { strong: { model: { provider: "openai", id: "gpt-4" } } } };
+		assert.equal(resolveCanvasModel(slots(unvetted), keys("openai")), null);
+		const haiku: UserSettings = { version: 1, models: { strong: { model: { provider: "anthropic", id: "claude-haiku-5-5" } } } };
+		assert.equal(resolveCanvasModel(slots(haiku), keys("anthropic")), null);
+	});
+
+	it("an explicit vetted slot wins and keeps its thinking level", () => {
+		const record: UserSettings = { version: 1, models: { canvas: { model: { provider: "openrouter", id: "qwen/qwen3.8-flash" }, thinkingLevel: "high" } } };
+		assert.deepEqual(resolveCanvasModel(slots(record), keys("openrouter")), { provider: "openrouter", id: "qwen/qwen3.8-flash", thinkingLevel: "high" });
+	});
+
+	it("a hand-edited unvetted canvas slot is ignored, and so is a vetted one whose key is gone", () => {
+		const rogue: UserSettings = { version: 1, models: { canvas: { model: { provider: "openrouter", id: "moonshotai/kimi-k3" } } } };
+		assert.deepEqual(resolveCanvasModel(slots(rogue), keys("openrouter"))?.id, GLM.id);
+		const keyless: UserSettings = { version: 1, models: { canvas: { model: { provider: "anthropic", id: "claude-sonnet-5-5" } } } };
+		assert.deepEqual(resolveCanvasModel(slots(keyless), keys("openrouter"))?.id, GLM.id);
+		assert.equal(resolveCanvasModel(slots(keyless), keys()), null);
+	});
+
+	it("sanitizeUserSettings keeps a well-formed canvas slot and a file without one loads unchanged", () => {
+		const withSlot = sanitizeUserSettings({ version: 1, models: { canvas: { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" }, thinkingLevel: "low" } } });
+		assert.deepEqual(withSlot?.models?.canvas, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" }, thinkingLevel: "low" });
+		const without = sanitizeUserSettings({ version: 1, models: { strong: { model: GLM } } });
+		assert.equal(without?.models?.canvas, undefined);
+	});
+
+	it("older settings files without the key keep working: the slot resolves null and the first-run gate ignores it", () => {
+		assert.equal(resolveSettings({ version: 1, models: { strong: { model: GLM } } }).models.canvas, null);
 	});
 });
