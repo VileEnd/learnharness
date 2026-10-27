@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DrawingScene, StrokeObject } from "../src/core/index.ts";
-import { eraseAt, exportColor, hitTest, quantizePoint, screenColor, screenToWorld, strokeOutline, touchRole, visibleObjects, worldToScreen } from "../components/canvas/geometry.ts";
+import { fitImageSize, eraseAt, exportColor, hitTest, quantizePoint, screenColor, screenToWorld, strokeOutline, touchRole, visibleObjects, worldToScreen } from "../components/canvas/geometry.ts";
 
 const stroke = (id: string, pts: [number, number][], extra: Partial<StrokeObject> = {}): StrokeObject => ({ id, z: 0, type: "stroke", brush: "pen", color: "ink", size: 4, points: pts.map(([x, y]) => [x, y, 0.5]), ...extra });
 const scene = (...objects: DrawingScene["objects"]): DrawingScene => ({ version: 1, objects });
@@ -65,5 +65,14 @@ describe("canvas geometry", () => {
 		const dt = performance.now() - t0;
 		assert.ok(vis.length > 0 && vis.length < 200, `got ${vis.length}`);
 		assert.ok(dt < 5, `took ${dt}ms`);
+	});
+});
+
+describe("fitImageSize", () => {
+	it("caps the long side at 1600 keeping aspect, never upscales", () => {
+		assert.deepEqual(fitImageSize(3200, 1600), { w: 1600, h: 800 });
+		assert.deepEqual(fitImageSize(1000, 4000), { w: 400, h: 1600 });
+		assert.deepEqual(fitImageSize(800, 600), { w: 800, h: 600 });
+		assert.deepEqual(fitImageSize(1600, 1600), { w: 1600, h: 1600 });
 	});
 });

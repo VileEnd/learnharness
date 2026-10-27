@@ -27,7 +27,7 @@ import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
 import { nextObjectId, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
-import { PALETTE_NAMES, screenColor } from "./geometry";
+import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
 
@@ -254,8 +254,9 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	const addImage = useCallback(
 		async (file: Blob, at: { x: number; y: number }) => {
 			try {
-				const assetId = await uploadAsset(chatId, file);
-				const dims = await imageSize(file);
+				const { blob, w: nw, h: nh } = await downscaleImage(file);
+				const assetId = await uploadAsset(chatId, blob);
+				const dims = { w: nw, h: nh };
 				const w = Math.min(dims.w, 400);
 				const h = Math.round((w / dims.w) * dims.h * 10) / 10;
 				const cur = sceneRef.current;
@@ -450,6 +451,28 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			</div>
 		</div>
 	);
+}
+
+/** Re-encodes an image whose long side exceeds IMAGE_MAX_SIDE (PNG stays PNG, others JPEG); small or undecodable images pass through unchanged. */
+async function downscaleImage(file: Blob): Promise<{ blob: Blob; w: number; h: number }> {
+	const dims = await imageSize(file);
+	const to = fitImageSize(dims.w, dims.h);
+	if (to.w === dims.w && to.h === dims.h) return { blob: file, ...dims };
+	try {
+		const bmp = await createImageBitmap(file);
+		const c = document.createElement("canvas");
+		c.width = to.w;
+		c.height = to.h;
+		const ctx = c.getContext("2d");
+		if (!ctx) return { blob: file, ...dims };
+		ctx.drawImage(bmp, 0, 0, to.w, to.h);
+		bmp.close();
+		const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+		const blob = await new Promise<Blob | null>((res) => c.toBlob(res, type, 0.9));
+		return blob ? { blob, ...to } : { blob: file, ...dims };
+	} catch {
+		return { blob: file, ...dims };
+	}
 }
 
 /** Natural size of an image blob (falls back to 300x200 when it cannot be decoded). */

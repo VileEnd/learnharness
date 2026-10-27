@@ -163,3 +163,14 @@ export function eraseAt(scene: DrawingScene, p: Pt, radius: number): DrawingScen
 	const kept = scene.objects.filter((o) => !(overlaps(objectBox(o), near) && distTo(o, p) <= radius));
 	return kept.length === scene.objects.length ? scene : { ...scene, objects: kept };
 }
+
+/** Pasted/uploaded images are stored at most this many px on the long side. */
+export const IMAGE_MAX_SIDE = 1600;
+
+/** Target size for an image whose long side may not exceed `max`; never upscales, keeps the aspect ratio. */
+export function fitImageSize(w: number, h: number, max: number = IMAGE_MAX_SIDE): { w: number; h: number } {
+	const long = Math.max(w, h);
+	if (!(long > max)) return { w, h };
+	const k = max / long;
+	return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
