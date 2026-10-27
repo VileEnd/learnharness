@@ -21,6 +21,11 @@ core tool surface must appear in real data here.
   probe, probe_done, recall, explain, research, demo, visual, pdf, find,
   grep, ls, read, list_sessions, list_propositions). Plan tree + 25 turn
   records + a per-chat model override.
+- `chats/chat_mvqwyk18_da3a4b82.json` — the interactive exercises (dev server on a
+  scratch data dir, 2026-10-27): a teach-phase chat with three answered `exercise`
+  calls (numeric first-try correct; table solved on the second Check after a hint;
+  multipart given up) plus the prober's `probe`/`recall`/`grade`. Stamped (`version: 1`)
+  by design; the unstamped pin is the master above.
 - `chats/chat_mv293wv5_10656952.json` — the practice lifecycle (owner-built,
   2026-10-10): graph-context (the bracketed preamble), problem ×2,
   practice-thinking ×2, conclude ×2, practice-next, problem-dismissed — the

@@ -2,6 +2,8 @@ import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, questionResult, serverExecute } from "./tool-execute.ts";
 import {
+	exerciseInputBase,
+	exerciseInputObject,
 	askInputSchema,
 	askOptionProblems,
 	explainInputBase,
@@ -12,6 +14,7 @@ import {
 	quizInputObject,
 	quizInputProblems,
 } from "../core/question-core.ts";
+import { exerciseSpecProblems, hintLeaks, type InteractiveFormat } from "../core/exercise-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { resolveQuizMechanic } from "../core/settings-resolution.ts";
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
@@ -308,6 +311,123 @@ export function probeExplainToolFor(ctx: { graphNodes?: ConceptNodes } = {}): Ag
 /** The validation-free recall tool (no graph wired: tests). */
 export const probeExplainTool = probeExplainToolFor();
 
+// ─── the exercise / assess tools (interactive generative formats) ────────────
+//
+// Same family as quiz/explain: CLIENT-ANSWERED (the browser grades locally
+// against the committed spec and returns the verdict as the tool output).
+// Mechanical description only: what each format's `spec` carries.
+
+/** Per-format `spec` field docs (mechanics only), listed for the enabled formats. */
+export const FORMAT_SPEC_DOCS: Partial<Record<InteractiveFormat, string>> = {
+	numeric:
+		'numeric: {answer: string, mode: "number"|"expression", variables?: string[] (every letter an expression answer uses), ' +
+		"tolerance?: {abs?, rel?}, unit?: string}. One typed value.",
+	blanks:
+		"blanks: {text: string containing {{id}} placeholders, blanks: [{id, accept: string[], mode?: \"text\"|\"number\"|\"expression\", " +
+		"caseSensitive?, variables?}]}. Fill-in-the-blank typed answers, no word bank.",
+	table:
+		'table: {columns: string[], rows: [{cells: ({given: string} | {id, accept: string[], mode?: "text"|"number"|"expression"|"bit", variables?})[]}]}. ' +
+		"Fixed cells are `given`; editable cells carry an id and the accepted values. At least one editable cell.",
+	multipart:
+		'multipart: {parts: [{id, label, format: "numeric"|"blanks"|"table", spec, weight?}]} with 2-6 parts, no nesting; each part\'s spec follows its own format.',
+};
+
+/** The spec docs for the enabled formats, joined (shared with the practice `problem` tool). */
+export function formatSpecDocs(formats: readonly InteractiveFormat[]): string {
+	return formats.map((f) => FORMAT_SPEC_DOCS[f]).filter((d): d is string => d !== undefined).join(" ");
+}
+
+function exerciseDescription(name: "exercise" | "assess", formats: readonly InteractiveFormat[], nodeId: boolean): string {
+	return (
+		"Pose an interactive EXERCISE the learner solves by producing an answer in a structured widget, then grade it. " +
+		"The browser grades locally against your `spec` (the answer key; hidden from the learner until they are done or give up). " +
+		"The learner can Check as many times as they like — each Check shows per-item right/wrong marks, never the key — and " +
+		"may reveal your `hints` one at a time, or give up. `hints` is 2 or 3 escalating strings, and no hint may contain an accepted answer. " +
+		"Write `explanation` BEFORE `spec`. The result you receive is the outcome, score, per-item marks, attempts, hints used and any give-up. " +
+		(nodeId
+			? "Every call declares `type` (the question's role in the teaching cycle) and `nodeId` (required, the plan node this exercise is about — validated at call time). "
+			: "") +
+		"Set `requireThinking` to true to require the learner's written thinking before they can submit. " +
+		"ONE exercise per turn: call a single " +
+		name +
+		", then end your turn. The `format` field takes one of: " +
+		formats.join(", ") +
+		". The `spec` fields by format: " +
+		formatSpecDocs(formats)
+	);
+}
+
+/** Cross-field authoring checks shared by exercise/assess (spec, hints, concepts). */
+function exerciseProblems(
+	input: { format: string; spec: unknown; hints: readonly string[] },
+	graphNodes: ConceptNodes | undefined,
+	concepts: readonly string[] | undefined,
+): string[] {
+	const problems = exerciseSpecProblems(input.format, input.spec).map((p) => `spec: ${p}`);
+	if (input.hints.length < 2 || input.hints.length > 3) {
+		problems.push(`hints: provide 2 or 3 escalating hints (got ${input.hints.length}).`);
+	}
+	for (const leaked of hintLeaks(input.format, input.spec, input.hints)) {
+		problems.push(`hints: a hint contains the accepted answer "${leaked}" - hints may nudge but never state the answer.`);
+	}
+	problems.push(...conceptsProblems(graphNodes, concepts));
+	return problems;
+}
+
+/** `format` is a literal union of the ENABLED formats; `spec` an open object. */
+function exerciseFormatField(formats: readonly InteractiveFormat[]) {
+	return Type.Union(
+		formats.map((f) => Type.Literal(f)),
+		{ description: "REQUIRED — which interactive format the learner works in (bare word, no quotes)." },
+	);
+}
+
+/** The teacher's exercise tool: nodeId-validated like the teach quiz. */
+export function teachExerciseToolFor(
+	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes; turn?: TeachTurnView },
+	formats: readonly InteractiveFormat[],
+) {
+	const guard = teachGuardFor(ctx.turn);
+	const parameters = Type.Object({ ...exerciseInputObject.properties, format: exerciseFormatField(formats) });
+	const tool: AgentTool<typeof parameters> = {
+		name: "exercise",
+		label: "exercise",
+		description: exerciseDescription("exercise", formats, true),
+		parameters,
+		prepareArguments: prepareQuestionArgumentsFor(ctx.graphNodes),
+		executionMode: "sequential",
+		execute: async (_toolCallId, input) => {
+			const problems = exerciseProblems(input, ctx.graphNodes, input.concepts);
+			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
+			if (nodeIdProblemText) problems.push(nodeIdProblemText);
+			if (problems.length > 0) return invalidInputResult("exercise", problems);
+			const refusal = guard("exercise", input.type);
+			if (refusal) return invalidInputResult("exercise", [refusal]);
+			return questionResult();
+		},
+	};
+	return tool;
+}
+
+/** The prober's exercise tool - named `assess`; no `type`, no `nodeId`. */
+export function probeExerciseToolFor(ctx: { graphNodes?: ConceptNodes } = {}, formats: readonly InteractiveFormat[] = []) {
+	const parameters = Type.Object({ ...exerciseInputBase.properties, format: exerciseFormatField(formats) });
+	const tool: AgentTool<typeof parameters> = {
+		name: "assess",
+		label: "assess",
+		description: exerciseDescription("assess", formats, false),
+		parameters,
+		prepareArguments: prepareQuestionArgumentsFor(ctx.graphNodes),
+		executionMode: "sequential",
+		execute: async (_toolCallId, input) => {
+			const problems = exerciseProblems(input, ctx.graphNodes, input.concepts);
+			if (problems.length > 0) return invalidInputResult("assess", problems);
+			return questionResult();
+		},
+	};
+	return tool;
+}
+
 /** The prober's registry context: the probe's own needs (probe_done —
  *  ProbeDoneContext) PLUS the job-dispatch wiring, since the owner ruling
  *  (2026-09-20) puts research in the probe phase's registry too. */
@@ -332,6 +452,8 @@ export interface ProberToolContext extends ProbeDoneContext {
 	/** The resolved quizzing mechanic. Absent = derived from `enabled`
 	 *  (legacy tools.explain), else Mixed. */
 	quizMechanic?: QuizMechanic;
+	/** The interactive formats switched on (agent.formats). Empty/absent = no `assess` tool. */
+	formats?: InteractiveFormat[];
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -369,6 +491,7 @@ export function createProberTools(
 		{
 			...(mechanics !== "free" ? { probe: probeQuizToolFor({ graphNodes: ctx.graphNodes }) } : {}),
 			...(mechanics !== "choice" ? { recall: probeExplainToolFor({ graphNodes: ctx.graphNodes }) } : {}),
+			...((ctx.formats ?? []).length > 0 ? { assess: probeExerciseToolFor({ graphNodes: ctx.graphNodes }, ctx.formats!) } : {}),
 		};
 	// healToolRecord (owner, 2026-10-09 — the whitehead generalization):
 	// the standard argument heal over the WHOLE registry — every tool,
@@ -424,7 +547,7 @@ export interface TeachTurnView {
 const GUARD_MAX_REFUSALS = 2;
 export function teachGuardFor(view: TeachTurnView | undefined) {
 	const refusals = new Map<string, number>();
-	return (tool: "quiz" | "explain", type: string | undefined): string | null => {
+	return (tool: "quiz" | "explain" | "exercise", type: string | undefined): string | null => {
 		if (!view || type !== "check") return null;
 		if (visibleTeachingSinceLastInput(view.messages(), [])) return null;
 		const n = refusals.get(tool) ?? 0;
@@ -513,6 +636,8 @@ export interface TeacherToolContext extends PlanToolContext {
 	/** The resolved quizzing mechanic. Absent = derived from `enabled`
 	 *  (legacy tools.explain), else Mixed. */
 	quizMechanic?: QuizMechanic;
+	/** The interactive formats switched on (agent.formats). Empty/absent = no `exercise` tool. */
+	formats?: InteractiveFormat[];
 }
 
 /**
@@ -566,6 +691,7 @@ export function createTeacherTools(
 		{
 			...(mechanics !== "free" ? { quiz: teachQuizToolFor(ctx) } : {}),
 			...(mechanics !== "choice" ? { explain: teachExplainToolFor(ctx) } : {}),
+			...((ctx.formats ?? []).length > 0 ? { exercise: teachExerciseToolFor(ctx, ctx.formats!) } : {}),
 		};
 	// healToolRecord — same standard as the prober's registry (above).
 	return healToolRecord(

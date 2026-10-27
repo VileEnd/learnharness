@@ -141,7 +141,7 @@ flowchart TB
 
 ### 2.1 The core barrel and browser-safety
 
-`src/core/index.ts` exports only browser-safe modules — pure logic + types, no node builtins, no fs, no network. Deliberately **not** barrel-exported (server code imports them directly): `graph.ts` and `coverage.ts` (need `node:crypto`), `clusters.ts`, `session-clusters.ts` and `layout-settle.ts` (server-only roles). Port *types* are types-only, hence safe to re-export. This split is what lets the same core serve browser (grading, layout, plan statuses, cost folding) and server (merger, derivation, coverage).
+`src/core/index.ts` exports only browser-safe modules — pure logic + types, no node builtins, no fs, no network. Deliberately **not** barrel-exported (server code imports them directly): `graph.ts` and `coverage.ts` (need `node:crypto`), `clusters.ts`, `session-clusters.ts` and `layout-settle.ts` (server-only roles). Port *types* are types-only, hence safe to re-export. This split is what lets the same core serve browser (grading, layout, plan statuses, cost folding) and server (merger, derivation, coverage). The interactive-exercise modules `math-expr.ts` and `exercise-core.ts` are barrel-exported and import no `node:*` module, because the browser and the server run the same graders (§5.2).
 
 ### 2.2 Contracts — one file per domain
 
@@ -340,6 +340,22 @@ Sub-agents **verify, never one-shot**: the demo-builder headlessly executes its 
 
 ---
 
+### 5.2 Interactive exercises (PR 1: core formats)
+
+A third question instrument beside quiz/explain and ask: the learner **produces** an answer in a structured widget, and deterministic code grades it. The formats with a grader in this build are `numeric`, `blanks`, `table` and `multipart` (`IMPLEMENTED_FORMATS`); `INTERACTIVE_FORMATS` already names the later ones so old records keep parsing.
+
+- **Tools.** The teacher holds `exercise` (with `type` predict/check and a plan `nodeId`), the prober holds `assess` (no `type`, no `nodeId`; the same name split as `quiz`/`probe` and `explain`/`recall`). Practice has no third tool: the `problem` tool takes an optional `format` + `spec` pair (both or neither). All three validate the spec in `execute` (`exerciseSpecProblems`; a number or expression key must itself parse, and an expression key may use only its declared `variables`), require 2 or 3 `hints`, and refuse a hint that contains an accepted value as a whole token (`hintLeaks`). Each takes the optional `requireThinking`, as quiz and explain do. The tools exist only when at least one format is enabled.
+- **Teach-phase guard.** A teach `exercise` with `type: "check"` goes through the same guard as quiz and explain (`teachGuardFor` in `src/agent/tools.ts`): it is refused when no visible teaching reached the learner since the last input, and the third attempt passes with a warning. Predictions and the prober's `assess` are never guarded.
+- **The browser grades.** `exercise`/`assess` have no server-side grading, like quiz: the dock (`components/question-dock.tsx`, widgets in `components/exercise/`) grades every Check with `gradeExercise` and keeps only the marks (`stripExpected`), so the expected values never reach the DOM before the loop closes. A correct Check, Submit, or "Show answer" (`gaveUp`) closes the loop; `buildExerciseAnswer` (`question-core.ts`) then builds the answer record with the full verdict, `attempts`, `hintsUsed`, `gaveUp` and `firstAttempt`. `compactAnswerForModel` strips the expected values from what the model reads (it wrote the key).
+- **Couldn't read is not wrong.** Before grading a Check, the docks ask `unreadableItems` for filled number/expression entries that do not parse ("1 000", "1,000", "2 3"). Those refuse the Check with a "couldn't read" notice, and the Check does not count as an attempt. `math-expr.ts` normalises common typed notation first (× · ⋅ → `*`, ÷ → `/`, superscripts → `^`, √ → `sqrt`, bare function arguments like `sinx`), so right answers in everyday notation grade right.
+- **The server re-grades practice Checks.** In practice, a Check rides the thinking input as a `ThinkingAttempt` (`{format, response, verdict}`). `parseChatInput` shape-checks it, and `inputAppends` re-grades it against the active problem's own spec (`verifiedAttempt` in `src/core/input-events.ts`). A claimed verdict that does not match the server's grade is a 400. The recorded verdict is always the server's, marks-only.
+- **Marks only until `conclude`.** The `practice-thinking` marker's `details.attempt` stores the marks-only verdict, and its content adds an `Attempt:` line with the summary and a per-item ✓/✗ list for the model, never the expected values. The answer key appears only when `conclude` reveals the problem (`keyResponse` renders it in the conclude card).
+- **Settings.** `agent.formats` is a boolean delta map keyed by format name. An absent key means enabled. `enabledFormats(effective)` (`settings-resolution.ts`) resolves it, and the chat handler passes the list to the prober, teacher and practice tool contexts. The settings page groups the toggles under "Question formats".
+- **Evidence.** `gradedItems` (`src/core/learner.ts`) reads answered `exercise`/`assess` calls through `exerciseItem` (kinds `exercise` and `assess`; predictions skipped). A first-try correct answer without hints is `clean` (or `tentative`/weak at low confidence). A correct answer after retries or hints is `correctWithHelp` (weak). `partly` is weak. A wrong answer is `miss` and a give-up is `surrendered`, both failed, with the first wrong item of the first attempt as the misconception.
+- **Display.** `parseExerciseInput` (`tool-parts.ts`) is the lenient display parse of persisted calls. The plan statuses (`contracts/plan.ts`) and the phase fold (`phases.ts`) count `tool-exercise` parts as they count `tool-quiz` and `tool-explain`.
+
+---
+
 ## 6. The knowledge graph — two channels, one writer
 
 **The extraction pipeline is the sole graph writer.** Nothing else appends to `data/graph/*.jsonl` — not the teacher, not the server, not a migration script. (The one sanctioned exception: `PUT /api/graph/positions` writes layout positions only, sanitized, with an incremental layout settle when the graph grew. Backfill scripts bypass this by design, as one-time operations.)
@@ -484,6 +500,10 @@ The app server has **no authentication of its own**: every `/api/*` route trusts
 | **Failure containment** — side channels (context, extraction, usage, naming) are fire-and-forget behind try/catch seams; a side-channel failure never touches the response or the persist; the turn registry clears on every path |
 | **Absence is not zero** — unreported tokens, absent prices, absent levels render as absent, never fabricated |
 | **Schema-valid ⇔ parseable** — boundary zod schemas are shared verbatim by producer and consumer |
+| **Exercises: the browser grades, the server re-grades what it records from practice** — teach/probe exercise answers are graded in the dock with the shared `gradeExercise`; a practice Check's claimed verdict is re-graded against the active problem's spec and refused on mismatch (`verifiedAttempt`) |
+| **Marks only until the reveal** — Check verdicts keep per-item marks, never expected values, in the DOM, the practice record and the model's context until the loop closes (teach/probe) or `conclude` reveals the problem (practice) |
+| **Unreadable is not wrong** — an entry the grader cannot parse refuses the Check ("couldn't read") instead of grading it wrong; it never counts as an attempt |
+| **Absent format key = enabled** — `agent.formats` stores only switched-off formats; `enabledFormats` derives the list |
 
 ### Known deviations from the ideal (documented, deliberate or accepted)
 
@@ -567,6 +587,10 @@ Every place the architecture is designed to be cut — the "one file" a future c
 | Steer delivery (wake) | `src/server/jobs.ts` + injected `deliver` | how background results re-enter lessons |
 | Push events | `src/core/events.ts` (bus) + `src/server/events-stream.ts` (SSE seam) + `components/server-events.tsx` (the window's EventSource) | change notification, end to end |
 | Web Push | `src/server/push.ts` (`notify`, injectable sender) + `public/sw.js` (`push`/`notificationclick`) + `components/settings/notifications-row.tsx` | when and how a device is told something while the app is closed; "teacher replied" fires only when no view is attached to the turn stream (`onFinish`'s `viewers`) |
+| Interactive exercise formats | `src/core/exercise-core.ts` (contract, `exerciseSpecProblems`, `gradeExercise`, `stripExpected`, `hintLeaks`, `unreadableItems`) + `src/core/math-expr.ts` (safe parser, `parseNumberLike`, `exprEquivalent`, `normalizeMathInput`) + `components/exercise/` (one widget per format) | what a format is, how it grades, how typed math reads |
+| Exercise answers and display | `buildExerciseAnswer` / `compactAnswerForModel` (`question-core.ts`) + `parseExerciseInput` (`tool-parts.ts`) | what an answered exercise records and what the model reads |
+| Practice attempt verification | `verifiedAttempt` in `src/core/input-events.ts` + `newThinkingMessage(…, { attempt })` (`native-messages.ts`) | how a practice Check is trusted and recorded |
+| Enabled formats | `agent.formats` + `enabledFormats` (`settings-resolution.ts`) | which formats the tools offer, one settings group |
 | Agent construction (tests) | `handleChatRequest(req, buildAgent?)` | scripted engines, no refactor |
 | Sub-agent verification | `sub-agents/headless.ts` (`headlessOverride`) | demo/SVG verification, no Chrome |
 | Data location (Docker volume) | `LH_DATA_DIR` env (`config.ts` PATHS) | where data/ lives, nothing else |

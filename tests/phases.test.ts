@@ -131,6 +131,7 @@ test("phaseAt3: empty transcript is probe", () => {
 
 import type { LhMessage } from "../src/core/native-messages.ts";
 import { phaseAt3Lh } from "../src/core/phases.ts";
+import { derivePlanStatuses, derivePlanStatusesLh } from "../src/core/contracts/plan.ts";
 
 /** A native toolResult (the probe_done conclusion). */
 function toolResult(toolName: string, isError = false): LhMessage {
@@ -209,4 +210,32 @@ test("phaseAt3 + phaseAt3Lh: a tagged explain CALL is the plan→teach seam too"
 		]),
 		"the two folds agree on the explain mechanic",
 	);
+});
+
+// ─── the exercise tool at the seam (interactive exercises, PR 1) ────────────
+
+test("tagged exercise advances plan to teach (view fold, native fold, plan statuses)", () => {
+	const done = toolResult("probe_done");
+	const exerciseCall = (args: Record<string, unknown>): LhMessage =>
+		({
+			id: "a_exercise",
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call_exercise", name: "exercise", arguments: args }],
+			timestamp: Date.now(),
+		}) as unknown as LhMessage;
+	const tagged = exerciseCall({ question: "q", format: "numeric", nodeId: "gravity-basics" });
+	const untagged = exerciseCall({ question: "q", format: "numeric" });
+
+	assert.equal(phaseAt3Lh([done, untagged]), "plan");
+	assert.equal(phaseAt3Lh([done, tagged]), "teach");
+	assert.equal(
+		phaseAt3([
+			{ parts: [{ type: "tool-probe_done", state: "output-available" } as never] },
+			{ parts: [{ type: "tool-exercise", input: { nodeId: "gravity-basics" } } as never] },
+		]),
+		"teach",
+	);
+	const tree = { nodes: [{ id: "gravity-basics", title: "G" }, { id: "other", title: "O" }], edges: [], version: 1 };
+	assert.equal(derivePlanStatusesLh(tree, [tagged]).current, "gravity-basics");
+	assert.equal(derivePlanStatuses(tree, [{ parts: [{ type: "tool-exercise", input: { nodeId: "other" } } as never] }]).current, "other");
 });

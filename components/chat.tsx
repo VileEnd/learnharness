@@ -56,7 +56,7 @@ import { PracticeDock } from "@/components/practice-dock";
 import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-cards";
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
 import { TopBar } from "@/components/top-bar";
-import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
+import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, ThinkingAttempt, TurnUsage, SessionPricing } from "@/src/core";
 import type { LhViewMessage } from "@/src/core";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
 import {
@@ -491,10 +491,10 @@ export function Chat({
 	// the dock stays mounted (the problem is still active until the agent
 	// concludes).
 	const submitThinking = useCallback(
-		(text: string) => {
+		(text: string, attempt?: ThinkingAttempt) => {
 			const problem = activeProblemRef.current;
 			if (!problem) return;
-			void send({ type: "thinking", problemCallId: problem.toolCallId, text });
+			void send({ type: "thinking", problemCallId: problem.toolCallId, text, ...(attempt ? { attempt } : {}) });
 		},
 		[send],
 	);
@@ -1518,7 +1518,9 @@ export function Chat({
 													case "tool-probe":
 													case "tool-ask_user_question":
 													case "tool-explain":
-													case "tool-recall": {
+													case "tool-recall":
+													case "tool-exercise":
+													case "tool-assess": {
 														// Pending/streaming questions live in the dock, not the
 														// transcript; answered ones render as graded records.
 														if (part.state === "output-available") {
@@ -1878,8 +1880,9 @@ function DockOverlay({
 	 *  {toolCallId, input} — dock ownership exactly like a pending
 	 *  question (the composer is replaced); null in teaching sessions. */
 	practice: { toolCallId: string; input: unknown } | null;
-	/** (commit, text) — the practice dock's two submit lanes. */
-	onSubmitThinking: (text: string) => void;
+	/** The practice dock's send: the thinking, plus the graded attempt when an
+	 *  interactive problem's Check carries one. */
+	onSubmitThinking: (text: string, attempt?: ThinkingAttempt) => void;
 	/** Teach-phase pending question: arrives collapsed behind the reveal button (W5). */
 	requiresReveal: boolean;
 	/** The reading-thinking draft (owner 2026-10-03) — owned by ChatView so
@@ -2370,7 +2373,7 @@ function DockOverlay({
 					>
 							{pending ? (
 								<QuestionDock
-									toolName={pending.tool as "quiz" | "probe" | "ask_user_question" | "explain" | "recall"}
+									toolName={pending.tool as "quiz" | "probe" | "ask_user_question" | "explain" | "recall" | "exercise" | "assess"}
 									toolCallId={pending.toolCallId}
 									input={pending.input as never}
 									expanded={expanded}
@@ -2387,7 +2390,7 @@ function DockOverlay({
 							) : practice ? (
 								<PracticeDock
 									problemCallId={practice.toolCallId}
-									input={practice.input as { statement: string }}
+									input={practice.input as { statement: string; format?: unknown; spec?: unknown }}
 									expanded={expanded}
 									onExpand={() => {
 										setExpanded(true);

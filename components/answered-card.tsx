@@ -7,7 +7,9 @@ import { ThinkingBlock } from "@/components/thinking-block";
 import { cn } from "@/lib/utils";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import type { QuestionAnswerData } from "@/src/core";
-import { answerForPresentation, parseAskInput, parseQuizInput } from "@/src/core";
+import { ExerciseWidget } from "@/components/exercise/exercise-widget";
+import { emptyResponse } from "@/components/exercise/attempt-state";
+import { answerForPresentation, parseAskInput, parseExerciseInput, parseQuizInput } from "@/src/core";
 
 /**
  * Static rendering of an answered question (tool part in `output-available`).
@@ -19,6 +21,8 @@ import { answerForPresentation, parseAskInput, parseQuizInput } from "@/src/core
  * client — the card reveals his answer, the committed correct answer, and
  * the explanation, with NO verdict chips (owner ruling 2026-09-27).
  */
+const FILLED_IN_TABLE = /^\s*(?:\*\*)?Filled in:?(?:\*\*)?\s*\n+(?:\s*\|.*(?:\n|$))+\s*/i;
+
 export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionAnswerData; input?: unknown }) {
 	const answer = answerForPresentation(savedAnswer, input);
 	const [whyOpen, setWhyOpen] = useState(false); // the tucked explanation (predictions, owner 2026-10-03)
@@ -32,6 +36,21 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 
 	const isQuiz = answer.kind === "quiz";
 	const isExplain = answer.kind === "explain";
+	const isExercise = answer.kind === "exercise";
+	// The exercise's spec rides the original call; without it (a foreign or
+	// malformed record) the card degrades to the verdict summary.
+	const exParsed = isExercise ? parseExerciseInput(input) : undefined;
+	const exInput = exParsed?.ok ? exParsed.input : undefined;
+	const exFormat = answer.format ?? exInput?.format;
+	const exWidget = exInput && exFormat === exInput.format ? exInput : undefined;
+	const exOutcome = answer.verdict?.outcome;
+	// A table review already shows the graded grid; drop an explanation's own
+	// leading "Filled in:" + table so it is not repeated under "Why".
+	const exExplanation = (() => {
+		const raw = exInput?.explanation ?? answer.explanation;
+		if (typeof raw !== "string") return raw;
+		return exFormat === "table" ? raw.replace(FILLED_IN_TABLE, "") : raw;
+	})();
 	const selectedIdx = new Set(answer.answers.map((a) => a.index));
 	const correctIdx = new Set(answer.correctIndices ?? []);
 	// The question's own context rides the ORIGINAL CALL, not the answer
@@ -70,13 +89,27 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 					? "Probe"
 					: answer.tool === "recall"
 						? "Recall"
-						: isQuiz
+						: isExercise
+							? "Exercise"
+							: isQuiz
 								? answer.questionType === "predict"
 									? "Prediction"
 									: "Check"
 									: isExplain
 										? "Explain"
 											: "Question"}
+				{isExercise &&
+					(answer.dontKnow ? (
+						<span className="rounded bg-muted px-1.5 py-0.5">didn't know</span>
+					) : answer.gaveUp ? (
+						<span className="rounded bg-red-500/15 px-1.5 py-0.5 text-red-500">gave up</span>
+					) : exOutcome === "correct" ? (
+						<span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-500">correct</span>
+					) : exOutcome === "partly" ? (
+						<span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-500">partly correct</span>
+					) : exOutcome === "wrong" ? (
+						<span className="rounded bg-red-500/15 px-1.5 py-0.5 text-red-500">incorrect</span>
+					) : null)}
 				{isQuiz &&
 					(answer.dontKnow ? (
 						<span className="rounded bg-muted px-1.5 py-0.5">didn't know</span>
@@ -94,6 +127,39 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 				// 2026-10-12): full markdown, LaTeX included.
 				<div className="mb-3 text-sm text-muted-foreground">
 					<ToolContentResponse>{parsedDetails}</ToolContentResponse>
+				</div>
+			)}
+
+			{isExercise && (
+				<div data-testid="answered-exercise">
+					{exWidget && (
+						<ExerciseWidget
+							format={exWidget.format}
+							spec={exWidget.spec}
+							toolCallId="answered"
+							value={answer.response ?? emptyResponse(exWidget.format, exWidget.spec)}
+							onChange={() => {}}
+							review={answer.verdict}
+							readOnly
+						/>
+					)}
+					<div className="mt-1 text-xs text-muted-foreground" data-testid="exercise-summary">
+						{[
+							answer.verdict?.summary,
+							answer.attempts ? `${answer.attempts} ${answer.attempts === 1 ? "attempt" : "attempts"}` : undefined,
+							answer.hintsUsed ? `${answer.hintsUsed} ${answer.hintsUsed === 1 ? "hint" : "hints"}` : undefined,
+						]
+							.filter(Boolean)
+							.join(" · ")}
+					</div>
+					{exExplanation && (
+						<div className="mt-2 rounded-lg bg-muted py-2 text-sm text-muted-foreground" data-testid="exercise-explanation">
+							<span className="font-medium text-foreground">Why: </span>
+							<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">
+								{exExplanation as string}
+							</ToolContentResponse>
+						</div>
+					)}
 				</div>
 			)}
 
@@ -168,7 +234,7 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 			    "I don't know" sent none (its slider was grayed out), explain and
 			    ask never had one, and records from before the feature carry no
 			    field — nothing to show, nothing rendered. */}
-			{isQuiz && answer.confidence != null && (
+			{(isQuiz || isExercise) && answer.confidence != null && (
 				<div className="mt-3 flex items-center gap-3" data-testid="answered-confidence">
 					<ConfidenceRail value={answer.confidence} className="min-w-0 flex-1" />
 					<span className="w-9 shrink-0 text-right font-mono text-sm tabular-nums text-muted-foreground">
@@ -176,7 +242,7 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 					</span>
 				</div>
 			)}
-			{answer.dontKnow && isQuiz && (
+			{answer.dontKnow && (isQuiz || isExercise) && (
 				<div className="mt-2 text-sm text-muted-foreground">Answered “I don't know”.</div>
 			)}
 
