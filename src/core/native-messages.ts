@@ -519,6 +519,43 @@ export function newHintRequest(callId: string): LhMarkerMessage {
 	};
 }
 
+/** Markers that are the learner's own input (they end a hint reply's window). */
+const LEARNER_INPUT_MARKERS: ReadonlySet<string> = new Set([
+	"hint-request",
+	"work-submission",
+	"work-dismissed",
+	"practice-thinking",
+	"practice-next",
+	"problem-dismissed",
+]);
+
+/** The hints of one canvas task / practice problem: per `hint-request` marker for `callId`, in order, the
+ *  learner-facing text (plain text or a clean send_to_user) of the assistant messages up to the next learner
+ *  input (a user message, a learner-input marker, or a non-error question answer). `text: null` = no reply
+ *  text (yet): pending, or errored/aborted with nothing delivered. Derived at read time, never stored. */
+export function hintsFor(messages: readonly unknown[], callId: string): { requestId: string; text: string | null }[] {
+	const all = messages as readonly LhMessage[];
+	const failed = failedOutputCallIds(all);
+	const out: { requestId: string; text: string | null }[] = [];
+	for (let i = 0; i < all.length; i++) {
+		const m = all[i]!;
+		if (m.role !== "custom" || m.customType !== "hint-request") continue;
+		if ((m.details as { callId?: unknown } | null)?.callId !== callId) continue;
+		const parts: string[] = [];
+		for (let j = i + 1; j < all.length; j++) {
+			const n = all[j]!;
+			const input =
+				n.role === "user" ||
+				(n.role === "custom" && LEARNER_INPUT_MARKERS.has(n.customType)) ||
+				(n.role === "toolResult" && !n.isError && (QUESTION_TOOLS as readonly string[]).includes(n.toolName));
+			if (input) break;
+			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed));
+		}
+		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
+	}
+	return out;
+}
+
 /** The active canvas task: the NEWEST cleanly-acked work/sketch call that no
  *  clean `grade` call (its `question` is the call id) and no dismissal marker
  *  has closed. Honest activation, as for problems: errored and dangling
