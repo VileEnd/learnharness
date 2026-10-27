@@ -31,7 +31,7 @@ import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
 import { TeacherInk } from "./teacher-ink";
 import { useDrawingScene } from "./use-drawing-scene";
-import { HintStrip, HintsButton, hintPending } from "./hints";
+import { HintStrip, HintsButton } from "./hints";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
 
 export const AUTOSAVE_MS = 2000;
@@ -127,8 +127,8 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 		}
 		return false;
 	}, [messages, hints]);
+	// The whole hint turn, not just until its first token: a second tap mid-stream would spend another rung.
 	const hintTurnBusy = turnBusy && newestRequestIsLatestInput;
-	const hintBusy = hintPending(hints, hintTurnBusy);
 	const [hintsOpen, setHintsOpen] = useState(false);
 	const hintsOpenRef = useRef(false);
 	hintsOpenRef.current = hintsOpen;
@@ -495,7 +495,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
 						{onHint && (
-							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={compactionRunning || busy || hintBusy} onClick={onHint} className="h-9 rounded-[6px] px-3 text-sm">
+							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={compactionRunning || busy || hintTurnBusy} onClick={onHint} className="h-9 rounded-[6px] px-3 text-sm">
 								<LightbulbIcon className="size-4" /> Hint
 							</Button>
 						)}
