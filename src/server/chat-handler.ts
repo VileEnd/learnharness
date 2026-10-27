@@ -400,13 +400,18 @@ export async function handleChatInput(
 	// thinking) runs on the canvas slot's model; posing a task and every other
 	// turn stay with the tutor. The send_to_user gate, the usage stamp, the
 	// spend-cap price and the drawing context all read this per-turn engine.
-	// A canvas engine that cannot be built falls back to the tutor.
-	const canvasModel = resolveCanvasModel(effective.models, providerKeyPresent);
-	let engine = conversationEngine;
-	if (canvasModel && isCanvasInput(record.messages, input)) {
-		try { engine = piEngineForSpec(canvasModel); }
-		catch (err) { console.error(`[chat ${chatId}] canvas model unavailable, staying on the tutor:`, err); }
+	// A canvas model whose engine cannot be built counts as no vetted model:
+	// canvas tools stay off rather than run on the unvetted tutor.
+	let canvasModel = resolveCanvasModel(effective.models, providerKeyPresent);
+	let canvasEngine: ReturnType<typeof piEngineForSpec> | null = null;
+	if (canvasModel) {
+		try { canvasEngine = piEngineForSpec(canvasModel); }
+		catch (err) {
+			console.error(`[chat ${chatId}] canvas model unavailable, canvas off this turn:`, err);
+			canvasModel = null;
+		}
 	}
+	const engine = canvasEngine && isCanvasInput(record.messages, input) ? canvasEngine : conversationEngine;
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;
