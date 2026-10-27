@@ -166,16 +166,16 @@ export function accumulateJobUsage(
  *     Only computing workers appear in Background agents or accept abort.
  *
  *  4. Session delivery owns one registry entry per deterministic steer ID,
- *     including while a wake is in flight or a 409/403 returns its cargo.
+ *     including while a wake is in flight or a 409 returns its cargo.
  *     A live agent takes it via pi steering; registration restores saved
  *     pending jobs before the answer run's first poll. Otherwise the idle
- *     wake uses the normal turn composition and respects pending questions,
- *     dismissal, and background consent. A saved transcript marker completes
+ *     wake uses the normal turn composition and respects pending questions
+ *     and the dismissal pause. A saved transcript marker completes
  *     delivery; HTTP 200 or streamed visibility alone does not.
  *
  *     Failed starts remain quietly pending until a learner run or restart
  *     recovery, without new timers, visible delivery errors, or worker-status
- *     changes. Existing 409 backoff and consent deferral remain. Accepted
+ *     changes. A 409 still retries on the existing backoff. Accepted
  *     turns are never automatically replayed. Legacy running records with a
  *     result become finished/pending; legacy terminal records with no
  *     delivery metadata remain untouched. Session deletion discards pending
