@@ -61,7 +61,19 @@ function tokenize(src: string): Tok[] | string {
 			let j = i;
 			while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
 			if (j === i) j = i + 1; // lone π
-			toks.push({ k: "id", s: src.slice(i, j) });
+			const run = src.slice(i, j);
+			const whole = src[j] === "(" || isFn(run) || Object.hasOwn(CONSTS, run) || run.length === 1;
+			const hasFn = Object.keys(FUNCS).some((f) => run.includes(f));
+			if (whole || hasFn) {
+				toks.push({ k: "id", s: run });
+			} else {
+				// adjacent single-letter variables / pi: `xy`, `2xy`, `xpi` → implicit multiplication
+				for (let m = 0; m < run.length; ) {
+					const piece = run.startsWith("pi", m) ? "pi" : run[m]!;
+					toks.push({ k: "id", s: piece });
+					m += piece.length;
+				}
+			}
 			i = j;
 			continue;
 		}
