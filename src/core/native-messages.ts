@@ -98,6 +98,94 @@ export function asAgentMessages(messages: readonly LhMessage[]): AgentMessage[] 
 	return messages as unknown as AgentMessage[];
 }
 
+// ─── explicit learner-facing output ─────────────────────────────────────────
+
+export const SEND_TO_USER_TOOL = "send_to_user";
+
+/** Read the output tool's message without changing the native call. Also
+ * accepts partial arguments while streaming; malformed/empty inputs carry
+ * no prose. This projection is independent of the currently selected model. */
+export function sendToUserText(block: unknown): string | undefined {
+	if (!block || typeof block !== "object") return undefined;
+	const call = block as { type?: unknown; name?: unknown; arguments?: unknown };
+	if (call.type !== "toolCall" || call.name !== SEND_TO_USER_TOOL) return undefined;
+	if (!call.arguments || typeof call.arguments !== "object") return undefined;
+	const message = (call.arguments as { message?: unknown }).message;
+	return typeof message === "string" && message.trim() ? message : undefined;
+}
+
+/** Learner-facing prose, in content order. Only the explicit output tool
+ * joins ordinary text here — thinking and all other tool inputs stay out.
+ * Shared by coverage/extraction and Markdown; native history stays intact. */
+export function userFacingTextOf(content: unknown, failedOutputCalls?: ReadonlySet<string>): string[] {
+	if (typeof content === "string") return content.trim() ? [content] : [];
+	if (!Array.isArray(content)) return [];
+	const out: string[] = [];
+	for (const block of content) {
+		if (!block || typeof block !== "object") continue;
+		if (block.type === "toolCall" && failedOutputCalls?.has(block.id)) continue;
+		const text = block.type === "text" ? block.text : sendToUserText(block);
+		if (typeof text === "string" && text.trim()) out.push(text);
+	}
+	return out;
+}
+
+/** Failed output calls remain retry context, not delivered teaching.
+ * Truncated calls can have valid-looking partial arguments. Failed/aborted
+ * generations do not execute their calls at all, so may have no result. */
+export function failedOutputCallIds(messages: readonly LhMessage[]): ReadonlySet<string> {
+	const failed = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "toolResult" && message.toolName === SEND_TO_USER_TOOL && message.isError) {
+			failed.add(message.toolCallId);
+		} else if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
+			for (const block of message.content) {
+				if (block.type === "toolCall" && block.name === SEND_TO_USER_TOOL) failed.add(block.id);
+			}
+		}
+	}
+	return failed;
+}
+
+/** Non-whitespace characters of ordinary prose that count as teaching. */
+export const VISIBLE_TEACHING_MIN_CHARS = 200;
+
+/** TEACH-PHASE GUARD predicate: did visible teaching reach the learner since
+ *  his last input? Scans `messages` then `pendingTurnMessages` (the in-flight
+ *  turn) backwards to the last user message, answer result (a non-error
+ *  question-tool result) or model-facing marker. Teaching = a text block of at
+ *  least VISIBLE_TEACHING_MIN_CHARS non-whitespace characters, or a
+ *  send_to_user call that did not fail. A refused check's error result is not
+ *  an input boundary; the UI-only plan-block marker is not one either. */
+export function visibleTeachingSinceLastInput(
+	messages: readonly unknown[],
+	pendingTurnMessages: readonly unknown[] = [],
+): boolean {
+	const all = [...messages, ...pendingTurnMessages] as LhMessage[];
+	let start = 0;
+	for (let i = all.length - 1; i >= 0; i--) {
+		const m = all[i]!;
+		const boundary =
+			m.role === "user" ||
+			(m.role === "custom" && m.customType !== "plan-block") ||
+			(m.role === "toolResult" && !m.isError && (QUESTION_TOOLS as readonly string[]).includes(m.toolName));
+		if (boundary) {
+			start = i + 1;
+			break;
+		}
+	}
+	const since = all.slice(start);
+	const failed = failedOutputCallIds(since);
+	for (const m of since) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const block of m.content) {
+			if (block.type === "text" && block.text.replace(/\s/g, "").length >= VISIBLE_TEACHING_MIN_CHARS) return true;
+			if (block.type === "toolCall" && sendToUserText(block) !== undefined && !failed.has(block.id)) return true;
+		}
+	}
+	return false;
+}
+
 // ─── id minting ──────────────────────────────────────────────────────────────
 
 /** The app-wide message id shape (same as the UIMessage-era mint). */

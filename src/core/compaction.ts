@@ -37,7 +37,7 @@ import type { PlanTree } from "./contracts/plan.ts";
 import { derivePlanStatusesLh, derivedNodeStatus } from "./contracts/plan.ts";
 import { COMPACTED_HISTORY_HEADER } from "./contracts/chat.ts";
 import type { LhMessage, LhMarkerMessage } from "./native-messages.ts";
-import { newMessageId } from "./native-messages.ts";
+import { newMessageId, sendToUserText } from "./native-messages.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, SystemMessage } from "@earendil-works/pi-ai";
 
@@ -317,6 +317,7 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 			const blocks: string[] = [];
 			for (const b of assistant.content) {
 				if (b.type === "text") blocks.push(b.text);
+				else if (b.type === "toolCall" && sendToUserText(b) !== undefined) blocks.push(sendToUserText(b)!); // learner-facing prose
 				else if (b.type === "toolCall") blocks.push(`(tool call ${b.name}: ${JSON.stringify(b.arguments)})`);
 				// thinking blocks: the model's private scratch — its
 				// conclusions land in text; skip the noise
