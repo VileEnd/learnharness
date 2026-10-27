@@ -140,8 +140,9 @@ export function userFacingTextOf(
 	return out;
 }
 
-/** Normalized-token overlap at or above which an ordinary text block is a
- *  repeat of a send_to_user message of the same turn. */
+/** Normalized-token overlap, measured against the LONGER of the two token
+ *  sets, at or above which an ordinary text block is a repeat of a
+ *  send_to_user message of the same turn. */
 export const DUPLICATE_TEXT_OVERLAP = 0.8;
 /** Texts shorter than this many tokens are never judged a duplicate: a short
  *  meta line ("I marked up your sketch") stays visible (over-hiding is worse). */
@@ -153,8 +154,10 @@ function tokenSetOf(text: string): Set<string> {
 
 /** RC4 (cross-model robustness): within ONE turn (the span between two input
  *  boundaries) that used a send_to_user call, an ordinary text block that
- *  substantially repeats a send_to_user message (token overlap of the
- *  shorter text >= DUPLICATE_TEXT_OVERLAP) is redundant for DISPLAY. A turn
+ *  substantially repeats a send_to_user message (shared tokens >=
+ *  DUPLICATE_TEXT_OVERLAP of the LONGER token set, so neither a long text
+ *  beside a short message nor a short line beside a long message is ever a
+ *  repeat) is redundant for DISPLAY. A turn
  *  with no (successful) send_to_user hides nothing: that is the #102 safety
  *  net. Returns the redundant text blocks by identity. Consumers that render
  *  to the learner (projectView, hintsFor, session markdown) skip them;
@@ -186,11 +189,15 @@ export function redundantTextBlocks(messages: readonly unknown[]): ReadonlySet<o
 		for (const { block, tokens } of texts) {
 			if (tokens.size < DUPLICATE_MIN_TOKENS) continue;
 			for (const s of sent) {
-				const shorter = Math.min(tokens.size, s.size);
-				if (shorter === 0) continue;
+				// Measured against the LONGER token set: the text's own tokens must
+				// be >= 0.8 shared (so a long teaching text next to a short message
+				// stays) AND so must the message's (so a short line whose words all
+				// occur in a long message stays). Together this bounds the size
+				// ratio to [0.8, 1.25]: only a near-restatement is a repeat.
+				const longer = Math.max(tokens.size, s.size);
 				let common = 0;
 				for (const t of tokens) if (s.has(t)) common++;
-				if (common / shorter >= DUPLICATE_TEXT_OVERLAP) {
+				if (common / longer >= DUPLICATE_TEXT_OVERLAP) {
 					out.add(block);
 					break;
 				}

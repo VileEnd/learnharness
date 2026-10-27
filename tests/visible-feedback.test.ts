@@ -51,6 +51,32 @@ describe("RC4 dedupe after send_to_user", () => {
 		assert.equal(redundantTextBlocks(m).size, 0);
 	});
 
+	// Final-review critical: overlap was measured against the SHORTER text, so a
+	// short send_to_user hid any longer text that merely contained its words.
+	const LONG = "Great work on the sketch. Now look again at the vertex: a parabola with a positive leading coefficient opens upward, "
+		+ "so the vertex is the lowest point of the curve, and the axis of symmetry passes through it. Try marking that axis next.";
+
+	it("a long teaching text next to a short send_to_user stays visible", () => {
+		const m = [user("u"), asst("a1", [send("s1", "Great work on the sketch!")]), ack("r1", "s1"), asst("a2", [{ type: "text", text: LONG }])];
+		assert.equal(redundantTextBlocks(m).size, 0);
+		assert.deepEqual(textsOf(projectView(m)), ["Great work on the sketch!", LONG]);
+		assert.equal(hintsFor([newHintRequest("w"), ...m.slice(1)], "w")[0]!.text, `Great work on the sketch!\n\n${LONG}`);
+		assert.ok(sessionMarkdown(m, { anchors: false }).includes("axis of symmetry"), "markdown keeps the long text");
+	});
+
+	it("a short text whose words all occur in a long send_to_user stays visible", () => {
+		const short = "Now look at the vertex next.";
+		const m = [user("u"), asst("a1", [send("s1", LONG)]), ack("r1", "s1"), asst("a2", [{ type: "text", text: short }])];
+		assert.equal(redundantTextBlocks(m).size, 0);
+		assert.deepEqual(textsOf(projectView(m)), [LONG, short]);
+	});
+
+	it("a repeat with a short lead-in is still hidden", () => {
+		const m = [user("u"), asst("a1", [send("s1", MSG)]), ack("r1", "s1"), asst("a2", [{ type: "text", text: `To recap: ${MSG}` }])];
+		assert.equal(redundantTextBlocks(m).size, 1);
+		assert.deepEqual(textsOf(projectView(m)), [MSG]);
+	});
+
 	it("coverage still counts both (userFacingTextOf without the set)", () => {
 		assert.equal(userFacingTextOf(turn[3]!.role === "assistant" ? (turn[3] as { content: unknown }).content : []).length, 1);
 	});
