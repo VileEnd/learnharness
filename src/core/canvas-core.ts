@@ -5,6 +5,10 @@
  * client-only and never part of a scene, so it is never hashed.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { healEncodedArguments } from "./argument-heal.ts";
+
 export type Brush = "pen" | "pencil" | "marker";
 export type ShapeKind = "line" | "arrow" | "rect" | "ellipse";
 
@@ -278,4 +282,258 @@ export function serializeSceneStructuredText(scene: DrawingScene, box: Box): str
 		}
 	}
 	return lines.join("\n");
+}
+
+// ---- teacher annotations (PR 3) ----
+
+export type AnnotationTarget = { object: string } | { cell: string } | { cells: string }; // cells: "B2:D3"
+export const MARK_KINDS = ["circle", "underline", "check", "cross", "note", "arrow"] as const;
+export type AnnotationMark =
+	| { kind: "circle" | "underline" | "check" | "cross" | "note"; target: AnnotationTarget; label?: string }
+	| { kind: "arrow"; from: AnnotationTarget; to: AnnotationTarget; label?: string };
+
+export const MAX_ANNOTATION_MARKS = 20;
+export const MAX_ANNOTATION_LABEL = 80;
+
+function gridRows(box: Box): number {
+	return regionGrid(box).rows;
+}
+
+/** What a model may legitimately cite for this drawing, appended to refusals so it can retry. */
+function validTargetsHint(scene: DrawingScene, box: Box): string {
+	const ids = scene.objects.filter(isTypedObject).map((o) => o.id);
+	return `valid cells are A1 to H${gridRows(box)}, ranges are written B2:D3` + (ids.length ? `; typed object ids: ${ids.join(", ")}` : "; this drawing has no typed objects (anchor by cell)");
+}
+
+function objectRect(o: DrawingObject): Box {
+	let x0: number, y0: number, x1: number, y1: number;
+	if (o.type === "stroke") {
+		const xs = o.points.map((p) => p[0]);
+		const ys = o.points.map((p) => p[1]);
+		x0 = Math.min(...xs); x1 = Math.max(...xs); y0 = Math.min(...ys); y1 = Math.max(...ys);
+	} else if (o.type === "shape") {
+		x0 = Math.min(o.x1, o.x2); x1 = Math.max(o.x1, o.x2); y0 = Math.min(o.y1, o.y2); y1 = Math.max(o.y1, o.y2);
+	} else {
+		x0 = Math.min(o.x, o.x + o.w); x1 = Math.max(o.x, o.x + o.w); y0 = Math.min(o.y, o.y + o.h); y1 = Math.max(o.y, o.y + o.h);
+	}
+	return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+function unionBox(a: Box, b: Box): Box {
+	const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+	return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+/** The world-space rectangle a target points at, or null when it does not resolve in this scene/grid. */
+export function resolveTargetRect(target: AnnotationTarget, scene: DrawingScene, box: Box): Box | null {
+	const t = target as { object?: unknown; cell?: unknown; cells?: unknown };
+	if (typeof t.object === "string") {
+		const o = scene.objects.find((x) => x.id === t.object);
+		return o ? objectRect(o) : null;
+	}
+	const grid = regionGrid(box);
+	// `cell` and `cells` resolve alike: a model that puts a range in `cell` (or one cell in `cells`) means it.
+	const spec = typeof t.cell === "string" ? t.cell : typeof t.cells === "string" ? t.cells : null;
+	return spec === null ? null : rangeRect(grid, box, spec);
+}
+
+/** A range separator: the colon the tool documents, or the dash the structured text writes spans with (`B6-D7`), or an en/em dash. */
+const RANGE_SEP = /\s*[:\-\u2013\u2014]\s*/;
+/** The shape of a cell or a range, grid aside ("C4", "B2:D3", "B2-D3"). */
+const CELL_SPEC = /^\s*[A-Ha-h]\d{1,2}(\s*[:\-\u2013\u2014]\s*[A-Ha-h]\d{1,2})?\s*$/;
+
+/** One cell or a two-corner range (either corner order), or null when it is not one in this grid. */
+function rangeRect(grid: RegionGrid, box: Box, spec: string): Box | null {
+	const parts = spec.trim().split(RANGE_SEP);
+	if (parts.length === 1) return cellRect(grid, box, parts[0] as string);
+	if (parts.length !== 2) return null;
+	const a = cellRect(grid, box, parts[0] as string);
+	const b = cellRect(grid, box, parts[1] as string);
+	return a && b ? unionBox(a, b) : null;
+}
+
+function targetProblem(label: string, target: unknown, scene: DrawingScene, box: Box): string | null {
+	if (typeof target !== "object" || target === null) return `${label} is missing - give {"object": id}, {"cell": "C4"} or {"cells": "B2:D3"}; ${validTargetsHint(scene, box)}`;
+	const t = target as { object?: unknown; cell?: unknown; cells?: unknown };
+	const given = [t.object, t.cell, t.cells].filter((v) => v !== undefined).length;
+	if (given !== 1) return `${label} must have exactly one of object, cell, cells; ${validTargetsHint(scene, box)}`;
+	if (resolveTargetRect(target as AnnotationTarget, scene, box)) return null;
+	const what = t.object !== undefined ? `object ${JSON.stringify(t.object)}` : t.cell !== undefined ? `cell ${JSON.stringify(t.cell)}` : `cells ${JSON.stringify(t.cells)}`;
+	const spec = t.object === undefined ? (t.cell ?? t.cells) : undefined;
+	if (typeof spec === "string" && !CELL_SPEC.test(spec)) {
+		return `${label}: ${what} is not a cell or a range - a cell is written C4 and ranges are written B2:D3; ${validTargetsHint(scene, box)}`;
+	}
+	return `${label}: ${what} does not exist in this drawing; ${validTargetsHint(scene, box)}`;
+}
+
+/** Problems with one mark against a scene and its grid box (empty = fine). */
+export function annotationMarkProblems(mark: unknown, scene: DrawingScene, box: Box): string[] {
+	if (typeof mark !== "object" || mark === null) return ["mark must be an object"];
+	const m = mark as { kind?: unknown; target?: unknown; from?: unknown; to?: unknown; label?: unknown };
+	const out: string[] = [];
+	if (typeof m.kind !== "string" || !(MARK_KINDS as readonly string[]).includes(m.kind)) {
+		return [`kind must be one of ${MARK_KINDS.join(", ")}`];
+	}
+	if (m.label !== undefined && (typeof m.label !== "string" || m.label.length > MAX_ANNOTATION_LABEL)) out.push(`label must be a string of at most ${MAX_ANNOTATION_LABEL} characters`);
+	if (m.kind === "arrow") {
+		const f = targetProblem("from", m.from, scene, box);
+		const t = targetProblem("to", m.to, scene, box);
+		if (f) out.push(f);
+		if (t) out.push(t);
+	} else {
+		const t = targetProblem("target", m.target, scene, box);
+		if (t) out.push(t);
+	}
+	return out;
+}
+
+// ---- the annotate input contract: ONE schema and ONE heal for the agent boundary and every read of the record ----
+
+const annotationTargetField = Type.Optional(
+	Type.Object(
+		{
+			object: Type.Optional(Type.String({ description: "A typed object id from the drawing's structured text, e.g. o2" })),
+			cell: Type.Optional(Type.String({ description: "One grid cell, e.g. C4" })),
+			cells: Type.Optional(Type.String({ description: "A grid range, top-left:bottom-right, e.g. B2:D3" })),
+		},
+		{ description: "Exactly ONE of object, cell, cells" },
+	),
+);
+
+/** The `annotate` tool's input schema: the agent tool declares it, and parseAnnotateInput reads the record with it. */
+export const annotateInputSchema = Type.Object({
+	drawingId: Type.String({ description: "The drawing to mark, exactly as the submission names it (drw_...)" }),
+	marks: Type.Array(
+		Type.Object({
+			kind: Type.String({ description: "circle | underline | check | cross | note | arrow" }),
+			target: annotationTargetField,
+			from: annotationTargetField,
+			to: annotationTargetField,
+			label: Type.Optional(Type.String({ description: `Short caption (at most ${MAX_ANNOTATION_LABEL} characters)` })),
+		}),
+		{ minItems: 1, maxItems: MAX_ANNOTATION_MARKS, description: `1 to ${MAX_ANNOTATION_MARKS} marks` },
+	),
+});
+
+export type AnnotateInput = { drawingId: string; marks: AnnotationMark[] };
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** A JSON-encoded object becomes the object; anything else is returned as is. */
+function decodedObject(v: unknown): unknown {
+	if (typeof v !== "string") return v;
+	try {
+		const parsed = JSON.parse(v) as unknown;
+		return isPlainObject(parsed) ? parsed : v;
+	} catch {
+		return v;
+	}
+}
+
+/** Optional fields sent as null mean absent (pi's boundary drops them before validation). */
+function withoutNulls(o: Record<string, unknown>): Record<string, unknown> {
+	return Object.values(o).includes(null) ? Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null)) : o;
+}
+
+/**
+ * The annotate heal: the standard top-level pass (a `marks` array sent as a JSON string) plus the nested
+ * wobbles of this one tool - a mark, or a mark's `target`/`from`/`to`, sent as a JSON-encoded object, and
+ * optional fields sent as null. Runs at the agent boundary (the tool's prepareArguments) AND in
+ * parseAnnotateInput, so a call that succeeded on healed args reads back the same from the RAW record.
+ * Well-formed args pass through untouched (same reference); idempotent.
+ */
+export function healAnnotateArguments(args: unknown): unknown {
+	const top = healEncodedArguments(args, annotateInputSchema);
+	if (!isPlainObject(top) || !Array.isArray(top.marks)) return top;
+	let changed = false;
+	const marks = top.marks.map((raw: unknown) => {
+		const decoded = decodedObject(raw);
+		if (!isPlainObject(decoded)) return raw;
+		let mark = withoutNulls(decoded);
+		for (const key of ["target", "from", "to"] as const) {
+			const t = decodedObject(mark[key]);
+			if (!isPlainObject(t)) continue;
+			const clean = withoutNulls(t);
+			if (clean !== mark[key]) mark = { ...mark, [key]: clean };
+		}
+		if (mark !== raw) changed = true;
+		return mark;
+	});
+	return changed ? { ...top, marks } : top;
+}
+
+/**
+ * Annotate arguments for READ (the fold, the card, the session markdown): heal, then the boundary's
+ * Convert + Check against the same schema, then the structural mark shape (a known kind; an arrow has
+ * from and to, every other mark a target). Undefined when the call could never have been accepted.
+ */
+export function parseAnnotateInput(raw: unknown): AnnotateInput | undefined {
+	const healed = healAnnotateArguments(raw);
+	if (!isPlainObject(healed)) return undefined;
+	const value = structuredClone(healed);
+	Value.Convert(annotateInputSchema, value);
+	if (!Value.Check(annotateInputSchema, value)) return undefined;
+	const clean = Value.Clean(annotateInputSchema, value) as { drawingId: string; marks: Record<string, unknown>[] };
+	const wellFormed = clean.marks.every((m) =>
+		(MARK_KINDS as readonly string[]).includes(m.kind as string) && (m.kind === "arrow" ? m.from !== undefined && m.to !== undefined : m.target !== undefined),
+	);
+	return wellFormed ? (clean as AnnotateInput) : undefined;
+}
+
+/** How a target reads in text: its object id, cell or range ("?" when it has none). */
+export function annotationTargetText(target: unknown): string {
+	const t = (isPlainObject(target) ? target : {}) as Partial<Record<"object" | "cell" | "cells", unknown>>;
+	const v = t.object ?? t.cell ?? t.cells;
+	return typeof v === "string" ? v : "?";
+}
+
+/** Where one mark points, in text: "o2", "B2:D3", or "A1 → C4" for an arrow. */
+export function annotationMarkPlace(mark: AnnotationMark): string {
+	return mark.kind === "arrow" ? `${annotationTargetText(mark.from)} \u2192 ${annotationTargetText(mark.to)}` : annotationTargetText(mark.target);
+}
+
+/** Ids of annotate calls that really happened: a result exists and is neither isError nor {ok:false}. */
+function succeededCallIds(messages: readonly unknown[]): Set<string> {
+	const ids = new Set<string>();
+	for (const m of messages) {
+		const r = m as { role?: string; toolCallId?: string; isError?: boolean; details?: unknown };
+		if (r.role !== "toolResult" || typeof r.toolCallId !== "string" || r.isError) continue;
+		if ((r.details as { ok?: unknown } | null | undefined)?.ok === false) continue;
+		ids.add(r.toolCallId);
+	}
+	return ids;
+}
+
+/** The marks the teacher drew on one drawing: a pure fold over successful `annotate` calls, in call order. */
+export function annotationsOf(messages: readonly unknown[], drawingId: string): { callId: string; marks: AnnotationMark[] }[] {
+	const ok = succeededCallIds(messages);
+	const out: { callId: string; marks: AnnotationMark[] }[] = [];
+	for (const m of messages) {
+		const a = m as { role?: string; content?: unknown };
+		if (a.role !== "assistant" || !Array.isArray(a.content)) continue;
+		for (const b of a.content as { type?: string; name?: string; id?: string; arguments?: unknown }[]) {
+			if (b.type !== "toolCall" || b.name !== "annotate" || typeof b.id !== "string" || !ok.has(b.id)) continue;
+			// The record keeps RAW arguments (the tool-parts law): parse them through the same heal the
+			// boundary ran, or a call that succeeded on healed args folds to nothing.
+			const args = parseAnnotateInput(b.arguments);
+			if (args?.drawingId !== drawingId) continue;
+			out.push({ callId: b.id, marks: args.marks });
+		}
+	}
+	return out;
+}
+
+/** Drawing ids the learner submitted for one task (a work call or a practice problem), oldest first, deduplicated. */
+export function submittedDrawingIds(messages: readonly unknown[], taskCallId: string): string[] {
+	const ids: string[] = [];
+	for (const m of messages) {
+		const r = m as { role?: string; customType?: string; details?: { workCallId?: unknown; problemCallId?: unknown; drawingId?: unknown } | null };
+		if (r.role !== "custom") continue;
+		const task = r.customType === "work-submission" ? r.details?.workCallId : r.customType === "practice-thinking" ? r.details?.problemCallId : undefined;
+		const id = r.details?.drawingId;
+		if (task === taskCallId && typeof id === "string" && !ids.includes(id)) ids.push(id);
+	}
+	return ids;
 }

@@ -17,6 +17,9 @@ import { CanvasPill } from "../components/model-picker.tsx";
 import { StatsBar } from "../components/stats-bar.tsx";
 import { DrawingThumb, WorkSubmissionCard, drawingPngUrl } from "../components/work-cards.tsx";
 import { GradeChip } from "../components/artifacts/grade-chip.tsx";
+import { AnnotateCard } from "../components/artifacts/annotate-card.tsx";
+import { artifactRenderers } from "../components/artifacts/index.ts";
+import { TeacherInk } from "../components/canvas/teacher-ink.tsx";
 import { canSubmitWork, CanvasWorkspace } from "../components/canvas/canvas-workspace.tsx";
 import { pickDraft } from "../components/canvas/draft.ts";
 import { tableAddCol, tableAddRow, tableNextCell, tableRemoveCol, tableRemoveRow } from "../components/canvas/object-edit.ts";
@@ -26,7 +29,7 @@ import { canvasTargetOf, dockKindOf } from "../components/chat.tsx";
 import { createPracticeGate, problemTool } from "../src/agent/tools/practice.ts";
 import { projectView } from "../src/core/view.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
-import type { DrawingScene } from "../src/core";
+import { sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type DrawingScene } from "../src/core";
 
 const noop = () => {};
 const dock = (over: Partial<React.ComponentProps<typeof WorkDock>> = {}) =>
@@ -181,6 +184,16 @@ describe("canvas workspace seams", () => {
 		assert.ok(!html.includes("fixed inset-0"), "mounted in the session area, never fixed inset-0");
 	});
 
+	it("the Teacher marks toggle appears only once the teacher annotated a drawing of this task", () => {
+		const sub = { role: "custom", customType: "work-submission", details: { workCallId: "call_w", drawingId: "drw_a" } };
+		const call = { role: "assistant", content: [{ type: "toolCall", id: "a1", name: "annotate", arguments: { drawingId: "drw_a", marks: [{ kind: "check", target: { cell: "A1" } }] } }] };
+		const ok = { role: "toolResult", toolCallId: "a1", toolName: "annotate", isError: false, content: [] };
+		const render = (messages: unknown[]) => renderToStaticMarkup(<CanvasWorkspace chatId="c1" callId="call_w" question="q" onSubmit={noop} onMinimize={noop} messages={messages} />);
+		assert.match(render([sub, call, ok]), /data-testid="canvas-ink-toggle"/);
+		assert.ok(!render([sub]).includes("canvas-ink-toggle"));
+		assert.ok(!render([sub, call, { ...ok, isError: true }]).includes("canvas-ink-toggle"), "a refused call leaves no marks");
+	});
+
 	it("table edits: add/remove row and column, Tab walks reading order", () => {
 		const t = [["a", "b"], ["c", "d"]];
 		assert.deepEqual(tableAddRow(t), [["a", "b"], ["c", "d"], ["", ""]]);
@@ -223,5 +236,80 @@ describe("practice canvas problems", () => {
 	it("accepted when the session canvas is on", async () => {
 		const ok = await problemTool(gate(), undefined, undefined, true).execute("call_x", input);
 		assert.equal(ok.isError, undefined);
+	});
+});
+
+describe("teacher ink", () => {
+	const inkScene: DrawingScene = {
+		version: 1,
+		objects: [
+			{ id: "o1", z: 0, type: "text", x: 100, y: 100, w: 200, h: 60, source: "x = 3" },
+			{ id: "o2", z: 1, type: "text", x: 100, y: 300, w: 200, h: 60, source: "y = 4" },
+		],
+	};
+	const box = sceneBoundingBox(inkScene)!;
+	const ink = (marks: AnnotationMark[], space: "world" | "percent") => renderToStaticMarkup(<TeacherInk marks={marks} scene={inkScene} box={box} space={space} />);
+
+	it("TeacherInk renders a circle for an object target", () => {
+		const html = ink([{ kind: "circle", target: { object: "o1" } }], "world");
+		assert.match(html, /data-testid="teacher-ink"/);
+		assert.match(html, /<ellipse[^>]*cx="200"[^>]*cy="130"/);
+	});
+
+	it("each kind draws its glyph, an arrow joins two rects, an unresolved target is skipped", () => {
+		const html = ink(
+			[
+				{ kind: "underline", target: { object: "o1" } },
+				{ kind: "check", target: { cell: "A1" } },
+				{ kind: "cross", target: { object: "o2" } },
+				{ kind: "note", target: { object: "o2" }, label: "sign slip" },
+				{ kind: "arrow", from: { object: "o1" }, to: { object: "o2" } },
+				{ kind: "circle", target: { object: "gone" } },
+			],
+			"percent",
+		);
+		for (const k of ["underline", "check", "cross", "note", "arrow"]) assert.match(html, new RegExp(`data-mark="${k}"`));
+		assert.ok(!html.includes('data-mark="circle"'));
+		assert.match(html, /sign slip/);
+		assert.match(html, /viewBox="0 0 100 /);
+	});
+
+	it("colours come from the palette helper, not literals in the component", () => {
+		assert.match(ink([{ kind: "circle", target: { object: "o1" } }], "world"), /#f87171/);
+		assert.match(renderToStaticMarkup(<TeacherInk marks={[{ kind: "circle", target: { object: "o1" } }]} scene={inkScene} box={box} space="percent" theme="light" />), /#d62828/);
+	});
+
+	it("submittedDrawingIds lists the drawings submitted for one task, in order", () => {
+		const m = (customType: string, details: object) => ({ role: "custom", customType, details });
+		const ids = submittedDrawingIds(
+			[m("work-submission", { workCallId: "w1", drawingId: "drw_a" }), m("work-submission", { workCallId: "w2", drawingId: "drw_b" }), m("work-submission", { workCallId: "w1", drawingId: "drw_c" }), m("practice-thinking", { problemCallId: "w1", drawingId: "drw_a" })],
+			"w1",
+		);
+		assert.deepEqual(ids, ["drw_a", "drw_c"]);
+	});
+});
+
+describe("AnnotateCard", () => {
+	const part = (over: object) => ({ type: "tool-annotate", state: "output-available", toolCallId: "t1", ...over });
+	it("AnnotateCard lists marks", () => {
+		const html = renderToStaticMarkup(
+			<AnnotateCard part={part({ input: { drawingId: "drw_a", marks: [{ kind: "circle", target: { object: "o2" }, label: "check this" }, { kind: "arrow", from: { cell: "A1" }, to: { cells: "B2:D3" } }] } })} />,
+		);
+		assert.match(html, /data-testid="annotate-card"/);
+		assert.match(html, /circle/);
+		assert.match(html, /o2/);
+		assert.match(html, /check this/);
+		assert.match(html, /A1/);
+		assert.match(html, /B2:D3/);
+	});
+	it("AnnotateCard lists marks the model sent as a JSON string (the record keeps raw arguments)", () => {
+		const html = renderToStaticMarkup(<AnnotateCard part={part({ input: { drawingId: "drw_a", marks: JSON.stringify([{ kind: "cross", target: { cell: "C4" } }]) } })} />);
+		assert.match(html, /cross/);
+		assert.match(html, /C4/);
+	});
+	it("a refused call or a malformed input renders nothing; the renderer is registered", () => {
+		assert.equal(renderToStaticMarkup(<AnnotateCard part={part({ state: "output-error", input: { drawingId: "d", marks: [{ kind: "check", target: { cell: "A1" } }] } })} />), "");
+		assert.equal(renderToStaticMarkup(<AnnotateCard part={part({ input: { drawingId: "d" } })} />), "");
+		assert.equal(artifactRenderers.annotate, AnnotateCard);
 	});
 });

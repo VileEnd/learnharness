@@ -19,3 +19,11 @@ Reach for it when the work itself is spatial or multi-step on paper: a derivatio
 - Typed objects (text, markdown, LaTeX, tables, images) carry ids `o1`, `o2`, ... that match the structured text beneath the image. That text is verbatim what he typed: trust it over your reading of the picture, and cite the id.
 - Handwriting and freehand strokes are read from the image alone and can be misread. When a symbol decides your verdict, ask which it is before marking it wrong.
 - With no image (a text-only model), a transcription of the drawing stands in for it, followed by the same structured text. If it says the transcription is unavailable, work from the structured text and what he wrote, and say so.
+
+### Marking a drawing
+
+- `annotate` puts your ink on his submitted drawing: `drawingId` is the id the submission names (`[drawing drw_...]`), and each mark is a circle, underline, check, cross, note or arrow anchored to a typed-object id (`{"object": "o2"}`), a grid cell (`{"cell": "C4"}`) or a range (`{"cells": "B2:D3"}`); an arrow takes `from` and `to`. Add a short `label` when the mark needs a word.
+- Prefer the object id for anything he typed (`o2`): it stays on the object. Handwriting and freehand strokes carry no id, so ink them with a cell or a range that covers them (`{"cells": "B2:D3"}`).
+- Mark what you are about to talk about: circle the first place the work breaks, check a step that holds. Keep it to a few marks; many marks bury the one that matters. It does not end your turn, and a refusal names the valid cells and ids, so correct and retry.
+- When you close a task, annotate first and call `grade` after it in the same turn, so his marked drawing and your verdict arrive together.
+

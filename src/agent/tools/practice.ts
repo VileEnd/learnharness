@@ -16,6 +16,7 @@
 
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { annotateToolsFor } from "./annotate.ts";
 import { resolveTargetId } from "../../core/chains.ts";
 import { readToolFor } from "./read.ts";
 import { lsToolFor } from "./ls.ts";
@@ -55,6 +56,8 @@ export interface PracticeToolContext {
 	/** This turn may pose canvas problems: the chat's canvas setting AND a
 	 *  canvas-capable device (a `problem` with `canvas: true` is refused otherwise). */
 	canvas?: boolean;
+	/** Arms `annotate` (teacher ink) on a canvas turn or when the record holds a drawing. */
+	drawingStore?: Pick<import("../../core/ports.ts").DrawingStore, "getScene">;
 }
 
 /** TURN-SCOPED GATE STATE (the BKT incident, 2026-10-05): the gates used
@@ -298,5 +301,6 @@ export function practiceTools(ctx: PracticeToolContext): Record<string, AgentToo
 		grep: grepToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 		...(jobs?.research ? { research: jobs.research } : {}),
 		...(ctx.documents ? documentTools(ctx.documents) : {}),
+		...annotateToolsFor(ctx),
 	});
 }

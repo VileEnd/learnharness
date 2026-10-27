@@ -22,7 +22,8 @@ import { resolveTargetId } from "../core/chains.ts";
 import { activeWorkOf, visibleTeachingSinceLastInput } from "../core/native-messages.ts";
 import { ungradedAnsweredRecalls } from "../core/learner.ts";
 import type { GraphNode, JobRecord } from "../core/contracts.ts";
-import type { ChatStore, JobStore } from "../core/ports.ts";
+import type { ChatStore, DrawingStore, JobStore } from "../core/ports.ts";
+import { annotateToolsFor } from "./tools/annotate.ts";
 import { jobTools, type DemoInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
@@ -459,6 +460,8 @@ export interface ProberToolContext extends ProbeDoneContext {
 	 *  canvas-capable device (a phone turn and job wakes pass false). Arms
 	 *  `sketch`; `grade` is armed whenever it is true or a task is open. */
 	canvas?: boolean;
+	/** Arms `annotate` (teacher ink) on a canvas turn or when the record holds a drawing. */
+	drawingStore?: Pick<DrawingStore, "getScene">;
 	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
 	workGate?: WorkGate;
 }
@@ -527,6 +530,7 @@ export function createProberTools(
 				...gradeFor(ctx, mechanics),
 				// The canvas task (sketch): only on a canvas-capable turn.
 				...(ctx.canvas === true ? { sketch: probeSketchToolFor(ctx) } : {}),
+				...annotateToolsFor(ctx),
 				...done,
 			},
 				withoutMechanics(enabled),
@@ -650,6 +654,8 @@ export interface TeacherToolContext extends PlanToolContext {
 	formats?: InteractiveFormat[];
 	/** This turn may use the canvas tools (see ProberToolContext.canvas). Arms `work`. */
 	canvas?: boolean;
+	/** Arms `annotate` (teacher ink) on a canvas turn or when the record holds a drawing. */
+	drawingStore?: Pick<DrawingStore, "getScene">;
 	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
 	workGate?: WorkGate;
 }
@@ -729,6 +735,7 @@ export function createTeacherTools(
 			...gradeFor(ctx, mechanics),
 			// The canvas task (work): only on a canvas-capable turn.
 			...(ctx.canvas === true ? { work: teachWorkToolFor(ctx) } : {}),
+			...annotateToolsFor(ctx),
 		},
 		withoutMechanics(enabled),
 		),
