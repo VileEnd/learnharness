@@ -89,6 +89,16 @@ describe("exercise widgets", () => {
 		assert.equal((html.match(/<input/g) ?? []).length, 2);
 	});
 
+	it("a blank inside a math span keeps the span whole so KaTeX renders it", () => {
+		const spec = { text: "Solve $2 + {{a}} = 5$ now.", blanks: [{ id: "a", accept: ["3"], mode: "number" as const }] };
+		const html = renderToStaticMarkup(
+			<ExerciseWidget format="blanks" spec={spec} toolCallId="c1" value={emptyResponse("blanks", spec)} onChange={noop} />,
+		);
+		assert.match(html, /katex/);
+		assert.doesNotMatch(html, /\$/);
+		assert.equal((html.match(/<input/g) ?? []).length, 1);
+	});
+
 	it("table renders given cells read-only and editable cells as inputs", () => {
 		const html = renderToStaticMarkup(
 			<ExerciseWidget format="table" spec={tableSpec} toolCallId="c1" value={emptyResponse("table", tableSpec)} onChange={noop} />,
