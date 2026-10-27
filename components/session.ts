@@ -26,9 +26,11 @@ export interface UseChatSessionOptions {
 	initialError?: string;
 	/** Reattach on mount: a turn is running server-side with no live view. */
 	initiallyInFlight?: boolean;
+	/** Is this device canvas-capable (components/use-canvas-capable.ts)? Sent with every chat POST. */
+	canvasCapable?: boolean;
 }
 
-export function useChatSession({ chatId, initialMessages, initialError, initiallyInFlight }: UseChatSessionOptions) {
+export function useChatSession({ chatId, initialMessages, initialError, initiallyInFlight, canvasCapable = false }: UseChatSessionOptions) {
 	// The model is per-mount (chatId-keyed component); onChange forces the
 	// re-render. The ref pattern keeps it stable across renders.
 	const modelRef = useRef<SessionModel | null>(null);
@@ -36,6 +38,10 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		modelRef.current = new SessionModel({ chatId, initialMessages, initialError });
 	}
 	const model = modelRef.current;
+	// Read at every POST (a ref-style getter: the value is render-fresh).
+	const capableRef = useRef(canvasCapable);
+	capableRef.current = canvasCapable;
+	model.canvasCapable = () => capableRef.current;
 	// The render VERSION — bumped by every model change, so the state memo
 	// below recomputes exactly when the model actually changed. (Using the
 	// reducer's dispatch as the memo dep was a freeze bug: dispatch is
@@ -132,6 +138,12 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		(problemCallId: string) => void model.dismissProblem(problemCallId),
 		[model],
 	);
+	const submitWork = useCallback(
+		(workCallId: string, text: string, drawingId?: string) => void model.submitWork(workCallId, text, drawingId),
+		[model],
+	);
+	const requestHint = useCallback((callId: string) => void model.requestHint(callId), [model]);
+	const dismissWork = useCallback((workCallId: string) => void model.dismissWork(workCallId), [model]);
 	const questionDraft = useCallback((toolCallId: string) => model.questionDraft(toolCallId), [model]);
 	const saveQuestionDraft = useCallback((toolCallId: string, draft: Parameters<SessionModel["saveQuestionDraft"]>[1]) => model.saveQuestionDraft(toolCallId, draft), [model]);
 	const setMessages = useCallback((record: LhMessage[], turnError?: string) => model.setMessages(record, turnError), [model]);
@@ -153,6 +165,9 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		submitAnswer,
 		dismissQuestion,
 		dismissProblem,
+		submitWork,
+		requestHint,
+		dismissWork,
 		questionDraft,
 		saveQuestionDraft,
 		setMessages,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, PenLineIcon } from "lucide-react";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
@@ -13,8 +13,6 @@ import { UnreadableNotice } from "@/components/exercise/widget-shared";
 import { emptyResponse, hasAnyText } from "@/components/exercise/attempt-state";
 import { gradeExercise, parseExerciseInput, stripExpected, unreadableItems, type ExerciseVerdict, type ThinkingAttempt } from "@/src/core";
 
-/** Before the hint input lands (PR 2) a hint is asked for in words. */
-export const HINT_REQUEST_TEXT = "I'd like a hint.";
 /** The thinking sent with a Check that carries no words of its own. */
 const CHECK_TEXT = "Here is my attempt.";
 
@@ -43,7 +41,7 @@ export interface PracticeDockProps {
 	problemCallId: string;
 	/** The pose's arguments — only the statement is the learner's (the
 	 *  mode badge would edge toward announcing the target; dropped). */
-	input: { statement: string; format?: unknown; spec?: unknown };
+	input: { statement: string; format?: unknown; spec?: unknown; canvas?: boolean };
 	/** Collapse state, owned by the DockOverlay. */
 	expanded: boolean;
 	onExpand: () => void;
@@ -56,12 +54,20 @@ export interface PracticeDockProps {
 	 *  and say so in the hint row. The server registry is the real gate;
 	 *  this is the affordance. */
 	compactionRunning?: boolean;
+	/** The Hint button: the host sends { type: "hint", callId } and the agent answers with the next rung only. */
+	onHint?: () => void;
+	/** A canvas problem (`input.canvas`): the device can draw / opens the workspace. */
+	canvasCapable?: boolean;
+	onOpenCanvas?: () => void;
+	/** False while the canvas workspace is open: its field then owns the
+	 *  dictation claim and the window-level Enter. Default true. */
+	active?: boolean;
 	/** Exercise problems: the attempt to start from (marks only; the seam
 	 *  the render tests drive). Fresh problems start empty. */
 	initialAttempt?: { response: unknown; verdict?: ExerciseVerdict };
 }
 
-export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onEscape, compactionRunning = false, initialAttempt }: PracticeDockProps) {
+export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onHint, canvasCapable = false, onOpenCanvas, active = true, onEscape, compactionRunning = false, initialAttempt }: PracticeDockProps) {
 	const [thinking, setThinking] = useState("");
 	// An interactive problem (`format` + `spec` on the pose): the widget sits
 	// under the statement; Check grades locally, shows ✓/✗ without the key and
@@ -84,7 +90,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 			},
 			[],
 		),
-		true,
+		active,
 	);
 
 	const coarse = useCoarsePointer();
@@ -92,7 +98,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	useAutoGrow(fieldRef, thinking);
 
 	const submit = () => {
-		if (compactionRunning) return;
+		if (compactionRunning || !active) return;
 		const text = thinkingRef.current.trim();
 		if (text.length === 0) return;
 		thinkingRef.current = "";
@@ -118,7 +124,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	};
 	const askForHint = () => {
 		if (compactionRunning) return;
-		onSubmit(HINT_REQUEST_TEXT);
+		onHint?.();
 	};
 
 	/* ENTER SUBMITS FROM ANYWHERE (owner round 6, 2026-10-05): dictation
@@ -155,6 +161,19 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 				<div className="lh-prose text-[15px]">
 					<ToolContentResponse>{input.statement}</ToolContentResponse>
 				</div>
+				{input.canvas === true && (
+					<div className="mt-2">
+						{canvasCapable ? (
+							<Button type="button" variant="outline" data-testid="open-canvas" disabled={compactionRunning} onClick={onOpenCanvas} className="h-9 gap-1.5 rounded-[6px] px-3 text-sm">
+								<PenLineIcon className="size-4" /> Open canvas
+							</Button>
+						) : (
+							<span data-testid="canvas-phone-hint" className="text-xs text-muted-foreground">
+								Draw on a tablet or computer
+							</span>
+						)}
+					</div>
+				)}
 				{ex && (
 					<div className="mt-2">
 						<ExerciseWidget

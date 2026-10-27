@@ -234,6 +234,19 @@ describe("the thinking input", () => {
 	it("empty text 400s at parse", () => {
 		assert.throws(() => parseChatInput({ type: "thinking", problemCallId: "c", text: "  " }), /non-empty/);
 	});
+
+	it("a canvas problem's drawing rides the thinking (verified when the store can say)", () => {
+		const input = parseChatInput({ type: "thinking", problemCallId: "call_p1", text: "see sketch", drawingId: "drw_abc123def456" });
+		assert.equal((input as { drawingId?: string }).drawingId, "drw_abc123def456");
+		const [marker] = inputAppends({ id: "chat_1", messages: problemPose() }, input, { drawingExists: () => true }) as Array<{ details: unknown; content: string }>;
+		assert.deepEqual(marker!.details, { problemCallId: "call_p1", text: "see sketch", drawingId: "drw_abc123def456" });
+		assert.match(marker!.content, /\[drawing drw_abc123def456\]/);
+		assert.throws(
+			() => inputAppends({ id: "chat_1", messages: problemPose() }, input, { drawingExists: () => false }),
+			/unknown drawing/,
+		);
+		assert.throws(() => parseChatInput({ type: "thinking", problemCallId: "c", text: "x", drawingId: "" }), /drawingId/);
+	});
 });
 
 // ── the move-on signal (owner round 16, 2026-10-06) ─────────────────────────

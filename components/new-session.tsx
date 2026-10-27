@@ -46,6 +46,7 @@ export async function startDraftSession(
 	fetchLike: typeof fetch,
 	mode?: "practice",
 	picks?: readonly DraftPick[],
+	canvas?: boolean,
 ): Promise<string | null> {
 	const t = text.trim();
 	if (!t) return null;
@@ -56,11 +57,13 @@ export async function startDraftSession(
 	const res = await fetchLike("/api/chats", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(
-			mode === "practice"
+		body: JSON.stringify({
+			...(mode === "practice"
 				? { title: t, kind: "practice", ...(picks && picks.length > 0 ? { graphContext: { propositions: picks } } : {}) }
-				: { title: t },
-		),
+				: { title: t }),
+			// The Canvas pill's draft choice (default off): stamped on the new chat's settings.
+			...(canvas === true ? { canvas: true } : {}),
+		}),
 	});
 	const { id } = (await res.json()) as { id: string };
 	// No settings PUT on create (per-session models, owner 2026-09-28):
@@ -84,6 +87,8 @@ export function DraftShell({
 	onOpenPicker,
 	onClearPicks,
 	overlay,
+	canvas = false,
+	onCanvasChange,
 }: {
 	busy: boolean;
 	text: string;
@@ -110,6 +115,9 @@ export function DraftShell({
 	 *  the graph view (the overlay fills its column, never the sidebar).
 	 *  Passed as a node so the pick state stays in NewSession. */
 	overlay?: ReactNode;
+	/** The Canvas pill's draft state (default off), owned by NewSession. */
+	canvas?: boolean;
+	onCanvasChange?: (next: boolean) => void;
 }) {
 	// Voice dictation (STT wave, 2026-09-17): finals append at the end of the
 	// draft text (via the parent's onChange — the truth lives there); the
@@ -207,6 +215,8 @@ export function DraftShell({
 								<StatsBar
 									dictationSlot={<DictationBar dictation={dictation} />}
 									turns={[]}
+									canvas={canvas}
+									onCanvasChange={onCanvasChange}
 								/>
 							</div>
 						</div>
@@ -239,6 +249,13 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		setText(v);
 	};
 	const [busy, setBusy] = useState(false);
+	// The Canvas pill (PR 2): the draft's choice, default off, stamped at creation.
+	const [canvas, setCanvas] = useState(false);
+	const canvasRef = useRef(false);
+	const applyCanvas = (v: boolean) => {
+		canvasRef.current = v;
+		setCanvas(v);
+	};
 	// THE PICK BAR (owner round 10): the draft's lifted pick set + the
 	// snapshot the standalone chain-table picker reads. Lazy — the graph
 	// is fetched on FIRST open only, then reused.
@@ -300,7 +317,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 			return;
 		}
 		setBusy(true);
-		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined)
+		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined, canvasRef.current)
 			.then((target) => {
 				if (target) router.push(target);
 				else setBusy(false);
@@ -316,6 +333,8 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 				onChange={applyText}
 				onSend={send}
 				mode={mode}
+				canvas={canvas}
+				onCanvasChange={applyCanvas}
 				picks={picks}
 				onOpenPicker={openPicker}
 				onClearPicks={() => applyPicks([])}

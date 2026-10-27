@@ -55,7 +55,7 @@ export type ChatInput =
 	 *  thinking on the ACTIVE problem — one lane (owner 2026-10-05):
 	 *  whether it claims an answer is read from the text. One
 	 *  problem may carry many submissions; each is its own turn. */
-	| { type: "thinking"; problemCallId: string; text: string; attempt?: ThinkingAttempt }
+	| { type: "thinking"; problemCallId: string; text: string; attempt?: ThinkingAttempt; drawingId?: string }
 	/** The practice move-on signal (owner round 16): the learner's
 	 *  explicit go-ahead during the between-problems pause — the Next
 	 *  chip or Enter on an empty composer. Practice sessions only, and
@@ -93,6 +93,11 @@ export type DismissInput =
 	/** The canvas-task discard: ask-style like dismiss-problem - the marker
 	 *  closes the task, nothing wakes. */
 	| { type: "dismiss-work"; workCallId: string };
+
+function parseDrawingId(v: unknown): string {
+	if (typeof v !== "string" || v.length === 0) throw new ChatInputError("drawingId must be a non-empty string");
+	return v;
+}
 
 /** Parse and validate a dismissal event off a request body. */
 export function parseDismissInput(input: unknown): DismissInput {
@@ -210,6 +215,7 @@ export function parseChatInput(input: unknown): ChatInput {
 				problemCallId: i.problemCallId,
 				text: i.text,
 				...(i.attempt !== undefined ? { attempt: parseThinkingAttempt(i.attempt) } : {}),
+				...(i.drawingId !== undefined ? { drawingId: parseDrawingId(i.drawingId) } : {}),
 			};
 		case "next":
 			return { type: "next" };
@@ -315,7 +321,16 @@ export function inputAppends(
 				throw new ChatInputError("thinking input targets no active problem");
 			}
 			const attempt = input.attempt ? verifiedAttempt(active, input.attempt) : undefined;
-			return [...dismissalConclusion(record), newThinkingMessage(input.problemCallId, input.text, attempt ? { attempt } : {})];
+			if (input.drawingId !== undefined && deps.drawingExists && !deps.drawingExists(record.id ?? "", input.drawingId)) {
+				throw new ChatInputError(`thinking input names an unknown drawing: ${input.drawingId}`);
+			}
+			return [
+				...dismissalConclusion(record),
+				newThinkingMessage(input.problemCallId, input.text, {
+					...(attempt ? { attempt } : {}),
+					...(input.drawingId !== undefined ? { drawingId: input.drawingId } : {}),
+				}),
+			];
 		}
 		case "next": {
 			// Honest 400s, the thinking gate's discipline: the signal is a

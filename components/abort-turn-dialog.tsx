@@ -25,7 +25,7 @@ import { useBackdropDismiss } from "@/components/backdrop-dismiss";
  */
 
 /** What Esc is aborting — drives copy and the confirm action. */
-export type AbortMode = "turn" | "question" | "problem";
+export type AbortMode = "turn" | "question" | "problem" | "work";
 
 const COPY: Record<AbortMode, { title: string; line: string; action: string }> = {
 	turn: {
@@ -42,6 +42,11 @@ const COPY: Record<AbortMode, { title: string; line: string; action: string }> =
 		title: "Discard this problem?",
 		line: "The problem is dropped — no solution is revealed.",
 		action: "Discard",
+	},
+	work: {
+		title: "Dismiss this canvas task?",
+		line: "The task is dropped — the teacher moves on without it.",
+		action: "Dismiss",
 	},
 };
 

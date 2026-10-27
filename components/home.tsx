@@ -98,6 +98,8 @@ export function Home({
 	 *  the composer opens the picker; the picks seed the opening prompt).
 	 *  Not enforcing any input format — the picks are a convenience. */
 	const [mode, setMode] = useState<"teach" | "practice">("teach");
+	// The Canvas pill's draft choice (PR 2): default off, stamped on the created chat.
+	const [canvas, setCanvas] = useState(false);
 	const [practiceProps, setPracticeProps] = useState<{ id: string; name: string; statement: string }[]>([]);
 	const [chainSelectOpen, setChainSelectOpen] = useState(false);
 	// The chain table is CONTROLLED off this id set (the lifted pick).
@@ -149,6 +151,8 @@ export function Home({
 					title: t,
 					...(mode === "practice" ? { kind: "practice" } : {}),
 					...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
+					// The Canvas pill's draft choice (default off).
+					...(canvas ? { canvas: true } : {}),
 				}),
 			});
 			const { id } = (await res.json()) as { id: string };
@@ -285,6 +289,8 @@ export function Home({
 					<StatsBar
 						dictationSlot={<DictationBar dictation={dictation} />}
 						turns={[] as TurnUsage[]}
+						canvas={canvas}
+						onCanvasChange={setCanvas}
 						leadingSlot={
 							<div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background p-0.5" data-testid="home-mode-switch">
 								{(["teach", "practice"] as const).map((m) => (
