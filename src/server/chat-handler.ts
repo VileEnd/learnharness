@@ -414,6 +414,7 @@ export async function handleChatInput(
 			{
 				drawingStore: stores.drawingStore,
 				transcriber: createDrawingTranscriber({ engineFor: (role) => resolveEngine(role) }),
+				onUsage: collectUsage,
 			},
 		);
 	} catch (err) {
