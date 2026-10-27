@@ -66,7 +66,12 @@ export class CanvasEngine {
 	constructor(root: HTMLElement, opts: CanvasEngineOptions = {}) {
 		this.root = root;
 		this.opts = opts;
-		Object.assign(root.style, { position: "relative", overflow: "hidden", touchAction: "none", userSelect: "none", webkitUserSelect: "none", webkitTouchCallout: "none" });
+		// Keep the host's own positioning: the workspace surface is `absolute
+		// inset-0`, and forcing `relative` here collapsed it to height 0 (the
+		// canvases inside are absolute), so nothing could be drawn - found by
+		// the first real-browser run. Only an unpositioned root gets relative.
+		if (getComputedStyle(root).position === "static") root.style.position = "relative";
+		Object.assign(root.style, { overflow: "hidden", touchAction: "none", userSelect: "none", webkitUserSelect: "none", webkitTouchCallout: "none" });
 		root.style.setProperty("-webkit-user-select", "none");
 		root.style.setProperty("-webkit-touch-callout", "none");
 		root.style.setProperty("touch-action", "none");
