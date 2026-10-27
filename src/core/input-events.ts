@@ -26,6 +26,8 @@
  */
 
 import type { QuestionAnswerData } from "./question-core.ts";
+import { gradeExercise, INTERACTIVE_FORMATS, stripExpected, type InteractiveFormat } from "./exercise-core.ts";
+import type { ThinkingAttempt } from "./native-messages.ts";
 import type { LhMessage } from "./native-messages.ts";
 import {
 	activeProblemOf,
@@ -49,7 +51,7 @@ export type ChatInput =
 	 *  thinking on the ACTIVE problem — one lane (owner 2026-10-05):
 	 *  whether it claims an answer is read from the text. One
 	 *  problem may carry many submissions; each is its own turn. */
-	| { type: "thinking"; problemCallId: string; text: string }
+	| { type: "thinking"; problemCallId: string; text: string; attempt?: ThinkingAttempt }
 	/** The practice move-on signal (owner round 16): the learner's
 	 *  explicit go-ahead during the between-problems pause — the Next
 	 *  chip or Enter on an empty composer. Practice sessions only, and
@@ -177,12 +179,52 @@ export function parseChatInput(input: unknown): ChatInput {
 			if (typeof i.text !== "string" || i.text.trim().length === 0) {
 				throw new ChatInputError("thinking input requires non-empty text");
 			}
-			return { type: "thinking", problemCallId: i.problemCallId, text: i.text };
+			return {
+				type: "thinking",
+				problemCallId: i.problemCallId,
+				text: i.text,
+				...(i.attempt !== undefined ? { attempt: parseThinkingAttempt(i.attempt) } : {}),
+			};
 		case "next":
 			return { type: "next" };
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
+}
+
+/** Shape-check a thinking input's graded attempt (the grade itself is
+ *  re-derived server-side in inputAppends; the claim only has to parse). */
+function parseThinkingAttempt(raw: unknown): ThinkingAttempt {
+	const a = raw as { format?: unknown; response?: unknown; verdict?: unknown } | null;
+	if (typeof a !== "object" || a === null) throw new ChatInputError("thinking attempt must be an object");
+	if (typeof a.format !== "string" || !(INTERACTIVE_FORMATS as readonly string[]).includes(a.format)) {
+		throw new ChatInputError("thinking attempt requires a known format");
+	}
+	const v = a.verdict as { outcome?: unknown; items?: unknown } | null;
+	if (typeof v !== "object" || v === null || typeof v.outcome !== "string" || !Array.isArray(v.items)) {
+		throw new ChatInputError("thinking attempt requires the verdict object");
+	}
+	return { format: a.format as InteractiveFormat, response: a.response, verdict: a.verdict as ThinkingAttempt["verdict"] };
+}
+
+/** Re-grade a claimed attempt against the active problem's own spec and
+ *  refuse a mismatch: the server never trusts a client verdict. Returns the
+ *  server's marks-only verdict (the one that is recorded). */
+function verifiedAttempt(active: { input: unknown }, attempt: ThinkingAttempt): ThinkingAttempt {
+	const input = active.input as { format?: unknown; spec?: unknown } | null;
+	if (!input || input.format !== attempt.format || input.spec === undefined) {
+		throw new ChatInputError("thinking attempt does not match the active problem's format");
+	}
+	const server = gradeExercise(attempt.format, input.spec, attempt.response);
+	const claim = attempt.verdict;
+	const same =
+		claim.outcome === server.outcome &&
+		claim.earned === server.earned &&
+		claim.total === server.total &&
+		claim.items.length === server.items.length &&
+		server.items.every((it, idx) => claim.items[idx]?.id === it.id && claim.items[idx]?.correct === it.correct);
+	if (!same) throw new ChatInputError("thinking attempt's verdict does not match the response");
+	return { format: attempt.format, response: attempt.response, verdict: stripExpected(server) };
 }
 
 /**
@@ -215,7 +257,8 @@ export function inputAppends(
 			if (!active || active.toolCallId !== input.problemCallId) {
 				throw new ChatInputError("thinking input targets no active problem");
 			}
-			return [...dismissalConclusion(record), newThinkingMessage(input.problemCallId, input.text)];
+			const attempt = input.attempt ? verifiedAttempt(active, input.attempt) : undefined;
+			return [...dismissalConclusion(record), newThinkingMessage(input.problemCallId, input.text, attempt ? { attempt } : {})];
 		}
 		case "next": {
 			// Honest 400s, the thinking gate's discipline: the signal is a

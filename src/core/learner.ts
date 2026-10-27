@@ -34,6 +34,7 @@ import type {
 import { coverageOf } from "./coverage.ts";
 import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, type LhMessage } from "./native-messages.ts";
 import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
+import type { ExerciseVerdict } from "./exercise-core.ts";
 
 /** A correct answer at or below this stated confidence (the slider's active
  *  doubt) counts as tentative, not clean. The untouched default 50 is clean. */
@@ -46,6 +47,7 @@ export const MIN_SPACING_HOURS = 20;
 
 const QUIZ_CALLS = ["quiz", "probe"] as const;
 const RECALL_CALLS = ["explain", "recall"] as const;
+const EXERCISE_CALLS = ["exercise", "assess"] as const;
 const GRADES = ["correct", "partly", "wrong", "dontKnow"] as const;
 const PRACTICE_OUTCOMES = ["solved", "solvedWithHints", "movedOn", "surrendered"] as const;
 
@@ -76,7 +78,7 @@ const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const iso = (ms: number): string => new Date(Number.isFinite(ms) ? ms : 0).toISOString();
 
-interface ToolCallBlock {
+export interface ToolCallBlock {
 	id: string;
 	name: string;
 	arguments: Record<string, unknown>;
@@ -207,6 +209,57 @@ function quizItem(chat: ChatRecord, call: ToolCallBlock, answer: QuestionAnswerD
 	return null;
 }
 
+/** The misconception an exercise miss exposed: the first wrong item of the
+ *  first attempt (what the learner gave, against what was expected). */
+function exerciseMisconception(answer: QuestionAnswerData): EvidenceEvent["misconception"] | undefined {
+	const verdict: ExerciseVerdict | undefined = answer.firstAttempt?.verdict ?? answer.verdict;
+	const wrong = (Array.isArray(verdict?.items) ? verdict.items : []).find((i) => !i.correct && str(i.given));
+	if (!wrong) return undefined;
+	const term = str(wrong.given)!;
+	const instead = str(wrong.expected);
+	return { term, ...(instead ? { instead } : {}) };
+}
+
+/** One answered `exercise` / `assess` call as a graded item. A clean first
+ *  try without hints is clean (or tentative at low confidence); a success
+ *  that needed retries or hints is weak, a give-up or a miss is failed. */
+export function exerciseItem(chat: ChatRecord, call: ToolCallBlock, answer: QuestionAnswerData, result: ToolResultMessage): GradedItem | null {
+	const at = str(answer.answeredAt) ?? iso(result.timestamp);
+	const note = str(answer.thinking) ?? str(answer.note);
+	const items = Array.isArray(answer.verdict?.items) ? answer.verdict.items : [];
+	const given = items.map((i) => str(i.given)).filter((g): g is string => g !== undefined).join("; ");
+	const expected = items.map((i) => str(i.expected)).filter((e): e is string => e !== undefined).join("; ");
+	const base = {
+		chatId: chat.id,
+		toolCallId: call.id,
+		kind: call.name as "exercise" | "assess",
+		at,
+		...(note ? { note } : {}),
+		tags: strings(call.arguments.concepts),
+		question: str(call.arguments.question) ?? "",
+		correct: expected,
+	};
+	if (answer.dontKnow === true) return { ...base, raw: "dontKnow", result: "failed", answer: "I don't know" };
+	const outcome = answer.verdict?.outcome ?? (answer.correct === true ? "correct" : undefined);
+	if (answer.gaveUp === true) {
+		const misconception = exerciseMisconception(answer);
+		return { ...base, raw: "surrendered", result: "failed", answer: given, ...(misconception ? { misconception } : {}) };
+	}
+	if (outcome === "correct") {
+		if ((answer.attempts ?? 1) === 1 && (answer.hintsUsed ?? 0) === 0) {
+			const tentative = typeof answer.confidence === "number" && answer.confidence <= TENTATIVE_MAX_CONFIDENCE;
+			return { ...base, raw: tentative ? "tentative" : "correct", result: tentative ? "weak" : "clean", answer: given };
+		}
+		return { ...base, raw: "correctWithHelp", result: "weak", answer: given };
+	}
+	if (outcome === "partly") return { ...base, raw: "partly", result: "weak", answer: given };
+	if (outcome === "wrong") {
+		const misconception = exerciseMisconception(answer);
+		return { ...base, raw: "miss", result: "failed", answer: given, ...(misconception ? { misconception } : {}) };
+	}
+	return null;
+}
+
 const GRADE_RESULT: Record<Grade, EvidenceResult> = { correct: "clean", partly: "weak", wrong: "failed", dontKnow: "failed" };
 
 const PRACTICE_RESULT: Record<(typeof PRACTICE_OUTCOMES)[number], EvidenceResult> = {
@@ -225,6 +278,15 @@ export function gradedItems(chat: ChatRecord): GradedItem[] {
 	for (const call of calls) {
 		const isQuiz = (QUIZ_CALLS as readonly string[]).includes(call.name);
 		const isRecall = (RECALL_CALLS as readonly string[]).includes(call.name);
+		if ((EXERCISE_CALLS as readonly string[]).includes(call.name)) {
+			if (normalizeQuizType(call.arguments.type) === "predict") continue;
+			const result = results.get(call.id);
+			const answer = answerOf(result);
+			if (!result || !answer) continue;
+			const item = exerciseItem(chat, call, answer, result);
+			if (item) out.push(item);
+			continue;
+		}
 		if (isQuiz || isRecall) {
 			// Predictions are posed before the teaching: misses are expected, not evidence.
 			if (normalizeQuizType(call.arguments.type) === "predict") continue;

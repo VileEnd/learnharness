@@ -43,6 +43,7 @@ import {
 	THINKING_LABEL,
 } from "./contracts/chat.ts";
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
+import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
@@ -331,16 +332,37 @@ export function newGraphContextMessage(picks: readonly GraphContextPick[], chain
  *  content label is the single "Your thinking"; `details` keeps the raw
  *  payload for the transcript card. One problem may carry many
  *  submissions. */
-export function newThinkingMessage(problemCallId: string, text: string): LhMarkerMessage {
+export function newThinkingMessage(
+	problemCallId: string,
+	text: string,
+	extra: { attempt?: ThinkingAttempt } = {},
+): LhMarkerMessage {
+	const { attempt } = extra;
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "practice-thinking",
-		content: `${THINKING_LABEL}:\n${text}`,
+		content: `${THINKING_LABEL}:\n${text}${attempt ? `\n\n${attemptMarks(attempt.verdict)}` : ""}`,
 		display: true,
-		details: { problemCallId, text },
+		details: { problemCallId, text, ...(attempt ? { attempt } : {}) },
 		timestamp: Date.now(),
 	};
+}
+
+/** The graded Check a thinking submission rides with (interactive practice
+ *  problems). The verdict stored here is marks-only: the expected values
+ *  stay out of the record until `conclude` reveals the solution. */
+export interface ThinkingAttempt {
+	format: InteractiveFormat;
+	response: unknown;
+	verdict: ExerciseVerdict;
+}
+
+/** The model-facing marks of an attempt: the summary and a per-item
+ *  tick/cross list. Never the expected values. */
+function attemptMarks(verdict: ExerciseVerdict): string {
+	const items = verdict.items.map((i) => `${i.correct ? "\u2713" : "\u2717"} ${i.id}`).join("\n");
+	return `Attempt: ${verdict.summary}${items ? `\n${items}` : ""}`;
 }
 
 /** The learner's explicit move-on signal (owner round 16): appended by

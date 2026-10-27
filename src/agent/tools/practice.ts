@@ -23,6 +23,7 @@ import { findToolFor } from "./find.ts";
 import { grepToolFor } from "./grep.ts";
 import { jobTools, type JobToolContext } from "./jobs.ts";
 import { documentTools, type DocumentToolDeps } from "./documents.ts";
+import { exerciseSpecProblems, INTERACTIVE_FORMATS, type InteractiveFormat } from "../../core/exercise-core.ts";
 import { activeProblemOf } from "../../core/native-messages.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import { concludeResult, invalidInputResult, problemResult } from "../tool-execute.ts";
@@ -47,6 +48,9 @@ export interface PracticeToolContext {
 	libraryRoot: string;
 	/** Runs before every library tool call (the bundle freshness hook). */
 	libraryBeforeAccess?: () => Promise<void>;
+	/** The interactive formats switched on (agent.formats). A problem may carry
+	 *  a `format` + `spec` only for one of these. */
+	formats?: InteractiveFormat[];
 }
 
 /** TURN-SCOPED GATE STATE (the BKT incident, 2026-10-05): the gates used
@@ -93,6 +97,19 @@ export const problemInputObject = Type.Object({
 	modelSolution: Type.String({
 		description: "REQUIRED — the full solution, moves in order, committed BEFORE the learner sees the problem. This IS the reveal — conclude shows it verbatim; never re-author it.",
 	}),
+	format: Type.Optional(
+		Type.Union(INTERACTIVE_FORMATS.map((f) => Type.Literal(f)), {
+			description:
+				"Optional — pose the problem as an interactive exercise in this format (bare word); requires `spec`. " +
+				"Omit for a free-text problem.",
+		}),
+	),
+	spec: Type.Optional(
+		Type.Object({}, {
+			additionalProperties: true,
+			description: "The exercise definition including the answer key, per the format's fields. Required with `format`.",
+		}),
+	),
 });
 
 export type ProblemInput = Static<typeof problemInputObject>;
@@ -100,6 +117,7 @@ export type ProblemInput = Static<typeof problemInputObject>;
 export function problemTool(
 	gate: PracticeGate,
 	graphNodes?: PracticeToolContext["graphNodes"],
+	formats?: PracticeToolContext["formats"],
 ): AgentTool<typeof problemInputObject> {
 	return {
 		name: "problem",
@@ -156,6 +174,19 @@ export function problemTool(
 						`target ${JSON.stringify(unknown)} is not a known proposition — targets must be proposition ids from the session context; if the material is not in the map, omit target entirely`,
 					]);
 				}
+			}
+			// INTERACTIVE PROBLEMS: `format` and `spec` travel together, the format
+			// must be switched on, and the spec must be gradeable.
+			if (input.format !== undefined || input.spec !== undefined) {
+				const problems: string[] = [];
+				if (input.format === undefined || input.spec === undefined) {
+					problems.push("format and spec go together - provide both or neither");
+				} else if (formats && !formats.includes(input.format)) {
+					problems.push(`format "${input.format}" is not enabled - enabled formats: ${formats.join(", ") || "none"}`);
+				} else {
+					problems.push(...exerciseSpecProblems(input.format, input.spec).map((p) => `spec: ${p}`));
+				}
+				if (problems.length > 0) return invalidInputResult("problem", problems);
 			}
 			gate.problemActive = true;
 			return problemResult();
@@ -238,7 +269,7 @@ export function practiceTools(ctx: PracticeToolContext): Record<string, AgentToo
 	// keep their own (target-normalizing) prepareArguments as the composed
 	// inner pass; the double heal is idempotent by construction.
 	return healToolRecord({
-		problem: problemTool(gate, ctx.graphNodes),
+		problem: problemTool(gate, ctx.graphNodes, ctx.formats),
 		conclude: concludeTool(gate),
 		read: readToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 		ls: lsToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),

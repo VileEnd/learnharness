@@ -30,6 +30,7 @@ import {
 	userFacingTextOf,
 } from "./native-messages.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { QuestionAnswerData } from "./question-core.ts";
 
 /** The practice join context (owner-approved, 2026-10-06 export round):
  *  practice tool RESULTS are acks — the statement, outcome, and verdict
@@ -106,6 +107,32 @@ function toolResultBody(result: ToolResultMessage, ctx?: MarkdownContext): { hea
 		else if (out?.correct === false) body.push("The learner answered incorrectly.");
 		else if (typeof out?.text === "string" && out.text.trim()) body.push(`The learner answered in his own words: ${out.text.trim()}`);
 		if (typeof out?.note === "string" && out.note) body.push(`*(his thinking: ${out.note})*`);
+		return { heading, body };
+	}
+
+	if (result.toolName === "exercise" || result.toolName === "assess") {
+		const ex = result.details as
+			| Partial<QuestionAnswerData>
+			| undefined;
+		const heading = result.toolName === "exercise" ? "Exercise" : "Assessment exercise";
+		const question = typeof ex?.questionText === "string" && ex.questionText ? ex.questionText : "(no question text)";
+		const body = [`**Q:** ${question}`];
+		if (ex?.dismissed === true) body.push("The learner skipped this exercise.");
+		else if (ex?.dontKnow === true) body.push("The learner did not know.");
+		else if (ex?.verdict) {
+			const v = ex.verdict;
+			const help = [
+				ex.attempts !== undefined ? `${ex.attempts} ${ex.attempts === 1 ? "attempt" : "attempts"}` : "",
+				ex.hintsUsed ? `${ex.hintsUsed} ${ex.hintsUsed === 1 ? "hint" : "hints"}` : "",
+				ex.gaveUp === true ? "gave up" : "",
+			].filter(Boolean);
+			body.push(
+				`The learner worked a ${ex.format ?? "structured"} exercise: ${v.earned}/${v.total} (${v.summary})${help.length ? ` - ${help.join(", ")}` : ""}.`,
+			);
+			if (v.items.length > 0) body.push(v.items.map((i) => `${i.correct ? "\u2713" : "\u2717"} ${i.id}`).join("  "));
+		}
+		const thinking = typeof ex?.thinking === "string" ? ex.thinking : undefined;
+		if (thinking) body.push(`*(his thinking: ${thinking})*`);
 		return { heading, body };
 	}
 
