@@ -145,3 +145,17 @@ test("stroke digest is capped at 40 lines with a +N more strokes summary", () =>
 	assert.equal(rows[40], "+5 more strokes");
 	assert.match(rows[0] as string, /^\[s1 /);
 });
+
+test("over the cap the digest keeps the LONGEST strokes (a late redrawn curve beats handwriting ticks), in id order", () => {
+	// Final review (M5 #1): the cap kept the OLDEST strokes, so a curve drawn
+	// after a lot of handwriting never reached the model.
+	const ticks = Array.from({ length: 42 }, (_, i) => strokeOf(`s${i + 1}`, "ink", line(3, (t) => [100 + 10 * i, 100 + 8 * t])));
+	const curve = strokeOf("s43", "red", line(41, (t) => [100 + 600 * t, 700 - 2400 * t * (1 - t)]));
+	const axis = strokeOf("s44", "blue", line(10, (t) => [400, 50 + 700 * t]));
+	const rows = digestOf([...ticks, curve, axis]).split("\n");
+	assert.equal(rows.length, 41);
+	assert.equal(rows[40], "+4 more strokes");
+	assert.match(rows[38] as string, /^\[s43 red stroke, curve, top at /);
+	assert.match(rows[39] as string, /^\[s44 blue stroke, vertical line /);
+	assert.match(rows[0] as string, /^\[s1 /, "the kept strokes stay in id order");
+});

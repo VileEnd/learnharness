@@ -315,17 +315,33 @@ export function drawnStrokes(scene: DrawingScene): StrokeObject[] {
 
 const byIdNumber = (a: { id: string }, b: { id: string }) => Number(a.id.slice(1)) - Number(b.id.slice(1)) || a.id.localeCompare(b.id);
 
-/** One line per freehand stroke: `[s4 blue stroke, vertical line @D1-D5]`, capped, the rest summarised. */
+/** The strokes the model is shown (the digest lines and the refusal's id list): every drawn stroke, or over
+ *  MAX_STROKE_DIGEST_LINES the LONGEST ones by path length (ties by id), so a curve or axis drawn after a lot of
+ *  handwriting is never cut in favour of short ticks (handwriting is read from the image). Always in id order.
+ *  `more` = how many were left out. The cap limits what is listed, never what a `stroke` target may name. */
+export function digestStrokes(scene: DrawingScene): { strokes: StrokeObject[]; more: number } {
+	const all = drawnStrokes(scene);
+	if (all.length <= MAX_STROKE_DIGEST_LINES) return { strokes: all.sort(byIdNumber), more: 0 };
+	const kept = all
+		.map((o) => ({ o, len: pathLength(o.points) }))
+		.sort((a, b) => b.len - a.len || byIdNumber(a.o, b.o))
+		.slice(0, MAX_STROKE_DIGEST_LINES)
+		.map((x) => x.o)
+		.sort(byIdNumber);
+	return { strokes: kept, more: all.length - MAX_STROKE_DIGEST_LINES };
+}
+
+/** One line per freehand stroke: `[s4 blue stroke, vertical line @D1-D5]`, capped (digestStrokes), the rest summarised. */
 function strokeDigestLines(scene: DrawingScene, grid: RegionGrid, box: Box): string[] {
-	const strokes = drawnStrokes(scene).sort(byIdNumber);
-	const lines = strokes.slice(0, MAX_STROKE_DIGEST_LINES).map((o) => {
+	const { strokes, more } = digestStrokes(scene);
+	const lines = strokes.map((o) => {
 		const xs = o.points.map((p) => p[0]);
 		const ys = o.points.map((p) => p[1]);
 		const a = cellOf(grid, box, Math.min(...xs), Math.min(...ys));
 		const b = cellOf(grid, box, Math.max(...xs), Math.max(...ys));
 		return `[${o.id} ${o.color} stroke, ${strokeShapeHint(o.points, grid, box)} @${a === b ? a : `${a}-${b}`}]`;
 	});
-	if (strokes.length > MAX_STROKE_DIGEST_LINES) lines.push(`+${strokes.length - MAX_STROKE_DIGEST_LINES} more strokes`);
+	if (more > 0) lines.push(`+${more} more strokes`);
 	return lines;
 }
 
@@ -371,11 +387,12 @@ function gridRows(box: Box): number {
 /** What a model may legitimately cite for this drawing, appended to refusals so it can retry. */
 function validTargetsHint(scene: DrawingScene, box: Box): string {
 	const ids = scene.objects.filter(isTypedObject).map((o) => o.id);
-	const strokes = drawnStrokes(scene).sort(byIdNumber).map((o) => o.id);
+	const { strokes, more } = digestStrokes(scene);
+	const strokeIds = strokes.map((o) => o.id);
 	return (
 		`valid cells are A1 to H${gridRows(box)}, ranges are written B2:D3` +
 		(ids.length ? `; typed object ids: ${ids.join(", ")}` : "; this drawing has no typed objects (anchor by cell)") +
-		(strokes.length ? `; stroke ids: ${strokes.join(", ")}` : "")
+		(strokeIds.length ? `; stroke ids: ${strokeIds.join(", ")}${more > 0 ? ` (+${more} more short strokes)` : ""}` : "")
 	);
 }
 
