@@ -13,7 +13,7 @@
  * events) while the learner did not abort is retried once. The pi loop
  * treats error steps as hard exits, so the retry sits at the stream seam.
  */
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { QUESTION_TOOLS } from "../core/pending.ts";
@@ -153,6 +153,28 @@ export function withEmptyErrorRetry(inner: StreamFn): StreamFn {
 				for (const h of held) out.push(h);
 			} catch (err) {
 				console.error("[stream-retry] failed:", err);
+				// Settle the stream: without a terminal event result() never
+				// resolves and the pi loop hangs the turn. The inner stream
+				// throwing would have surfaced as an error step; so does this.
+				const error: AssistantMessage = {
+					role: "assistant",
+					content: [],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "error",
+					errorMessage: err instanceof Error ? err.message : String(err),
+					timestamp: Date.now(),
+				};
+				out.push({ type: "error", reason: "error", error });
 			} finally {
 				out.end();
 			}

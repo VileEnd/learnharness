@@ -137,6 +137,29 @@ describe("RC9 zero-event error retry", () => {
 	});
 });
 
+describe("RC9 retry that throws", () => {
+	it("settles as an error step instead of hanging the turn", async () => {
+		const { engine } = scripted([fauxAssistantMessage("unused")]);
+		let n = 0;
+		const throwing: PiEngine = {
+			...engine,
+			streamFn: () => {
+				if (n++ > 0) throw new Error("socket exploded");
+				const s = createAssistantMessageEventStream();
+				const error = { ...fauxAssistantMessage(""), stopReason: "error" as const, errorMessage: "The operation was aborted", content: [] };
+				s.push({ type: "error", reason: "error", error });
+				s.end();
+				return s;
+			},
+		};
+		const agent = createTeacherAgent(undefined, { engine: throwing, tools: {}, messages: asAgentMessages([user("u")]) });
+		await agent.continue();
+		const last = agent.state.messages.at(-1) as { stopReason?: string; errorMessage?: string };
+		assert.equal(last.stopReason, "error");
+		assert.match(last.errorMessage ?? "", /socket exploded/);
+	});
+});
+
 describe("RC10 phase recovery", () => {
 	const handoff = (): LhMessage => ({ ...newHandoffMessage("c1") }) as LhMessage;
 	const diagram = "Here is the plan:\n```mermaid\ngraph TD\n  a-->b\n```";
