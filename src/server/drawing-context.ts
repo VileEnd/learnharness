@@ -14,6 +14,7 @@ import {
 	type DrawingContext,
 	type DrawingStore,
 } from "../core/index.ts";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { LhMessage } from "../core/native-messages.ts";
 import type { ChatRecord } from "../core/contracts/chat.ts";
 import type { PiEngine } from "../agent/models.ts";
@@ -23,6 +24,8 @@ export interface DrawingContextDeps {
 	drawingStore: DrawingStore;
 	/** Absent when no transcriber model is configured. */
 	transcriber?: DrawingTranscriber;
+	/** Money channel: the transcription is vision-slot spend. */
+	onUsage?: (usage: Usage) => void;
 }
 
 /** The drawing ids on markers of the active work/problem, oldest first. */
@@ -66,7 +69,7 @@ export async function prepareDrawingContext(
 					if (png) {
 						const box = scene ? sceneBoundingBox(scene) : null;
 						const structured = scene && box ? serializeSceneStructuredText(scene, box) : "";
-						const t = await deps.transcriber.transcribe(png, structured);
+						const t = await deps.transcriber.transcribe(png, structured, deps.onUsage);
 						drawingStore.writeTranscript(chatId, newest, t);
 						transcripts.set(newest, t.text);
 					}

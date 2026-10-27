@@ -6,6 +6,7 @@
  * Mermaid for diagrams, ~~struck~~ for crossed-out work.
  */
 
+import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { PiEngine } from "../models.ts";
 import { runSubagent } from "./pi-run.ts";
@@ -25,12 +26,13 @@ export interface DrawingTranscriberDeps {
 }
 
 export interface DrawingTranscriber {
-	transcribe(png: Uint8Array, structured: string): Promise<{ model: string; text: string }>;
+	/** onUsage: the money channel, one call per model request. */
+	transcribe(png: Uint8Array, structured: string, onUsage?: (usage: Usage) => void): Promise<{ model: string; text: string }>;
 }
 
 export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingTranscriber {
 	return {
-		async transcribe(png, structured) {
+		async transcribe(png, structured, onUsage) {
 			const engine = deps.engineFor("transcriber");
 			if (!engine) throw new Error("no transcriber model configured");
 			const message: AgentMessage = {
@@ -47,6 +49,7 @@ export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingT
 				systemPrompt: TRANSCRIBE_PROMPT,
 				messages: [message],
 				maxTurns: 1,
+				onUsage,
 			});
 			const out = text.trim();
 			if (!out) throw new Error("the transcriber returned nothing");

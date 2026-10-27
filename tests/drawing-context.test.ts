@@ -98,6 +98,19 @@ describe("drawings in the model context", () => {
 		assert.equal(calls, 1);
 	});
 
+	it("transcription usage is reported once (cache hit reports none)", async () => {
+		const messages = [...pose(), sub(0)];
+		const { s } = store();
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("[C4] y")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		let usages = 0;
+		const onUsage = () => { usages++; };
+		await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber, onUsage });
+		await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber, onUsage });
+		assert.equal(usages, 1);
+	});
+
 	it("text-only without transcriber falls back to stub", async () => {
 		const messages = [...pose(), sub(0)];
 		const transcriber = createDrawingTranscriber({ engineFor: () => undefined });
