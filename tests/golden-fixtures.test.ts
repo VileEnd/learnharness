@@ -213,6 +213,26 @@ test("jobs: the kind × status matrix parses through the job store", () => {
 	assert.deepEqual([...statuses].sort(), ["done", "error"], "both terminal statuses are fixture-d");
 });
 
+test("jobs: delivery-era records keep their saved input and delivery state", () => {
+	const delivered = jobStore.getJob("job_mvqv5fhr_cd425a41");
+	assert.ok(delivered, "the delivered research job reads");
+	assert.equal(delivered!.status, "done");
+	assert.deepEqual(delivered!.delivery, { kind: "result", status: "delivered" });
+	assert.equal(typeof (delivered!.input as { question?: unknown }).question, "string", "dispatch input saved");
+	assert.ok(delivered!.result, "worker result saved");
+
+	const aborted = jobStore.getJob("job_mvqv5fhu_71d106c0");
+	assert.ok(aborted, "the aborted research job reads");
+	assert.equal(aborted!.status, "error");
+	assert.deepEqual(aborted!.delivery, { kind: "abort", status: "delivered" });
+	assert.equal(typeof (aborted!.input as { question?: unknown }).question, "string", "dispatch input saved");
+
+	// Legacy records carry neither field and must never be replayed.
+	const legacy = jobStore.getJob("job_mv282vv0_e7b89c9b");
+	assert.equal(legacy!.delivery, undefined);
+	assert.equal(legacy!.input, undefined);
+});
+
 test("settings: the stamped record parses", () => {
 	const s = settingsStore.readSettings();
 	assert.ok(s, "settings record reads");
