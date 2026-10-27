@@ -26,6 +26,7 @@ import type {
 	RoleModelOverride,
 } from "../core/settings.ts";
 import { QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 
 /** Parsed-or-rejected — `ok: false` carries the 400's error message. */
@@ -177,6 +178,16 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 			return { ok: false, error: `quizMechanic must be one of: ${QUIZ_MECHANICS.join(", ")}` };
 		}
 		settings.quizMechanic = raw.quizMechanic as QuizMechanic;
+	}
+	const formats = parseBooleanMap(raw.formats, "formats");
+	if (formats.error) return { ok: false, error: formats.error };
+	if (formats.map) {
+		for (const key of Object.keys(formats.map)) {
+			if (!(INTERACTIVE_FORMATS as readonly string[]).includes(key)) {
+				return { ok: false, error: `unknown format "${key}"` };
+			}
+		}
+		settings.formats = formats.map;
 	}
 	const prompts = parseBooleanMap(raw.prompts, "prompts");
 	if (prompts.error) return { ok: false, error: prompts.error };

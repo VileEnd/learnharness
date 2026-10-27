@@ -30,6 +30,8 @@ import { CONCLUDE_ACK_TEXT } from "../src/core/contracts/chat.ts";
 import { dismissAppends, inputAppends, parseChatInput, parseDismissInput } from "../src/core/input-events.ts";
 import { modelSolutionForConclude } from "../src/core/native-messages.ts";
 import { projectView } from "../src/core/index.ts";
+import { gradeExercise } from "../src/core/exercise-core.ts";
+import { ChatInputError } from "../src/core/input-events.ts";
 
 // ── builders (native-shaped test fixtures) ───────────────────────────────────
 
@@ -424,5 +426,64 @@ describe("projectView renders the move-on signal", () => {
 			parts.some((p) => p.type === "data-practice-next"),
 			"the data-practice-next part rides the view",
 		);
+	});
+});
+
+describe("practice thinking attempt (interactive problems)", () => {
+	const spec = { text: "{{a}} and {{b}}", blanks: [{ id: "a", accept: ["cat"] }, { id: "b", accept: ["dog"] }] };
+	const pose = (): LhMessage[] => {
+		const messages = problemPose("call_x");
+		const assistant = messages[0] as unknown as AssistantMessage;
+		const block = assistant.content[0] as { arguments: Record<string, unknown> };
+		block.arguments = { ...block.arguments, format: "blanks", spec };
+		return messages;
+	};
+	const attemptOf = (values: Record<string, string>, tamper?: (v: ReturnType<typeof gradeExercise>) => void) => {
+		const response = { values };
+		const verdict = gradeExercise("blanks", spec, response);
+		tamper?.(verdict);
+		return { format: "blanks" as const, response, verdict };
+	};
+
+	it("practice thinking attempt is re-graded: a client claim of correct against a wrong response is refused", () => {
+		const record = { messages: pose(), kind: "practice" };
+		const forged = attemptOf({ a: "cat", b: "x" }, (v) => {
+			v.outcome = "correct";
+			v.earned = v.total;
+			for (const i of v.items) i.correct = true;
+		});
+		assert.throws(
+			() => inputAppends(record, { type: "thinking", problemCallId: "call_x", text: "done", attempt: forged }),
+			ChatInputError,
+		);
+	});
+
+	it("an honest attempt lands as marks only: the model sees the summary and per-item marks, never the expected values", () => {
+		const record = { messages: pose(), kind: "practice" };
+		const [marker] = inputAppends(record, {
+			type: "thinking",
+			problemCallId: "call_x",
+			text: "my answer",
+			attempt: attemptOf({ a: "cat", b: "x" }),
+		}) as [LhMessage & { content: string; details: { attempt?: { verdict: { items: object[] } } } }];
+		assert.match(marker.content, /Attempt: 1\/2 blanks right/);
+		assert.match(marker.content, /\u2713 a/);
+		assert.match(marker.content, /\u2717 b/);
+		assert.ok(!marker.content.includes("dog"), "the expected value stays out");
+		assert.ok(marker.details.attempt!.verdict.items.every((i) => !("expected" in i)), "the record keeps marks only");
+	});
+
+	it("an attempt against a problem with no spec is refused", () => {
+		const record = { messages: problemPose("call_x"), kind: "practice" };
+		assert.throws(
+			() => inputAppends(record, { type: "thinking", problemCallId: "call_x", text: "t", attempt: attemptOf({ a: "cat", b: "dog" }) }),
+			ChatInputError,
+		);
+	});
+
+	it("newThinkingMessage without an attempt is unchanged", () => {
+		const m = newThinkingMessage("call_x", "hi");
+		assert.equal(m.content, "Your thinking:\nhi");
+		assert.deepEqual(m.details, { problemCallId: "call_x", text: "hi" });
 	});
 });

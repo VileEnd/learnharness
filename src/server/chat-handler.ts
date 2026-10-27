@@ -35,6 +35,7 @@ import { library } from "./okf-library.ts";
 import {
 	extractionEnabled,
 	documentToolsEnabled,
+	enabledFormats,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -438,6 +439,7 @@ export async function handleChatInput(
 						},
 						libraryRoot: PATHS.okf,
 						libraryBeforeAccess: () => library.ensureFresh(),
+						formats: enabledFormats(effective),
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
@@ -457,6 +459,7 @@ export async function handleChatInput(
 						libraryBeforeAccess: () => library.ensureFresh(),
 						// The questions' `concepts` tags validate against the whole graph.
 						graphNodes: () => stores.graphStore.readNodes(),
+						formats: enabledFormats(effective),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -476,6 +479,7 @@ export async function handleChatInput(
 						libraryBeforeAccess: () => library.ensureFresh(),
 						// The questions' `concepts` tags validate against the whole graph.
 						graphNodes: () => stores.graphStore.readNodes(),
+						formats: enabledFormats(effective),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,

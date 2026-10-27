@@ -58,6 +58,7 @@ import { defaultOrderLevel, populateLevel } from "@/components/thinking-default"
 import type React from "react";
 import {
 	COMPACTION_THRESHOLD_FLOOR,
+	IMPLEMENTED_FORMATS,
 	MODEL_SLOTS,
 	resolveSettings,
 	type AgentSettings,
@@ -115,6 +116,12 @@ interface ModelsBody {
  *  Pure — exported for tests. */
 export function composeTool(agent: AgentSettings | undefined, id: string, on: boolean): AgentSettings {
 	return { ...agent, tools: { ...agent?.tools, [id]: on } };
+}
+
+/** Compose: one question format toggled, the rest of the section carried verbatim.
+ *  Pure - exported for tests. */
+export function composeFormats(agent: AgentSettings | undefined, format: string, on: boolean): AgentSettings {
+	return { ...agent, formats: { ...agent?.formats, [format]: on } };
 }
 
 /** The quizzing mechanics: a segmented control, not a toggle — exactly one
@@ -876,6 +883,18 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})()}
+			</SettingsGroup>
+
+			<SettingsGroup label="Question formats" testid="group-formats">
+				{IMPLEMENTED_FORMATS.map((f) => (
+					<SettingsRow key={f} label={f.charAt(0).toUpperCase() + f.slice(1)} testid={`format-row-${f}`}>
+						<Toggle
+							checked={agent?.formats?.[f] !== false}
+							label={`format ${f}`}
+							onChange={(on) => onSectionChange(composeFormats(agent, f, on))}
+						/>
+					</SettingsRow>
+				))}
 			</SettingsGroup>
 
 			<SettingsGroup label="Context" testid="group-context">

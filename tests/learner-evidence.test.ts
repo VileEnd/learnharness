@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { TENTATIVE_MAX_CONFIDENCE, deriveEvidence, unattributedItems } from "../src/core/learner.ts";
-import { chat, conclude, explain, grade, problem, quiz } from "./learner-helpers.ts";
+import { call, chat, conclude, explain, grade, problem, quiz, result } from "./learner-helpers.ts";
+import type { LhMessage } from "../src/core/native-messages.ts";
 
 const NODES = new Set(["n1", "n2", "n3"]);
 
@@ -139,5 +140,90 @@ describe("unattributedItems", () => {
 		const rows = [{ chatId: "c1", toolCallId: "q4", conceptIds: [], at: "t" }];
 		assert.deepEqual(unattributedItems(c, rows).map((i) => i.toolCallId), ["q1"]);
 		assert.deepEqual(unattributedItems(chat("p", [...problem("a"), ...conclude("b", "solved")], "practice"), []), []);
+	});
+});
+
+// ─── exercise / assess evidence (interactive exercises, PR 1) ───────────────
+
+const wrongItem = { id: "b1", correct: false, expected: "dog", given: "cat" };
+const rightItem = { id: "b2", correct: true, expected: "fox", given: "fox" };
+const verdictOf = (outcome: "correct" | "partly" | "wrong", items = [rightItem]) => ({ outcome, earned: 0, total: 1, items, summary: "s" });
+
+/** An exercise/assess call + its answer record. */
+function exercise(
+	id: string,
+	opts: {
+		tool?: "exercise" | "assess";
+		outcome: "correct" | "partly" | "wrong";
+		attempts?: number;
+		hintsUsed?: number;
+		gaveUp?: boolean;
+		dontKnow?: boolean;
+		confidence?: number;
+		type?: string;
+		first?: ReturnType<typeof verdictOf>;
+		items?: (typeof rightItem)[];
+	},
+): LhMessage[] {
+	const tool = opts.tool ?? "exercise";
+	return [
+		call(id, tool, { question: `E ${id}`, format: "blanks", concepts: ["n1"], ...(opts.type ? { type: opts.type } : {}) }),
+		result(id, tool, {
+			kind: "exercise",
+			questionText: `E ${id}`,
+			dontKnow: opts.dontKnow === true,
+			answers: [],
+			format: "blanks",
+			verdict: verdictOf(opts.outcome, opts.items),
+			attempts: opts.attempts ?? 1,
+			hintsUsed: opts.hintsUsed ?? 0,
+			correct: opts.outcome === "correct",
+			...(opts.gaveUp ? { gaveUp: true } : {}),
+			...(opts.first ? { firstAttempt: { verdict: opts.first } } : {}),
+			...(opts.confidence !== undefined ? { confidence: opts.confidence } : {}),
+			answeredAt: "2026-10-20T10:00:00.000Z",
+		}),
+	];
+}
+
+const firstOf = (messages: LhMessage[]) => {
+	const e = deriveEvidence([chat("c1", messages)], [], NODES)[0]!;
+	return [e.kind, e.raw, e.result] as const;
+};
+
+describe("exerciseItem (exercise / assess evidence)", () => {
+	it("exerciseItem maps partly to weak", () => {
+		assert.deepEqual(firstOf(exercise("x1", { outcome: "partly" })), ["exercise", "partly", "weak"]);
+	});
+
+	it("exerciseItem low-confidence correct is tentative", () => {
+		assert.deepEqual(firstOf(exercise("x1", { outcome: "correct", confidence: TENTATIVE_MAX_CONFIDENCE })), ["exercise", "tentative", "weak"]);
+		assert.deepEqual(firstOf(exercise("x2", { outcome: "correct", confidence: 50, tool: "assess" })), ["assess", "correct", "clean"]);
+	});
+
+	it("exerciseItem: correct after retries is weak", () => {
+		assert.deepEqual(firstOf(exercise("x1", { outcome: "correct", attempts: 2 })), ["exercise", "correctWithHelp", "weak"]);
+	});
+
+	it("exerciseItem: hint used makes correct weak", () => {
+		assert.deepEqual(firstOf(exercise("x1", { outcome: "correct", hintsUsed: 1 })), ["exercise", "correctWithHelp", "weak"]);
+	});
+
+	it("exerciseItem: give-up is surrendered, with the first attempt's first wrong item as the misconception", () => {
+		const m = exercise("x1", { outcome: "wrong", gaveUp: true, attempts: 3, first: verdictOf("wrong", [rightItem, wrongItem]) });
+		const e = deriveEvidence([chat("c1", m)], [], NODES)[0]!;
+		assert.deepEqual([e.raw, e.result], ["surrendered", "failed"]);
+		assert.deepEqual(e.misconception, { term: "cat", instead: "dog" });
+	});
+
+	it("a miss is failed with the misconception; don't know is failed without one", () => {
+		const miss = deriveEvidence([chat("c1", exercise("x1", { outcome: "wrong", items: [wrongItem] }))], [], NODES)[0]!;
+		assert.deepEqual([miss.raw, miss.result, miss.misconception], ["miss", "failed", { term: "cat", instead: "dog" }]);
+		const dk = deriveEvidence([chat("c1", exercise("x2", { outcome: "wrong", dontKnow: true }))], [], NODES)[0]!;
+		assert.deepEqual([dk.raw, dk.result, dk.misconception], ["dontKnow", "failed", undefined]);
+	});
+
+	it("predictions are not evidence", () => {
+		assert.equal(deriveEvidence([chat("c1", exercise("x1", { outcome: "correct", type: "predict" }))], [], NODES).length, 0);
 	});
 });

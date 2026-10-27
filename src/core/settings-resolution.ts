@@ -26,6 +26,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ModelRole } from "../../config.ts";
 import type { ChatSettings } from "./contracts/chat.ts";
 import type { SearchEngineId } from "./search.ts";
+import { IMPLEMENTED_FORMATS, INTERACTIVE_FORMATS, type InteractiveFormat } from "./exercise-core.ts";
 import {
 	BACKGROUND_MODEL_ROLES,
 	FACTORY_SETTINGS,
@@ -77,6 +78,8 @@ export interface EffectiveSettings {
 		tools: Record<string, boolean>;
 		/** The resolved quizzing mechanic (resolveQuizMechanic). */
 		quizMechanic: QuizMechanic;
+		/** Delta map as stored - absent key = format enabled (use enabledFormats). */
+		formats: Record<string, boolean>;
 		/** Delta map as stored — absent key → override off. */
 		prompts: Record<string, boolean>;
 		/** The search-engine preference as stored (search wave, 2026-09-20):
@@ -170,6 +173,13 @@ export function resolveQuizMechanic(agent?: AgentSettings): QuizMechanic {
 	return agent?.quizMechanic ?? (explain === true ? "free" : explain === false ? "choice" : "mixed");
 }
 
+/** The implemented interactive formats not switched off, in INTERACTIVE_FORMATS order. */
+export function enabledFormats(effective: EffectiveSettings): InteractiveFormat[] {
+	return INTERACTIVE_FORMATS.filter(
+		(f) => IMPLEMENTED_FORMATS.includes(f) && effective.agent.formats[f] !== false,
+	);
+}
+
 /** Resolve the whole record. `record` may be null (first boot) — every
  *  factory-defaulted field lands on its default; MODEL fields resolve to
  *  null/undefined when unset (no factory pins exist — BYOK all the way
@@ -194,6 +204,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			models,
 			tools: agent.tools ?? {},
 			quizMechanic: resolveQuizMechanic(agent),
+			formats: agent.formats ?? {},
 			prompts: agent.prompts ?? {},
 			search: agent.search ?? {},
 			graphTools: agent.graphTools ?? {},

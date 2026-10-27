@@ -19,6 +19,7 @@
 
 import { Type, type Static } from "typebox";
 import { stripModelValueDebris } from "./value-debris.ts";
+import { gradeExercise, stripExpected, type ExerciseVerdict, type InteractiveFormat } from "./exercise-core.ts";
 
 // ─── shared types ───────────────────────────────────────────────────────────
 
@@ -155,6 +156,14 @@ export const conceptsField = Type.Optional(
 	}),
 );
 
+/** Trailing optional flag shared by the quizzing tools: the learner's
+ *  "Your thinking" field must be filled before the answer can be sent. */
+const requireThinkingField = Type.Optional(
+	Type.Boolean({
+		description: "Set to true to require the learner to write their thinking before they can submit the answer.",
+	}),
+);
+
 // The SHARED quiz authoring fields — everything except `nodeId`. The probe
 // and teach agents use DIFFERENT tools under the same name (docs/probe-teach-
 // split.md §1): the prober's quiz has NO nodeId field at all (there is no
@@ -205,6 +214,7 @@ export const quizInputBase = Type.Object({
 		Type.String({ description: "Optional extra context or instructions shown under the question." }),
 	),
 	concepts: conceptsField,
+	requireThinking: requireThinkingField,
 });
 
 // The TEACH-side quiz object: the shared base + the plan-position field
@@ -245,7 +255,7 @@ export function normalizeQuizType(raw: unknown): QuizQuestionType | undefined {
  *  truth. Records that predate the `type` field carry none — they render
  *  as checks, the standing default. */
 export function questionNeedsReveal(tool: string, rawInput: unknown, phase: string): boolean {
-	if ((tool !== "quiz" && tool !== "explain") || phase !== "teach") return false;
+	if ((tool !== "quiz" && tool !== "explain" && tool !== "exercise") || phase !== "teach") return false;
 	return normalizeQuizType((rawInput as { type?: unknown } | null)?.type) !== "predict";
 }
 
@@ -331,6 +341,7 @@ export const explainInputBase = Type.Object({
 		Type.String({ description: "Optional extra context or instructions shown under the question." }),
 	),
 	concepts: conceptsField,
+	requireThinking: requireThinkingField,
 });
 
 /** The TEACH-side explain object: base + the plan-position field (same
@@ -371,6 +382,77 @@ export function explainInputProblems(input: { correctAnswer: string }): string[]
 	}
 	return [];
 }
+
+
+// ─── the exercise tools (interactive generative formats) ───────────────────
+//
+// `exercise` (teach) and `assess` (probe): the learner PRODUCES an answer in
+// a structured widget (numeric / blanks / table / multipart). The browser
+// grades it against the committed `spec` with exercise-core and returns the
+// verdict as the tool output. The spec carries the answer key, so it stays
+// hidden until the learner has answered or given up. `hints` is the
+// pre-written escalating ladder the "Hint" button reveals one rung at a time.
+// The tools declare `format` as a literal union of the ENABLED formats
+// (agent/tools.ts); this base carries a plain string so the display parse
+// accepts whatever was recorded.
+
+export const exerciseInputBase = Type.Object({
+	question: Type.String({
+		description:
+			"The single exercise prompt shown above the widget. ONE exercise per turn: pose it, then end your turn.",
+	}),
+	format: Type.String({
+		description: "REQUIRED — which interactive format the learner works in (bare word, no quotes).",
+	}),
+	explanation: Type.String({
+		description:
+			"REQUIRED. Explanation revealed AFTER the learner is done (right, or gave up). Written BEFORE the spec by design: " +
+			"reason the solution out first, then commit the answer key the reasoning supports.",
+	}),
+	spec: Type.Object({}, {
+		additionalProperties: true,
+		description: "REQUIRED. The exercise definition including the answer key, per the format's fields.",
+	}),
+	hints: Type.Array(Type.String(), {
+		description:
+			"REQUIRED. 2 or 3 escalating hints, shown one at a time on request. Each nudges further than the last " +
+			"and none states the answer.",
+	}),
+	requireThinking: requireThinkingField,
+	details: Type.Optional(
+		Type.String({ description: "Optional extra context or instructions shown under the question." }),
+	),
+	concepts: conceptsField,
+});
+
+/** The TEACH-side exercise object: the role + plan-position pair leads, as
+ *  for the teach quiz. */
+export const exerciseInputObject = Type.Object({
+	type: predictCheckType,
+	nodeId: Type.String({
+		description:
+			"REQUIRED plan-tree node id this exercise is about — must EXACTLY match one of this session's " +
+			"plan_init node slugs (validated at call time; a mismatched id is rejected back to you). " +
+			"The lesson's position on the map derives from these tags.",
+	}),
+	...exerciseInputBase.properties,
+});
+
+/** The probe-side declaration: the bare base (no `type`, no `nodeId`). */
+export const probeExerciseInputSchema = exerciseInputBase;
+
+/** The DISPLAY parse schema for persisted exercise calls: the base + the
+ *  OPTIONAL lenient `type` (probe calls carry none). */
+export const exerciseDisplayInputSchema = Type.Object({
+	...exerciseInputBase.properties,
+	type: Type.Optional(Type.String()),
+});
+
+export type ExerciseToolInput = Omit<Static<typeof exerciseInputObject>, "nodeId" | "type" | "format"> & {
+	format: InteractiveFormat;
+	type?: string;
+	nodeId?: string;
+};
 
 /** The tool names that carry the quizzing mechanic — the teach seam
  *  (phases), the plan-position fold, and the pending gate all recognize
@@ -420,7 +502,7 @@ export interface OptionAnswer {
 	index: number; // 1-based display index
 }
 
-export type QuestionKind = "quiz" | "ask" | "explain";
+export type QuestionKind = "quiz" | "ask" | "explain" | "exercise";
 export type SelectMode = "single-select" | "multi-select";
 export type QuestionMode = SelectMode | "text";
 
@@ -483,6 +565,20 @@ export interface QuestionAnswerData {
 	correctIndices?: number[]; // quiz only (rendering)
 	committed?: string; // explain only (rendering): the model's committed answer
 	explanation?: string; // quiz only (rendering)
+	/** exercise only: which format the learner worked in. */
+	format?: InteractiveFormat;
+	/** exercise only: the learner's last submitted response (format-shaped). */
+	response?: unknown;
+	/** exercise only: the local grade of `response` (rendering + the record). */
+	verdict?: ExerciseVerdict;
+	/** exercise only: how many times the learner pressed Check. */
+	attempts?: number;
+	/** exercise only: how many hints were revealed. */
+	hintsUsed?: number;
+	/** exercise only: the learner gave up and took the answer. */
+	gaveUp?: boolean;
+	/** exercise only: the grade of the first Check, kept once retries follow. */
+	firstAttempt?: { verdict: ExerciseVerdict; confidence?: number };
 	dismissed?: boolean;
 	answeredAt: string;
 }
@@ -766,6 +862,51 @@ export function buildAnswer(qd: QuestionData, req: AnswerRequest, tool?: string)
 	return base;
 }
 
+/** Build the exercise answer record: grade `response` against the call's
+ *  spec with the shared grader. `correct` is the verdict's outcome; the
+ *  confidence rides real answers only (dropped on "I don't know"), as for
+ *  buildAnswer. The full verdict (with expected values) rides the record;
+ *  compactAnswerForModel strips it for the model. */
+export function buildExerciseAnswer(
+	input: ExerciseToolInput,
+	response: unknown,
+	req: AnswerRequest & {
+		attempts: number;
+		hintsUsed: number;
+		gaveUp: boolean;
+		firstAttempt?: { verdict: ExerciseVerdict; confidence?: number };
+	},
+	tool?: string,
+	_toolCallId?: string,
+): QuestionAnswerData {
+	const verdict = gradeExercise(input.format, input.spec, response);
+	const dontKnow = req.dontKnow === true;
+	const out: QuestionAnswerData = {
+		kind: "exercise",
+		...(tool ? { tool } : {}),
+		questionType: normalizeQuizType(input.type),
+		questionText: input.question,
+		dontKnow,
+		answers: [],
+		thinking: req.thinking?.trim() || undefined,
+		readingThinking: req.readingThinking?.trim() || undefined,
+		explanation: input.explanation,
+		format: input.format,
+		response,
+		verdict,
+		attempts: req.attempts,
+		hintsUsed: req.hintsUsed,
+		correct: !dontKnow && verdict.outcome === "correct",
+		answeredAt: new Date().toISOString(),
+	};
+	if (req.gaveUp) out.gaveUp = true;
+	if (req.firstAttempt) out.firstAttempt = req.firstAttempt;
+	if (!dontKnow && req.confidence !== undefined) {
+		out.confidence = Math.max(0, Math.min(100, Math.round(req.confidence)));
+	}
+	return out;
+}
+
 /**
  * The MODEL-VISIBLE answer record (owner, tool-result diet 2026-10-02):
  * the tool call already carries everything the model itself authored —
@@ -794,6 +935,7 @@ export function dismissedAnswer(kind: QuestionKind, questionText: string): Quest
 
 export function compactAnswerForModel(ad: QuestionAnswerData): Record<string, unknown> {
 	if (ad.dismissed) return { kind: ad.kind, dismissed: true };
+	if (ad.kind === "exercise") return compactExerciseAnswer(ad);
 	const out: Record<string, unknown> = { kind: ad.kind };
 	if (ad.dontKnow) out.dontKnow = true;
 	// Array.isArray: the seam is called with `unknown` answers (test
@@ -814,5 +956,37 @@ export function compactAnswerForModel(ad: QuestionAnswerData): Record<string, un
 	const thinking = ad.thinking ?? ad.note;
 	if (thinking) out.thinking = thinking;
 	if (ad.readingThinking) out.thinkingWhileReading = ad.readingThinking;
+	return out;
+}
+
+/** The exercise branch of the model-visible record: outcome, score, the
+ *  per-item marks and the help used. Expected values are NEVER included
+ *  (the model authored the key; the marks are what the learner showed). */
+function compactExerciseAnswer(ad: QuestionAnswerData): Record<string, unknown> {
+	const out: Record<string, unknown> = { kind: "exercise" };
+	if (ad.format) out.format = ad.format;
+	const v = ad.verdict ? stripExpected(ad.verdict) : undefined;
+	out.outcome = v?.outcome ?? "wrong";
+	out.earned = v?.earned ?? 0;
+	out.total = v?.total ?? 0;
+	out.items = v?.items ?? [];
+	out.attempts = ad.attempts ?? 1;
+	out.hintsUsed = ad.hintsUsed ?? 0;
+	if (ad.gaveUp) out.gaveUp = true;
+	if (ad.firstAttempt) {
+		const f = stripExpected(ad.firstAttempt.verdict);
+		out.firstAttempt = {
+			outcome: f.outcome,
+			earned: f.earned,
+			total: f.total,
+			items: f.items,
+			...(ad.firstAttempt.confidence !== undefined ? { confidence: ad.firstAttempt.confidence } : {}),
+		};
+	}
+	if (ad.confidence !== undefined) out.confidence = ad.confidence;
+	const thinking = ad.thinking ?? ad.note;
+	if (thinking) out.thinking = thinking;
+	if (ad.readingThinking) out.thinkingWhileReading = ad.readingThinking;
+	if (ad.dontKnow) out.dontKnow = true;
 	return out;
 }

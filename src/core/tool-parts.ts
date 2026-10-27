@@ -29,7 +29,8 @@
 
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
-import { quizDisplayInputSchema, askInputSchema, askOptionProblems, quizInputProblems, explainInputProblems, explainDisplayInputSchema, type AskToolInput, type QuizToolInput, type ExplainToolInput } from "./question-core.ts";
+import { exerciseDisplayInputSchema, type ExerciseToolInput, quizDisplayInputSchema, askInputSchema, askOptionProblems, quizInputProblems, explainInputProblems, explainDisplayInputSchema, type AskToolInput, type QuizToolInput, type ExplainToolInput } from "./question-core.ts";
+import { exerciseSpecProblems, INTERACTIVE_FORMATS } from "./exercise-core.ts";
 import { healEncodedArguments } from "./argument-heal.ts";
 import { probeDoneInputSchema, type ProbeDoneInput } from "./contracts/probe.ts";
 
@@ -116,4 +117,16 @@ export function parseExplainInput(input: unknown): ExplainToolInput | undefined 
 /** probe_done parse — the core-owned schema the tool itself declares. */
 export function parseProbeDoneInput(input: unknown): ProbeDoneInput | undefined {
 	return boundaryParse<ProbeDoneInput>(probeDoneInputSchema, input);
+}
+/** Exercise parse for DISPLAY (exercise / assess calls): the display schema
+ *  (base + OPTIONAL lenient `type`), then the same spec check the tool's
+ *  execute ran, so an input that could never have been posed renders as the
+ *  quiet fallback. The `format` must be a known format. */
+export function parseExerciseInput(raw: unknown): { ok: true; input: ExerciseToolInput } | { ok: false } {
+	const healed = healEncodedArguments(raw, exerciseDisplayInputSchema);
+	const cleaned = boundaryParse<ExerciseToolInput>(exerciseDisplayInputSchema, healed);
+	if (!cleaned) return { ok: false };
+	if (!(INTERACTIVE_FORMATS as readonly string[]).includes(cleaned.format)) return { ok: false };
+	if (exerciseSpecProblems(cleaned.format, cleaned.spec).length > 0) return { ok: false };
+	return { ok: true, input: cleaned };
 }
