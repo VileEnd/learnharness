@@ -88,3 +88,5 @@ export type { DocSearchHit, DocSearchResult, DocSearchQuery, DocListEntry, DocRe
 export * from "./math-expr.ts";
 // exercise-core.ts (interactive exercises, PR 1): contract + generative graders - pure, browser-safe.
 export * from "./exercise-core.ts";
+// canvas-core.ts (canvas workspace, PR 2): drawing scene contract, region grid, content ids - pure, browser-safe (pure-JS sha256).
+export * from "./canvas-core.ts";
