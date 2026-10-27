@@ -31,7 +31,7 @@ import {
 import { TOGGLEABLE_TOOLS } from "../src/core/pending.ts";
 import { jobStore } from "../src/store/jobs.ts";
 import { IMPLEMENTED_FORMATS } from "../src/core/exercise-core.ts";
-import { exerciseInputBase, probeQuizInputSchema, quizInputObject, quizInputProblems } from "../src/core/question-core.ts";
+import { exerciseInputBase, probeQuizInputSchema, quizInputObject, quizInputProblems, workInputObject } from "../src/core/question-core.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { PATHS } from "../config.ts";
 
@@ -480,6 +480,13 @@ describe("tool descriptions carry mechanics only, no question-craft", () => {
 		);
 		assert.ok(shared.includes("asymmetry"), "the option craft moved here, not deleted");
 		assert.ok(shared.includes("TRANSCRIBED SPEECH"), "the dictation-leniency note lives here");
+	});
+	it("24-canvas-tools.md cites only real tool and field names", async () => {
+		const frag = await fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared/24-canvas-tools.md"), "utf-8");
+		const known = new Set<string>(["20-question-tools", "grade", "question", "quiz", "explain", "exercise", "o1", "o2", "C4", "B2-D3"]);
+		const cited = [...frag.matchAll(/`([A-Za-z_0-9-]+)`/g)].map((m) => m[1]!);
+		assert.ok(cited.length >= 3, "the fragment cites names");
+		for (const name of cited) assert.ok(known.has(name) || name in workInputObject.properties, `\`${name}\` is not a real name`);
 	});
 	it("22-exercise-tools.md cites only schema field names", async () => {
 		const frag = await fs.promises.readFile(

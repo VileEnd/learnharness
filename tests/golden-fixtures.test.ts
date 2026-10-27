@@ -36,6 +36,7 @@ fs.cpSync(GOLDEN, TMP, { recursive: true });
 process.env.LH_DATA_DIR = TMP;
 
 const { chatStore } = await import("../src/store/chats.ts");
+const { drawingStore } = await import("../src/store/drawings.ts");
 const { graphStore } = await import("../src/store/graph.ts");
 const { jobStore } = await import("../src/store/jobs.ts");
 const { settingsStore } = await import("../src/store/settings.ts");
@@ -50,6 +51,7 @@ const { danglingQuestionOf, activeProblemOf } = await import("../src/core/native
 const TEACH = "chat_mv27rrra_feff23b6";
 const EXERCISES = "chat_mvqwyk18_da3a4b82";
 const PRACTICE = "chat_mv293wv5_10656952";
+const CANVAS = "chat_mvr0bwhl_d3a812e8";
 
 function snapshotTree(dir: string): Map<string, Buffer> {
 	const out = new Map<string, Buffer>();
@@ -75,7 +77,7 @@ test("chats: both fixture records parse through the production read path", () =>
 	assert.ok(ids.has(TEACH), "the teach master record lists");
 	assert.ok(ids.has(PRACTICE), "the practice lifecycle record lists");
 
-	for (const id of [TEACH, PRACTICE, EXERCISES]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
 		const r = chatStore.getChat(id);
 		assert.ok(r, `${id} reads`);
 		assert.ok(Array.isArray(r!.messages) && r!.messages.length > 0);
@@ -86,8 +88,15 @@ test("chats: both fixture records parse through the production read path", () =>
 	}
 });
 
+test("drawings: the canvas chat's submitted drawing reads through the DrawingStore", () => {
+	const marker = chatStore.getChat(CANVAS)!.messages.find((m) => (m as { customType?: string }).customType === "work-submission" && (m as { details?: { drawingId?: string } }).details?.drawingId) as { details: { drawingId: string } } | undefined;
+	assert.ok(marker, "a submission carries a drawingId");
+	assert.ok(drawingStore.getScene(CANVAS, marker.details.drawingId), "the scene reads");
+	assert.ok(drawingStore.getPng(CANVAS, marker.details.drawingId), "the snapshot reads");
+});
+
 test("chats: the LLM wire flattening turns each full record into a legal provider message list", () => {
-	for (const id of [TEACH, PRACTICE, EXERCISES]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
 		const r = chatStore.getChat(id)!;
 		const wire = toLlmMessages(r.messages as never);
 		assert.ok(wire.length > 0);
@@ -126,9 +135,12 @@ test("markers: the fixture pair covers EVERY custom-marker kind of the current c
 		"practice-next",
 		"problem-dismissed",
 		"compaction",
+		"work-submission",
+		"work-dismissed",
+		"hint-request",
 	] as const;
 	const seen = new Set<string>();
-	for (const id of [TEACH, PRACTICE, EXERCISES]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
 		for (const m of chatStore.getChat(id)!.messages) {
 			if ((m as { role?: string }).role === "custom") seen.add((m as { customType: string }).customType);
 		}
