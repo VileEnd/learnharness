@@ -29,7 +29,7 @@ test("annotate rejects unknown object id", async () => {
 test("annotate rejects out-of-grid cell", async () => {
 	const r = await run(tool, { drawingId: "drw_a", marks: [{ kind: "check", target: { cell: "Z99" } }] });
 	assert.equal(r.isError, true);
-	assert.match(text(r), /A1-H\d+/);
+	assert.match(text(r), /A1 to H\d+/);
 });
 
 test("annotate accepts cell range and arrows", async () => {
@@ -101,4 +101,42 @@ test("a stringified marks array is healed before validation", async () => {
 	const t = tools.annotate!;
 	const args = t.prepareArguments!({ drawingId: "drw_a", marks: JSON.stringify([{ kind: "circle", target: { cell: "A1" } }]) }) as { marks: unknown };
 	assert.ok(Array.isArray(args.marks));
+});
+
+// ---- heal parity: the record keeps RAW arguments (the tool-parts law) ----
+
+test("annotationsOf folds a recorded call whose marks arrived as a JSON string", () => {
+	const raw = { drawingId: "drw_a", marks: JSON.stringify([{ kind: "circle", target: { cell: "A1" } }]) };
+	const messages = [{ role: "assistant", content: [{ type: "toolCall", id: "s", name: "annotate", arguments: raw }] }, result("s")];
+	assert.deepEqual(annotationsOf(messages, "drw_a"), [{ callId: "s", marks: [{ kind: "circle", target: { cell: "A1" } }] }]);
+});
+
+test("a stringified nested target and null optional fields heal at the boundary and in the record alike", async () => {
+	const raw = { drawingId: "drw_a", marks: [{ kind: "arrow", from: '{"object":"o1"}', to: { cell: "C4" }, target: null, label: null }] };
+	const tools = createTeacherTools({
+		chatId: "c1", chatStore: { getChat: () => null } as never, jobStore: {} as never, spawn: () => {}, libraryRoot: "/tmp",
+		canvas: true, drawingStore: store("c1", "drw_a"),
+	} as never);
+	const prepared = tools.annotate!.prepareArguments!(raw) as { marks: { from: unknown }[] };
+	assert.deepEqual(prepared.marks[0]!.from, { object: "o1" });
+	const messages = [{ role: "assistant", content: [{ type: "toolCall", id: "n", name: "annotate", arguments: raw }] }, result("n")];
+	assert.deepEqual(annotationsOf(messages, "drw_a"), [{ callId: "n", marks: [{ kind: "arrow", from: { object: "o1" }, to: { cell: "C4" } }] }]);
+});
+
+// ---- range spelling: the structured text writes spans with a dash ----
+
+test("a dash, an en dash or a range in cell resolves like the colon range", async () => {
+	const colon = resolveTargetRect({ cells: "A1:C1" }, scene, box);
+	assert.ok(colon);
+	assert.deepEqual(resolveTargetRect({ cells: "A1-C1" }, scene, box), colon);
+	assert.deepEqual(resolveTargetRect({ cells: "A1–C1" }, scene, box), colon);
+	assert.deepEqual(resolveTargetRect({ cell: "A1-C1" }, scene, box), colon);
+	const r = await run(tool, { drawingId: "drw_a", marks: [{ kind: "underline", target: { cells: "A1-C1" } }, { kind: "circle", target: { cell: "A1:B1" } }] });
+	assert.equal(r.isError, undefined);
+});
+
+test("a malformed range is refused with the range syntax", async () => {
+	const r = await run(tool, { drawingId: "drw_a", marks: [{ kind: "underline", target: { cells: "A1..C1" } }] });
+	assert.equal(r.isError, true);
+	assert.match(text(r), /ranges are written B2:D3/);
 });
