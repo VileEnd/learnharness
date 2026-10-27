@@ -18,10 +18,11 @@ import { practiceTools, type PracticeToolContext } from "./tools/practice.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserTool } from "./tools/send-to-user.ts";
 import { createTurnGuard } from "./turn-guard.ts";
+import { newTurnNudge, nextNudge, withEmptyErrorRetry } from "./turn-nudge.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
-import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext } from "../core/native-messages.ts";
+import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext, type LhMessage } from "../core/native-messages.ts";
 
 /**
  * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
@@ -215,6 +216,8 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	// (upstream 87b04cc idea). Later turn-ending tools join with one name here.
 	const stopper = makeQuestionStopper(kind === "practice" ? PRACTICE_TURN_ENDERS : TEACH_TURN_ENDERS);
 	const guard = createTurnGuard({ spendCapUsd: opts.spendCapUsd, stepCost: opts.stepCost });
+	// RC9/RC10: at most one hidden re-prompt per turn (turn-nudge.ts).
+	const nudged = { used: false };
 	const systemPrompt = opts.promptSwitches
 		? composeInstructions(kind, opts.promptSwitches)
 		: composedInstructions[kind]!;
@@ -243,7 +246,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			],
 			messages: opts.messages ?? [],
 		},
-		streamFn: engine.streamFn,
+		streamFn: withEmptyErrorRetry(engine.streamFn),
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
 		// 0.87.1: shouldStopAfterTurn → finishTurn. Same call point (after
 		// tool results attach, before turn_end) and `{ action: "end" }` still
@@ -255,7 +258,14 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			// results); a posed question ending the turn outranks its notice.
 			const asked = stopper(turn);
 			const stop = guard.finishTurn(turn as never, asked);
-			return asked || stop ? { action: "end" } : undefined;
+			if (asked || stop) return { action: "end" };
+			// A step with no tool calls ends the run: if the learner is left
+			// with nothing usable, queue ONE steer for the loop's follow-up poll.
+			if (turn.message.stopReason === "stop" && !turn.message.content.some((c) => c.type === "toolCall")) {
+				const text = nextNudge(turn.context.messages as unknown as LhMessage[], nudged);
+				if (text !== undefined) agent.followUp(newTurnNudge(text) as unknown as AgentMessage);
+			}
+			return undefined;
 		},
 		beforeToolCall: async ({ toolCall }) => guard.beforeToolCall(toolCall.name),
 		// Wave C (2026-09-26, owner correction same day): markers handed to a
@@ -282,6 +292,11 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			guard.observeUsage(event.message.usage);
 			opts.onUsage?.(event.message.usage);
 		} else if (event.type === "agent_end") {
+			// The steer is scaffolding: it never reaches the record.
+			const msgs = agent.state.messages as unknown as Array<{ role?: string; customType?: string }>;
+			for (let i = msgs.length - 1; i >= 0; i--) {
+				if (msgs[i]!.role === "custom" && msgs[i]!.customType === "turn-nudge") msgs.splice(i, 1);
+			}
 			// The guard's stop notice rides the record as the turn's last
 			// assistant line (state is reduced before listeners run, and the
 			// settle seam reads state after this listener).

@@ -1,0 +1,162 @@
+/**
+ * In-turn re-prompts and the empty-error retry (RC9, RC10a; cross-model
+ * robustness, 2026-10-27). Weaker models sometimes end a turn the learner
+ * cannot use: after a work submission or hint request they mark/grade and
+ * say nothing, or (DeepSeek) they write the plan as a diagram without
+ * calling plan_init. The agent layer answers with ONE hidden steer per turn
+ * through pi's follow-up queue; the steer is scaffolding, so it is stripped
+ * from the agent's state at agent_end and never reaches the record or the
+ * transcript. Pure predicates live here; teacher-agent.ts wires them.
+ *
+ * withEmptyErrorRetry covers the Gemini failure: a step that ends in an
+ * error with no content ("The operation was aborted" after ~25 s, zero
+ * events) while the learner did not abort is retried once. The pi loop
+ * treats error steps as hard exits, so the retry sits at the stream seam.
+ */
+import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { QUESTION_TOOLS } from "../core/pending.ts";
+import {
+	failedOutputCallIds,
+	isInputBoundary,
+	PRACTICE_PROBLEM_TOOL,
+	sendToUserText,
+	WORK_TOOLS,
+	type LhMarkerMessage,
+	type LhMessage,
+} from "../core/native-messages.ts";
+
+export const SILENT_TURN_STEER =
+	"The learner saw only your marks/grade - tell him in plain text what you saw and what to do next.";
+export const PLAN_INIT_STEER = "Call plan_init with that plan.";
+
+export function newTurnNudge(text: string): LhMarkerMessage {
+	return {
+		id: `nudge_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
+		role: "custom",
+		customType: "turn-nudge",
+		content: text,
+		display: false,
+		details: null,
+		timestamp: Date.now(),
+	};
+}
+
+/** The messages since the last input boundary, and that boundary (if any). */
+function sinceInput(messages: readonly LhMessage[]): { boundary: LhMessage | undefined; since: LhMessage[] } {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (isInputBoundary(messages[i])) return { boundary: messages[i], since: messages.slice(i + 1) };
+	}
+	return { boundary: undefined, since: [...messages] };
+}
+
+const POSE_TOOLS: readonly string[] = [...QUESTION_TOOLS, ...WORK_TOOLS, PRACTICE_PROBLEM_TOOL];
+
+/** RC9: the turn answers a work submission / hint request, yet nothing in it
+ *  is learner-visible prose and no question or task was posed. */
+export function silentAfterSubmission(messages: readonly LhMessage[]): boolean {
+	const { boundary, since } = sinceInput(messages);
+	if (boundary?.role !== "custom") return false;
+	if (boundary.customType !== "work-submission" && boundary.customType !== "hint-request") return false;
+	const failed = failedOutputCallIds(since);
+	for (const m of since) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const block of m.content) {
+			if (block.type === "text" && block.text.trim()) return false;
+			if (block.type === "toolCall") {
+				if (POSE_TOOLS.includes(block.name)) return false;
+				if (!failed.has(block.id) && sendToUserText(block) !== undefined) return false;
+			}
+		}
+	}
+	return true;
+}
+
+const PLAN_DIAGRAM = /```\s*mermaid|^\s*(?:graph|flowchart)\s+(?:TD|TB|LR|RL|BT)\b/im;
+
+/** RC10(a): the probe-handoff (planning) turn wrote a plan-looking diagram
+ *  but no plan_init succeeded. */
+export function planWrittenAsProse(messages: readonly LhMessage[]): boolean {
+	const { boundary, since } = sinceInput(messages);
+	if (boundary?.role !== "custom" || boundary.customType !== "probe-handoff") return false;
+	let diagram = false;
+	for (const m of since) {
+		if (m.role === "toolResult" && m.toolName === "plan_init") {
+			const ok = (m.details as { ok?: unknown } | null | undefined)?.ok !== false;
+			if (!m.isError && ok) return false;
+		}
+		if (m.role === "assistant" && Array.isArray(m.content)) {
+			for (const block of m.content) if (block.type === "text" && PLAN_DIAGRAM.test(block.text)) diagram = true;
+		}
+	}
+	return diagram;
+}
+
+/** At most one steer per turn: the first matching rule wins. `done` is the
+ *  caller's per-turn flag holder. */
+export function nextNudge(messages: readonly LhMessage[], done: { used: boolean }): string | undefined {
+	if (done.used) return undefined;
+	const text = silentAfterSubmission(messages)
+		? SILENT_TURN_STEER
+		: planWrittenAsProse(messages)
+			? PLAN_INIT_STEER
+			: undefined;
+	if (text !== undefined) done.used = true;
+	return text;
+}
+
+/** RC9: retry a step ONCE when it ends in an error with no content and the
+ *  learner did not abort. Only the "start" event may precede the error. */
+/** Only transient-looking failures are worth a second request: an abort or
+ *  timeout nobody asked for, a dropped connection, a 5xx/429, or no message
+ *  at all. A server that answered with a 4xx body would fail identically. */
+function isTransient(message: string | undefined): boolean {
+	if (!message?.trim()) return true;
+	return /abort|timed? ?out|timeout|fetch failed|network|econn|socket|terminated|premature|overloaded|\b(?:408|429|5\d\d)\b/i.test(message);
+}
+
+export function withEmptyErrorRetry(inner: StreamFn): StreamFn {
+	let retried = false;
+	return async (model, context, options) => {
+		const first = await inner(model, context, options);
+		const out = createAssistantMessageEventStream();
+		void (async () => {
+			try {
+				const held: AssistantMessageEvent[] = [];
+				let live = false;
+				for await (const event of first) {
+					if (live) {
+						out.push(event);
+						continue;
+					}
+					if (event.type === "start") {
+						held.push(event);
+						continue;
+					}
+					const empty =
+						event.type === "error" &&
+						event.error.content.length === 0 &&
+						!retried &&
+						isTransient(event.error.errorMessage) &&
+						options?.signal?.aborted !== true;
+					if (empty) {
+						retried = true;
+						const second = await inner(model, context, options);
+						for await (const e of second) out.push(e);
+						return;
+					}
+					live = true;
+					for (const h of held) out.push(h);
+					out.push(event);
+				}
+				for (const h of held) out.push(h);
+			} catch (err) {
+				console.error("[stream-retry] failed:", err);
+			} finally {
+				out.end();
+			}
+		})();
+		return out;
+	};
+}
