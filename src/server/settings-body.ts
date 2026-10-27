@@ -44,10 +44,10 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 		canvas?: unknown;
 	};
 	const settings: ChatSettings = {};
-	if (raw.model !== undefined) {
+	// `null` is the explicit clear (see chatSettingsClears): absent from the parse.
+	if (raw.model !== undefined && raw.model !== null) {
 		if (
 			typeof raw.model !== "object" ||
-			raw.model === null ||
 			typeof raw.model.provider !== "string" ||
 			typeof raw.model.id !== "string"
 		) {
@@ -55,7 +55,7 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 		}
 		settings.model = { provider: raw.model.provider, id: raw.model.id };
 	}
-	if (raw.thinkingLevel !== undefined) {
+	if (raw.thinkingLevel !== undefined && raw.thinkingLevel !== null) {
 		if (typeof raw.thinkingLevel !== "string") {
 			return { ok: false, error: "thinkingLevel must be a string" };
 		}
@@ -70,6 +70,17 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 	// budget dial is gone with it. A stale client sending the old key has
 	// it silently dropped here (forward-compatible, like any unknown key).
 	return { ok: true, settings };
+}
+
+/** Keys a per-chat PUT body explicitly clears with `null` (the route merges
+ *  over the stored settings, where an omitted key means "keep"). Only the
+ *  pins can be cleared; call after parseSettingsBody accepted the body. */
+export function chatSettingsClears(body: unknown): Array<"model" | "thinkingLevel"> {
+	const raw = (body ?? {}) as Record<string, unknown>;
+	const out: Array<"model" | "thinkingLevel"> = [];
+	if (raw.model === null) out.push("model");
+	if (raw.thinkingLevel === null) out.push("thinkingLevel");
+	return out;
 }
 
 // ─── Section parsers (settings-storage wave, 2026-09-19) ────────────────────
