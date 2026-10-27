@@ -27,6 +27,7 @@ import { exerciseSpecProblems, INTERACTIVE_FORMATS, type InteractiveFormat } fro
 import { activeProblemOf } from "../../core/native-messages.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import { concludeResult, invalidInputResult, problemResult } from "../tool-execute.ts";
+import { formatSpecDocs } from "../tools.ts";
 import { healEncodedArguments, healToolRecord } from "./heal.ts";
 
 
@@ -126,7 +127,11 @@ export function problemTool(
 			"Pose one practice problem. Ends the turn — the learner works in the thinking field; their thinking " +
 			"traces and answer commits arrive back as labeled messages. The modelSolution rides this call's " +
 			"arguments and stays hidden from the learner until you conclude (conclude shows it verbatim — the " +
-			"reveal needs no new field). Only one problem may be active — conclude it before posing the next.",
+			"reveal needs no new field). Only one problem may be active — conclude it before posing the next." +
+			(formats && formats.length > 0
+				? " Optional interactive form: `format` (bare word: " + formats.join(", ") + ") plus `spec`, both or neither. " +
+					"The `spec` fields by format: " + formatSpecDocs(formats)
+				: ""),
 		parameters: problemInputObject,
 		executionMode: "sequential",
 		prepareArguments: (args: unknown) => {
