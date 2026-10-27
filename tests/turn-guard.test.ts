@@ -25,10 +25,15 @@ function tools(): Record<string, AgentTool<any>> {
 		name, label: name, description: name, parameters: params, executionMode: "sequential",
 		execute: async () => ({ content: [{ type: "text", text: isError ? "nope" : "ok" }], details: null, isError }),
 	});
-	return { bad: make("bad", true), read: make("read", false), flaky: {
+	/** `flaky` fails only for path "a": one tool, success or failure by arguments. */
+	const flaky: AgentTool<any> = {
 		name: "flaky", label: "flaky", description: "flaky", parameters: params, executionMode: "sequential",
-		execute: async (_id: string, args: { path?: string }) => ({ content: [{ type: "text", text: args.path === "a" ? "nope" : "ok" }], details: null, isError: args.path === "a" }),
-	} };
+		execute: async (_id, args) => {
+			const bad = (args as { path?: string }).path === "a";
+			return { content: [{ type: "text", text: bad ? "nope" : "ok" }], details: null, isError: bad };
+		},
+	};
+	return { bad: make("bad", true), read: make("read", false), flaky };
 }
 const call = (name: string, args: Record<string, string | { nested: boolean }>, id: string) => fauxToolCall(name, args, { id });
 const step = (...calls: ReturnType<typeof fauxToolCall>[]) => fauxAssistantMessage(calls, { stopReason: "toolUse" });
