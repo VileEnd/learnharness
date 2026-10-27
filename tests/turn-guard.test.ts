@@ -25,7 +25,10 @@ function tools(): Record<string, AgentTool<any>> {
 		name, label: name, description: name, parameters: params, executionMode: "sequential",
 		execute: async () => ({ content: [{ type: "text", text: isError ? "nope" : "ok" }], details: null, isError }),
 	});
-	return { bad: make("bad", true), read: make("read", false) };
+	return { bad: make("bad", true), read: make("read", false), flaky: {
+		name: "flaky", label: "flaky", description: "flaky", parameters: params, executionMode: "sequential",
+		execute: async (_id: string, args: { path?: string }) => ({ content: [{ type: "text", text: args.path === "a" ? "nope" : "ok" }], details: null, isError: args.path === "a" }),
+	} };
 }
 const call = (name: string, args: Record<string, string | { nested: boolean }>, id: string) => fauxToolCall(name, args, { id });
 const step = (...calls: ReturnType<typeof fauxToolCall>[]) => fauxAssistantMessage(calls, { stopReason: "toolUse" });
@@ -117,6 +120,44 @@ describe("identical-failure breaker", () => {
 		await agent.prompt("go");
 		assert.ok(textOf(resultsOf(agent, "bad")[2]!).includes(finalRefusal("bad")), "reads in between reset nothing");
 		assert.ok(resultsOf(agent, "read").every((r) => !r.isError && /ok/.test(textOf(r))));
+	});
+
+	// Final-review important: the tool was dropped MID-message, so later calls
+	// in the same message (one that already ran and SUCCEEDED) were rewritten
+	// to the refusal while isError stayed false, and counted toward the stop.
+	it("[bad, bad, bad, good] in one message: the success keeps its result and nothing ends the turn", async () => {
+		const { engine, faux } = scripted([
+			step(call("flaky", { path: "a" }, "f1"), call("flaky", { path: "a" }, "f2"), call("flaky", { path: "a" }, "f3"),
+				call("flaky", { path: "b" }, "f4"), call("flaky", { path: "c" }, "f5")),
+			fauxAssistantMessage("done"),
+		]);
+		const agent = createTeacherAgent(undefined, { engine, tools: tools() });
+		await agent.prompt("go");
+		const rs = resultsOf(agent, "flaky");
+		assert.equal(rs.length, 5);
+		assert.ok(textOf(rs[2]!).includes(finalRefusal("flaky")), "the 3rd identical failure is refused");
+		for (const r of rs.slice(3)) {
+			assert.equal(r.isError, false);
+			assert.match(textOf(r), /ok/);
+			assert.ok(!textOf(r).includes("unavailable"), "a success is never rewritten");
+		}
+		assert.equal(faux.state.callCount, 2, "same-step calls never count toward the stop");
+		assert.ok(!lastAssistantText(agent).includes("stuck"));
+	});
+
+	it("the model sees the refusal before any call counts toward the stop", async () => {
+		const { engine, faux } = scripted([
+			step(call("flaky", { path: "a" }, "f1"), call("flaky", { path: "a" }, "f2"), call("flaky", { path: "a" }, "f3"),
+				call("flaky", { path: "a" }, "f4"), call("flaky", { path: "a" }, "f5")),
+			step(call("flaky", { path: "b" }, "f6")), step(call("flaky", { path: "c" }, "f7")),
+			fauxAssistantMessage("must not run"),
+		]);
+		const agent = createTeacherAgent(undefined, { engine, tools: tools() });
+		await agent.prompt("go");
+		assert.equal(faux.state.callCount, 3, "two calls AFTER the refusal step end the turn");
+		const rs = resultsOf(agent, "flaky");
+		assert.ok(rs.slice(5).every((r) => r.isError && textOf(r).includes("unavailable for the rest of this turn")));
+		assert.ok(lastAssistantText(agent).includes(STUCK_NOTICE));
 	});
 
 	it("20 successful reads in a row are untouched", async () => {
