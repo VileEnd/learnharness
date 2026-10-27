@@ -471,6 +471,7 @@ export async function handleChatInput(
 						libraryBeforeAccess: () => library.ensureFresh(),
 						formats: enabledFormats(effective),
 						canvas,
+						drawingStore: stores.drawingStore,
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
@@ -492,6 +493,7 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
+						drawingStore: stores.drawingStore,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -513,6 +515,7 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
+						drawingStore: stores.drawingStore,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
