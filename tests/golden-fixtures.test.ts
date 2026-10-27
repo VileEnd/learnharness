@@ -44,6 +44,7 @@ const { getGraph, deriveView } = await import("../src/core/graph.ts");
 const { sanitizeRenderSettings } = await import("../src/core/render-settings.ts");
 const { toLlmMessages } = await import("../src/core/native-messages.ts");
 const { phaseAt3Lh } = await import("../src/core/phases.ts");
+const { resolveQuizMechanic } = await import("../src/core/settings-resolution.ts");
 const { danglingQuestionOf, activeProblemOf } = await import("../src/core/native-messages.ts");
 
 const TEACH = "chat_mv27rrra_feff23b6";
@@ -217,6 +218,7 @@ test("settings: the stamped record parses", () => {
 	assert.ok(s, "settings record reads");
 	assert.equal(s!.version, 1, "settings carry their version stamp");
 	assert.ok(s!.models && typeof s!.models === "object", "model slots present");
+	assert.equal(resolveQuizMechanic(s!.agent), "mixed", "the sanitizer keeps agent.quizMechanic");
 });
 
 // ── read-only: readers never write ──────────────────────────────────────────

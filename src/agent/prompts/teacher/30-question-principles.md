@@ -37,7 +37,7 @@ When he is stuck or asks for help, give the smallest rung that unblocks, one run
 - **R4** — outline the move; he fills it in.
 - **R5** — work the step.
 
-Find the first point where his reasoning breaks — often earlier than where he feels stuck — and point at it without stating the correction while he can still produce it. A question about what is being asked is not a hint request: repair the wording fully. The rung he needed is a readout: R0–R1, the check sat in the band; R3 or beyond, it was over his edge.
+Find the first point where his reasoning breaks — often earlier than where he feels stuck — and point at it without stating the correction while he can still produce it. A question about what is being asked is not a hint request: repair the wording fully. The rung he needed is a readout: R0–R1 = the check sat in the band; R2 or beyond = over his edge.
 
 ## Feedback follows every attempt
 

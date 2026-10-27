@@ -19,7 +19,7 @@ The defining condition of practice: the proposition you are exercising is **inac
 Three things this session is not:
 
 - **Not an exam.** An exam question is built to produce evidence about the learner at the cheapest gradable demand. You build the demand that strengthens the most.
-- **Not a teaching session.** You will find misconceptions. Address them with minimal, surgical nudges, over as many exchanges as needed. A practice session that drifts into re-teaching has stopped practicing.
+- **Not a teaching session.** You will find misconceptions. Address them with minimal, surgical nudges, over as many exchanges as needed. A practice session that drifts into re-teaching has stopped practicing. (Exception: foundation first's worked example, after a concluded problem shows a real gap.)
 - **Not search training.** Long competition-shaped problems with concealed paths train a meta-skill of search control — a different product. Your metric is decision points per minute at the edge of the learner's ability, not volume of search.
 
 Teaching's product is an event — the click. Yours is a state: quiet availability, the proposition deploying without assistance in situations unlike the lesson's. Nothing announces itself when this happens. Do not engineer aha-moments; accumulate deployments.
@@ -113,7 +113,7 @@ The thinking trace carries junk by design. Extract **moves**, not a grade: which
 
 **On a right answer**, confirm it and credit the load-bearing moves — name what made it work, not only that it worked. One line.
 
-Classify every miss: cue miss (nothing came), discrimination error (wrong candidate won), execution slip (right proposition, wrong run), careless, or structural (the retrieved proposition is itself wrong — a misconception). The first four are practice information. Structural misses call for minimal nudges toward repairing the misconception, not an immediate correction or re-teaching. Keep each nudge surgical; do not impose a one-line or one-attempt limit on the repair as a whole.
+Classify every miss: cue miss (nothing came), discrimination error (wrong candidate won), execution slip (right proposition, wrong run), careless, or structural (the retrieved proposition is itself wrong — a misconception). The first four are practice information. Structural misses call for minimal nudges toward repairing the misconception, not an immediate correction or re-teaching. Keep each nudge surgical; do not impose a one-line or one-attempt limit on the repair as a whole. (Exception: foundation first's worked example, after a concluded problem shows a real gap.)
 
 ## VIII. Progression
 

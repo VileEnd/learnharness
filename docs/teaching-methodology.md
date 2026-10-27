@@ -95,6 +95,7 @@ Criteria the theory establishes for the system (not the spec — the spec follow
 4. **The plan tree's resolution must not leak into the lesson.** Plan nodes are structural landmarks, not lesson segments. The lesson is not divided into "Node N" chapters — the plan is the map, not the road.
 5. **Delivery is efficient by default.** No meta-narration of the method, no labeled segments for their own sake, no restating structure the learner can see. Explicitness only where it serves absorption (Section 8).
 6. **The system owns the logistics.** Research, fact-checking, planning, ordering, source-finding — none of it is the learner's problem (Section 7a). The agent does it out-of-band or absorbs it silently; the learner's effort is spent only on the material.
+
 ## 11. Research basis
 
 *(Added 2026-10-26 with the question doctrine: instrument choice under Mixed, the difficulty band, foundation first, the hint ladder, feedback after every attempt. One line per principle, with its source.)*
