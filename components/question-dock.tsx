@@ -12,6 +12,7 @@ import {
 	buildAnswer,
 	buildExerciseAnswer,
 	gradeExercise,
+	unreadableItems,
 	parseExerciseInput,
 	repairMathForDisplay,
 	normalizeQuizType,
@@ -43,6 +44,7 @@ import {
 } from "@/src/core";
 import { CONFIDENCE_COLORS, confidenceRailStyle } from "@/components/confidence-rail";
 import { ExerciseWidget } from "@/components/exercise/exercise-widget";
+import { UnreadableNotice } from "@/components/exercise/widget-shared";
 import {
 	emptyResponse,
 	exerciseAttemptReducer,
@@ -433,8 +435,14 @@ function QuestionDockForm({
 	// Check grades locally and keeps only the marks; a correct Check closes
 	// the loop (the effect below submits).
 	const canCheck = !!exInput && !sel.dontKnow && thinkingOk && !compactionRunning && !attempt.submitting && hasAnyText(attempt.response);
+	// Entries the grader cannot read refuse the Check (not counted) instead
+	// of grading a notation slip wrong; any edit clears the notice.
+	const [unreadableCount, setUnreadableCount] = useState(0);
 	const check = () => {
 		if (!exInput || !canCheck) return;
+		const unread = unreadableItems(exInput.format, exInput.spec, attempt.response);
+		setUnreadableCount(unread.length);
+		if (unread.length > 0) return;
 		dispatch({
 			type: "check",
 			verdict: gradeExercise(exInput.format, exInput.spec, attempt.response),
@@ -724,11 +732,15 @@ function QuestionDockForm({
 							spec={exInput.spec}
 							toolCallId={toolCallId}
 							value={attempt.response}
-							onChange={(response) => dispatch({ type: "edit", response })}
+							onChange={(response) => {
+								setUnreadableCount(0);
+								dispatch({ type: "edit", response });
+							}}
 							review={attempt.verdict}
 							marksOnly
 							readOnly={sel.dontKnow || attempt.submitting}
 						/>
+						<UnreadableNotice count={unreadableCount} />
 						{hints.slice(0, attempt.hintsUsed).map((h, i) => (
 							<div key={i} data-testid="exercise-hint" className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
 								<span className="font-medium text-foreground">Hint {i + 1}: </span>

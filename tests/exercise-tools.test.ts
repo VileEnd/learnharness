@@ -140,6 +140,16 @@ describe("the authoring contract", () => {
 		assert.deepEqual(hintLeaks("blanks", spec, ["it is LIGHT blue, right?", "x marks the spot"]), ["light blue"]);
 		assert.deepEqual(hintLeaks("blanks", spec, ["no leak"]), []);
 	});
+
+	it("hintLeaks matches whole tokens only", () => {
+		const blanks = { text: "I live {{a}} Berlin.", blanks: [{ id: "a", accept: ["in"] }] };
+		assert.deepEqual(hintLeaks("blanks", blanks, ["Think about the preposition used for cities."]), []);
+		assert.deepEqual(hintLeaks("blanks", blanks, ["It is in, not at."]), ["in"]);
+		const numeric = { answer: "10", mode: "number" };
+		assert.deepEqual(hintLeaks("numeric", numeric, ["there are 100 in total"]), []);
+		assert.deepEqual(hintLeaks("numeric", numeric, ["it is 10."]), ["10"]);
+		assert.deepEqual(hintLeaks("numeric", { answer: "x^2", mode: "expr" }, ["try (x^2)"]), ["x^2"]);
+	});
 });
 
 describe("the answer record", () => {

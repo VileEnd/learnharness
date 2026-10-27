@@ -59,5 +59,31 @@ test("adjacent single-letter variables multiply implicitly", () => {
 	assert.equal(exprEquivalent("2xy", "2yx", ["x", "y"]), true);
 	assert.equal(exprEquivalent("2xy", "3xy", ["x", "y"]), false);
 	assert.equal(exprEquivalent("xpi", "pi*x", ["x"]), true);
-	assert.equal(parseExpr("sinx").ok, false);
+	assert.equal(parseExpr("xsinx").ok, false); // a function inside a letter run stays unreadable
+});
+
+test("common typed notation grades like its ASCII form", () => {
+	assert.equal(exprEquivalent("x²", "x^2", ["x"]), true);
+	assert.equal(exprEquivalent("x⁻¹", "1/x", ["x"]), true);
+	assert.equal(parseNumberLike("3×4"), 12);
+	assert.equal(parseNumberLike("12÷4"), 3);
+	assert.equal(exprEquivalent("2·x", "2x", ["x"]), true);
+	assert.equal(exprEquivalent("2⋅x − 1", "2x-1", ["x"]), true);
+	assert.equal(exprEquivalent("sinx", "sin(x)", ["x"]), true);
+	assert.equal(exprEquivalent("sin 2x", "sin(2x)", ["x"]), true);
+	assert.equal(exprEquivalent("sin x cos x", "sin(x)*cos(x)", ["x"]), true);
+	assert.equal(exprEquivalent("√x", "sqrt(x)", ["x"]), true);
+	assert.equal(parseNumberLike("2√9"), 6);
+	assert.equal(parseExpr("sinh(x)").ok, false); // not a function we know, never sin(h·x)
+});
+
+test("thousands separators and number juxtaposition", () => {
+	assert.equal(parseNumberLike("1,000,000"), 1_000_000);
+	assert.equal(parseNumberLike("1,000.5"), 1000.5);
+	assert.equal(parseNumberLike("1,000"), null); // German 1.0 or English 1000: refused, not guessed
+	assert.equal(parseNumberLike("0,125"), 0.125);
+	assert.equal(parseNumberLike("1 000"), null);
+	assert.equal(parseNumberLike("2 3"), null);
+	assert.equal(parseNumberLike("2^3 4"), null);
+	assert.equal(parseNumberLike("2 pi"), 2 * Math.PI);
 });

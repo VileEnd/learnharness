@@ -99,3 +99,14 @@ export function ItemInput({
 		</span>
 	);
 }
+
+/** Shown when Check found entries the grader cannot read (unreadableItems):
+ *  the Check is refused and does not count as an attempt. */
+export function UnreadableNotice({ count }: { count: number }) {
+	if (count === 0) return null;
+	return (
+		<div data-testid="exercise-unreadable" role="status" className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+			Couldn't read {count === 1 ? "that entry" : `${count} entries`}. Write it like 1000, 2.5, 3*4, x^2 or sqrt(2). This Check didn't count.
+		</div>
+	);
+}
