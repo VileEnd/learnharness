@@ -143,7 +143,7 @@ test("repeated recovery behind a question yields one handed and one durable mark
 	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "delivered");
 });
 
-for (const refused of [409, 403]) test(`duplicate during a ${refused} wake retains one logical owner`, async () => {
+for (const refused of [409, 503]) test(`duplicate during a ${refused} wake retains one logical owner`, async () => {
 	const owner = chat(); const { steer } = pending(owner.id);
 	let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
 	let attempts = 0;
@@ -158,7 +158,7 @@ for (const refused of [409, 403]) test(`duplicate during a ${refused} wake retai
 	await until(() => attempts === 1);
 	assert.strictEqual(deliverJobResult(steer), first, "wake cargo is still in the registry");
 	release();
-	if (refused === 403) {
+	if (refused === 503) {
 		await delay(30);
 		const next = agent(); assert(beginTurn(owner.id)); registerLiveAgent(owner.id, next.value);
 		assert.equal(next.handed.length, 1);
@@ -211,8 +211,8 @@ test("a racing foreground settlement cannot release an outstanding staged wake",
 	setTurnRunner(async (id, input) => {
 		assert.equal(input.type, "steers"); if (input.type !== "steers") return 500;
 		started = true;
-		// Subscription wake startup can await catalog refresh before claiming
-		// the session. Its cargo is not yet a durable input prefix.
+		// Wake startup is asynchronous: the runner can await work before
+		// claiming the session. Its cargo is not yet a durable input prefix.
 		await startup;
 		const faux = createFauxCore({});
 		faux.setResponses([(context) => {
