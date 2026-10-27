@@ -25,7 +25,7 @@ import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
-import { annotationsOf, hintsFor, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
+import { annotationsOf, hintsFor, isInputBoundary, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
 import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
@@ -116,13 +116,14 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	);
 	// The replies to this task's hint requests, derived from the record (so they survive minimise and reload).
 	const hints = useMemo(() => hintsFor(messages, callId), [messages, callId]);
-	// Pending only while that request is still the newest learner input: a later submission or message means
-	// the request will never be answered, so a turn that is running is not "getting a hint".
+	// Pending only while that request is still the newest input (isInputBoundary, the same rule hintsFor ends a
+	// hint's window on): a later submission, message, answer or job steer means the running turn is not "getting
+	// a hint".
 	const newestRequestIsLatestInput = useMemo(() => {
 		const id = hints[hints.length - 1]?.requestId;
 		for (let i = messages.length - 1; i >= 0; i--) {
-			const m = messages[i] as { id?: string; role?: string; customType?: string };
-			if (m.role === "user" || (m.role === "custom" && m.customType !== "plan-block")) return m.id === id;
+			const m = messages[i];
+			if (isInputBoundary(m)) return (m as { id?: string }).id === id;
 		}
 		return false;
 	}, [messages, hints]);

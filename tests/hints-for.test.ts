@@ -1,13 +1,26 @@
 /** hintsFor: the hint replies of one canvas task / practice problem, derived from the record. */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { hintsFor, newHintRequest, newThinkingMessage, newWorkSubmission, type LhMessage } from "../src/core/native-messages.ts";
+import {
+	hintsFor,
+	isInputBoundary,
+	newAnswerResult,
+	newHintRequest,
+	newNextMessage,
+	newPlanBlockMessage,
+	newThinkingMessage,
+	newUserMessage,
+	newWorkSubmission,
+	type LhMessage,
+} from "../src/core/native-messages.ts";
 
 const req = (callId: string, id: string): LhMessage => ({ ...newHintRequest(callId), id });
 const say = (id: string, text: string, extra: object = {}): LhMessage =>
 	({ id, role: "assistant", content: [{ type: "text", text }], stopReason: "stop", ...extra }) as unknown as LhMessage;
 const sendCall = (id: string, callId: string, message: string): LhMessage =>
 	({ id, role: "assistant", content: [{ type: "toolCall", id: callId, name: "send_to_user", arguments: { message } }], stopReason: "toolUse" }) as unknown as LhMessage;
+const marker = (id: string, customType: string): LhMessage =>
+	({ id, role: "custom", customType, content: "x", display: true, details: {}, timestamp: 0 }) as unknown as LhMessage;
 const sendResult = (id: string, callId: string, isError: boolean): LhMessage =>
 	({ id, role: "toolResult", toolCallId: callId, toolName: "send_to_user", isError, content: [] }) as unknown as LhMessage;
 
@@ -60,5 +73,46 @@ describe("hintsFor", () => {
 			{ requestId: "r1", text: "nudge" },
 			{ requestId: "r2", text: null },
 		]);
+	});
+
+	it("a job's steer after the hint reply does not join the hint (subagent-steer/-abort, probe-handoff end the window)", () => {
+		for (const kind of ["subagent-steer", "subagent-abort", "probe-handoff"]) {
+			const m = [req("w", "r1"), say("a1", "Hint: look at the axes"), marker("s1", kind), say("a2", "Your diagram of the pipeline is ready above.")];
+			assert.deepEqual(hintsFor(m, "w"), [{ requestId: "r1", text: "Hint: look at the axes" }], kind);
+		}
+	});
+
+	it("a clean question answer ends the window; a refused (error) result does not", () => {
+		const answer = { ...newAnswerResult("q1", "quiz", { selected: [0] }), id: "ans" } as LhMessage;
+		assert.deepEqual(hintsFor([req("w", "r1"), say("a1", "nudge"), answer, say("a2", "feedback on the quiz")], "w"), [
+			{ requestId: "r1", text: "nudge" },
+		]);
+		const refused = ({ id: "e1", role: "toolResult", toolCallId: "q1", toolName: "quiz", isError: true, content: [] }) as unknown as LhMessage;
+		assert.equal(hintsFor([req("w", "r1"), say("a1", "nudge"), refused, say("a2", "and more")], "w")[0]?.text, "nudge\n\nand more");
+	});
+
+	it("practice-next ends the window", () => {
+		const next = { ...newNextMessage(), id: "n1" } as LhMessage;
+		assert.deepEqual(hintsFor([req("prob1", "r1"), say("a1", "nudge"), next, say("a2", "here is the next problem")], "prob1"), [
+			{ requestId: "r1", text: "nudge" },
+		]);
+	});
+});
+
+describe("isInputBoundary (the one learner/model-facing input boundary)", () => {
+	it("user messages, model-facing markers and clean question answers are boundaries", () => {
+		assert.equal(isInputBoundary(newUserMessage("hi")), true);
+		for (const kind of ["hint-request", "work-submission", "practice-next", "subagent-steer", "subagent-abort", "probe-handoff", "graph-context", "compaction"]) {
+			assert.equal(isInputBoundary(marker("m", kind)), true, kind);
+		}
+		assert.equal(isInputBoundary(newAnswerResult("q1", "ask_user_question", { answer: "a" })), true);
+	});
+
+	it("the UI-only plan block, assistant messages, refused answers and other tool results are not", () => {
+		assert.equal(isInputBoundary(newPlanBlockMessage("p1", {})), false);
+		assert.equal(isInputBoundary(say("a1", "prose")), false);
+		assert.equal(isInputBoundary({ role: "toolResult", toolCallId: "q", toolName: "quiz", isError: true, content: [] }), false);
+		assert.equal(isInputBoundary(sendResult("t1", "c1", false)), false);
+		assert.equal(isInputBoundary(null), false);
 	});
 });
