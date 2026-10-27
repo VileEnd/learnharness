@@ -52,6 +52,9 @@ export interface PracticeToolContext {
 	/** The interactive formats switched on (agent.formats). A problem may carry
 	 *  a `format` + `spec` only for one of these. */
 	formats?: InteractiveFormat[];
+	/** This turn may pose canvas problems: the chat's canvas setting AND a
+	 *  canvas-capable device (a `problem` with `canvas: true` is refused otherwise). */
+	canvas?: boolean;
 }
 
 /** TURN-SCOPED GATE STATE (the BKT incident, 2026-10-05): the gates used
@@ -111,6 +114,13 @@ export const problemInputObject = Type.Object({
 			description: "The exercise definition including the answer key, per the format's fields. Required with `format`.",
 		}),
 	),
+	canvas: Type.Optional(
+		Type.Boolean({
+			description:
+				"Optional - true opens a drawing canvas for this problem (the learner sketches or works on it and " +
+				"submits a drawing with the thinking). Accepted only when the session's canvas is on.",
+		}),
+	),
 });
 
 export type ProblemInput = Static<typeof problemInputObject>;
@@ -119,6 +129,7 @@ export function problemTool(
 	gate: PracticeGate,
 	graphNodes?: PracticeToolContext["graphNodes"],
 	formats?: PracticeToolContext["formats"],
+	canvas = false,
 ): AgentTool<typeof problemInputObject> {
 	return {
 		name: "problem",
@@ -192,6 +203,11 @@ export function problemTool(
 					problems.push(...exerciseSpecProblems(input.format, input.spec).map((p) => `spec: ${p}`));
 				}
 				if (problems.length > 0) return invalidInputResult("problem", problems);
+			}
+			if (input.canvas === true && !canvas) {
+				return invalidInputResult("problem", [
+					"canvas is not available for this session - omit canvas (the learner works in the thinking field)",
+				]);
 			}
 			gate.problemActive = true;
 			return problemResult();
@@ -274,7 +290,7 @@ export function practiceTools(ctx: PracticeToolContext): Record<string, AgentToo
 	// keep their own (target-normalizing) prepareArguments as the composed
 	// inner pass; the double heal is idempotent by construction.
 	return healToolRecord({
-		problem: problemTool(gate, ctx.graphNodes, ctx.formats),
+		problem: problemTool(gate, ctx.graphNodes, ctx.formats, ctx.canvas === true),
 		conclude: concludeTool(gate),
 		read: readToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 		ls: lsToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),

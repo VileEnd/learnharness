@@ -34,7 +34,7 @@
 
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
-import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, WORK_TOOLS } from "./native-messages.ts";
+import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, WORK_TOOLS, workAnswerForGrade } from "./native-messages.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
@@ -250,6 +250,11 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 					if (block.name === PRACTICE_CONCLUDE_TOOL) {
 						part.reveal = modelSolutionForConclude(messages, block.id);
 						part.problemInput = problemInputForConclude(messages, block.id);
+					}
+					// A grade closing a canvas task reveals the committed correctAnswer.
+					if (block.name === "grade") {
+						const answer = workAnswerForGrade(messages, block.arguments);
+						if (answer !== undefined) part.reveal = answer;
 					}
 					rest.push(part);
 				}

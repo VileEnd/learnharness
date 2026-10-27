@@ -107,6 +107,11 @@ export class CanvasEngine {
 	getScene(): DrawingScene {
 		return this.scene;
 	}
+	/** An edit made OUTSIDE the engine (a typed-object overlay, a placement):
+	 *  the new scene joins the undo stack like a finished stroke. */
+	applyScene(next: DrawingScene): void {
+		this.commit(next);
+	}
 	setTool(tool: CanvasTool): void {
 		this.tool = tool;
 		this.drawing = null;

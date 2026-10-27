@@ -470,6 +470,7 @@ export async function handleChatInput(
 						libraryRoot: PATHS.okf,
 						libraryBeforeAccess: () => library.ensureFresh(),
 						formats: enabledFormats(effective),
+						canvas,
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},

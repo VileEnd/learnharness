@@ -173,7 +173,7 @@ describe("postInputEvent (the 409 identity-retry)", { skip: process.env.NO_SLOW 
 		const res = await m.postInputEvent({ type: "text", text: "hi" });
 		assert.equal(res.status, 200);
 		assert.equal(calls.length, 1, "no polling, single call");
-		assert.deepEqual(JSON.parse(calls[0]!.body!), { chatId: "chat_x", input: { type: "text", text: "hi" } });
+		assert.deepEqual(JSON.parse(calls[0]!.body!), { chatId: "chat_x", input: { type: "text", text: "hi" }, canvasCapable: false });
 	});
 
 	it("waits out the turn, then re-POSTs the SAME event body (identity retry)", async () => {
@@ -254,7 +254,7 @@ describe("send (one input event, verbatim consumption)", () => {
 		assert.match((m.getState().nativeMessages.at(-1) as { id?: string }).id ?? "", /^c_/);
 		assert.equal(m.getState().messages.at(-1)!.parts[0]!.text, "my topic");
 		await pending;
-		assert.deepEqual(JSON.parse(posts[0]!), { chatId: "chat_x", input: { type: "text", text: "my topic" } });
+		assert.deepEqual(JSON.parse(posts[0]!), { chatId: "chat_x", input: { type: "text", text: "my topic" }, canvasCapable: false });
 		assert.equal(m.getState().status, "ready");
 		// The streamed assistant REPLACED through full partials (never deltas):
 		const view = m.getState().messages;
@@ -358,6 +358,7 @@ describe("send (one input event, verbatim consumption)", () => {
 		assert.deepEqual(JSON.parse(postBody), {
 			chatId: "chat_x",
 			input: { type: "answer", toolCallId: "call-1", answer: { correct: true } },
+			canvasCapable: false,
 		});
 	});
 
@@ -1640,5 +1641,78 @@ describe("absorbed — the custom role (the doubled thinking card)", () => {
 		const customs = m.getState().nativeMessages.filter((x) => (x as { role?: string }).role === "custom");
 		assert.equal(customs.length, 1, "the server copy replaced the optimistic one — no doubling");
 		assert.equal((customs[0] as { id?: string }).id, "srv_1");
+	});
+});
+
+// ─── the canvas task (PR 2): submit, hint, dismiss, capability ──────────────
+
+describe("canvas task inputs", () => {
+	const workPosed = (): LhMessage[] => [
+		{ id: "a1", role: "assistant", content: [{ type: "toolCall", id: "call_w", name: "work", arguments: { question: "Q", correctAnswer: "A" } }], stopReason: "toolUse", timestamp: 1, provider: "openrouter", model: "test", usage: { input: 0, output: 0, total: 0, cacheReads: 0, cacheWrites: 0 } } as unknown as LhMessage,
+	];
+
+	it("submitWork appends optimistically and POSTs a work-submit input", async () => {
+		const posts: string[] = [];
+		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });
+		const m = model({ initialMessages: workPosed(), canvasCapable: () => true });
+		const pending = m.submitWork("call_w", "my reasoning", "drw_abc123def456");
+		const card = m.getState().messages.at(-1)!.parts[0]!;
+		assert.equal(card.type, "data-work-submission", "the card renders the moment Submit fires");
+		assert.deepEqual(card.data, { workCallId: "call_w", text: "my reasoning", drawingId: "drw_abc123def456" });
+		await pending;
+		assert.deepEqual(JSON.parse(posts[0]!), {
+			chatId: "chat_x",
+			input: { type: "work-submit", workCallId: "call_w", text: "my reasoning", drawingId: "drw_abc123def456" },
+			canvasCapable: true,
+		});
+	});
+
+	it("a text-only submission carries no drawingId", async () => {
+		const posts: string[] = [];
+		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });
+		const m = model({ initialMessages: workPosed() });
+		await m.submitWork("call_w", "words only");
+		assert.deepEqual(JSON.parse(posts[0]!).input, { type: "work-submit", workCallId: "call_w", text: "words only" });
+	});
+
+	it("hint button sends hint input", async () => {
+		const posts: string[] = [];
+		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });
+		const m = model({ initialMessages: workPosed() });
+		await m.requestHint("call_w");
+		assert.deepEqual(JSON.parse(posts[0]!).input, { type: "hint", callId: "call_w" });
+	});
+
+	it("every chat POST says whether the device is canvas-capable (default: not)", async () => {
+		const posts: string[] = [];
+		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });
+		let capable = false;
+		const m = model({ canvasCapable: () => capable });
+		await m.send({ type: "text", text: "one" });
+		capable = true;
+		await m.send({ type: "text", text: "two" });
+		assert.equal(JSON.parse(posts[0]!).canvasCapable, false);
+		assert.equal(JSON.parse(posts[1]!).canvasCapable, true);
+	});
+
+	it("a practice thinking submission can carry the drawing", async () => {
+		const posts: string[] = [];
+		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });
+		const m = model();
+		await m.send({ type: "thinking", problemCallId: "call_p", text: "see sketch", drawingId: "drw_abc123def456" });
+		assert.deepEqual(JSON.parse(posts[0]!).input, { type: "thinking", problemCallId: "call_p", text: "see sketch", drawingId: "drw_abc123def456" });
+	});
+
+	it("dismissWork lands the dismissal marker optimistically and POSTs the silent route", async () => {
+		const calls: Array<{ url: string; body?: string }> = [];
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			calls.push({ url: String(input), body: typeof init?.body === "string" ? init.body : undefined });
+			return Response.json({ ok: true });
+		}) as typeof fetch;
+		const m = model({ initialMessages: workPosed() });
+		await m.dismissWork("call_w");
+		assert.equal(m.getState().messages.at(-1)!.parts[0]!.type, "data-work-dismissed");
+		assert.equal(calls[0]!.url, "/api/chats/chat_x/dismiss");
+		assert.deepEqual(JSON.parse(calls[0]!.body!), { input: { type: "dismiss-work", workCallId: "call_w" } });
 	});
 });

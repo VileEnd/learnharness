@@ -49,4 +49,17 @@ describe("escAbortTarget (the layered-Esc ruling)", () => {
 	it("stacking order among overlays: mermaid paints above plan (later in DOM)", () => {
 		assert.equal(escAbortTarget({ ...none, mermaidFocus: true, planOpen: true, pending: true }), "mermaid");
 	});
+
+	it("esc minimises canvas before dismissing work (PR 2)", () => {
+		// An open workspace claims the first Esc (minimise) ...
+		assert.equal(escAbortTarget({ ...none, canvasOpen: true, work: true }), "canvas");
+		assert.equal(escAbortTarget({ ...none, canvasOpen: true, work: true, busy: true }), "canvas");
+		// ... the next Esc (workspace closed) offers the task's dismissal ...
+		assert.equal(escAbortTarget({ ...none, work: true }), "work");
+		assert.equal(escAbortTarget({ ...none, work: true, busy: true }), "work", "the dismissal outranks the turn abort");
+		// ... a pending side question outranks the minimised task, an overlay outranks both.
+		assert.equal(escAbortTarget({ ...none, work: true, pending: true }), "question");
+		assert.equal(escAbortTarget({ ...none, work: true, planOpen: true }), "plan");
+		assert.equal(escAbortTarget({ ...none, abortAsk: true, canvasOpen: true, work: true }), null, "the confirm's own Esc is claimed by the dialog");
+	});
 });

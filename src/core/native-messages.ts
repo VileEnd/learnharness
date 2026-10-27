@@ -551,6 +551,26 @@ export function activeWorkOf(
 	return null;
 }
 
+/** The committed `correctAnswer` of the canvas task a `grade` call closes
+ *  (its `question` is the work/sketch call id): the reveal joined onto the
+ *  grade part by projectView. Undefined for any other grade (a quiz, an
+ *  explain) or a task the record never cleanly posed. */
+export function workAnswerForGrade(messages: readonly LhMessage[], gradeInput: unknown): string | undefined {
+	const target = (gradeInput as { question?: unknown } | null | undefined)?.question;
+	if (typeof target !== "string") return undefined;
+	const clean = cleanToolCallIds(messages);
+	if (!clean.has(target)) return undefined;
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "assistant") continue;
+		for (const block of (m as AssistantMessage).content) {
+			if (block.type !== "toolCall" || block.id !== target || !(WORK_TOOLS as readonly string[]).includes(block.name)) continue;
+			const answer = (block.arguments as { correctAnswer?: unknown } | undefined)?.correctAnswer;
+			return typeof answer === "string" && answer.trim().length > 0 ? answer : undefined;
+		}
+	}
+	return undefined;
+}
+
 /** The submissions made on one canvas task, in order. */
 export function workSubmissionsOf(
 	messages: readonly LhMessage[],
