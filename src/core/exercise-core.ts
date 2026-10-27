@@ -311,3 +311,35 @@ export function gradeExercise(format: InteractiveFormat, spec: unknown, response
 export function stripExpected(v: ExerciseVerdict): ExerciseVerdict {
 	return { ...v, items: v.items.map(({ expected: _e, ...rest }) => rest) };
 }
+
+// ---- hint hygiene ----
+
+/** Every accepted answer value in a spec (numeric answer, blank/cell accepts, multipart recursively). */
+function answerValues(format: string, spec: unknown): string[] {
+	if (!isRec(spec)) return [];
+	switch (format) {
+		case "numeric": return isStr(spec.answer) ? [spec.answer] : [];
+		case "blanks":
+			return Array.isArray(spec.blanks) ? spec.blanks.flatMap((b) => (isRec(b) && isStrArr(b.accept) ? b.accept : [])) : [];
+		case "table":
+			return Array.isArray(spec.rows)
+				? spec.rows.flatMap((r) => (isRec(r) && Array.isArray(r.cells) ? r.cells.flatMap((c) => (isRec(c) && isStrArr(c.accept) ? c.accept : [])) : []))
+				: [];
+		case "multipart":
+			return Array.isArray(spec.parts) ? spec.parts.flatMap((p) => (isRec(p) && isStr(p.format) ? answerValues(p.format, p.spec) : [])) : [];
+		default: return [];
+	}
+}
+
+/** The accepted answer values a hint leaks (empty = clean). Case-insensitive on
+ *  whitespace-normalised text; values shorter than 2 characters are ignored. */
+export function hintLeaks(format: string, spec: unknown, hints: readonly string[]): string[] {
+	const fold = (s: string) => norm(s).toLowerCase();
+	const values = [...new Set(answerValues(format, spec).map(fold))].filter((v) => v.length >= 2);
+	const leaked = new Set<string>();
+	for (const h of hints) {
+		const hint = fold(h);
+		for (const v of values) if (hint.includes(v)) leaked.add(v);
+	}
+	return [...leaked];
+}

@@ -19,8 +19,8 @@ export interface EvidenceEvent {
 	chatId: string;
 	/** The question/problem call this came from (a practice event carries the conclude call's id). */
 	toolCallId: string;
-	kind: "quiz" | "probe" | "explain" | "recall" | "practice";
-	/** correct | miss | dontKnow | partly | wrong | solved | solvedWithHints | movedOn | surrendered | tentative */
+	kind: "quiz" | "probe" | "explain" | "recall" | "exercise" | "assess" | "practice";
+	/** correct | miss | dontKnow | partly | wrong | solved | solvedWithHints | movedOn | surrendered | tentative | correctWithHelp | miss */
 	raw: string;
 	result: EvidenceResult;
 	/** His note on a quiz, the agent's note on a grade, the verdict on a practice problem. */
