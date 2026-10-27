@@ -318,7 +318,7 @@ export const probeExplainTool = probeExplainToolFor();
 // Mechanical description only: what each format's `spec` carries.
 
 /** Per-format `spec` field docs (mechanics only), listed for the enabled formats. */
-const FORMAT_SPEC_DOCS: Partial<Record<InteractiveFormat, string>> = {
+export const FORMAT_SPEC_DOCS: Partial<Record<InteractiveFormat, string>> = {
 	numeric:
 		'numeric: {answer: string, mode: "number"|"expression", variables?: string[] (every letter an expression answer uses), ' +
 		"tolerance?: {abs?, rel?}, unit?: string}. One typed value.",
@@ -331,6 +331,11 @@ const FORMAT_SPEC_DOCS: Partial<Record<InteractiveFormat, string>> = {
 	multipart:
 		'multipart: {parts: [{id, label, format: "numeric"|"blanks"|"table", spec, weight?}]} with 2-6 parts, no nesting; each part\'s spec follows its own format.',
 };
+
+/** The spec docs for the enabled formats, joined (shared with the practice `problem` tool). */
+export function formatSpecDocs(formats: readonly InteractiveFormat[]): string {
+	return formats.map((f) => FORMAT_SPEC_DOCS[f]).filter((d): d is string => d !== undefined).join(" ");
+}
 
 function exerciseDescription(name: "exercise" | "assess", formats: readonly InteractiveFormat[], nodeId: boolean): string {
 	return (
@@ -348,7 +353,7 @@ function exerciseDescription(name: "exercise" | "assess", formats: readonly Inte
 		", then end your turn. The `format` field takes one of: " +
 		formats.join(", ") +
 		". The `spec` fields by format: " +
-		formats.map((f) => FORMAT_SPEC_DOCS[f]).filter((d): d is string => d !== undefined).join(" ")
+		formatSpecDocs(formats)
 	);
 }
 
