@@ -144,6 +144,16 @@ describe("per-turn spend cap", () => {
 		assert.equal(spendNotice(0.5), "This turn reached your spend limit of $0.50 (Settings → Agent). Send a message to continue.");
 	});
 
+	it("stops when spend lands exactly on the cap (>= not >)", async () => {
+		const { engine, faux } = scripted([
+			step(call("read", { path: "1" }, "r1")), step(call("read", { path: "2" }, "r2")), fauxAssistantMessage("must not run"),
+		]);
+		const agent = createTeacherAgent(undefined, { engine, tools: tools(), spendCapUsd: 0.5, stepCost: () => 0.25 });
+		await agent.prompt("go");
+		assert.equal(faux.state.callCount, 2);
+		assert.ok(lastAssistantText(agent).includes(spendNotice(0.5)));
+	});
+
 	it("unknown cost counts as zero: no stop, no fake zero shown", async () => {
 		const { engine, faux } = scripted([
 			step(call("read", { path: "1" }, "r1")), step(call("read", { path: "2" }, "r2")), fauxAssistantMessage("done"),
