@@ -134,6 +134,12 @@ it("the fullscreen button opens the same SVG image and inversion; download keeps
 	const originalSvg = FIGURE.replace(' xmlns="http://www.w3.org/2000/svg"', '').replace("θ &amp; φ", "θ&nbsp;&amp; φ");
 	const displaySvg = FIGURE.replace("θ &amp; φ", "θ&#160;&amp; φ");
 	const dom = parseHTML("<html><body></body></html>");
+	// The fork's overlay reads (pointer: coarse) and registers a back-dismiss
+	// history entry; linkedom has neither matchMedia nor history.
+	Object.assign(dom.window, {
+		matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+		history: { state: null, pushState() {}, back() {} },
+	});
 	const names = ["window", "document", "Element", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
 	const originals = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
 	Object.assign(globalThis, {
@@ -146,6 +152,7 @@ it("the fullscreen button opens the same SVG image and inversion; download keeps
 	const host = dom.document.createElement("div");
 	dom.document.body.append(host);
 	const root = createRoot(host);
+	const realSetTimeoutOuter = globalThis.setTimeout;
 	const originalCreateUrl = URL.createObjectURL;
 	const originalRevokeUrl = URL.revokeObjectURL;
 	const originalCreateElement = dom.document.createElement;
@@ -184,16 +191,28 @@ it("the fullscreen button opens the same SVG image and inversion; download keeps
 			}
 			return element;
 		}) as typeof originalCreateElement;
+		// The 30s revoke timer must not keep the test process alive.
+		const realSetTimeout = globalThis.setTimeout;
+		globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+			const t = realSetTimeout(fn, ms);
+			if (ms === 30_000) t.unref();
+			return t;
+		}) as typeof setTimeout;
 		await act(async () => { host.querySelector('[data-testid="visual-download"]')!.dispatchEvent(new dom.window.Event("click", { bubbles: true })); });
 		assert.ok(downloaded);
 		assert.equal(await downloaded.text(), originalSvg);
 		assert.equal(downloaded.type, "image/svg+xml");
 		assert.deepEqual(clicked, { name: "figure.svg", href: "blob:figure-test" });
-		assert.equal(revoked, "blob:figure-test");
+		// The fork revokes 30s after the click (mobile share sheets read late), not inline.
+		assert.equal(revoked, undefined);
 	} finally {
 		try {
 			await act(async () => root.unmount());
+			// use-back-dismiss pops its history entry on a 0ms timer; let it run
+			// while the stubbed window still exists.
+			await new Promise((resolve) => setTimeout(resolve, 5));
 		} finally {
+			globalThis.setTimeout = realSetTimeoutOuter;
 			URL.createObjectURL = originalCreateUrl;
 			URL.revokeObjectURL = originalRevokeUrl;
 			dom.document.createElement = originalCreateElement;
