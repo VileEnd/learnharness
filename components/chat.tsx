@@ -1787,11 +1787,9 @@ export function Chat({
 							if (canvasTarget.kind === "work") submitWork(canvasTarget.callId, text, drawingId);
 							else submitThinking(text.length > 0 ? text : "Here is my drawing.", undefined, drawingId);
 						}}
-						// The coaching lands in the transcript: minimise so it is seen.
-						onHint={() => {
-							requestHint(canvasTarget.callId);
-							setCanvasOpen(false);
-						}}
+						// The hint is read inside the canvas (hintsFor on the record): the workspace stays open.
+						onHint={() => requestHint(canvasTarget.callId)}
+						turnBusy={busy}
 						onMinimize={() => setCanvasOpen(false)}
 					/>
 				)}
