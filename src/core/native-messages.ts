@@ -147,6 +147,45 @@ export function failedOutputCallIds(messages: readonly LhMessage[]): ReadonlySet
 	return failed;
 }
 
+/** Non-whitespace characters of ordinary prose that count as teaching. */
+export const VISIBLE_TEACHING_MIN_CHARS = 200;
+
+/** TEACH-PHASE GUARD predicate: did visible teaching reach the learner since
+ *  his last input? Scans `messages` then `pendingTurnMessages` (the in-flight
+ *  turn) backwards to the last user message, answer result (a non-error
+ *  question-tool result) or model-facing marker. Teaching = a text block of at
+ *  least VISIBLE_TEACHING_MIN_CHARS non-whitespace characters, or a
+ *  send_to_user call that did not fail. A refused check's error result is not
+ *  an input boundary; the UI-only plan-block marker is not one either. */
+export function visibleTeachingSinceLastInput(
+	messages: readonly unknown[],
+	pendingTurnMessages: readonly unknown[] = [],
+): boolean {
+	const all = [...messages, ...pendingTurnMessages] as LhMessage[];
+	let start = 0;
+	for (let i = all.length - 1; i >= 0; i--) {
+		const m = all[i]!;
+		const boundary =
+			m.role === "user" ||
+			(m.role === "custom" && m.customType !== "plan-block") ||
+			(m.role === "toolResult" && !m.isError && (QUESTION_TOOLS as readonly string[]).includes(m.toolName));
+		if (boundary) {
+			start = i + 1;
+			break;
+		}
+	}
+	const since = all.slice(start);
+	const failed = failedOutputCallIds(since);
+	for (const m of since) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const block of m.content) {
+			if (block.type === "text" && block.text.replace(/\s/g, "").length >= VISIBLE_TEACHING_MIN_CHARS) return true;
+			if (block.type === "toolCall" && sendToUserText(block) !== undefined && !failed.has(block.id)) return true;
+		}
+	}
+	return false;
+}
+
 // ─── id minting ──────────────────────────────────────────────────────────────
 
 /** The app-wide message id shape (same as the UIMessage-era mint). */

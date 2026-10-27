@@ -101,7 +101,8 @@ describe("send_to_user model gate", () => {
 					assert.equal(typeof output!.prepareArguments, "function", "standard argument healing is wired");
 				}
 				assert.equal(agent.state.systemPrompt, composeInstructions(kind as keyof typeof factories));
-				assert.ok(!agent.state.systemPrompt.includes(SEND_TO_USER_TOOL), "no added prompt instructions");
+				// V2: the prompt is model-independent; the one shared paragraph is conditional on holding the tool.
+				assert.ok(agent.state.systemPrompt.includes("when you hold `send_to_user`"), "conditional delivery paragraph");
 			}
 		});
 	}
