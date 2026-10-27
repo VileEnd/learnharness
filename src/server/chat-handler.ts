@@ -39,6 +39,7 @@ import {
 	extractionEnabled,
 	documentToolsEnabled,
 	enabledFormats,
+	resolveCanvasModel,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -58,6 +59,7 @@ import { asAgentMessages } from "../core/native-messages.ts";
 import {
 	ChatInputError,
 	inputAppends,
+	isCanvasInput,
 	parseChatInput,
 	type TurnInput,
 } from "../core/input-events.ts";
@@ -189,7 +191,7 @@ setJobRespawn((jobId) => void jobRunner.runJob(jobId));
 /** The route-facing entry: parse {chatId, input} and run one turn. */
 export async function handleChatRequest(
 	req: Request,
-	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean; canvas: boolean }) => TeachingAgent,
 ): Promise<Response> {
 	let body: { chatId?: unknown; input?: unknown; canvasCapable?: unknown };
 	try {
@@ -221,7 +223,7 @@ export async function handleChatRequest(
 export async function handleChatInput(
 	chatId: string,
 	input: TurnInput,
-	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean; canvas: boolean }) => TeachingAgent,
 	turnOpts: { canvasCapable?: boolean } = {},
 ): Promise<Response> {
 	let record = stores.chatStore.getChat(chatId);
@@ -393,7 +395,18 @@ export async function handleChatInput(
 	// turn gate above (chat.model override → strong slot → refused) — the
 	// engine build is pure from here; thinking levels clamp natively.
 	// (Built once above the compaction gate; reused verbatim.)
-	const engine = conversationEngine;
+	// THE CANVAS MODEL (owner, 2026-10-27): a turn whose triggering input is
+	// canvas input (a work submission, a hint on a canvas task, drawn practice
+	// thinking) runs on the canvas slot's model; posing a task and every other
+	// turn stay with the tutor. The send_to_user gate, the usage stamp, the
+	// spend-cap price and the drawing context all read this per-turn engine.
+	// A canvas engine that cannot be built falls back to the tutor.
+	const canvasModel = resolveCanvasModel(effective.models, providerKeyPresent);
+	let engine = conversationEngine;
+	if (canvasModel && isCanvasInput(record.messages, input)) {
+		try { engine = piEngineForSpec(canvasModel); }
+		catch (err) { console.error(`[chat ${chatId}] canvas model unavailable, staying on the tutor:`, err); }
+	}
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;
@@ -450,9 +463,10 @@ export async function handleChatInput(
 	// request came from a canvas-capable device (a phone turn and every
 	// server-initiated turn run without them; `grade` stays armed whenever a
 	// task is open - tools.ts gradeFor).
-	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true;
+	// ... AND a vetted canvas model resolves (CANVAS_VETTED_MODELS).
+	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true && canvasModel !== null;
 	const constructed: TeachingAgent = buildAgent
-		? buildAgent({ ...agentOpts, teaching })
+		? buildAgent({ ...agentOpts, teaching, canvas })
 		: record.kind === "practice"
 			? createPracticeAgent(
 					{
@@ -477,7 +491,8 @@ export async function handleChatInput(
 						libraryBeforeAccess: () => library.ensureFresh(),
 						formats: enabledFormats(effective),
 						canvas,
-						drawingStore: stores.drawingStore,
+						// annotate (armed by the drawing store) needs a vetted canvas model too.
+						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
@@ -499,7 +514,8 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
-						drawingStore: stores.drawingStore,
+						// annotate (armed by the drawing store) needs a vetted canvas model too.
+						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -521,7 +537,8 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
-						drawingStore: stores.drawingStore,
+						// annotate (armed by the drawing store) needs a vetted canvas model too.
+						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,

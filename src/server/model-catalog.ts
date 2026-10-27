@@ -22,7 +22,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
 import { settingsStore } from "../store/settings.ts";
 import { effectiveSettings } from "./stores.ts";
-import { keyValue } from "./keys.ts";
+import { keyValue, providerKeyPresent } from "./keys.ts";
 import type { ChatSettings } from "../core/contracts/chat.ts";
 import type {
 	CatalogDefaults,
@@ -32,7 +32,7 @@ import type {
 	RolePins,
 	SlotPins,
 } from "../core/contracts/models.ts";
-import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolution.ts";
+import { resolveCanvasModel, type EffectiveModelSpec, type EffectiveSlot } from "../core/settings-resolution.ts";
 import { AUTH_PROVIDER_KEYS } from "../core/auth-keys.ts";
 import { BACKGROUND_MODEL_ROLES, MODEL_SLOTS, type BackgroundModelRole, type ModelSlotName, type ModelsSettings } from "../core/settings.ts";
 
@@ -97,14 +97,14 @@ export function catalogRolePins(): RolePins {
 	return rolePinsFor(effectiveSettings().agent.models);
 }
 
-/** The three slot tiers' RESOLVED pins — effectiveSettings().models
+/** The slot tiers' RESOLVED pins — effectiveSettings().models
  *  verbatim: the same resolution the engine wiring uses, so the Models
  *  settings page's captions cannot drift from what actually runs. NULL
  *  per tier that holds no model. */
 export function catalogSlots(): SlotPins {
 	const slots = effectiveSettings().models;
 	const pins = {} as SlotPins;
-	for (const name of ["strong", "cheap", "vision"] as const) {
+	for (const name of MODEL_SLOTS) {
 		const slot: EffectiveSlot | null = slots[name];
 		pins[name] = slot
 			? {
@@ -192,7 +192,21 @@ export function modelCatalog(): ModelCatalogResponse {
 		rolePins: catalogRolePins(),
 		slots: catalogSlots(),
 		providers: catalogProviders(),
+		canvas: catalogCanvas(),
 	};
+}
+
+/** The canvas model in force (resolveCanvasModel over the live keys): the
+ *  one answer the pill and the Canvas settings row read, so they cannot
+ *  drift from the chat handler. */
+export function catalogCanvas(): ModelCatalogResponse["canvas"] {
+	const spec = resolveCanvasModel(effectiveSettings().models, providerKeyPresent);
+	return spec
+		? {
+				model: { provider: spec.provider, id: spec.id },
+				...(spec.thinkingLevel !== undefined ? { thinkingLevel: spec.thinkingLevel } : {}),
+			}
+		: null;
 }
 
 /** One validated outcome for a settings write. */

@@ -12,7 +12,7 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TOGGLE_TOOLS, AgentSection } from "../components/settings/agent-section.tsx";
+import { TOGGLE_TOOLS, AgentSection, slotCatalogFor } from "../components/settings/agent-section.tsx";
 import { AppearanceSection, GraphSection } from "../components/settings/appearance-section.tsx";
 import { KeysSection } from "../components/settings/keys-section.tsx";
 import { KeyboardSection } from "../components/settings/keyboard-section.tsx";
@@ -61,9 +61,9 @@ describe("SettingsDialog (the designed surface, SSR)", () => {
 });
 
 describe("AgentSection (thin SSR)", () => {
-	it("renders the three model SLOT rows (slots-only, fix wave: unpicked reads —, no Default option)", () => {
+	it("renders the four model SLOT rows (strong, cheap, vision, canvas) (slots-only, fix wave: unpicked reads —, no Default option)", () => {
 		const html = renderToStaticMarkup(<AgentSection agent={undefined} models={undefined} graph={undefined} onSectionChange={() => {}} onModelsChange={() => {}} />);
-		for (const slot of ["strong", "cheap", "vision"]) {
+		for (const slot of ["strong", "cheap", "vision", "canvas"]) {
 			assert.ok(html.includes(`data-testid="slot-row-${slot}"`), slot);
 			// The shared model-picker dropdown as the opened menu (owner,
 			// 2026-09-20), the thin trigger as the collapsed look.
@@ -77,7 +77,8 @@ describe("AgentSection (thin SSR)", () => {
 		// carries a Default row (menu-default testid is retired).
 		assert.equal((html.match(/>Default<\/span>/g) ?? []).length, 0, "no Default trigger");
 		assert.ok(!html.includes('data-testid="menu-default"'), "no Default row");
-		assert.equal((html.match(/>—<\/span>/g) ?? []).length, 6, "three slots × two — triggers");
+		assert.equal((html.match(/>—<\/span>/g) ?? []).length, 8, "four slots × two — triggers");
+		assert.ok(html.includes("Reads your drawings, gives canvas hints, marks and grades canvas tasks"), "the Canvas row explains itself");
 		// the per-role rows are GONE (slots-only)
 		for (const role of ["researcher", "demoBuilder", "visualMaker"]) {
 			assert.ok(!html.includes(`data-testid="role-row-${role}"`), `${role} retired`);
@@ -280,5 +281,27 @@ describe("KeyboardSection (thin SSR)", () => {
 		assert.ok(!html.includes("Model menu"), "model-menu rows removed");
 		assert.ok(!KEYBOARD_ACTIONS.some((a) => a.id as string === "model-menu-walk"));
 		assert.ok(!KEYBOARD_ACTIONS.some((a) => a.id as string === "model-menu-pick"));
+	});
+});
+describe("the Canvas slot picker (owner, 2026-10-27)", () => {
+	const entry = (provider: string, id: string, input: Array<"text" | "image"> = ["text", "image"]) => ({ provider, id, input }) as never;
+	const catalog = [
+		entry("openrouter", "z-ai/glm-5.3-flash"),
+		entry("openrouter", "qwen/qwen3.8-flash"),
+		entry("openrouter", "moonshotai/kimi-k3"),
+		entry("anthropic", "claude-haiku-5-5"),
+		entry("anthropic", "claude-sonnet-5-5"),
+		entry("openai", "gpt-4"),
+	];
+
+	it("offers ONLY allowlisted models", () => {
+		const ids = (slotCatalogFor("canvas", catalog) ?? []).map((m: { id: string }) => m.id);
+		assert.deepEqual(ids, ["z-ai/glm-5.3-flash", "qwen/qwen3.8-flash", "claude-sonnet-5-5"]);
+	});
+
+	it("the other slots keep their pickers; no catalog yet is undefined", () => {
+		assert.equal(slotCatalogFor("strong", catalog)?.length, 6);
+		assert.equal(slotCatalogFor("vision", catalog)?.length, 6);
+		assert.equal(slotCatalogFor("canvas", null), undefined);
 	});
 });
