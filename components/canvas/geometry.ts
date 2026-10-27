@@ -31,6 +31,8 @@ export function worldToScreen(view: Viewport, p: Pt): Pt {
 
 // ---- palette ----
 
+/** The teacher's ink colour: a palette name, so it follows the theme through screenColor. */
+export const TEACHER_INK_COLOR = "red";
 export const PALETTE_NAMES = ["ink", "red", "blue", "green", "orange", "purple", "gray", "highlight"] as const;
 export type PaletteName = (typeof PALETTE_NAMES)[number];
 const LIGHT: Record<PaletteName, string> = { ink: "#1a1a1a", red: "#d62828", blue: "#1d4ed8", green: "#15803d", orange: "#c2410c", purple: "#7e22ce", gray: "#6b7280", highlight: "#facc15" };

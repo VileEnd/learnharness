@@ -55,7 +55,7 @@ import { SessionMessageNavigation } from "@/components/session-navigation";
 import { PracticeDock } from "@/components/practice-dock";
 import { WorkDock } from "@/components/work-dock";
 import { CanvasWorkspace } from "@/components/canvas/canvas-workspace";
-import { WorkDismissedLine, WorkSubmissionCard, type WorkSubmissionData } from "@/components/work-cards";
+import { SessionMessagesContext, WorkDismissedLine, WorkSubmissionCard, type WorkSubmissionData } from "@/components/work-cards";
 import { useCanvasCapable } from "@/components/use-canvas-capable";
 import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-cards";
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
@@ -1247,6 +1247,7 @@ export function Chat({
 				openSetup: () => setSetupOpen(true),
 			}}
 		>
+		<SessionMessagesContext.Provider value={nativeMessages}>
 		<SessionMermaidContext.Provider
 			value={{
 				openMermaid: setMermaidFocus,
@@ -1779,6 +1780,7 @@ export function Chat({
 						callId={canvasTarget.callId}
 						question={canvasTarget.question}
 						details={canvasTarget.details}
+						messages={nativeMessages}
 						requireThinking={canvasTarget.requireThinking}
 						compactionRunning={compacting}
 						onSubmit={(text, drawingId) => {
@@ -1799,6 +1801,7 @@ export function Chat({
 		</div>
 		</JobsContext.Provider>
 		</SessionMermaidContext.Provider>
+		</SessionMessagesContext.Provider>
 		{/* The BYOK setup flow (owner, 2026-09-22): one mount serves the
 		    persistent CTA, the refused-send interception, and the job cards'
 		    deep-link. Save keeps the draft in the composer — it never sends
