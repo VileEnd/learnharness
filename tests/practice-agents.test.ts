@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, type AssistantMessage, type ToolResultMessage } from "@earendil-works/pi-ai";
 
 import {
 	activeProblemOf,
@@ -400,5 +400,40 @@ describe("practice prompt composition (own directory + the formatting appendix)"
 	it("the segment registry knows practice (override paths resolve)", () => {
 		assert.ok(allSegmentPaths().includes("practice/00-base.md"));
 		assert.ok(allSegmentPaths().includes("practice/10-doctrine.md"));
+	});
+});
+
+// ── the turn-end law (upstream 87b04cc idea): a pose ends the turn, mixed batch included ──
+describe("a problem pose ends the turn", () => {
+	async function llmCallsFor(content: Parameters<typeof fauxAssistantMessage>[0]) {
+		const faux = createFauxCore({});
+		let calls = 0;
+		faux.setResponses([
+			() => {
+				calls++;
+				return fauxAssistantMessage(content, { stopReason: "toolUse" });
+			},
+			() => {
+				calls++;
+				return fauxAssistantMessage([fauxText("should never run")]);
+			},
+		]);
+		const agent = createPracticeAgent(ctxOf([]), { engine: { model: faux.getModel(), streamFn: faux.streamSimple } });
+		await agent.prompt("practice parity");
+		await agent.waitForIdle();
+		return calls;
+	}
+
+	it("a lone pose ends the turn", async () => {
+		assert.equal(await llmCallsFor([fauxToolCall("problem", PROBLEM_INPUT, { id: "p1" })]), 1);
+	});
+
+	it("a pose batched with a non-terminating call (conclude) still ends the turn: no further LLM call", async () => {
+		const calls = await llmCallsFor([
+			fauxText("Here is one."),
+			fauxToolCall("problem", PROBLEM_INPUT, { id: "p1" }),
+			fauxToolCall("conclude", { outcome: "solved", verdict: "ok", rung: null, missClass: null, retest: false }, { id: "c1" }),
+		]);
+		assert.equal(calls, 1);
 	});
 });
