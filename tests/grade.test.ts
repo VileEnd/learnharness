@@ -20,6 +20,7 @@ import { gradeTool, gradeInputObject } from "../src/agent/tools/grade.ts";
 import { GradeChip } from "../components/artifacts/grade-chip.tsx";
 import type { ChatRecord } from "../src/core/contracts.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
+import { deriveEvidence } from "../src/core/learner.ts";
 import { chat, explain, grade, quiz } from "./learner-helpers.ts";
 
 const graphNodes = () => [
@@ -111,15 +112,38 @@ describe("grade", () => {
 		assert.equal((await run(tool, { question: "e2", grade: "correct", note: "n" })).isError, true);
 	});
 
-	it("a misconception is allowed only with partly or wrong", async () => {
+	it("a misconception sent with correct or dontKnow is healed away at the boundary and in the fold, not refused", async () => {
 		const chatStore = storeOf([...explain("e1"), ...explain("e2"), ...explain("e3")]);
 		const tool = gradeTool({ chatId: "c1", chatStore });
 		const misconception = { term: "P increments", instead: "P decrements" };
-		assert.equal((await run(tool, { question: "e1", grade: "correct", note: "n", misconception })).isError, true);
-		assert.equal((await run(tool, { question: "e2", grade: "dontKnow", note: "n", misconception })).isError, true);
-		const ok = await run(tool, { question: "e3", grade: "wrong", note: "n", misconception });
+		const healed = (args: unknown) => tool.prepareArguments!(args as never) as Record<string, unknown>;
+		assert.equal("misconception" in healed({ question: "e1", grade: "correct", note: "n", misconception }), false);
+		assert.equal("misconception" in healed({ question: "e2", grade: "dontKnow", note: "n", misconception }), false);
+		assert.deepEqual(healed({ question: "e3", grade: "wrong", note: "n", misconception }).misconception, misconception);
+		const ok = await run(tool, healed({ question: "e1", grade: "correct", note: "n", misconception }));
 		assert.notEqual(ok.isError, true);
-		assert.equal(ok.content[0]!.text, "Recorded: wrong.");
+		// the RAW record (misconception still on a correct grade) never reaches the evidence
+		const msgs = [...explain("e1", { concepts: ["n1"] }), ...grade("g1", "e1", "correct", { misconception })];
+		const events = deriveEvidence([chat("c1", msgs)], [], new Set(["n1"]) as never);
+		assert.equal(events.length, 1);
+		assert.equal(events[0]!.misconception, undefined);
+	});
+
+	it("a long note is truncated at a word boundary within 140 characters, not refused", async () => {
+		const long = "he had the sign right but missed the factor of two when differentiating the exponent ".repeat(4).trim();
+		const chatStore = storeOf(explain("e1"));
+		const tool = gradeTool({ chatId: "c1", chatStore });
+		const healed = tool.prepareArguments!({ question: "e1", grade: "partly", note: long } as never) as { note: string };
+		assert.ok(healed.note.length <= 140 && healed.note.endsWith("\u2026"));
+		assert.ok(long.startsWith(healed.note.slice(0, -1)));
+		assert.equal(long[healed.note.length - 1], " ", "cut at a word boundary");
+		assert.equal(Value.Check(gradeInputObject, healed), true);
+		assert.notEqual((await run(tool, healed)).isError, true);
+		// the fold and the chip read the raw record with the same heal
+		const events = deriveEvidence([chat("c1", [...explain("e1", { concepts: ["n1"] }), ...grade("g1", "e1", "partly", { note: long })])], [], new Set(["n1"]) as never);
+		assert.ok(events[0]!.note!.length <= 140 && events[0]!.note!.endsWith("\u2026"));
+		const html = renderToStaticMarkup(React.createElement(GradeChip, { part: { type: "tool-grade", state: "output-available", input: { grade: "partly", note: long } } as never }));
+		assert.ok(html.includes("\u2026"));
 	});
 
 	it("the note is at most 140 characters; grade values are closed", () => {
