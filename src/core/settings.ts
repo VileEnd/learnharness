@@ -274,11 +274,26 @@ export interface AgentSettings {
 	 *  for the prober, teacher and practice agents over the learner's library.
 	 *  Absent = enabled (the toggle discipline). */
 	documentTools?: { enabled?: boolean };
+	/** Per-turn spend ceiling in USD (runaway-turn breaker, owner 2026-10-27).
+	 *  Absent or 0 = DEFAULT_TURN_SPEND_CAP_USD; allowed range
+	 *  TURN_SPEND_CAP_MIN_USD..TURN_SPEND_CAP_MAX_USD. */
+	turnSpendCapUsd?: number;
 	/** System-prompt override SWITCHES keyed by segment path (absent key =
 	 *  off). Switch-on requires the override file to exist (enforced by the
 	 *  route); the switch is explicit so users keep a file on disk but run
 	 *  the source default to compare (owner decision 2026-09-19). */
 	prompts?: Record<string, boolean>;
+}
+
+/** The per-turn spend ceiling's default and bounds (USD). */
+export const DEFAULT_TURN_SPEND_CAP_USD = 0.5;
+export const TURN_SPEND_CAP_MIN_USD = 0.05;
+export const TURN_SPEND_CAP_MAX_USD = 20;
+
+/** Resolve the stored cap: absent, 0 or junk = the default; else clamped. */
+export function resolveTurnSpendCap(stored: unknown): number {
+	if (typeof stored !== "number" || !Number.isFinite(stored) || stored <= 0) return DEFAULT_TURN_SPEND_CAP_USD;
+	return Math.min(TURN_SPEND_CAP_MAX_USD, Math.max(TURN_SPEND_CAP_MIN_USD, stored));
 }
 
 /** Markdown-rendering knobs — the bare-bones set (owner decision). */
@@ -582,6 +597,10 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 		const enabled = (raw.documentTools as Record<string, unknown>).enabled;
 		if (enabled === undefined) out.documentTools = {};
 		else if (typeof enabled === "boolean") out.documentTools = { enabled };
+	}
+	// Per-turn spend cap: lenient read (junk or 0 drops to the default).
+	if (typeof raw.turnSpendCapUsd === "number" && Number.isFinite(raw.turnSpendCapUsd) && raw.turnSpendCapUsd > 0) {
+		out.turnSpendCapUsd = resolveTurnSpendCap(raw.turnSpendCapUsd);
 	}
 	return out;
 }
