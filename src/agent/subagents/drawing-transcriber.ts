@@ -1,0 +1,56 @@
+/**
+ * The drawing transcriber (PR 2, Task 10): a vision-slot, single-call
+ * sub-agent that turns a learner's drawing (PNG + its structured text) into
+ * text for a model that cannot read images. Rules ported from the OCR
+ * sidecar's SCAN_PROMPT (services/ocr/app/pipeline.py): LaTeX for math,
+ * Mermaid for diagrams, ~~struck~~ for crossed-out work.
+ */
+
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { PiEngine } from "../models.ts";
+import { runSubagent } from "./pi-run.ts";
+
+export const TRANSCRIBE_PROMPT = `You are transcribing a learner's hand-drawn canvas (an image) into text for a tutor who cannot see images.
+The image has a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text you are given.
+Transcribe EVERYTHING drawn, faithfully, in the drawing's own language:
+- Handwriting and text as plain text; math as LaTeX ($...$ inline, $$...$$ display); tables as markdown tables.
+- Hand-drawn diagrams (flowcharts, graphs, trees, circuits, block diagrams): a \`\`\`mermaid block, quoting every node label (A["label"]) and edge label (A -- "label" --> B), whenever the structure can be reproduced faithfully; otherwise describe it as *[Diagram: ...]*, naming every label and arrow.
+- Plots, axes and curves: a short description of axes, labels, intercepts and the shape drawn.
+- Crossed-out content: keep it, wrapped in ~~strikethrough~~, so it is clear it was struck out.
+- Tag EVERY region with its grid location, in square brackets before it: [C4] for one cell, [B2-D3] for a span.
+Do not invent content, do not correct the learner's mistakes, and mark unreadable parts as [unreadable]. Output only the transcription.`;
+
+export interface DrawingTranscriberDeps {
+	engineFor(role: "transcriber"): PiEngine | undefined;
+}
+
+export interface DrawingTranscriber {
+	transcribe(png: Uint8Array, structured: string): Promise<{ model: string; text: string }>;
+}
+
+export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingTranscriber {
+	return {
+		async transcribe(png, structured) {
+			const engine = deps.engineFor("transcriber");
+			if (!engine) throw new Error("no transcriber model configured");
+			const message: AgentMessage = {
+				role: "user",
+				content: [
+					{ type: "text", text: structured ? `Structured text of the typed objects:\n${structured}` : "No typed objects." },
+					{ type: "image", data: Buffer.from(png).toString("base64"), mimeType: "image/png" },
+				],
+				timestamp: Date.now(),
+			};
+			const { text } = await runSubagent([], {
+				role: "transcriber",
+				engine,
+				systemPrompt: TRANSCRIBE_PROMPT,
+				messages: [message],
+				maxTurns: 1,
+			});
+			const out = text.trim();
+			if (!out) throw new Error("the transcriber returned nothing");
+			return { model: `${engine.model.provider}:${engine.model.id}`, text: out };
+		},
+	};
+}

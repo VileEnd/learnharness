@@ -338,16 +338,16 @@ export function newGraphContextMessage(picks: readonly GraphContextPick[], chain
 export function newThinkingMessage(
 	problemCallId: string,
 	text: string,
-	extra: { attempt?: ThinkingAttempt } = {},
+	extra: { attempt?: ThinkingAttempt; drawingId?: string } = {},
 ): LhMarkerMessage {
-	const { attempt } = extra;
+	const { attempt, drawingId } = extra;
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "practice-thinking",
-		content: `${THINKING_LABEL}:\n${text}${attempt ? `\n\n${attemptMarks(attempt.verdict)}` : ""}`,
+		content: `${THINKING_LABEL}:\n${text}${drawingId ? `\n[drawing ${drawingId}]` : ""}${attempt ? `\n\n${attemptMarks(attempt.verdict)}` : ""}`,
 		display: true,
-		details: { problemCallId, text, ...(attempt ? { attempt } : {}) },
+		details: { problemCallId, text, ...(attempt ? { attempt } : {}), ...(drawingId ? { drawingId } : {}) },
 		timestamp: Date.now(),
 	};
 }
@@ -721,6 +721,88 @@ function resultIdsFrom(messages: readonly AgentMessage[]): Set<string> {
 	return ids;
 }
 
+// ─── drawings in the model context ───────────────────────────────────────────
+
+interface DrawingPlan {
+	activeIds: Set<string>;
+	/** Index of the newest drawing marker of an active task (the one image). */
+	newest: number;
+}
+
+/** The task id a drawing marker belongs to, and its drawing id. */
+function drawingMarkerOf(marker: LhMarkerMessage): { taskId: string; drawingId: string } | null {
+	if (marker.customType !== "work-submission" && marker.customType !== "practice-thinking") return null;
+	const d = marker.details as { workCallId?: unknown; problemCallId?: unknown; drawingId?: unknown } | null;
+	const taskId = marker.customType === "work-submission" ? d?.workCallId : d?.problemCallId;
+	if (typeof taskId !== "string" || typeof d?.drawingId !== "string") return null;
+	return { taskId, drawingId: d.drawingId };
+}
+
+function planDrawings(messages: readonly LhMessage[], start: number): DrawingPlan {
+	const activeIds = new Set<string>();
+	const work = activeWorkOf(messages);
+	if (work) activeIds.add(work.toolCallId);
+	const problem = activeProblemOf(messages);
+	if (problem) activeIds.add(problem.toolCallId);
+	let newest = -1;
+	for (let i = messages.length - 1; i >= start; i--) {
+		const m = messages[i]!;
+		if ((m as { role?: string }).role !== "custom") continue;
+		const d = drawingMarkerOf(m as LhMarkerMessage);
+		if (d && activeIds.has(d.taskId)) {
+			newest = i;
+			break;
+		}
+	}
+	return { activeIds, newest };
+}
+
+function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPlan, ctx: DrawingContext): Message | null {
+	const d = drawingMarkerOf(marker);
+	if (!d) return null;
+	const user = (content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>): Message =>
+		({ role: "user", content, timestamp: marker.timestamp }) as Message;
+	let resolved: ReturnType<DrawingContext["resolve"]> = null;
+	try {
+		resolved = ctx.resolve(d.drawingId); // convertToLlm never throws
+	} catch {
+		resolved = null;
+	}
+	const structured = resolved?.structured ? `\n${resolved.structured}` : "";
+	const text = (t: string) => user([{ type: "text", text: t }]);
+	if (!plan.activeIds.has(d.taskId)) {
+		return text(`${marker.content}\n[Drawing ${d.drawingId} omitted \u2014 task closed]${structured}`);
+	}
+	if (index !== plan.newest) {
+		return text(`${marker.content}\n[earlier drawing ${d.drawingId} \u2014 superseded]${structured}`);
+	}
+	if (!resolved) return text(`${marker.content}\n[Drawing ${d.drawingId}: unavailable]`);
+	if (resolved.png) {
+		return user([
+			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${structured}` },
+			{ type: "image", data: resolved.png.data, mimeType: resolved.png.mimeType },
+		]);
+	}
+	if (resolved.transcript) return text(`${marker.content}\nTranscription:\n${resolved.transcript}${structured}`);
+	return text(`${marker.content}\n[Drawing ${d.drawingId}: transcription unavailable]${structured}`);
+}
+
+/** What the model sees of a drawing. Supplied by the server per turn
+ *  (server/drawing-context.ts); core stays free of stores. */
+export interface DrawingContext {
+	/** Called for the drawings of the ACTIVE task (image / transcript) and,
+	 *  for closed tasks, to re-resolve the structured text only. */
+	resolve(drawingId: string): {
+		png?: { data: string; mimeType: "image/png" };
+		transcript?: string;
+		structured: string;
+	} | null;
+}
+
+/** Explains the grid and object ids the image and the structured text share. */
+export const GRID_NOTE =
+	"The attached image shows the learner's drawing on a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text below; refer to a place by its cell (C4) or span (B2-D3).";
+
 /**
  * AgentMessage[] → the provider wire (the agent's convertToLlm — required
  * by pi-agent-core's loop config, the ONE place model-facing decisions
@@ -738,7 +820,7 @@ function resultIdsFrom(messages: readonly AgentMessage[]): Set<string> {
  * Contract (pi-agent-core): never throws — an unknown shape passes
  * through untouched rather than killing the loop.
  */
-export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
+export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing?: DrawingContext } = {}): Message[] {
 	// THE COMPACTION CUT (owner round 14, 2026-10-05): the ACTIVE marker
 	// (the newest — chained compactions rule last) names the first kept
 	// message; everything before it is replaced by the marker's content
@@ -778,6 +860,9 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 	const out: Message[] = [];
 	if (leading) out.push(leading);
 	if (head) out.push(head);
+	// DRAWINGS: only the newest submission of the ACTIVE task rides as an
+	// image; earlier ones are superseded stubs, a closed task's collapse.
+	const drawingPlan = opts.drawing ? planDrawings(lhMessages, start) : null;
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
@@ -793,11 +878,14 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			// there lands user text between a tool call and its result (the
 			// provider 400s and the session wedges for good).
 			if (marker.customType === "compaction") continue;
-			out.push({
-				role: "user",
-				content: [{ type: "text", text: marker.content }],
-			timestamp: marker.timestamp,
-			});
+			const drawn = drawingPlan ? drawingMessage(marker, i, drawingPlan, opts.drawing!) : null;
+			out.push(
+				drawn ?? {
+					role: "user",
+					content: [{ type: "text", text: marker.content }],
+					timestamp: marker.timestamp,
+				},
+			);
 			continue;
 		}
 		// Strip the record id: the wire carries the native shape only.

@@ -111,7 +111,8 @@ export function estimateMessageTokens(message: LhMessage | AgentMessage): number
 
 // Pi coding-agent 1.4.0 estimateTokens: fixed image allowance, NOT a
 // measurement of encrypted reasoning or actual provider vision tokens.
-const ESTIMATED_IMAGE_CHARS = 4_800;
+// Raised for canvas drawings (about 2 800 tokens, a 2048x1024 PNG).
+export const ESTIMATED_IMAGE_CHARS = 11_200;
 function textCharsOfContent(content: unknown): number {
 	if (typeof content === "string") return content.length;
 	if (!Array.isArray(content)) return 0;
