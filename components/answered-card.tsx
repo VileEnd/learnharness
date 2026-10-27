@@ -21,6 +21,8 @@ import { answerForPresentation, parseAskInput, parseExerciseInput, parseQuizInpu
  * client — the card reveals his answer, the committed correct answer, and
  * the explanation, with NO verdict chips (owner ruling 2026-09-27).
  */
+const FILLED_IN_TABLE = /^\s*(?:\*\*)?Filled in:?(?:\*\*)?\s*\n+(?:\s*\|.*(?:\n|$))+\s*/i;
+
 export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionAnswerData; input?: unknown }) {
 	const answer = answerForPresentation(savedAnswer, input);
 	const [whyOpen, setWhyOpen] = useState(false); // the tucked explanation (predictions, owner 2026-10-03)
@@ -42,6 +44,13 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 	const exFormat = answer.format ?? exInput?.format;
 	const exWidget = exInput && exFormat === exInput.format ? exInput : undefined;
 	const exOutcome = answer.verdict?.outcome;
+	// A table review already shows the graded grid; drop an explanation's own
+	// leading "Filled in:" + table so it is not repeated under "Why".
+	const exExplanation = (() => {
+		const raw = exInput?.explanation ?? answer.explanation;
+		if (typeof raw !== "string") return raw;
+		return exFormat === "table" ? raw.replace(FILLED_IN_TABLE, "") : raw;
+	})();
 	const selectedIdx = new Set(answer.answers.map((a) => a.index));
 	const correctIdx = new Set(answer.correctIndices ?? []);
 	// The question's own context rides the ORIGINAL CALL, not the answer
@@ -143,11 +152,11 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 							.filter(Boolean)
 							.join(" · ")}
 					</div>
-					{(exInput?.explanation ?? answer.explanation) && (
+					{exExplanation && (
 						<div className="mt-2 rounded-lg bg-muted py-2 text-sm text-muted-foreground" data-testid="exercise-explanation">
 							<span className="font-medium text-foreground">Why: </span>
 							<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">
-								{(exInput?.explanation ?? answer.explanation) as string}
+								{exExplanation as string}
 							</ToolContentResponse>
 						</div>
 					)}

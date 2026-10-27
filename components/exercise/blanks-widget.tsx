@@ -3,13 +3,15 @@
 import { Inline, ItemInput, isRec, valuesOf, type FormatWidgetProps } from "./widget-shared.tsx";
 
 const BLANK = /\{\{([^{}]+)\}\}/g;
+const TRAILING_BLANKS = /^(\$\$?)([\s\S]*?)((?:\s*\{\{[^{}]+\}\})+)\s*(\$\$?)$/;
 const MATH_SPAN = /\$\$[\s\S]+?\$\$|\$[^$\n]+\$/g;
 
 /**
  * Split a blanks text into segments: prose followed by the ids of the inputs
  * that belong after it. A blank inside a `$...$` / `$$...$$` math span cannot
  * be cut out of the span (the fragments would not render as KaTeX), so the span
- * stays whole with each blank shown as a box, and its inputs follow the span.
+ * stays whole; trailing blanks move out of it (their inputs follow the span) and
+ * blanks inside it become a thin invisible gap.
  */
 export function splitBlanks(text: string): { prose: string; ids: string[] }[] {
 	const out: { prose: string; ids: string[] }[] = [];
@@ -27,10 +29,15 @@ export function splitBlanks(text: string): { prose: string; ids: string[] }[] {
 	for (const m of text.matchAll(MATH_SPAN)) {
 		addProse(text.slice(last, m.index));
 		last = m.index + m[0].length;
+		const tail = m[0].match(TRAILING_BLANKS);
+		const body = tail ? tail[1]! + tail[2]!.trim() + tail[4]! : m[0];
 		const ids = [...m[0].matchAll(BLANK)].map((b) => b[1]!.trim());
 		if (ids.length === 0) pending += m[0];
 		else {
-			out.push({ prose: pending + m[0].replace(BLANK, "\\square"), ids });
+			// A trailing blank leaves the span so its input sits exactly there;
+			// a blank mid-span becomes a thin invisible gap (never a box glyph).
+			const kept = tail && tail[2]!.trim() === "" ? "" : body.replace(BLANK, "\\,");
+			out.push({ prose: pending + kept, ids });
 			pending = "";
 		}
 	}
