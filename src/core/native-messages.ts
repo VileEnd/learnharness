@@ -515,21 +515,23 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 	// message; everything before it is replaced by the marker's content
 	// (header + summary) rendered ONCE, up top. The marker itself is then
 	// skipped in place — it must never render twice. A cut naming a
-	// missing id degrades honestly (everything renders — never throw).
+	// missing id degrades honestly (everything renders under the head —
+	// never throw).
 	const lhMessages = messages as readonly LhMessage[];
 	const active = activeCompactionOf(lhMessages);
 	let start = 0;
 	let head: Message | null = null;
 	if (active) {
 		const kept = keptIndexFor(lhMessages, active);
-		if (kept > 0) {
-			start = kept;
-			head = {
-				role: "user",
-				content: [{ type: "text", text: active.content }],
-				timestamp: active.timestamp,
-			};
-		}
+		if (kept > 0) start = kept;
+		// An unresolvable cut (kept < 0) degrades honestly: everything
+		// renders, the summary rides at the top — never in place, where it
+		// could split a tool call from its result.
+		head = {
+			role: "user",
+			content: [{ type: "text", text: active.content }],
+			timestamp: active.timestamp,
+		};
 	}
 	// THE LEADING SYSTEM MESSAGE IS REQUEST CHROME, NEVER COMPACTABLE
 	// PAYLOAD (the OpenRouter no-tools incident, owner 2026-10-05):
@@ -555,11 +557,13 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			// UI-only markers: plan blocks, and problem dismissals (the
 			// synthesized conclude pair carries the model's face).
 			if (marker.customType === "plan-block" || marker.customType === "problem-dismissed") continue;
-			// The ACTIVE compaction marker already rendered as the head —
-			// never twice. (Stale markers before the cut are unreachable; a
-			// marker whose cut could not resolve has no head and renders as
-			// its user text — honest degradation.)
-			if (marker.customType === "compaction" && head !== null && marker.id === active!.id) continue;
+			// COMPACTION MARKERS NEVER RENDER IN PLACE (hotfix 0.19.1): the
+			// active one already rendered as the head (or, when its cut
+			// could not resolve, is hoisted to the head below); a STALE one
+			// can sit INSIDE the active cut's kept tail, and rendering it
+			// there lands user text between a tool call and its result (the
+			// provider 400s and the session wedges for good).
+			if (marker.customType === "compaction") continue;
 			out.push({
 				role: "user",
 				content: [{ type: "text", text: marker.content }],
@@ -677,6 +681,11 @@ export function endsInDismissal(messages: readonly LhMessage[]): boolean {
 export function needsContinuation(messages: readonly LhMessage[]): boolean {
 	const last = messages[messages.length - 1];
 	if (!last || (last as { role?: string }).role !== "toolResult") return false;
+	// Compaction markers are model-invisible record chrome: one landing
+	// between the call and a late result must not hide the owner.
+	messages = messages.filter(
+		(m) => !((m as { role?: string }).role === "custom" && (m as LhMarkerMessage).customType === "compaction"),
+	);
 	// The trailing results batch (contiguous by construction — the agent
 	// appends its batch; the question gate keeps a quiz call and its
 	// learner answer adjacent).
