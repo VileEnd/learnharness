@@ -51,7 +51,7 @@ const { danglingQuestionOf, activeProblemOf } = await import("../src/core/native
 const TEACH = "chat_mv27rrra_feff23b6";
 const EXERCISES = "chat_mvqwyk18_da3a4b82";
 const PRACTICE = "chat_mv293wv5_10656952";
-const CANVAS = "chat_mvr0bwhl_d3a812e8";
+const CANVAS = "chat_mvr17zp1_fb98d9b6";
 
 function snapshotTree(dir: string): Map<string, Buffer> {
 	const out = new Map<string, Buffer>();
@@ -93,6 +93,63 @@ test("drawings: the canvas chat's submitted drawing reads through the DrawingSto
 	assert.ok(marker, "a submission carries a drawingId");
 	assert.ok(drawingStore.getScene(CANVAS, marker.details.drawingId), "the scene reads");
 	assert.ok(drawingStore.getPng(CANVAS, marker.details.drawingId), "the snapshot reads");
+});
+
+test("canvas chat: refused probe_done calls conclude nothing; the clean one hands off", async () => {
+	// Real data (live run, 2026-10-27): the prober graded its sketch and called
+	// probe_done twice in the same turn; both were refused as "canvas task
+	// still open" (the record was frozen at the turn's write-ahead; fixed
+	// since, workGate). The probe must stay open through them, and only the
+	// later clean probe_done may flip the phase and hand off.
+	const { hasProbeDone, activeWorkOf } = await import("../src/core/native-messages.ts");
+	const ms = chatStore.getChat(CANVAS)!.messages;
+	const idx = (pred: (m: Record<string, unknown>) => boolean) => ms.map((m, i) => (pred(m as never) ? i : -1)).filter((i) => i >= 0);
+	const doneResults = idx((m) => m.role === "toolResult" && m.toolName === "probe_done");
+	const refused = doneResults.filter((i) => (ms[i] as { details?: { ok?: boolean } }).details?.ok === false);
+	const clean = doneResults.filter((i) => (ms[i] as { details?: { ok?: boolean } }).details?.ok === true);
+	assert.ok(refused.length >= 1 && clean.length === 1, "the record carries refused and concluding probe_done results");
+	for (const i of refused) {
+		assert.equal(phaseAt3Lh(ms, i), "probe", `refused probe_done at ${i} keeps the probe`);
+		assert.equal(hasProbeDone(ms.slice(0, i + 1)), false);
+	}
+	assert.equal(phaseAt3Lh(ms, clean[0]!), "plan");
+	assert.equal(hasProbeDone(ms.slice(0, clean[0]! + 1)), true);
+	const handoff = idx((m) => m.role === "custom" && m.customType === "probe-handoff");
+	assert.ok(handoff.length === 1 && handoff[0]! > clean[0]!, "the handoff steer follows the clean probe_done");
+	// Every canvas task in the record is closed (graded with its exact id, or dismissed).
+	assert.equal(activeWorkOf(ms), null);
+});
+
+test("canvas chat: stored drawings keep palette names and the export carries the grid", async () => {
+	const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+	const ids = chatStore
+		.getChat(CANVAS)!
+		.messages.map((m) => (m as { details?: { drawingId?: string } }).details?.drawingId)
+		.filter((id): id is string => typeof id === "string");
+	assert.ok(ids.length >= 2);
+	for (const id of new Set(ids)) {
+		const scene = drawingStore.getScene(CANVAS, id)!;
+		for (const o of scene.objects as Array<{ type: string; color?: string }>) {
+			if (o.type === "stroke") assert.match(o.color ?? "", /^[a-z]+$/, `stroke colour is a palette name, not ${o.color}`);
+		}
+		const png = drawingStore.getPng(CANVAS, id)!;
+		assert.equal(Buffer.from(png.subarray(1, 4)).toString("latin1"), "PNG");
+		// The region grid: the first column boundary (W/8) is a faint line over
+		// (nearly) the whole height of the browser's exportPng output.
+		const img = await loadImage(Buffer.from(png));
+		const c = createCanvas(img.width, img.height);
+		const ctx = c.getContext("2d");
+		ctx.drawImage(img, 0, 0);
+		const x = Math.round(img.width / 8);
+		let lined = 0;
+		for (let y = 0; y < img.height; y++) {
+			const band = ctx.getImageData(x - 2, y, 5, 1).data;
+			let hit = false;
+			for (let k = 0; k < band.length; k += 4) if (band[k]! < 245 && band[k + 3]! > 0) hit = true;
+			if (hit) lined++;
+		}
+		assert.ok(lined / img.height > 0.9, `grid line at x=${x} covers ${lined}/${img.height} rows`);
+	}
 });
 
 test("chats: the LLM wire flattening turns each full record into a legal provider message list", () => {
