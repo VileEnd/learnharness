@@ -219,9 +219,14 @@ export function cellRect(grid: RegionGrid, box: Box, cell: string): Box | null {
 
 /** The cell span of a typed object: "C4", or "B6-D7" (top-left to bottom-right) when it covers several. */
 function spanOf(o: TypedObject, grid: RegionGrid, box: Box): string {
-	const a = cellOf(grid, box, o.x, o.y);
+	// Normalize so a zero or negative w/h still yields end >= start.
+	const x0 = Math.min(o.x, o.x + o.w);
+	const x1 = Math.max(o.x, o.x + o.w);
+	const y0 = Math.min(o.y, o.y + o.h);
+	const y1 = Math.max(o.y, o.y + o.h);
+	const a = cellOf(grid, box, x0, y0);
 	// Just inside the far edge so an object ending exactly on a cell line does not claim the next cell.
-	const b = cellOf(grid, box, o.x + o.w - 1e-6, o.y + o.h - 1e-6);
+	const b = cellOf(grid, box, Math.max(x0, x1 - 1e-6), Math.max(y0, y1 - 1e-6));
 	return a === b ? a : `${a}-${b}`;
 }
 

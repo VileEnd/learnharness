@@ -67,6 +67,19 @@ test("serializeSceneStructuredText tags typed objects with cells", () => {
 	assert.equal(nextObjectId(scene), "o3");
 });
 
+test("zero or negative size on a cell line keeps a forward span", () => {
+	const box = { x: 0, y: 0, w: 800, h: 800 };
+	const scene = validate({ version: 1, objects: [
+		{ id: "o1", z: 0, type: "latex", x: 300, y: 300, w: 0, h: 0, source: "x" },
+		{ id: "o2", z: 1, type: "latex", x: 300, y: 300, w: -50, h: -50, source: "y" },
+	] });
+	const text = serializeSceneStructuredText(scene, box);
+	assert.match(text, /\[o1 latex @D4\]/);
+	assert.match(text, /\[o2 latex @C3\]/);
+	assert.deepEqual(objectsAt(scene, box).D4, ["o1"]);
+	assert.deepEqual(objectsAt(scene, box).C3, ["o2"]);
+});
+
 test("sha256Hex matches a known vector", () => {
 	assert.equal(sha256Hex(new TextEncoder().encode("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 	assert.equal(sha256Hex(new Uint8Array()), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
