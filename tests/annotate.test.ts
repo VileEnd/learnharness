@@ -191,3 +191,37 @@ test("both from and to on a non-arrow mark is refused, naming the rename", async
 	assert.equal((r as { isError?: boolean }).isError, true);
 	assert.match(text(r), /only arrows take from\/to - rename `from` to `target`/);
 });
+
+// ---- stroke targets (M5) ----
+
+const strokeScene: DrawingScene = {
+	version: 1,
+	objects: [
+		{ id: "o1", z: 0, type: "text", x: 0, y: 0, w: 100, h: 40, source: "x" },
+		{ id: "s4", z: 1, type: "stroke", brush: "pen", color: "blue", size: 3, points: [[10, 20, 1], [30, 80, 1], [20, 60, 1]] },
+		{ id: "s5", z: 2, type: "stroke", brush: "pen", color: "red", size: 3, points: [] },
+	],
+};
+const strokeTool = annotateToolFor({ chatId: "c1", drawingStore: { getScene: () => strokeScene } });
+
+test("annotate resolves a stroke target to the stroke's bounding rect", async () => {
+	assert.deepEqual(resolveTargetRect({ stroke: "s4" }, strokeScene, sceneBoundingBox(strokeScene)!), { x: 10, y: 20, w: 20, h: 60 });
+	const r = await run(strokeTool, { drawingId: "drw_a", marks: [{ kind: "circle", target: { stroke: "s4" } }] });
+	assert.equal(r.isError, undefined);
+});
+
+test("annotate refuses an unknown stroke id and lists the valid ones; empty strokes do not resolve", async () => {
+	const r = await run(strokeTool, { drawingId: "drw_a", marks: [{ kind: "circle", target: { stroke: "s9" } }] });
+	assert.equal(r.isError, true);
+	assert.match(text(r), /s9/);
+	assert.match(text(r), /stroke ids: s4\b/);
+	assert.doesNotMatch(text(r), /s5/);
+	assert.equal(resolveTargetRect({ stroke: "s5" }, strokeScene, sceneBoundingBox(strokeScene)!), null);
+	assert.equal(resolveTargetRect({ object: "s5" }, strokeScene, sceneBoundingBox(strokeScene)!), null);
+});
+
+test("a bare stroke key on a mark heals into a target, and the fold reads it", () => {
+	const raw = { drawingId: "drw_a", marks: [{ kind: "circle", stroke: "s4" }] };
+	const prepared = strokeTool.prepareArguments!(raw) as { marks: { target: unknown }[] };
+	assert.deepEqual(prepared.marks[0]!.target, { stroke: "s4" });
+});

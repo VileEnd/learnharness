@@ -12,7 +12,7 @@ import type { PiEngine } from "../models.ts";
 import { runSubagent } from "./pi-run.ts";
 
 export const TRANSCRIBE_PROMPT = `You are transcribing a learner's hand-drawn canvas (an image) into text for a tutor who cannot see images.
-The image has a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text you are given.
+The image has a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text you are given. Freehand strokes appear there as [s4 blue stroke, vertical line @D1-D5] with a code-computed shape hint; trust the hint and the cell span over your reading of the picture.
 Transcribe EVERYTHING drawn, faithfully, in the drawing's own language:
 - Handwriting and text as plain text; math as LaTeX ($...$ inline, $$...$$ display); tables as markdown tables.
 - Hand-drawn diagrams (flowcharts, graphs, trees, circuits, block diagrams): a \`\`\`mermaid block, quoting every node label (A["label"]) and edge label (A -- "label" --> B), whenever the structure can be reproduced faithfully; otherwise describe it as *[Diagram: ...]*, naming every label and arrow.
@@ -38,7 +38,7 @@ export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingT
 			const message: AgentMessage = {
 				role: "user",
 				content: [
-					{ type: "text", text: structured ? `Structured text of the typed objects:\n${structured}` : "No typed objects." },
+					{ type: "text", text: structured ? `Structured text (typed objects, then a code-computed stroke digest, one line per freehand stroke):\n${structured}` : "No typed objects or strokes." },
 					{ type: "image", data: Buffer.from(png).toString("base64"), mimeType: "image/png" },
 				],
 				timestamp: Date.now(),
