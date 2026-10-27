@@ -301,7 +301,16 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
  * handler keys teacher construction on.
  */
 export function createProberAgent(ctx: ProberToolContext, opts: AgentBuildOptions = {}) {
-	return baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, ...ctx }, opts.toolToggles)));
+	// Late-bound turn view (as the teacher's): grade's first-submission refusal
+	// must see this turn's own messages or a retried grade is refused again.
+	const holder: { agent?: ReturnType<typeof baseAgentOptions> } = {};
+	const turn = {
+		messages: () => holder.agent?.state.messages ?? [],
+		hasSendToUser: () => holder.agent?.state.tools.some((t) => t.name === SEND_TO_USER_TOOL) ?? false,
+	};
+	const agent = baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, turn, ...ctx }, opts.toolToggles)));
+	holder.agent = agent;
+	return agent;
 }
 
 /**

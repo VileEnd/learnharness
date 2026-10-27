@@ -464,6 +464,9 @@ export interface ProberToolContext extends ProbeDoneContext {
 	drawingStore?: Pick<DrawingStore, "getScene">;
 	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
 	workGate?: WorkGate;
+	/** The in-flight turn's view (late-bound by the prober agent): lets `grade` see a
+	 *  refusal or coaching from earlier in the SAME turn. Absent = record only. */
+	turn?: TeachTurnView;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs

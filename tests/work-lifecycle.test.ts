@@ -392,6 +392,18 @@ describe("canvas doctrine for weaker models (M3)", () => {
 		assert.ok(!(await run(tool, { question: "w1", grade: "wrong" })).isError);
 	});
 
+	it("RC6: the prober registry refuses a sketch grade once, then passes in the same turn", async () => {
+		const open = [...pose("s1", "sketch", { question: "q", correctAnswer: "a" }), newWorkSubmission("s1", "first")];
+		const pending: LhMessage[] = [];
+		const turn = { messages: () => [...open, ...pending], hasSendToUser: () => false };
+		const tools = createProberTools({ chatId: "c1", chatStore: { getChat: () => chat("c1", open) }, jobStore: {}, spawn: () => {}, libraryRoot: "/nonexistent", quizMechanic: "choice", canvas: true, turn } as never);
+		const first = (await tools.grade!.execute("g1", { question: "s1", grade: "wrong", note: "n" } as never)) as { isError?: boolean };
+		assert.equal(first.isError, true);
+		pending.push(call("g1", "grade", { question: "s1", grade: "wrong", note: "n" }), result("g1", "grade", null, 2, true));
+		const retry = (await tools.grade!.execute("g2", { question: "s1", grade: "wrong", note: "n" } as never)) as { isError?: boolean };
+		assert.ok(!retry.isError);
+	});
+
 	it("RC6: correct is never refused; second submission and coaching lift the refusal", async () => {
 		const open = [...pose(), newWorkSubmission("w1", "first")];
 		assert.ok(!(await run(gradeOf(open), { question: "w1", grade: "correct" })).isError);
