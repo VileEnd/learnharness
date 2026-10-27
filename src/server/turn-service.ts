@@ -1,5 +1,5 @@
 /**
- * The chat-turn services — one named, error-contained seam per turn
+ * The chat-turn services — one named seam per turn
  * responsibility, extracted from the chat-handler so it composes instead of
  * implementing. Each takes its dependencies explicitly (storage ports, the
  * job runner) — no module here imports an adapter.
@@ -27,6 +27,14 @@ import type { ExtractionPipeline } from "../agent/subagents/extraction.ts";
 import type { AttributionService } from "./attribution.ts";
 import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 
+/** Distinguish a failed canonical save from later bookkeeping failures. */
+export class TurnPersistenceError extends Error {
+	constructor(cause: unknown) {
+		super("The reply could not be saved.", { cause });
+		this.name = "TurnPersistenceError";
+	}
+}
+
 /**
  * The canonical state write (Wave B, owner-approved 2026-09-26): append the
  * turn's own messages — the agent loop's native history, provider/model/
@@ -46,7 +54,8 @@ import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/setti
  * - Plan blocks: one frozen snapshot per successful plan_init call,
  *   idempotent (persist replays are safe).
  *
- * Returns the stamped new messages (usage provenance reads them).
+ * Returns the stamped new messages (usage provenance reads them). Throws
+ * TurnPersistenceError on failure so the runner can report it before DONE.
  */
 export function persistTurn(
 	chatStore: ChatStore,
@@ -57,7 +66,7 @@ export function persistTurn(
 ): LhMessage[] {
 	try {
 		const record = chatStore.getChat(chatId);
-		if (!record) return [];
+		if (!record) throw new Error(`Chat not found: ${chatId}`);
 		const stamped: LhMessage[] = [];
 		for (const m of turnMessages.slice(baseCount)) {
 			const message = m as LhMessage;
@@ -80,7 +89,7 @@ export function persistTurn(
 		return stamped;
 	} catch (err) {
 		console.error(`[chat ${chatId}] persist failed:`, err, { isAborted });
-		return [];
+		throw new TurnPersistenceError(err);
 	}
 }
 
