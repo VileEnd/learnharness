@@ -53,7 +53,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 	strong: { label: "Strong", roster: "Prober, teacher" },
 	cheap: { label: "Cheap", roster: "Researcher, demo builder, extractor, auditor, describer" },
-	vision: { label: "Vision", roster: "Visual maker" },
+	vision: { label: "Vision", roster: "Visual maker, drawing transcriber" },
 };
 const SLOT_ORDER: readonly ModelSlotName[] = ["strong", "cheap", "vision"];
 

@@ -25,7 +25,7 @@ test("local cutoff matches published native golden boundaries and estimator valu
 		["completed result boundary", [user(400), call(4), result(400), user(40)], 30, 3, [100, 3, 100, 10]],
 		["oversized trailing result", [user(400), user(40), call(4), result(400)], 30, 2, [100, 10, 3, 100]],
 		["multiple trailing results", [user(400), call(4), result(200), result(200)], 30, 1, [100, 3, 50, 50]],
-		["image allowance", [user(400), image(), user(40)], 1000, 1, [100, 1200, 10]],
+		["image allowance", [user(400), image(), user(40)], 1000, 1, [100, 2800, 10]],
 		["empty trailing text", [user(400), assistant(0), user(0)], 30, 0, [100, 0, 0]],
 		["pending call", [user(400), user(400), call(4)], 10, 1, [100, 100, 3]],
 	];
@@ -51,5 +51,5 @@ test("opaque signatures remain unmeasured and preserved; system/image allowances
 	assert.equal(estimateMessageTokens(signed), 0);
 	assert.equal((signed as { content: { thinkingSignature: string }[] }).content[0]!.thinkingSignature.length, 600_000);
 	const system = { role: "system", content: [{ type: "image", data: "fixture", mimeType: "image/png" }], sections: { a: "abcd" }, toolsAdded: [{ name: "fixture" }] };
-	assert.equal(estimateMessageTokens(system as never), Math.ceil((4800 + 4 + JSON.stringify(system.toolsAdded).length) / 4));
+	assert.equal(estimateMessageTokens(system as never), Math.ceil((11_200 + 4 + JSON.stringify(system.toolsAdded).length) / 4));
 });

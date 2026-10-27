@@ -1,4 +1,5 @@
 import {
+	chatSettingsClears,
 	clampChatLevel,
 	effectiveSettings,
 	getChat,
@@ -9,8 +10,8 @@ import {
 import type { ChatSettings } from "@/src/core";
 
 /**
- * The per-chat model control (model-control wave): replace-whole settings —
- * the picker sends the complete desired object ({} clears all overrides).
+ * The per-chat model control (model-control wave). Since the canvas PR the body
+ * MERGES over the stored settings (an omitted `canvas` or `model` is preserved).
  * PER-SESSION MODELS (owner, 2026-09-28): this route is THE in-session
  * writer — the composer's control binds the session's own record; the
  * strong slot is only the birth default and never reaches an existing
@@ -32,17 +33,24 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 	const parsed = parseSettingsBody(body);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
 
-	const verdict = validateChatSettings(parsed.settings);
+	const existing = getChat(id)?.settings ?? {};
+	const merged: ChatSettings = { ...existing, ...parsed.settings };
+	// Explicit clear: `model: null` / `thinkingLevel: null` drop the pin.
+	for (const key of chatSettingsClears(body)) delete merged[key];
+
+	const verdict = validateChatSettings(merged);
 	if (!verdict.ok) {
 		return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 	}
 
-	// Replace-whole persists the validated, level-clamped object — no
-	// merges, so a stale client can never resurrect a cleared override.
+	// Persists the validated, level-clamped object.
 	// Clamp-on-write (owner, interlude 2026-09-22): a pinned thinking
 	// level never rejects — it clamps to the named model's nearest
 	// supported (body model, else the record's strong slot).
-	const settings = clampChatLevel(parsed.settings, effectiveSettings().models.strong);
+	// canvas PR: the body merges over the stored settings, so a body that
+	// omits `canvas` (or `model`) preserves it.
+	// `null` clears a pin (model / thinkingLevel).
+	const settings = clampChatLevel(merged, effectiveSettings().models.strong);
 	stores.chatStore.saveSettings(id, settings);
 	return Response.json({ settings });
 }

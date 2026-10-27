@@ -53,6 +53,10 @@ import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
 import { PracticeDock } from "@/components/practice-dock";
+import { WorkDock } from "@/components/work-dock";
+import { CanvasWorkspace } from "@/components/canvas/canvas-workspace";
+import { WorkDismissedLine, WorkSubmissionCard, type WorkSubmissionData } from "@/components/work-cards";
+import { useCanvasCapable } from "@/components/use-canvas-capable";
 import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-cards";
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
 import { TopBar } from "@/components/top-bar";
@@ -69,6 +73,7 @@ import { ChatOverflowMenu } from "@/components/chat-overflow-menu";
 import { useCoarsePointer } from "@/components/use-coarse-pointer";
 import {
 	activeProblemOf,
+	activeWorkOf,
 	dismissedAnswer,
 	findPendingToolCall,
 	phaseAt3,
@@ -230,6 +235,9 @@ export function Chat({
 	 *  only decides whether the pill rides the composer. */
 	initialConfigured?: boolean;
 }) {
+	// The device can draw (min screen side >= 600): rides every chat POST so the
+	// server arms the canvas tools only for a capable device.
+	const canvasCapable = useCanvasCapable();
 	// Reattach plumbing (background-turn runner wave): the hook holds the
 	// settled terminal's callback — a stable ref assigned below, once
 	// syncFromServer exists (refs, not closures: no stale capture).
@@ -241,8 +249,8 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { messages, nativeMessages, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
-		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
+	const { messages, nativeMessages, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, submitWork, requestHint, dismissWork, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
+		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight, canvasCapable });
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
@@ -377,10 +385,14 @@ export function Chat({
 				planOpen: planOpenRef.current,
 				setupOpen: setupOpenRef.current,
 				pending: pendingRef.current !== null,
+				canvasOpen: canvasOpenRef.current,
+				work: activeWorkRef.current !== null,
 				problem: activeProblemRef.current !== null,
 				busy: busyRef.current,
 			});
-			if (target === "question") setAbortAsk("question");
+			if (target === "canvas") setCanvasOpen(false);
+			else if (target === "work") setAbortAsk("work");
+			else if (target === "question") setAbortAsk("question");
 			else if (target === "problem") setAbortAsk("problem");
 			else if (target === "turn") setAbortAsk("turn");
 			else if (target === "mermaid") setMermaidFocus(null);
@@ -403,7 +415,7 @@ export function Chat({
 			// 2026-10-04 — the GLM loop): the question can only dangle because a
 			// turn is STILL RUNNING, so the discard ALSO kills that turn; the
 			// route parks the dismissal (202) and the settle applies it.
-			const p = pendingRef.current;
+			const p = mode === "work" ? null : pendingRef.current;
 			if (p) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
 				const reading = readingThinkingRef.current.trim() || undefined;
@@ -420,13 +432,23 @@ export function Chat({
 			// silent marker route; the conclude synthesis rides the user's
 			// next input. The composer returns immediately. Mid-turn the
 			// discard also kills the running turn (same park + settle law).
+			// The canvas-task discard: the same ask-style silent route.
+			if (mode === "work") {
+				const work = activeWorkRef.current;
+				if (work) {
+					setCanvasOpen(false);
+					void dismissWork(work.toolCallId);
+					if (busyRef.current) abortInFlightTurn();
+				}
+				return;
+			}
 			const problem = activeProblemRef.current;
 			if (problem) {
 				void dismissProblem(problem.toolCallId);
 				if (busyRef.current) abortInFlightTurn();
 			}
 		},
-		[abortInFlightTurn, dismissQuestion, dismissProblem],
+		[abortInFlightTurn, dismissQuestion, dismissProblem, dismissWork],
 	);
 	// Mount continuation: if the stored transcript ends with a fulfilled tool
 	// (a job result landed while no client was open), resume the lesson — the
@@ -456,6 +478,19 @@ export function Chat({
 	const activeProblem = activeProblemOf(nativeMessages);
 	const activeProblemRef = useRef(activeProblem);
 	activeProblemRef.current = activeProblem;
+
+	// THE OPEN CANVAS TASK (PR 2): a work/sketch call no grade or dismissal has
+	// closed. A side question (pending) outranks it in the dock; the work dock
+	// returns once the question is answered.
+	const activeWork = activeWorkOf(nativeMessages);
+	const activeWorkRef = useRef(activeWork);
+	activeWorkRef.current = activeWork;
+	// The canvas workspace's subject: the open task, or an active practice
+	// problem posed with canvas: true.
+	const canvasTarget = canvasTargetOf(activeWork, activeProblem);
+	const [canvasOpen, setCanvasOpen] = useState(false);
+	const canvasOpenRef = useRef(false);
+	canvasOpenRef.current = canvasOpen && canvasTarget !== null && canvasCapable;
 
 	const localStream = status === "submitted" || status === "streaming";
 	const busy = localStream || turnInFlight;
@@ -491,10 +526,10 @@ export function Chat({
 	// the dock stays mounted (the problem is still active until the agent
 	// concludes).
 	const submitThinking = useCallback(
-		(text: string, attempt?: ThinkingAttempt) => {
+		(text: string, attempt?: ThinkingAttempt, drawingId?: string) => {
 			const problem = activeProblemRef.current;
 			if (!problem) return;
-			void send({ type: "thinking", problemCallId: problem.toolCallId, text, ...(attempt ? { attempt } : {}) });
+			void send({ type: "thinking", problemCallId: problem.toolCallId, text, ...(attempt ? { attempt } : {}), ...(drawingId ? { drawingId } : {}) });
 		},
 		[send],
 	);
@@ -509,6 +544,15 @@ export function Chat({
 	// ends at the question call), so the session's current phase IS the
 	// question's phase.
 	const requiresReveal = pending !== null && questionNeedsReveal(pending.tool, pending.input, phaseAt3(messages));
+	// A teach-phase canvas CHECK arrives behind the same reveal bar (the work
+	// dock owns that state itself); a prediction never does.
+	const workRequiresReveal =
+		pending === null && activeWork !== null && questionNeedsReveal(activeWork.tool, activeWork.input, phaseAt3(messages));
+	// The workspace closes when its subject goes (graded, dismissed, concluded) and
+	// when a side question takes the dock: answer it, then re-open the canvas.
+	useEffect(() => {
+		if (canvasTarget === null || pending !== null) setCanvasOpen(false);
+	}, [canvasTarget === null, pending !== null]);
 
 	/* The READING-THINKING channel (owner 2026-10-03): a draft field for
 	 * thinking while reading the teaching prose, mounted while a check waits
@@ -640,6 +684,7 @@ export function Chat({
 			...pick('[data-testid="reading-thinking-field"] textarea'),
 			...pick('[data-testid="question-dock"] textarea'),
 			...pick('[data-testid="practice-dock"] textarea'),
+			...pick('[data-testid="work-dock"] textarea'),
 			...pick('[data-testid="composer"] textarea'),
 		];
 	}, []);
@@ -685,7 +730,7 @@ export function Chat({
 	// affordance).
 	const [compacting, setCompacting] = useState(initiallyCompacting);
 	const canSend =
-		(text.trim().length > 0 || dictation.active) && !pending && !activeProblem && !compacting;
+		(text.trim().length > 0 || dictation.active) && !pending && !activeProblem && !activeWork && !compacting;
 
 	/* THE PRACTICE PAUSE (owner round 16): between problems — practice
 	 * kind, nothing active, nothing in flight, and at least one problem
@@ -696,6 +741,7 @@ export function Chat({
 		kind === "practice" &&
 		!pending &&
 		!activeProblem &&
+		!activeWork &&
 		!compacting &&
 		!busy &&
 		nativeMessages.some(
@@ -1376,7 +1422,11 @@ export function Chat({
 											case "data-compaction-cut":
 												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
 											case "data-practice-thinking":
-												return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} />;
+												return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} chatId={chatId} />;
+											case "data-work-submission":
+												return <WorkSubmissionCard key={pi} data={part.data as WorkSubmissionData} chatId={chatId} />;
+											case "data-work-dismissed":
+												return <WorkDismissedLine key={pi} />;
 											case "data-practice-next":
 												// The learner's move-on signal (owner round 16): a compact
 												// centered mono-caps line — chrome, the dismissal register.
@@ -1615,6 +1665,16 @@ export function Chat({
 					initialQuestionDraft={pending ? questionDraft(pending.toolCallId)?.form : undefined}
 					onSaveQuestionDraft={(form) => { if (pending) saveQuestionDraft(pending.toolCallId, { form }); }}
 					practice={activeProblem}
+					work={activeWork}
+					workRequiresReveal={workRequiresReveal}
+					canvasCapable={canvasCapable}
+					canvasOpen={canvasOpen}
+					onOpenCanvas={() => setCanvasOpen(true)}
+					onSubmitWork={(text) => {
+						if (activeWork) submitWork(activeWork.toolCallId, text);
+					}}
+					onHint={(callId) => requestHint(callId)}
+					onDismissWork={() => setAbortAsk("work")}
 					compactionRunning={compacting}
 					onSubmitThinking={submitThinking}
 					chatId={chatId}
@@ -1711,6 +1771,28 @@ export function Chat({
 					/>
 				)}
 				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} />}
+				{/* The canvas workspace (PR 2): a session-area overlay like the diagram focus. */}
+				{canvasOpen && canvasTarget !== null && canvasCapable && pending === null && (
+					<CanvasWorkspace
+						key={canvasTarget.callId}
+						chatId={chatId}
+						callId={canvasTarget.callId}
+						question={canvasTarget.question}
+						details={canvasTarget.details}
+						requireThinking={canvasTarget.requireThinking}
+						compactionRunning={compacting}
+						onSubmit={(text, drawingId) => {
+							if (canvasTarget.kind === "work") submitWork(canvasTarget.callId, text, drawingId);
+							else submitThinking(text.length > 0 ? text : "Here is my drawing.", undefined, drawingId);
+						}}
+						// The coaching lands in the transcript: minimise so it is seen.
+						onHint={() => {
+							requestHint(canvasTarget.callId);
+							setCanvasOpen(false);
+						}}
+						onMinimize={() => setCanvasOpen(false)}
+					/>
+				)}
 				<AbortTurnDialog mode={abortAsk} onClose={() => setAbortAsk(null)} onConfirm={confirmAbort} busy={busy} />
 				</div>
 			</div>
@@ -1776,7 +1858,7 @@ export function Chat({
  *  then the session overlays (mermaid paints above plan — later in DOM),
  *  then setup (self-closing — the gate only must not fire), then the
  *  2026-10-02 abort chain proper (question before turn). */
-export type EscAbortTarget = "mermaid" | "plan" | "setup" | "question" | "problem" | "turn" | null;
+export type EscAbortTarget = "mermaid" | "plan" | "setup" | "canvas" | "question" | "work" | "problem" | "turn" | null;
 	/**
  * Does the ?prompt topic still owe its first send? The gate is "no real
  * conversation yet" (no user/assistant message) — NOT emptiness: a
@@ -1796,6 +1878,12 @@ export function escAbortTarget(s: {
 	planOpen: boolean;
 	setupOpen: boolean;
 	pending: boolean;
+	/** The canvas workspace is open (it also claims Esc itself at the
+	 *  document level; this gate is the pure defense). Esc MINIMISES it first. */
+	canvasOpen?: boolean;
+	/** An open canvas task (work/sketch) with the workspace minimised: the
+	 *  NEXT Esc offers its dismissal. Below a pending side question. */
+	work?: boolean;
 	/** An active practice problem (practice sessions, 2026-10-04): Esc
 	 *  opens the discard confirm — below a pending question (the two
 	 *  never coexist, but the layering stays strict), above the turn
@@ -1808,9 +1896,55 @@ export function escAbortTarget(s: {
 	if (s.mermaidFocus) return "mermaid";
 	if (s.planOpen) return "plan";
 	if (s.setupOpen) return "setup";
+	if (s.canvasOpen) return "canvas";
 	if (s.pending) return "question";
+	if (s.work) return "work";
 	if (s.problem) return "problem";
 	if (s.busy) return "turn";
+	return null;
+}
+
+/** Which surface owns the dock band (PR 2). A pending side question ALWAYS wins:
+ *  while a canvas task is open the agent may still pose quiz / explain /
+ *  exercise / ask, the question dock takes the band until it is answered,
+ *  then the work dock returns. Then the open canvas task, then an active
+ *  practice problem, else the composer. */
+export type DockKind = "question" | "work" | "practice" | "composer";
+export function dockKindOf(s: { pending: boolean; work: boolean; practice: boolean }): DockKind {
+	if (s.pending) return "question";
+	if (s.work) return "work";
+	if (s.practice) return "practice";
+	return "composer";
+}
+
+/** The canvas workspace's subject (PR 2): the open work/sketch task, or an
+ *  active practice problem posed with `canvas: true`. Null = nothing to draw on. */
+export interface CanvasTarget {
+	kind: "work" | "practice";
+	callId: string;
+	question: string;
+	details?: string;
+	requireThinking?: boolean;
+}
+export function canvasTargetOf(
+	work: { toolCallId: string; input: unknown } | null,
+	problem: { toolCallId: string; input: unknown } | null,
+): CanvasTarget | null {
+	if (work) {
+		const i = (work.input ?? {}) as { question?: unknown; details?: unknown; requireThinking?: unknown };
+		return {
+			kind: "work",
+			callId: work.toolCallId,
+			question: typeof i.question === "string" ? i.question : "",
+			...(typeof i.details === "string" ? { details: i.details } : {}),
+			...(i.requireThinking === true ? { requireThinking: true } : {}),
+		};
+	}
+	if (problem) {
+		const i = (problem.input ?? {}) as { statement?: unknown; canvas?: unknown };
+		if (i.canvas !== true) return null;
+		return { kind: "practice", callId: problem.toolCallId, question: typeof i.statement === "string" ? i.statement : "" };
+	}
 	return null;
 }
 
@@ -1850,6 +1984,14 @@ function DockOverlay({
 	initialQuestionDraft,
 	onSaveQuestionDraft,
 	practice,
+	work,
+	workRequiresReveal,
+	canvasCapable,
+	canvasOpen,
+	onOpenCanvas,
+	onSubmitWork,
+	onHint,
+	onDismissWork,
 	compactionRunning,
 	onSubmitThinking,
 	requiresReveal,
@@ -1880,9 +2022,22 @@ function DockOverlay({
 	 *  {toolCallId, input} — dock ownership exactly like a pending
 	 *  question (the composer is replaced); null in teaching sessions. */
 	practice: { toolCallId: string; input: unknown } | null;
+	/** The OPEN canvas task (work/sketch, PR 2): the work dock owns the band
+	 *  unless a side question is pending (the question dock wins). */
+	work: { toolCallId: string; tool: "work" | "sketch"; input: unknown } | null;
+	workRequiresReveal: boolean;
+	canvasCapable: boolean;
+	/** The workspace is open (the work dock stops claiming dictation). */
+	canvasOpen: boolean;
+	onOpenCanvas: () => void;
+	/** The work dock's text-only submission. */
+	onSubmitWork: (text: string) => void;
+	/** The Hint button (work dock and practice dock): { type: "hint", callId }. */
+	onHint: (callId: string) => void;
+	onDismissWork: () => void;
 	/** The practice dock's send: the thinking, plus the graded attempt when an
 	 *  interactive problem's Check carries one. */
-	onSubmitThinking: (text: string, attempt?: ThinkingAttempt) => void;
+	onSubmitThinking: (text: string, attempt?: ThinkingAttempt, drawingId?: string) => void;
 	/** Teach-phase pending question: arrives collapsed behind the reveal button (W5). */
 	requiresReveal: boolean;
 	/** The reading-thinking draft (owner 2026-10-03) — owned by ChatView so
@@ -1986,8 +2141,9 @@ function DockOverlay({
 	// Dock ownership (the fold machine, the reserve immunity, the arrival
 	// states): a pending question OR an active practice problem — either
 	// replaces the composer and owns the band.
-	const pendingRef = useRef(!!pending || !!practice);
-	pendingRef.current = !!pending || !!practice;
+	const dockKind = dockKindOf({ pending: !!pending, work: !!work, practice: !!practice });
+	const pendingRef = useRef(dockKind !== "composer");
+	pendingRef.current = dockKind !== "composer";
 	const requiresRevealRef = useRef(requiresReveal);
 	requiresRevealRef.current = requiresReveal;
 	const revealedRef = useRef(revealed);
@@ -2272,11 +2428,14 @@ function DockOverlay({
 		if (b) offer(b.getBoundingClientRect().height);
 	};
 
-	const mode = pending
-		? `question:${pending.toolCallId}`
-		: practice
-			? `practice:${practice.toolCallId}`
-			: "chat";
+	const mode =
+		dockKind === "question"
+			? `question:${pending!.toolCallId}`
+			: dockKind === "work"
+				? `work:${work!.toolCallId}`
+				: dockKind === "practice"
+					? `practice:${practice!.toolCallId}`
+					: "chat";
 	// The opening variant of a session appears instantly — the fade/rise is
 	// reserved for mid-session transitions.
 	const initialModeRef = useRef(mode);
@@ -2302,7 +2461,7 @@ function DockOverlay({
 	// term (the fold) belongs to EVERY docked variant — question AND
 	// practice (owner fix, 2026-10-06). Typing growth keeps the key and
 	// never animates; the fold/unfold morphs like teaching always has.
-	const stateKey = dockStateKey(mode, !!pending || !!practice, expanded);
+	const stateKey = dockStateKey(mode, dockKind !== "composer", expanded);
 	const prevRef = useRef<{ key: string; height: number } | null>(null);
 	useIsoLayoutEffect(() => {
 		const el = shellRef.current;
@@ -2387,10 +2546,30 @@ function DockOverlay({
 									dictationClaim={!revealPending}
 									compactionRunning={compactionRunning}
 								/>
+							) : work ? (
+								<WorkDock
+									key={work.toolCallId}
+									chatId={chatId}
+									callId={work.toolCallId}
+									question={(work.input as { question?: string } | null)?.question ?? ""}
+									active={!canvasOpen}
+									requiresReveal={workRequiresReveal}
+									canvasCapable={canvasCapable}
+									onOpenCanvas={onOpenCanvas}
+									onSubmit={onSubmitWork}
+									onHint={() => onHint(work.toolCallId)}
+									onDismiss={onDismissWork}
+									onEscape={dictationCancel}
+									compactionRunning={compactionRunning}
+								/>
 							) : practice ? (
 								<PracticeDock
 									problemCallId={practice.toolCallId}
-									input={practice.input as { statement: string; format?: unknown; spec?: unknown }}
+									input={practice.input as { statement: string; format?: unknown; spec?: unknown; canvas?: boolean }}
+									onHint={() => onHint(practice.toolCallId)}
+									canvasCapable={canvasCapable}
+									onOpenCanvas={onOpenCanvas}
+									active={!canvasOpen}
 									expanded={expanded}
 									onExpand={() => {
 										setExpanded(true);

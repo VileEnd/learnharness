@@ -26,6 +26,20 @@ core tool surface must appear in real data here.
   calls (numeric first-try correct; table solved on the second Check after a hint;
   multipart given up) plus the prober's `probe`/`recall`/`grade`. Stamped (`version: 1`)
   by design; the unstamped pin is the master above.
+- `chats/chat_mvr17zp1_fb98d9b6.json` + `drawings/chat_mvr17zp1_fb98d9b6/` — the canvas
+  workspace (dev server on a scratch data dir, 2026-10-27, `settings.canvas: true`; the
+  canvas driven in headless Chromium through the real workspace, so the PNGs come from
+  `exportPng` with the region grid and `oN` badges and the scenes store palette names):
+  three prober `sketch` tasks — the first graded by its exact id after one drawing
+  submission, the second with a `hint-request`, two `work-submission`s (a drawing with
+  a LaTeX object, then a resubmission of the unchanged scene, which reuses its
+  content-addressed `drawingId`) and a grade, the third dismissed (`work-dismissed`);
+  every submission here carries a drawing (text-only submissions are unit-tested);
+  two refused `probe_done` calls in the grading turn (pre-fix: the record was frozen at
+  write-ahead, see final-fix report) that conclude nothing, then the clean `probe_done`,
+  the `probe-handoff` steer and `plan_init`. Drafts are kept (`drafts/<callId>.json`).
+  Stamped (`version: 1`). Replaces `chat_mvr0bwhl_d3a812e8`, whose hand-POSTed drawing
+  had no grid and whose refused `probe_done` had flipped the phase.
 - `chats/chat_mv293wv5_10656952.json` — the practice lifecycle (owner-built,
   2026-10-10): graph-context (the bracketed preamble), problem ×2,
   practice-thinking ×2, conclude ×2, practice-next, problem-dismissed — the

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { type SessionPricing, type TurnUsage } from "@/src/core";
 import { costLabel as formatCost, formatTokens, prettyModel } from "@/components/usage-format";
-import { ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
+import { CanvasPill, ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
 
 export function formatContextMeasurement(tokens: number | null, limit: number | null): string {
 	const numerator = tokens === null ? "?" : formatTokens(tokens);
@@ -34,6 +34,8 @@ export function StatsBar({
 	dictationSlot,
 	chatId,
 	leadingSlot,
+	canvas,
+	onCanvasChange,
 }: {
 	turns: TurnUsage[];
 	contextTokens?: number | null;
@@ -52,6 +54,10 @@ export function StatsBar({
 	 *  composer's teach | practice switch rides here — before the session
 	 *  data (which renders nothing pre-chat on that surface). */
 	leadingSlot?: ReactNode;
+	/** The Canvas pill (PR 2). DRAFT surfaces (no chatId) hold the choice and hand it to
+	 *  the create call; in a session the pill reads and writes the chat's own record. */
+	canvas?: boolean;
+	onCanvasChange?: (next: boolean) => void;
 }) {
 	const [open, setOpen] = useState(false);
 	const [selectedModel, setSelectedModel] = useState<string | undefined>();
@@ -193,7 +199,10 @@ export function StatsBar({
 			{/* The model + thinking control — one controller for the conversation
 			    agents (prober/teacher); the record's `turns` above still folds
 			    the ACTUAL models billed, regardless of what the picker says. */}
-			<ModelControl chatId={chatId} onModelChange={setSelectedModel} />
+			<div className="flex min-w-0 items-center gap-1.5">
+				<CanvasPill chatId={chatId} value={canvas} onChange={onCanvasChange} />
+				<ModelControl chatId={chatId} onModelChange={setSelectedModel} />
+			</div>
 		</div>
 	);
 }

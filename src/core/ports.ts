@@ -27,6 +27,7 @@ import type {
 	TurnUsage,
 	NotesSource,
 } from "./contracts.ts";
+import type { DrawingScene } from "./canvas-core.ts";
 import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/documents.ts";
 import type { OkfFile } from "./contracts/okf.ts";
 import type { AttributionRow } from "./contracts/learner.ts";
@@ -301,6 +302,36 @@ export interface DocumentStore {
 	readPendingBatches(): PendingBatch[];
 	/** Replace the whole pending list (atomic). */
 	writePendingBatches(batches: PendingBatch[]): void;
+}
+
+// ─── DrawingStore — canvas drawings per chat (data/drawings) ────────────────
+
+/**
+ * Content-addressed drawing submissions (scene json + png), uploaded image
+ * assets, per-call drafts (revisioned, optimistic) and transcript caches,
+ * all under data/drawings/<chatId>/. The chat record stays the truth; these
+ * are the only non-record drawing files. Reads never throw: unknown or
+ * path-shaped ids read as absent. Writes are atomic.
+ */
+export interface DrawingStore {
+	/** Id = drawingIdOf(scene) (computed here); an existing <id>.json is not rewritten. */
+	saveSubmission(chatId: string, scene: DrawingScene, png: Uint8Array): { drawingId: string };
+	getScene(chatId: string, drawingId: string): DrawingScene | null;
+	getPng(chatId: string, drawingId: string): Uint8Array | null;
+	saveAsset(chatId: string, bytes: Uint8Array, mimeType: "image/png" | "image/jpeg"): { assetId: string };
+	getAsset(chatId: string, assetId: string): { bytes: Uint8Array; mimeType: string } | null;
+	readDraft(chatId: string, callId: string): { scene: DrawingScene; rev: number } | null;
+	/** Optimistic write: ok only when baseRev equals the stored rev (0 = none yet). */
+	writeDraft(
+		chatId: string,
+		callId: string,
+		scene: DrawingScene,
+		baseRev: number,
+	): { ok: true; rev: number } | { ok: false; current: { scene: DrawingScene; rev: number } | null };
+	readTranscript(chatId: string, drawingId: string): { model: string; text: string } | null;
+	writeTranscript(chatId: string, drawingId: string, t: { model: string; text: string }): void;
+	/** Remove the chat's whole drawings folder. */
+	deleteForChat(chatId: string): void;
 }
 
 // ─── ConceptVectorStore — embeddings of the graph's concepts ────────────────

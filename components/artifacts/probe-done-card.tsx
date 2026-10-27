@@ -38,14 +38,17 @@ export function ProbeDoneCard({ part }: { part: { input?: unknown; output?: unkn
 	// branch below still reads output.error.
 	const assessment = input?.assessment;
 	const strands = assessment && Array.isArray(assessment.strands) ? assessment.strands : null;
+	// A refused call ({ok:false}) concluded nothing (core isProbeConclusion):
+	// the heading must not claim it did.
+	const refused = output !== undefined && output !== null && output.ok === false;
 
 	return (
 		<div data-testid="probe-done-card" className="my-3 rounded-xl border bg-card/60 p-3">
 			<div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				<ClipboardCheckIcon className="size-3.5 text-primary" />
-				Probe concluded — your assessment
+				{refused ? "Assessment not filed yet" : "Probe concluded — your assessment"}
 			</div>
-			{output && !output.ok ? (
+			{refused ? (
 				<p className="text-sm text-muted-foreground">The prober retried: {output.error}</p>
 			) : state === "output-error" ? (
 				<p className="text-sm text-muted-foreground">
