@@ -1,0 +1,1 @@
+{"version":1,"objects":[{"id":"s1","z":1,"type":"stroke","brush":"pen","color":"#1a1a1a","size":3,"points":[[40,40,0.5],[120,44,0.5],[200,40,0.5],[260,46,0.5]]},{"id":"o1","z":2,"type":"latex","x":40,"y":80,"w":260,"h":50,"source":"x^2 + \\frac{b}{a}x = -\\frac{c}{a}"},{"id":"o2","z":3,"type":"text","x":40,"y":150,"w":260,"h":40,"source":"add (b/2a)^2 to both sides"}]}

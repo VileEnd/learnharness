@@ -26,6 +26,11 @@ core tool surface must appear in real data here.
   calls (numeric first-try correct; table solved on the second Check after a hint;
   multipart given up) plus the prober's `probe`/`recall`/`grade`. Stamped (`version: 1`)
   by design; the unstamped pin is the master above.
+- `chats/chat_mvr0bwhl_d3a812e8.json` + `drawings/chat_mvr0bwhl_d3a812e8/` — the canvas
+  workspace (dev server on a scratch data dir, 2026-10-27, `settings.canvas: true`): a
+  prober `sketch` task with three `work-submission` markers (the second after a
+  `hint-request`, the third carrying a drawing: `drw_*.json` scene + `.png`), the
+  probe-to-teach handoff, and a `work-dismissed` marker. Stamped (`version: 1`).
 - `chats/chat_mv293wv5_10656952.json` — the practice lifecycle (owner-built,
   2026-10-10): graph-context (the bracketed preamble), problem ×2,
   practice-thinking ×2, conclude ×2, practice-next, problem-dismissed — the
