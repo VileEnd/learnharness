@@ -99,16 +99,13 @@ export const CANVAS_VETTED_MODELS: readonly CanvasVettedModel[] = [
 	{
 		provider: "openrouter",
 		id: "z-ai/glm-5.3-flash",
-		// GIVE-AWAY CONDITION OPEN (M7 brief "GLM give-away vetting"; final
-		// review 2026-10-27). In M6 GLM stated the target ("vertex x = +1") in
-		// coaching AND in a hint. The no-give-away rung in
-		// shared/24-canvas-tools.md was re-checked live on GLM only partly, n=1
-		// each: coaching after a WRONG submission passed; the hint passed only
-		// on a task with NO submission (nothing to give away). The failing state
-		// (a hint after a coached wrong submission) was not re-run under the
-		// final prompt. Neither the re-check nor an owner acceptance of the
-		// give-away is recorded yet; the owner decides before merge.
-		note: "tested 2026-10-27 (prober and teacher scenarios pass); give-away rung re-checked live n=1: coaching after a wrong submission passed, hint re-checked only on a task with no submission; hint after a wrong submission NOT re-checked",
+		// GIVE-AWAY RE-CHECK (2026-10-27): in M6 GLM stated the target in
+		// coaching and in a hint. Under the final prompt the failing state (a
+		// hint right after a coached wrong submission) was re-run n=3: no hint
+		// text stated a value (3/3). One run instead closed the task with grade
+		// inside the hint turn, revealing the committed answer; grade is now
+		// refused while the latest input is a hint request (grade.ts).
+		note: "tested 2026-10-27 (prober and teacher scenarios pass); hint after a coached wrong submission re-run n=3, no value stated; grade in a hint turn now refused",
 	},
 	{ provider: "openrouter", id: "qwen/qwen3.8-flash", note: "tested 2026-10-27 (prober and teacher scenarios pass)" },
 	{ provider: "openrouter", id: "deepseek/deepseek-v4.1-flash", note: "tested 2026-10-27 (prober and teacher scenarios pass)" },
