@@ -1,4 +1,5 @@
 import {
+	chatSettingsClears,
 	clampChatLevel,
 	effectiveSettings,
 	getChat,
@@ -32,7 +33,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 	const parsed = parseSettingsBody(body);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
 
-	const verdict = validateChatSettings(parsed.settings);
+	const existing = getChat(id)?.settings ?? {};
+	const merged: ChatSettings = { ...existing, ...parsed.settings };
+	// Explicit clear: `model: null` / `thinkingLevel: null` drop the pin.
+	for (const key of chatSettingsClears(body)) delete merged[key];
+
+	const verdict = validateChatSettings(merged);
 	if (!verdict.ok) {
 		return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 	}
@@ -43,8 +49,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 	// supported (body model, else the record's strong slot).
 	// canvas PR: the body merges over the stored settings, so a body that
 	// omits `canvas` (or `model`) preserves it.
-	const existing = getChat(id)?.settings ?? {};
-	const settings = clampChatLevel({ ...existing, ...parsed.settings }, effectiveSettings().models.strong);
+	// `null` clears a pin (model / thinkingLevel).
+	const settings = clampChatLevel(merged, effectiveSettings().models.strong);
 	stores.chatStore.saveSettings(id, settings);
 	return Response.json({ settings });
 }

@@ -222,7 +222,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// shows the stored value). No notifySettingsSaved: the write touches
 	// one session's record, not the slots — no other surface reads it.
 	const saveChat = useCallback(
-		async (next: ChatSettings) => {
+		async (next: ChatSettings | { model: ChatSettings["model"]; thinkingLevel: ThinkingLevel | null }) => {
 			setError(null);
 			try {
 				const res = await fetch(`/api/chats/${chatId}/settings`, {
@@ -236,7 +236,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					return;
 				}
 				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
-				setSession(stored?.settings ?? next);
+				setSession(stored?.settings ?? { model: next.model, thinkingLevel: next.thinkingLevel ?? undefined });
 				setOpen(null);
 			} catch {
 				setError("Could not reach the server — try again.");
@@ -252,7 +252,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined) => {
 			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level });
+				// The route merges: null (not undefined, which JSON drops) clears the old level.
+				void saveChat({ model: { provider, id }, thinkingLevel: level ?? null });
 			} else {
 				// composeSlotModel's empty-string convention: no level = unset.
 				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));

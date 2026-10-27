@@ -68,6 +68,20 @@ it("settings PUT preserves canvas across a model change", async () => {
 	assert.deepEqual(rec?.settings?.model, model);
 });
 
+it("settings PUT with thinkingLevel/model null clears the pin", async () => {
+	const put = (body: unknown) => settings.PUT(new Request("http://x", { method: "PUT", body: JSON.stringify(body) }), ctx());
+	const model = { provider: "openrouter", id: "anthropic/claude-sonnet-4.5" };
+	assert.equal((await put({ model, thinkingLevel: "high" })).status, 200);
+	assert.ok(stores.chatStore.getChat(chat.id)?.settings?.thinkingLevel);
+	assert.equal((await put({ model, thinkingLevel: null })).status, 200);
+	assert.equal(stores.chatStore.getChat(chat.id)?.settings?.thinkingLevel, undefined);
+	assert.deepEqual(stores.chatStore.getChat(chat.id)?.settings?.model, model);
+	assert.equal((await put({ model: null })).status, 200);
+	const rec = stores.chatStore.getChat(chat.id)?.settings;
+	assert.equal(rec?.model, undefined);
+	assert.equal(rec?.canvas, true);
+});
+
 it("POST /api/chats stamps canvas", async () => {
 	const res = await chatsRoute.POST(new Request("http://x", { method: "POST", body: JSON.stringify({ canvas: true }) }));
 	const { id } = await res.json();
