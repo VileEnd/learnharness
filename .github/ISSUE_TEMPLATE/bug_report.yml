@@ -1,0 +1,79 @@
+name: Bug report
+description: Report something that is not working as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve LearnHarness. Describe what you observed; you do not need to know the cause.
+
+        **This report is public.** Never paste API keys, tokens, passwords or the contents of `auth.json`, and never attach credential files or your whole data folder. Remove private information and share only the learning content you are comfortable making public.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce it? If it is intermittent or you are unsure, describe what you were doing when it happened.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The release tag you deployed (for example v0.19.0), or Settings → About if your build shows it. If you cannot find it, write "unknown".
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - Desktop browser
+        - iPad / tablet
+        - Phone (browser)
+        - Installed PWA on phone
+        - Installed PWA on desktop or tablet
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      description: For example, Firefox on Linux, or Safari on iPadOS 18.
+    validations:
+      required: true
+  - type: input
+    id: provider_model
+    attributes:
+      label: Model provider and model
+      description: For example, OpenRouter and the model name. Name the provider only; do not include any keys or tokens.
+    validations:
+      required: true
+  - type: textarea
+    id: transcript_excerpt
+    attributes:
+      label: Sanitized chat-log excerpt (optional)
+      description: A few relevant entries around the affected turn or tool call are especially helpful. Remove credentials, personal information and private learning content first. Leave blank if the records are difficult to find.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or other context (optional)
+      description: Check for private information before posting.
+    validations:
+      required: false
