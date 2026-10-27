@@ -384,9 +384,10 @@ function exerciseFormatField(formats: readonly InteractiveFormat[]) {
 
 /** The teacher's exercise tool: nodeId-validated like the teach quiz. */
 export function teachExerciseToolFor(
-	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes },
+	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes; turn?: TeachTurnView },
 	formats: readonly InteractiveFormat[],
 ) {
+	const guard = teachGuardFor(ctx.turn);
 	const parameters = Type.Object({ ...exerciseInputObject.properties, format: exerciseFormatField(formats) });
 	const tool: AgentTool<typeof parameters> = {
 		name: "exercise",
@@ -400,6 +401,8 @@ export function teachExerciseToolFor(
 			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
 			if (problems.length > 0) return invalidInputResult("exercise", problems);
+			const refusal = guard("exercise", input.type);
+			if (refusal) return invalidInputResult("exercise", [refusal]);
 			return questionResult();
 		},
 	};
@@ -544,7 +547,7 @@ export interface TeachTurnView {
 const GUARD_MAX_REFUSALS = 2;
 export function teachGuardFor(view: TeachTurnView | undefined) {
 	const refusals = new Map<string, number>();
-	return (tool: "quiz" | "explain", type: string | undefined): string | null => {
+	return (tool: "quiz" | "explain" | "exercise", type: string | undefined): string | null => {
 		if (!view || type !== "check") return null;
 		if (visibleTeachingSinceLastInput(view.messages(), [])) return null;
 		const n = refusals.get(tool) ?? 0;
