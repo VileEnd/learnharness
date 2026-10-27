@@ -11,6 +11,9 @@ import { newAnswerResult, type QuestionAnswerData } from "../src/core/index.ts";
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, { window: dom.window, document: dom.document, Element: dom.window.Element,
 	HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true });
+// The fork's dock reads (pointer: coarse); linkedom has no matchMedia.
+Object.assign(dom.window, { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+Object.assign(globalThis, { CSS: { supports: () => true } });
 
 test("actual select → submit → saved result → historical Why uses source data and presentation-only recovery", async () => {
 	const question = String.raw`Find $\\nabla f$ for $\begin{pmatrix}a&b\\c&d\end{pmatrix}$.`;
