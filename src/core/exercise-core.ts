@@ -3,7 +3,7 @@
  * Pure and browser-safe: imports only core. The browser grades; the verdict is the tool output.
  */
 
-import { exprEquivalent, parseExpr, parseNumberLike } from "./math-expr.ts";
+import { exprEquivalent, parseExpr, parseNumberLike, type Expr } from "./math-expr.ts";
 
 export const INTERACTIVE_FORMATS = [
 	"numeric", "blanks", "table", "multipart", "ordering", "matching", "spot-error",
@@ -60,11 +60,20 @@ const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every(isSt
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const MODES = ["text", "number", "expression"];
 
-function checkAnswer(src: string, mode: string): string | null {
+function identifiers(e: Expr, out: Set<string> = new Set()): Set<string> {
+	if (e.t === "var") out.add(e.name);
+	else if (e.t === "neg" || e.t === "call") identifiers(e.a, out);
+	else if (e.t === "bin") { identifiers(e.a, out); identifiers(e.b, out); }
+	return out;
+}
+
+function checkAnswer(src: string, mode: string, variables: readonly string[] = []): string | null {
 	if (mode === "number") return parseNumberLike(src) === null ? `"${src}" is not a number` : null;
 	if (mode === "expression") {
 		const r = parseExpr(src);
-		return r.ok ? null : `"${src}" is not a valid expression: ${r.error}`;
+		if (!r.ok) return `"${src}" is not a valid expression: ${r.error}`;
+		const unknown = [...identifiers(r.expr)].filter((n) => !variables.includes(n));
+		return unknown.length ? `"${src}" uses ${unknown.join(", ")} not listed in variables` : null;
 	}
 	return null;
 }
@@ -75,7 +84,7 @@ function numericProblems(spec: unknown): string[] {
 	if (!isStr(spec.answer) || !spec.answer.trim()) return ["answer must be a non-empty string"];
 	if (spec.mode !== "number" && spec.mode !== "expression") p.push('mode must be "number" or "expression"');
 	else {
-		const e = checkAnswer(spec.answer, spec.mode);
+		const e = checkAnswer(spec.answer, spec.mode, isStrArr(spec.variables) ? spec.variables : []);
 		if (e) p.push(`answer ${e}`);
 	}
 	if (spec.variables !== undefined && !isStrArr(spec.variables)) p.push("variables must be a string array");
@@ -93,9 +102,11 @@ function acceptProblems(where: string, c: Rec, modes: string[]): string[] {
 	if (!isStrArr(c.accept) || c.accept.length === 0) return [...p, `${where}: accept must be a non-empty string array`];
 	const mode = c.mode === undefined ? "text" : c.mode;
 	if (!isStr(mode) || !modes.includes(mode)) return [...p, `${where}: mode must be one of ${modes.join(", ")}`];
+	if (c.variables !== undefined && !isStrArr(c.variables)) p.push(`${where}: variables must be a string array`);
 	if (mode === "number" || mode === "expression") {
+		const vars = isStrArr(c.variables) ? c.variables : [];
 		for (const a of c.accept) {
-			const e = checkAnswer(a, mode);
+			const e = checkAnswer(a, mode, vars);
 			if (e) p.push(`${where}: accept ${e}`);
 		}
 	}

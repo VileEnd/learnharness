@@ -47,3 +47,14 @@ test("stripExpected removes answers", () => {
 test("malformed response never throws", () => {
 	assert.equal(gradeExercise("table", { columns: ["A"], rows: [{ cells: [{ id: "c", accept: ["1"] }] }] }, null).outcome, "wrong");
 });
+
+test("expression answers must declare their variables", async () => {
+	const { exerciseSpecProblems, gradeExercise } = await import("../src/core/exercise-core.ts");
+	assert.ok(exerciseSpecProblems("numeric", { answer: "2x", mode: "expression" }).length > 0);
+	assert.deepEqual(exerciseSpecProblems("numeric", { answer: "2x", mode: "expression", variables: ["x"] }), []);
+	const blanks = (b: object) => ({ text: "{{a}}", blanks: [{ id: "a", accept: ["2x"], mode: "expression", ...b }] });
+	assert.ok(exerciseSpecProblems("blanks", blanks({})).length > 0);
+	assert.ok(exerciseSpecProblems("blanks", blanks({ variables: "x" })).length > 0);
+	assert.deepEqual(exerciseSpecProblems("blanks", blanks({ variables: ["x"] })), []);
+	assert.equal(gradeExercise("numeric", { answer: "2x", mode: "expression", variables: ["x"] }, { value: "x+x" }).outcome, "correct");
+});
