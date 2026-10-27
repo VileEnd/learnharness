@@ -2,7 +2,9 @@
 
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
-import type { ArtifactPartProps } from "@/src/core";
+import { gradeExercise, parseExerciseInput, type ArtifactPartProps, type ThinkingAttempt } from "@/src/core";
+import { ExerciseWidget } from "@/components/exercise/exercise-widget";
+import { keyResponse } from "@/components/exercise/attempt-state";
 
 /**
  * The practice transcript cards (practice sessions, owner design
@@ -53,6 +55,9 @@ export interface PracticeThinkingData {
 	/** Legacy records (pre 2026-10-05) carry the old two-lane flag; ignored. */
 	commit?: boolean;
 	text: string;
+	/** An interactive problem's Check: the learner's response and its marks
+	 *  (never the expected values; they stay out of the record until conclude). */
+	attempt?: ThinkingAttempt;
 }
 
 export function ProblemCard({ part }: ArtifactPartProps) {
@@ -106,6 +111,19 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 	const reveal =
 		typeof part.reveal === "string" ? part.reveal : typeof input.solutionReveal === "string" ? input.solutionReveal : "";
 
+	const problemEx = parseExerciseInput({
+		question: "",
+		explanation: "",
+		hints: [],
+		...((part.problemInput ?? {}) as Record<string, unknown>),
+	});
+	const answerKey = (() => {
+		if (!problemEx.ok) return undefined;
+		const { format, spec } = problemEx.input;
+		const response = keyResponse(format, spec);
+		return { format, spec, response, review: gradeExercise(format, spec, response) };
+	})();
+
 	// The dismissal synthesis: no verdict, no reveal — one muted line (the
 	// learner clicked; the record needs only the fact).
 	if (outcome === "dismissed") {
@@ -138,6 +156,25 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 			)}
 			{/* Then the divider, then the labeled model solution (Slice G: the
 			    hero is the pose's commitment, verbatim). */}
+			{/* An interactive problem: the answer key in review mode (the first
+			    accepted value of every item), shown only now that it concluded. */}
+			{answerKey && (
+				<>
+					<div className="my-3 border-t" />
+					<div data-testid="conclude-answer-key">
+						<div className="mb-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Answer key</div>
+						<ExerciseWidget
+							format={answerKey.format}
+							spec={answerKey.spec}
+							toolCallId="answer-key"
+							value={answerKey.response}
+							onChange={() => {}}
+							review={answerKey.review}
+							readOnly
+						/>
+					</div>
+				</>
+			)}
 			{reveal.length > 0 && (
 				<>
 					<div className="my-3 border-t" />
@@ -266,5 +303,19 @@ export function ThinkingCard({ data }: { data: PracticeThinkingData }) {
 	// 50%-italic quote block on expand. Legacy records' commit flag is
 	// deliberately unread (one lane now). A TRANSCRIPT row (owner round,
 	// 2026-10-07): full-width band + rail, arriving expanded.
-	return <ThinkingBlock testId="thinking-card" label="YOUR THINKING" text={data.text} defaultOpen />;
+	return (
+		<>
+			<ThinkingBlock testId="thinking-card" label="YOUR THINKING" text={data.text} defaultOpen />
+			{data.attempt && (
+				<div data-testid="thinking-attempt" className="mb-1 px-1 text-xs text-muted-foreground">
+					Check: {data.attempt.verdict.summary}
+					{data.attempt.verdict.items.length > 1 && (
+						<span className="ml-2 font-mono">
+							{data.attempt.verdict.items.map((i) => (i.correct ? "\u2713" : "\u2717")).join(" ")}
+						</span>
+					)}
+				</div>
+			)}
+		</>
+	);
 }
