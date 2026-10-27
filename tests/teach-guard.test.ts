@@ -18,6 +18,7 @@ after(() => {
 
 const { visibleTeachingSinceLastInput, SEND_TO_USER_TOOL, asAgentMessages, newUserMessage } = await import("../src/core/native-messages.ts");
 const { createTeacherAgent, createProberAgent } = await import("../src/agent/teacher-agent.ts");
+const { teachExerciseToolFor } = await import("../src/agent/tools.ts");
 const { projectView } = await import("../src/core/view.ts");
 const { chatStore } = await import("../src/store/chats.ts");
 const { jobStore } = await import("../src/store/jobs.ts");
@@ -216,5 +217,32 @@ describe("teach quiz/explain guard", () => {
 		await agent.prompt("go");
 		const r = agent.state.messages.find((m) => m.role === "toolResult" && m.toolName === "probe");
 		assert.ok(r && r.role === "toolResult" && !r.isError);
+	});
+});
+
+describe("teach exercise guard", () => {
+	const exerciseArgs = (type: "check" | "predict") => ({
+		type, nodeId: "chain-rule", question: "What is 3 times 4?", format: "numeric" as const,
+		explanation: "Three groups of four.", spec: { answer: "12", mode: "number" },
+		hints: ["Think of groups.", "Three groups, four in each."],
+	});
+	const run = async (messages: unknown[], type: "check" | "predict") => {
+		const tool = teachExerciseToolFor(
+			{ chatId: makeChat().id, chatStore, turn: { messages: () => messages, hasSendToUser: () => true } },
+			["numeric"],
+		);
+		const r = await tool.execute("e1", exerciseArgs(type) as never);
+		return { isError: (r as { isError?: boolean }).isError === true, text: JSON.stringify(r.content) };
+	};
+
+	it("refuses a check exercise with no visible teaching", async () => {
+		const r = await run([user()], "check");
+		assert.equal(r.isError, true);
+		assert.match(r.text, /No visible teaching reached the learner before this check/);
+	});
+
+	it("allows a check exercise after visible teaching, and a prediction without it", async () => {
+		assert.equal((await run([user(), assistant([{ type: "text", text: LONG }])], "check")).isError, false);
+		assert.equal((await run([user()], "predict")).isError, false);
 	});
 });
