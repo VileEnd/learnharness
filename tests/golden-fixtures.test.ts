@@ -48,6 +48,7 @@ const { resolveQuizMechanic } = await import("../src/core/settings-resolution.ts
 const { danglingQuestionOf, activeProblemOf } = await import("../src/core/native-messages.ts");
 
 const TEACH = "chat_mv27rrra_feff23b6";
+const EXERCISES = "chat_mvqwyk18_da3a4b82";
 const PRACTICE = "chat_mv293wv5_10656952";
 
 function snapshotTree(dir: string): Map<string, Buffer> {
@@ -74,7 +75,7 @@ test("chats: both fixture records parse through the production read path", () =>
 	assert.ok(ids.has(TEACH), "the teach master record lists");
 	assert.ok(ids.has(PRACTICE), "the practice lifecycle record lists");
 
-	for (const id of [TEACH, PRACTICE]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES]) {
 		const r = chatStore.getChat(id);
 		assert.ok(r, `${id} reads`);
 		assert.ok(Array.isArray(r!.messages) && r!.messages.length > 0);
@@ -86,7 +87,7 @@ test("chats: both fixture records parse through the production read path", () =>
 });
 
 test("chats: the LLM wire flattening turns each full record into a legal provider message list", () => {
-	for (const id of [TEACH, PRACTICE]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES]) {
 		const r = chatStore.getChat(id)!;
 		const wire = toLlmMessages(r.messages as never);
 		assert.ok(wire.length > 0);
@@ -127,7 +128,7 @@ test("markers: the fixture pair covers EVERY custom-marker kind of the current c
 		"compaction",
 	] as const;
 	const seen = new Set<string>();
-	for (const id of [TEACH, PRACTICE]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES]) {
 		for (const m of chatStore.getChat(id)!.messages) {
 			if ((m as { role?: string }).role === "custom") seen.add((m as { customType: string }).customType);
 		}
@@ -250,4 +251,16 @@ test("read-only: after every read above, the data dir is byte-identical to the f
 		assert.ok(BEFORE.has(name), `${name} existed before`);
 		assert.deepEqual(buf, BEFORE.get(name), `${name} unchanged by reads`);
 	}
+});
+
+test("golden fixtures: answered exercise calls cover first-try, retries with a hint, and a give-up", () => {
+	const answers: Array<{ kind?: string; attempts?: number; hintsUsed?: number; gaveUp?: boolean; verdict?: { outcome?: string } }> = [];
+	for (const m of chatStore.getChat(EXERCISES)!.messages) {
+		const r = m as { role?: string; toolName?: string; details?: typeof answers[number] };
+		if (r.role === "toolResult" && r.toolName === "exercise" && r.details?.kind === "exercise") answers.push(r.details);
+	}
+	assert.ok(answers.length >= 3, "three answered exercise calls");
+	assert.ok(answers.some((a) => a.attempts === 1 && a.hintsUsed === 0 && a.verdict?.outcome === "correct"), "a first-try correct");
+	assert.ok(answers.some((a) => (a.attempts ?? 0) > 1 && (a.hintsUsed ?? 0) > 0 && a.verdict?.outcome === "correct"), "retries with a hint");
+	assert.ok(answers.some((a) => a.gaveUp === true), "a give-up");
 });

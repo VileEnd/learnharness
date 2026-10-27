@@ -22,6 +22,7 @@ import {
 	probeQuizTool,
 	probeExplainTool,
 	quizExampleBody,
+	teachExerciseToolFor,
 	teachExplainToolFor,
 	teachQuizToolFor,
 	type ProberToolContext,
@@ -29,7 +30,8 @@ import {
 } from "../src/agent/tools.ts";
 import { TOGGLEABLE_TOOLS } from "../src/core/pending.ts";
 import { jobStore } from "../src/store/jobs.ts";
-import { probeQuizInputSchema, quizInputObject, quizInputProblems } from "../src/core/question-core.ts";
+import { IMPLEMENTED_FORMATS } from "../src/core/exercise-core.ts";
+import { exerciseInputBase, probeQuizInputSchema, quizInputObject, quizInputProblems } from "../src/core/question-core.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { PATHS } from "../config.ts";
 
@@ -478,5 +480,25 @@ describe("tool descriptions carry mechanics only, no question-craft", () => {
 		);
 		assert.ok(shared.includes("asymmetry"), "the option craft moved here, not deleted");
 		assert.ok(shared.includes("TRANSCRIBED SPEECH"), "the dictation-leniency note lives here");
+	});
+	it("22-exercise-tools.md cites only schema field names", async () => {
+		const frag = await fs.promises.readFile(
+			path.join(PATHS.root, "src/agent/prompts/shared/22-exercise-tools.md"),
+			"utf-8",
+		);
+		const desc = teachExerciseToolFor({ chatId: "chat_x", chatStore: undefined as never }, IMPLEMENTED_FORMATS).description;
+		const specDocs = desc.slice(desc.indexOf("The `spec` fields by format:"));
+		const known = new Set<string>([
+			...Object.keys(exerciseInputBase.properties),
+			// the answer fields that arrive with the result (compactExerciseAnswer)
+			"outcome", "earned", "total", "items", "attempts", "hintsUsed", "gaveUp", "firstAttempt",
+			// every spec field the exercise tool's description documents per format
+			...(specDocs.match(/[A-Za-z_]+/g) ?? []),
+		]);
+		const cited = [...frag.matchAll(/`([A-Za-z_]+)`/g)].map((m) => m[1]!);
+		assert.ok(cited.length > 10, "the fragment cites fields");
+		for (const name of cited) assert.ok(known.has(name), `\`${name}\` is not a schema field`);
+		assert.ok(frag.includes("The spec is your committed answer key; write `explanation` before the spec."));
+		assert.ok(frag.includes("Partial credit arrives as `earned`/`total` with per-item verdicts — address the wrong items."));
 	});
 });
