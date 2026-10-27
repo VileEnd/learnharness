@@ -32,6 +32,7 @@ import {
 	MODEL_SLOTS,
 	ROLE_SLOT,
 	type AgentSettings,
+	type QuizMechanic,
 	type BackgroundModelRole,
 	type FactorySettings,
 	type GeneralSettings,
@@ -74,6 +75,8 @@ export interface EffectiveSettings {
 		models: Record<BackgroundModelRole, EffectiveModelSpec | undefined>;
 		/** Delta map as stored — consumers resolve absent key → enabled. */
 		tools: Record<string, boolean>;
+		/** The resolved quizzing mechanic (resolveQuizMechanic). */
+		quizMechanic: QuizMechanic;
 		/** Delta map as stored — absent key → override off. */
 		prompts: Record<string, boolean>;
 		/** The search-engine preference as stored (search wave, 2026-09-20):
@@ -160,6 +163,13 @@ export function resolveModelSpec(
 	};
 }
 
+/** The quizzing mechanic: the explicit setting, else the legacy
+ *  `tools.explain` switch (true = free, false = choice), else Mixed. */
+export function resolveQuizMechanic(agent?: AgentSettings): QuizMechanic {
+	const explain = agent?.tools?.explain;
+	return agent?.quizMechanic ?? (explain === true ? "free" : explain === false ? "choice" : "mixed");
+}
+
 /** Resolve the whole record. `record` may be null (first boot) — every
  *  factory-defaulted field lands on its default; MODEL fields resolve to
  *  null/undefined when unset (no factory pins exist — BYOK all the way
@@ -183,6 +193,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		agent: {
 			models,
 			tools: agent.tools ?? {},
+			quizMechanic: resolveQuizMechanic(agent),
 			prompts: agent.prompts ?? {},
 			search: agent.search ?? {},
 			graphTools: agent.graphTools ?? {},

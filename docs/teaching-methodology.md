@@ -95,3 +95,20 @@ Criteria the theory establishes for the system (not the spec — the spec follow
 4. **The plan tree's resolution must not leak into the lesson.** Plan nodes are structural landmarks, not lesson segments. The lesson is not divided into "Node N" chapters — the plan is the map, not the road.
 5. **Delivery is efficient by default.** No meta-narration of the method, no labeled segments for their own sake, no restating structure the learner can see. Explicitness only where it serves absorption (Section 8).
 6. **The system owns the logistics.** Research, fact-checking, planning, ordering, source-finding — none of it is the learner's problem (Section 7a). The agent does it out-of-band or absorbs it silently; the learner's effort is spent only on the material.
+
+## 11. Research basis
+
+*(Added 2026-10-26 with the question doctrine: instrument choice under Mixed, the difficulty band, foundation first, the hint ladder, feedback after every attempt. One line per principle, with its source.)*
+
+- **Produce before you're shown** — a short answer with feedback beats multiple choice for later retention: Kang, McDermott & Roediger 2007.
+- **Multiple choice for discrimination** — multiple choice works when the distractors are competitive, built from real confusions: Little & Bjork 2012, 2014.
+- **Mixed, not one format** — the format evidence is mixed and hybrid practice works best: Greving & Richter 2022; BMC Med. Educ. 2024; the 2017 meta-analysis.
+- **Predictions target the step's core idea** — prequestions help on the asked material (g = 0.54) and about zero on unasked material: pre-registered meta-analysis, Psychon. Bull. Rev. 2024.
+- **Feedback always follows an attempt** — a failed retrieval still helps when feedback follows: Kornell, Hays & Bjork 2009.
+- **Correct a confident error explicitly** — high-confidence errors are the ones corrective feedback fixes best (hypercorrection): Butterfield & Metcalfe 2001.
+- **The difficulty band** — learning is fastest at about 85% success: Wilson et al. 2019.
+- **Foundation first** — productive failure needs prior knowledge: Sinha & Kapur 2021. Novices learn from worked examples, which hinder once they are expert, so steps fade as he gains ground: Kalyuga et al. 2003; Renkl et al. 2004; Salden et al. 2010.
+- **The hint ladder: the smallest rung that unblocks** — the assistance dilemma (too little help stalls, too much skips the learning) and help abuse: Koedinger & Aleven 2007; Aleven et al. 2006.
+- **Hints, never answers** — unguarded GPT-4 access cut later exam scores by 17%, a hints-not-answers tutor avoided the harm, and learners overestimated how much they had learned: Bastani et al., PNAS 2025.
+- **A structured tutor** — a structured AI tutor beat active learning, and helped most when introducing a topic: Kestin et al., Sci. Rep. 2025.
+- **Hint wording is checked, not trusted** — about 35% of LLM-generated hints are too general, wrong, or leak the answer: Int. J. AIED 2025.
