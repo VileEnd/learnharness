@@ -1,4 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import { callCost } from "./pricing.ts";
 import {
 	createPracticeAgent,
 	createProberAgent,
@@ -368,16 +369,17 @@ export async function handleChatInput(
 	// append-only turns log at onFinish — idempotent per turn id.
 	const turnUsageId = crypto.randomUUID();
 	const steps: CallUsage[] = [];
+	const callUsageOf = (usage: Usage): CallUsage => ({
+		inputTokens: usage.input,
+		outputTokens: usage.output,
+		cacheReadTokens: usage.cacheRead,
+		cacheWriteTokens: usage.cacheWrite,
+		cacheWrite1hTokens: usage.cacheWrite1h ?? 0,
+		// Optional in pi's Usage — persisted as 0, never dropped.
+		reasoningTokens: usage.reasoning ?? 0,
+	});
 	const collectUsage = (usage: Usage) => {
-		steps.push({
-			inputTokens: usage.input,
-			outputTokens: usage.output,
-			cacheReadTokens: usage.cacheRead,
-			cacheWriteTokens: usage.cacheWrite,
-			cacheWrite1hTokens: usage.cacheWrite1h ?? 0,
-			// Optional in pi's Usage — persisted as 0, never dropped.
-			reasoningTokens: usage.reasoning ?? 0,
-		});
+		steps.push(callUsageOf(usage));
 	};
 
 	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
@@ -425,6 +427,10 @@ export async function handleChatInput(
 		drawing,
 		messages: asAgentMessages(merged),
 		onUsage: collectUsage,
+		// The runaway-turn spend cap (turn-guard.ts): the same price
+		// computation the money channel folds with; unknown cost = null.
+		spendCapUsd: effective.agent.turnSpendCapUsd,
+		stepCost: (usage) => callCost(callUsageOf(usage), modelId),
 		toolToggles: effective.agent.tools,
 		quizMechanic: effective.agent.quizMechanic,
 		// Debug (owner, 2026-10-04): teacher/prober raw provider events under

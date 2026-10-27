@@ -25,7 +25,7 @@ import type {
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 
@@ -238,6 +238,15 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 			return { ok: false, error: "documentTools.enabled must be a boolean" };
 		}
 		settings.documentTools = documentTools.enabled === undefined ? {} : { enabled: documentTools.enabled };
+	}
+	// Per-turn spend cap (USD): 0 = unset (the default applies); else in range.
+	if (raw.turnSpendCapUsd !== undefined) {
+		const cap = raw.turnSpendCapUsd;
+		if (typeof cap !== "number" || !Number.isFinite(cap)) return { ok: false, error: "turnSpendCapUsd must be a number" };
+		if (cap !== 0 && (cap < TURN_SPEND_CAP_MIN_USD || cap > TURN_SPEND_CAP_MAX_USD)) {
+			return { ok: false, error: `turnSpendCapUsd must be 0 (default) or between ${TURN_SPEND_CAP_MIN_USD} and ${TURN_SPEND_CAP_MAX_USD}` };
+		}
+		if (cap !== 0) settings.turnSpendCapUsd = cap;
 	}
 	return { ok: true, settings };
 }

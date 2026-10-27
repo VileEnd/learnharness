@@ -32,6 +32,7 @@ import {
 	FACTORY_SETTINGS,
 	MODEL_SLOTS,
 	ROLE_SLOT,
+	resolveTurnSpendCap,
 	type AgentSettings,
 	type QuizMechanic,
 	type BackgroundModelRole,
@@ -91,6 +92,8 @@ export interface EffectiveSettings {
 		graphTools: { enabled?: boolean };
 		/** Document tools (PR I): absent enabled = ON; consumers use documentToolsEnabled. */
 		documentTools: { enabled?: boolean };
+		/** The per-turn spend ceiling in USD, resolved (default 0.50). */
+		turnSpendCapUsd: number;
 	};
 	/** The resolved strong/cheap/vision slots: each tier's concrete model or
 	 *  NULL when the tier holds no model (no factory floor — BYOK all the
@@ -209,6 +212,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			search: agent.search ?? {},
 			graphTools: agent.graphTools ?? {},
 			documentTools: agent.documentTools ?? {},
+			turnSpendCapUsd: resolveTurnSpendCap(agent.turnSpendCapUsd),
 		},
 		models: {
 			strong: resolveSlot(modelsSection.strong),

@@ -58,6 +58,8 @@ import { defaultOrderLevel, populateLevel } from "@/components/thinking-default"
 import type React from "react";
 import {
 	COMPACTION_THRESHOLD_FLOOR,
+	DEFAULT_TURN_SPEND_CAP_USD,
+	resolveTurnSpendCap,
 	IMPLEMENTED_FORMATS,
 	MODEL_SLOTS,
 	resolveSettings,
@@ -144,6 +146,16 @@ export function composeGraphTools(agent: AgentSettings | undefined, on: boolean)
  *  absent = ON, the write explicit either way. Pure - exported for tests. */
 export function composeDocumentTools(agent: AgentSettings | undefined, on: boolean): AgentSettings {
 	return { ...agent, documentTools: { enabled: on } };
+}
+
+/** Compose the per-turn spend cap: empty = unset (the default applies);
+ *  junk = no change; otherwise clamped to the server's range. Pure - exported
+ *  for tests. */
+export function composeTurnSpendCap(agent: AgentSettings | undefined, raw: string): AgentSettings {
+	if (raw.trim() === "") return { ...agent, turnSpendCapUsd: undefined };
+	const n = Number(raw);
+	if (!Number.isFinite(n) || n <= 0) return { ...agent };
+	return { ...agent, turnSpendCapUsd: resolveTurnSpendCap(n) };
 }
 
 /** Compose: one slot's model/thinking override. Empty model = absent
@@ -782,6 +794,23 @@ export function AgentSection({
 						checked={agent?.documentTools?.enabled ?? true}
 						label="document tools"
 						onChange={(on) => onSectionChange(composeDocumentTools(agent, on))}
+					/>
+				</SettingsRow>
+				{/* The per-turn spend ceiling (owner 2026-10-27): a runaway turn stops
+				    cleanly once its cost reaches this. agent.turnSpendCapUsd; empty =
+				    the default. */}
+				<SettingsRow
+					label="Max spend per turn (USD)"
+					hint={`A turn stops once it costs this much (default ${DEFAULT_TURN_SPEND_CAP_USD.toFixed(2)})`}
+					testid="turn-spend-cap-row"
+				>
+					<CommitInput
+						type="number"
+						value={String(agent?.turnSpendCapUsd ?? "")}
+						placeholder={DEFAULT_TURN_SPEND_CAP_USD.toFixed(2)}
+						ariaLabel="max spend per turn in USD"
+						testid="input-turn-spend-cap"
+						onCommit={(v) => onSectionChange(composeTurnSpendCap(agent, v))}
 					/>
 				</SettingsRow>
 				{/* The quizzing mechanic (owner 2026-09-27): segmented — exactly one
