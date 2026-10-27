@@ -100,6 +100,37 @@ describe("exercise widgets", () => {
 		assert.equal((html.match(/<input/g) ?? []).length, 1);
 	});
 
+	it("a blank inside math leaves no placeholder glyph next to the input", () => {
+		for (const text of ["Then $P(\\text{positive}) = {{a}}$ holds.", "Then $2 + {{a}} = 5$ holds."]) {
+			const spec = { text, blanks: [{ id: "a", accept: ["3"], mode: "number" as const }] };
+			const html = renderToStaticMarkup(
+				<ExerciseWidget format="blanks" spec={spec} toolCallId="c1" value={emptyResponse("blanks", spec)} onChange={noop} />,
+			);
+			assert.doesNotMatch(html, /\\square|\u25a1|\u25fb/);
+			assert.doesNotMatch(html, /katex-error/);
+			assert.equal((html.match(/<input/g) ?? []).length, 1);
+		}
+	});
+
+	it("table cells shrink and overlay the mark so a phone-width table fits", () => {
+		const verdict = gradeExercise("table", tableSpec, {});
+		const html = renderToStaticMarkup(
+			<ExerciseWidget format="table" spec={tableSpec} toolCallId="c1" value={{}} onChange={noop} readOnly review={verdict} />,
+		);
+		assert.match(html, /table-fixed/);
+		assert.match(html, /<input[^>]*class="[^"]*\bmin-w-0\b[^"]*\bw-full\b/);
+		assert.match(html, /<span[^>]*class="[^"]*\babsolute\b[^"]*"[^>]*data-mark|data-mark="x"[^>]*class="[^"]*\babsolute\b/);
+	});
+
+	it("a table review does not repeat the filled-in table under Why", () => {
+		const input = exerciseInput("table", { explanation: "Filled in:\n\n| x | y |\n| --- | --- |\n| 2 | 4 |\n\nSquare it." });
+		const answer = buildExerciseAnswer(input as never, { values: { r1: "4", r2: "9" } }, { attempts: 1, hintsUsed: 0, gaveUp: false }, "exercise");
+		const html = renderToStaticMarkup(<AnsweredCard answer={answer} input={input} />);
+		assert.doesNotMatch(html, /Filled in/);
+		assert.match(html, /Square it/);
+		assert.equal((html.match(/<table/g) ?? []).length, 1);
+	});
+
 	it("table renders given cells read-only and editable cells as inputs", () => {
 		const html = renderToStaticMarkup(
 			<ExerciseWidget format="table" spec={tableSpec} toolCallId="c1" value={emptyResponse("table", tableSpec)} onChange={noop} />,

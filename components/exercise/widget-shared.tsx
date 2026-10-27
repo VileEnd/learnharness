@@ -47,6 +47,7 @@ export function ItemInput({
 	width = "w-28",
 	placeholder,
 	suffix,
+	compact,
 }: {
 	id: string;
 	label: string;
@@ -58,6 +59,8 @@ export function ItemInput({
 	width?: string;
 	placeholder?: string;
 	suffix?: string;
+	/** Table cell: fill the cell, shrink freely, and overlay the mark in the input's corner. */
+	compact?: boolean;
 }) {
 	const mark = item ? (item.correct ? "true" : "false") : undefined;
 	return (
@@ -65,7 +68,7 @@ export function ItemInput({
 			data-item={id}
 			data-correct={mark}
 			className={cn(
-				"mx-0.5 inline-flex items-center gap-1.5 align-baseline",
+				compact ? "relative flex w-full min-w-0 flex-col" : "mx-0.5 inline-flex items-center gap-1.5 align-baseline",
 			)}
 		>
 			<input
@@ -81,13 +84,18 @@ export function ItemInput({
 				className={cn(
 					"lh-input min-w-0 rounded-md border bg-background/60 px-2 py-1 text-sm outline-none transition-colors focus:border-primary/60",
 					width,
+					compact && "w-full pr-6",
 					mark === "true" && "border-green-500/60 bg-green-500/10",
 					mark === "false" && "border-red-500/60 bg-red-500/10",
 				)}
 			/>
 			{suffix && <span className="text-sm text-muted-foreground">{suffix}</span>}
 			{item && (
-				<span aria-hidden data-mark={item.correct ? "check" : "x"} className={cn("flex shrink-0", item.correct ? "text-green-500" : "text-red-500")}>
+				<span
+					aria-hidden
+					data-mark={item.correct ? "check" : "x"}
+					className={cn("flex shrink-0", compact && "pointer-events-none absolute right-1.5 top-2", item.correct ? "text-green-500" : "text-red-500")}
+				>
 					<GlyphMark kind={item.correct ? "check" : "x"} className="size-3.5" />
 				</span>
 			)}

@@ -10,11 +10,11 @@ export function TableWidget({ spec, value, onChange, items, showExpected, readOn
 	const vals = valuesOf(value);
 	return (
 		<div data-testid="exercise-table" className="overflow-x-auto py-1">
-			<table className="w-full border-collapse text-sm">
+			<table className="w-full table-fixed border-collapse text-sm">
 				<thead>
 					<tr>
 						{columns.map((c, i) => (
-							<th key={i} className="border-b px-2 py-1.5 text-left text-xs font-medium text-muted-foreground">
+							<th key={i} className="border-b px-1 py-1.5 text-left sm:px-2 text-xs font-medium text-muted-foreground">
 								<Inline>{c}</Inline>
 							</th>
 						))}
@@ -24,7 +24,7 @@ export function TableWidget({ spec, value, onChange, items, showExpected, readOn
 					{rows.map((row, ri) => (
 						<tr key={ri}>
 							{row.cells.map((cell, ci) => (
-								<td key={ci} className="border-b px-2 py-1.5 align-middle">
+								<td key={ci} className="min-w-0 border-b px-1 py-1.5 align-middle sm:px-2">
 									{typeof cell.given === "string" ? (
 										<Inline>{cell.given}</Inline>
 									) : typeof cell.id === "string" ? (
@@ -36,7 +36,8 @@ export function TableWidget({ spec, value, onChange, items, showExpected, readOn
 											item={items[cell.id]}
 											showExpected={showExpected}
 											readOnly={readOnly}
-											width="w-24"
+											width="w-24 min-w-0"
+											compact
 										/>
 									) : null}
 								</td>
