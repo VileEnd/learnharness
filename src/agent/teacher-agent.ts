@@ -20,7 +20,7 @@ import { sendToUserTool } from "./tools/send-to-user.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
-import { toLlmMessages } from "../core/native-messages.ts";
+import { SEND_TO_USER_TOOL, toLlmMessages } from "../core/native-messages.ts";
 
 /**
  * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
@@ -270,8 +270,17 @@ export function createTeacherAgent(
 	ctx?: TeacherToolContext,
 	opts: AgentBuildOptions = {},
 ) {
-	const tools = opts.tools ?? (ctx ? createTeacherTools({ quizMechanic: opts.quizMechanic, ...ctx }, opts.toolToggles) : bareQuestionTools());
-	return baseAgentOptions("teacher", opts, Object.values(tools));
+	// Teach-phase guard seam: tools are built before the Agent, so they get a
+	// late-bound view of its message state (tools.ts TeachTurnView).
+	const holder: { agent?: ReturnType<typeof baseAgentOptions> } = {};
+	const turn = {
+		messages: () => holder.agent?.state.messages ?? [],
+		hasSendToUser: () => holder.agent?.state.tools.some((t) => t.name === SEND_TO_USER_TOOL) ?? false,
+	};
+	const tools = opts.tools ?? (ctx ? createTeacherTools({ quizMechanic: opts.quizMechanic, turn, ...ctx }, opts.toolToggles) : bareQuestionTools());
+	const agent = baseAgentOptions("teacher", opts, Object.values(tools));
+	holder.agent = agent;
+	return agent;
 }
 
 /** The bare teach question set (tests, bare agents): quiz with the shared

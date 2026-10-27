@@ -16,6 +16,7 @@ import type { QuizMechanic } from "../core/settings.ts";
 import { resolveQuizMechanic } from "../core/settings-resolution.ts";
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import { resolveTargetId } from "../core/chains.ts";
+import { visibleTeachingSinceLastInput } from "../core/native-messages.ts";
 import { ungradedAnsweredRecalls } from "../core/learner.ts";
 import type { GraphNode, JobRecord } from "../core/contracts.ts";
 import type { ChatStore, JobStore } from "../core/ports.ts";
@@ -259,8 +260,9 @@ export const probeQuizTool = probeQuizToolFor();
 /** The teacher's free-recall variant (nodeId-validated, same seam as the
  *  teach quiz — phases/plan recognize BOTH tool names). */
 export function teachExplainToolFor(
-	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes },
+	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes; turn?: TeachTurnView },
 ): AgentTool<typeof explainInputObject> {
+	const guard = teachGuardFor(ctx.turn);
 	return {
 		name: "explain",
 		label: "explain",
@@ -273,6 +275,8 @@ export function teachExplainToolFor(
 			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
 			if (problems.length > 0) return invalidInputResult("explain", problems);
+			const refusal = guard("explain", input.type);
+			if (refusal) return invalidInputResult("explain", [refusal]);
 			return questionResult();
 		},
 	};
@@ -400,6 +404,44 @@ export function createProberTools(
 
 // ─── the teacher's question tools (quiz carries the position field) ──────────
 
+
+/** The in-flight turn as the teach guard sees it. SEAM CHOICE (V2): the tools
+ *  are built BEFORE the Agent, so the teacher agent hands them this late-bound
+ *  view; it reads the agent's own message state (history + this turn's
+ *  messages, tool results included) at execute time. Least invasive: no new
+ *  gate threaded through the handler, and tests without it are unguarded. */
+export interface TeachTurnView {
+	/** History plus the in-flight turn's messages. */
+	messages: () => readonly unknown[];
+	/** Whether send_to_user is registered for this turn's model. */
+	hasSendToUser: () => boolean;
+}
+
+/** One guard per registry (= per turn): refuses a `check` question when no
+ *  visible teaching reached the learner since his last input. A repeat
+ *  refusal of the same tool is allowed on the third attempt (warned), so a
+ *  stubborn model can never loop forever. Predictions are exempt. */
+const GUARD_MAX_REFUSALS = 2;
+export function teachGuardFor(view: TeachTurnView | undefined) {
+	const refusals = new Map<string, number>();
+	return (tool: "quiz" | "explain", type: string | undefined): string | null => {
+		if (!view || type !== "check") return null;
+		if (visibleTeachingSinceLastInput(view.messages(), [])) return null;
+		const n = refusals.get(tool) ?? 0;
+		if (n >= GUARD_MAX_REFUSALS) {
+			console.warn(`[teach-guard] ${tool}: check allowed after ${n} refusals with no visible teaching`);
+			return null;
+		}
+		refusals.set(tool, n + 1);
+		return (
+			"No visible teaching reached the learner before this check. " +
+			(view.hasSendToUser()
+				? "Text you write after a tool result may not be delivered; send your teaching with `send_to_user`, then pose the check."
+				: "Write your teaching as normal text first, then pose the check.")
+		);
+	};
+}
+
 /** The nodeId-against-live-tree check the teacher's quiz chains after the
  *  shared authoring contract (the old superRefine, verbatim). */
 function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeId: string): string | null {
@@ -424,8 +466,9 @@ function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeI
  *  gone — off-map checks route through ask_user_question, and the teach
  *  seam (first tagged quiz) is structurally guaranteed. */
 export function teachQuizToolFor(
-	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes },
+	ctx: Pick<PlanToolContext, "chatId" | "chatStore"> & { graphNodes?: ConceptNodes; turn?: TeachTurnView },
 ): AgentTool<typeof quizInputObject> {
+	const guard = teachGuardFor(ctx.turn);
 	return {
 		name: "quiz",
 		label: "quiz",
@@ -438,12 +481,17 @@ export function teachQuizToolFor(
 			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
 			if (problems.length > 0) return invalidInputResult("quiz", problems);
+			const refusal = guard("quiz", input.type);
+			if (refusal) return invalidInputResult("quiz", [refusal]);
 			return questionResult();
 		},
 	};
 }
 
 export interface TeacherToolContext extends PlanToolContext {
+	/** The in-flight turn's view for the teach-phase guard (see TeachTurnView).
+	 *  Absent = unguarded. */
+	turn?: TeachTurnView;
 	/** Job-tool wiring (sub-agent dispatch): the job store + the runner's
 	 *  spawn seam. The composition root injects both. */
 	jobStore: JobStore;
