@@ -89,12 +89,26 @@ export interface CanvasVettedModel {
  *  the cross-model matrix: the M6 re-run (2026-10-27, 0.25.0 + robustness
  *  commits) for the three flash models, the earlier 0.24.0 run for the
  *  Sonnet control. NOT allowlisted because not passing or not re-tested:
- *  Haiku, Gemini, Kimi, Qwen max/27b, every openai/* model. */
+ *  Haiku, Gemini, Kimi, Qwen max/27b, every openai/* model.
+ *
+ *  Before adding a model: re-run the canvas matrix on it AND check its
+ *  context window. Compaction (threshold and kick) uses the TUTOR's window,
+ *  so a canvas model with a smaller window could overflow on a long chat;
+ *  all four entries below report >= 1M in pi's catalog. */
 export const CANVAS_VETTED_MODELS: readonly CanvasVettedModel[] = [
 	{
 		provider: "openrouter",
 		id: "z-ai/glm-5.3-flash",
-		note: "tested 2026-10-27 (prober and teacher scenarios pass); allowlisted on the condition of the no-give-away coaching and hint rung in shared/24-canvas-tools.md, re-checked live on it the same day",
+		// GIVE-AWAY CONDITION OPEN (M7 brief "GLM give-away vetting"; final
+		// review 2026-10-27). In M6 GLM stated the target ("vertex x = +1") in
+		// coaching AND in a hint. The no-give-away rung in
+		// shared/24-canvas-tools.md was re-checked live on GLM only partly, n=1
+		// each: coaching after a WRONG submission passed; the hint passed only
+		// on a task with NO submission (nothing to give away). The failing state
+		// (a hint after a coached wrong submission) was not re-run under the
+		// final prompt. Neither the re-check nor an owner acceptance of the
+		// give-away is recorded yet; the owner decides before merge.
+		note: "tested 2026-10-27 (prober and teacher scenarios pass); give-away rung re-checked live n=1: coaching after a wrong submission passed, hint re-checked only on a task with no submission; hint after a wrong submission NOT re-checked",
 	},
 	{ provider: "openrouter", id: "qwen/qwen3.8-flash", note: "tested 2026-10-27 (prober and teacher scenarios pass)" },
 	{ provider: "openrouter", id: "deepseek/deepseek-v4.1-flash", note: "tested 2026-10-27 (prober and teacher scenarios pass)" },
