@@ -313,3 +313,42 @@ describe("AnnotateCard", () => {
 		assert.equal(artifactRenderers.annotate, AnnotateCard);
 	});
 });
+
+describe("hints inside the canvas", () => {
+	const reqs = (callId: string, id: string) => ({ id, role: "custom", customType: "hint-request", content: "Hint", display: true, details: { callId }, timestamp: 1 });
+	const reply = (id: string, text: string) => ({ id, role: "assistant", content: [{ type: "text", text }], stopReason: "stop" });
+	const render = (messages: unknown[], turnBusy = false) =>
+		renderToStaticMarkup(<CanvasWorkspace chatId="c1" callId="call_w" question="q" onSubmit={noop} onHint={noop} onMinimize={noop} messages={messages} turnBusy={turnBusy} />);
+
+	it("renders nothing without hints", () => {
+		const html = render([]);
+		assert.ok(!html.includes("canvas-hint-strip"));
+		assert.ok(!html.includes("canvas-hints-button"));
+	});
+
+	it("shows the newest hint in the strip and the count on the button", () => {
+		const html = render([reqs("call_w", "r1"), reply("a1", "first hint text"), reqs("call_w", "r2"), reply("a2", "second hint text"), reqs("other", "r3"), reply("a3", "not mine")]);
+		assert.match(html, /data-testid="canvas-hint-strip"/);
+		assert.match(html, /Hint 2/);
+		assert.match(html, /second hint text/);
+		assert.ok(!html.includes("first hint text"), "earlier hints live in the panel");
+		assert.ok(!html.includes("not mine"));
+		assert.match(html, /data-testid="canvas-hints-count"[^>]*>2</);
+	});
+
+	it("a pending request shows Getting a hint and still counts", () => {
+		const html = render([reqs("call_w", "r1"), reply("a1", "one"), reqs("call_w", "r2")], true);
+		assert.match(html, /Getting a hint/);
+		assert.match(html, /data-testid="canvas-hints-count"[^>]*>2</);
+		assert.ok(!html.includes("canvas-hint-text"));
+	});
+
+	it("a request superseded by a later submission is not pending while another turn runs", () => {
+		const sub = { id: "s1", role: "custom", customType: "work-submission", content: "x", display: true, details: { workCallId: "call_w" }, timestamp: 2 };
+		assert.ok(!render([reqs("call_w", "r1"), sub], true).includes("Getting a hint"));
+	});
+
+	it("an unanswered request with no running turn shows no strip", () => {
+		assert.ok(!render([reqs("call_w", "r1")], false).includes("canvas-hint-strip"));
+	});
+});
