@@ -2,15 +2,40 @@
 
 import { Inline, ItemInput, isRec, valuesOf, type FormatWidgetProps } from "./widget-shared.tsx";
 
-/** Split a blanks text into prose segments and placeholder ids. */
-export function splitBlanks(text: string): { prose: string; id?: string }[] {
-	const out: { prose: string; id?: string }[] = [];
+const BLANK = /\{\{([^{}]+)\}\}/g;
+const MATH_SPAN = /\$\$[\s\S]+?\$\$|\$[^$\n]+\$/g;
+
+/**
+ * Split a blanks text into segments: prose followed by the ids of the inputs
+ * that belong after it. A blank inside a `$...$` / `$$...$$` math span cannot
+ * be cut out of the span (the fragments would not render as KaTeX), so the span
+ * stays whole with each blank shown as a box, and its inputs follow the span.
+ */
+export function splitBlanks(text: string): { prose: string; ids: string[] }[] {
+	const out: { prose: string; ids: string[] }[] = [];
+	let pending = "";
+	const addProse = (chunk: string) => {
+		let last = 0;
+		for (const m of chunk.matchAll(BLANK)) {
+			out.push({ prose: pending + chunk.slice(last, m.index), ids: [m[1]!.trim()] });
+			pending = "";
+			last = m.index + m[0].length;
+		}
+		pending += chunk.slice(last);
+	};
 	let last = 0;
-	for (const m of text.matchAll(/\{\{([^{}]+)\}\}/g)) {
-		out.push({ prose: text.slice(last, m.index), id: m[1]!.trim() });
+	for (const m of text.matchAll(MATH_SPAN)) {
+		addProse(text.slice(last, m.index));
 		last = m.index + m[0].length;
+		const ids = [...m[0].matchAll(BLANK)].map((b) => b[1]!.trim());
+		if (ids.length === 0) pending += m[0];
+		else {
+			out.push({ prose: pending + m[0].replace(BLANK, "\\square"), ids });
+			pending = "";
+		}
 	}
-	out.push({ prose: text.slice(last) });
+	addProse(text.slice(last));
+	if (pending) out.push({ prose: pending, ids: [] });
 	return out;
 }
 
@@ -22,17 +47,18 @@ export function BlanksWidget({ spec, value, onChange, items, showExpected, readO
 			{splitBlanks(text).map((seg, i) => (
 				<span key={i}>
 					{seg.prose && <Inline>{seg.prose}</Inline>}
-					{seg.id !== undefined && (
+					{seg.ids.map((id) => (
 						<ItemInput
-							id={seg.id}
-							label={`Blank ${seg.id}`}
-							value={vals[seg.id] ?? ""}
-							onChange={(v) => onChange({ values: { ...vals, [seg.id!]: v } })}
-							item={items[seg.id]}
+							key={id}
+							id={id}
+							label={`Blank ${id}`}
+							value={vals[id] ?? ""}
+							onChange={(v) => onChange({ values: { ...vals, [id]: v } })}
+							item={items[id]}
 							showExpected={showExpected}
 							readOnly={readOnly}
 						/>
-					)}
+					))}
 				</span>
 			))}
 		</div>
