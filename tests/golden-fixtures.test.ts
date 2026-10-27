@@ -52,6 +52,7 @@ const TEACH = "chat_mv27rrra_feff23b6";
 const EXERCISES = "chat_mvqwyk18_da3a4b82";
 const PRACTICE = "chat_mv293wv5_10656952";
 const CANVAS = "chat_mvr17zp1_fb98d9b6";
+const MATRIX = "chat_mvr78knt_bfaafe31";
 
 function snapshotTree(dir: string): Map<string, Buffer> {
 	const out = new Map<string, Buffer>();
@@ -76,6 +77,7 @@ test("chats: both fixture records parse through the production read path", () =>
 	const ids = new Set(list.map((c) => c.id));
 	assert.ok(ids.has(TEACH), "the teach master record lists");
 	assert.ok(ids.has(PRACTICE), "the practice lifecycle record lists");
+	assert.ok(ids.has(MATRIX), "the cross-model canvas record lists");
 
 	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
 		const r = chatStore.getChat(id);
@@ -152,8 +154,36 @@ test("canvas chat: stored drawings keep palette names and the export carries the
 	}
 });
 
+test("cross-model canvas chat: numbered hint request, refused grade, stroke-digest annotate", async () => {
+	// Real data (M6 live matrix, 2026-10-27, qwen/qwen3.8-flash prober on a
+	// scratch dev server): the cross-model robustness PR writes numbered
+	// hint-request markers (details.n, "Hint request N ..."), and a grade with
+	// a hallucinated id is refused (naming the valid id) before the clean one.
+	const { hintRequestText, nextHintNumber, hintsFor, activeWorkOf } = await import("../src/core/native-messages.ts");
+	const { gradedQuestionIds } = await import("../src/core/learner.ts");
+	const ms = chatStore.getChat(MATRIX)!.messages;
+	assert.equal(typeof phaseAt3Lh(ms), "string", "the phase fold runs clean");
+	activeProblemOf(ms);
+	const hints = ms.filter((m) => (m as { customType?: string }).customType === "hint-request") as unknown as Array<{ content: string; details: { callId: string; n?: number } }>;
+	assert.equal(hints.length, 1);
+	const { callId, n } = hints[0]!.details;
+	assert.equal(n, 1, "the marker carries its number");
+	assert.equal(hints[0]!.content, hintRequestText(1));
+	assert.equal(nextHintNumber(ms, callId), 2, "the next request derives n = 2 from the record");
+	const [hint] = hintsFor(ms, callId);
+	assert.ok(hint && typeof hint.text === "string" && hint.text.length > 0, "the hint reply derives from the record");
+	const grades = ms.filter((m) => (m as { role?: string; toolName?: string }).role === "toolResult" && (m as { toolName?: string }).toolName === "grade") as Array<{ isError?: boolean }>;
+	assert.deepEqual(grades.map((g) => g.isError === true), [true, false], "one refused grade, then the clean one");
+	assert.deepEqual([...gradedQuestionIds(ms as never)], [callId], "the refused grade counts in no fold");
+	assert.equal(activeWorkOf(ms), null, "the graded sketch task is closed");
+	const annotated = ms.some((m) => (m as { content?: unknown }).content instanceof Array
+		&& ((m as { content: Array<{ type?: string; name?: string; arguments?: { marks?: Array<{ target?: { stroke?: string } }> } }> }).content)
+			.some((b) => b.type === "toolCall" && b.name === "annotate" && (b.arguments?.marks ?? []).some((k) => typeof k.target?.stroke === "string")));
+	assert.ok(annotated, "annotate targets a stroke by its digest id");
+});
+
 test("chats: the LLM wire flattening turns each full record into a legal provider message list", () => {
-	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS, MATRIX]) {
 		const r = chatStore.getChat(id)!;
 		const wire = toLlmMessages(r.messages as never);
 		assert.ok(wire.length > 0);
@@ -197,7 +227,7 @@ test("markers: the fixture pair covers EVERY custom-marker kind of the current c
 		"hint-request",
 	] as const;
 	const seen = new Set<string>();
-	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS, MATRIX]) {
 		for (const m of chatStore.getChat(id)!.messages) {
 			if ((m as { role?: string }).role === "custom") seen.add((m as { customType: string }).customType);
 		}
@@ -309,6 +339,7 @@ test("settings: the stamped record parses", () => {
 	assert.equal(s!.version, 1, "settings carry their version stamp");
 	assert.ok(s!.models && typeof s!.models === "object", "model slots present");
 	assert.equal(resolveQuizMechanic(s!.agent), "mixed", "the sanitizer keeps agent.quizMechanic");
+	assert.equal(s!.agent?.turnSpendCapUsd, 1, "the sanitizer keeps agent.turnSpendCapUsd (written by PUT /api/settings/agent)");
 });
 
 // ── read-only: readers never write ──────────────────────────────────────────

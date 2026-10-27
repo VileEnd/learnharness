@@ -4,7 +4,8 @@
 		"tools": {
 			"explain": false
 		},
-		"quizMechanic": "mixed"
+		"quizMechanic": "mixed",
+		"turnSpendCapUsd": 1
 	},
 	"models": {
 		"strong": {
