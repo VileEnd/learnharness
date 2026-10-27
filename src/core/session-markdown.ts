@@ -27,6 +27,7 @@ import {
 	PRACTICE_PROBLEM_TOOL,
 	problemInputForConclude,
 	SEND_TO_USER_TOOL,
+	redundantTextBlocks,
 	userFacingTextOf,
 	WORK_TOOLS,
 	type LhMarkerMessage,
@@ -46,6 +47,8 @@ export interface MarkdownContext {
 	/** toolCallId → the call part's name + arguments. */
 	calls: Map<string, { name: string; args: Record<string, unknown> | undefined }>;
 	failedOutputCalls?: ReadonlySet<string>;
+	/** Text blocks that repeat a send_to_user message of their turn (RC4). */
+	redundantText?: ReadonlySet<object>;
 }
 
 function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
@@ -64,7 +67,7 @@ function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
 			}
 		}
 	}
-	return { messages, calls, failedOutputCalls: failedOutputCallIds(messages) };
+	return { messages, calls, failedOutputCalls: failedOutputCallIds(messages), redundantText: redundantTextBlocks(messages) };
 }
 
 /** solvedWithHints → "Solved with hints" — the outcome enum reads as prose. */
@@ -219,7 +222,7 @@ export function messageMarkdown(
 			parts.push(`### Learner${anchor}\n\n${text.trim()}`);
 		}
 	} else if (role === "assistant") {
-		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]))) {
+		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]), ctx?.redundantText)) {
 			parts.push(`### Teacher${anchor}\n\n${text.trim()}`);
 		}
 	} else if (role === "toolResult") {

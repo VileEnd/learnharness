@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import { probeDoneInputSchema, PROBE_DONE_ACK_TEXT } from "../../core/contracts.ts";
-import { activeWorkOf, danglingQuestionOf, hasProbeDone, type LhMessage } from "../../core/native-messages.ts";
+import { activeWorkOf, hasProbeDone, openQuestionOf, type LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 import { buildProbeHandoffSteer, type SteerMessage } from "../../core/contracts.ts";
 import type { WorkGate } from "./work.ts";
@@ -71,7 +71,7 @@ export function probeDoneTool(ctx: ProbeDoneContext): Record<string, AgentTool<a
 				const record = ctx.chatStore.getChat(ctx.chatId);
 				if (!record) return { ok: false, error: `Chat not found: ${ctx.chatId}` };
 
-				if (danglingQuestionOf(record.messages) !== null) {
+				if (openQuestionOf(record.messages) !== null) {
 					return {
 						ok: false,
 						error:
