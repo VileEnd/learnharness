@@ -35,7 +35,7 @@ export interface BlanksSpec {
 	text: string;
 	blanks: BlankSpec[];
 }
-export type TableCell = { given: string } | { id: string; accept: string[]; mode?: CellMode | "bit" };
+export type TableCell = { given: string } | { id: string; accept: string[]; mode?: CellMode | "bit"; variables?: string[] };
 export interface TableSpec {
 	columns: string[];
 	rows: { cells: TableCell[] }[];
@@ -264,7 +264,7 @@ function gradeTable(spec: TableSpec, response: unknown): ExerciseVerdict {
 		for (const c of row.cells) {
 			if (!("id" in c)) continue;
 			const given = str(vals[c.id]);
-			items.push({ id: c.id, correct: matchesAny(given, c.accept, c.mode ?? "text", {}), expected: c.accept[0], given: given || undefined });
+			items.push({ id: c.id, correct: matchesAny(given, c.accept, c.mode ?? "text", { variables: c.variables }), expected: c.accept[0], given: given || undefined });
 		}
 	}
 	return verdict(items, items.filter((i) => i.correct).length, items.length, "cells");
