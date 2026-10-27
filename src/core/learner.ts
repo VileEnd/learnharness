@@ -32,6 +32,7 @@ import type {
 	LearnerSnapshot,
 } from "./contracts.ts";
 import { coverageOf } from "./coverage.ts";
+import { healGradeArguments } from "./grade-heal.ts";
 import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, WORK_TOOLS, workSubmissionsOf, type LhMessage } from "./native-messages.ts";
 import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
 import type { ExerciseVerdict } from "./exercise-core.ts";
@@ -125,10 +126,11 @@ function gradesOf(calls: readonly ToolCallBlock[], results: Map<string, ToolResu
 		if (c.name !== "grade") continue;
 		const result = results.get(c.id);
 		if (!result) continue;
-		const question = str(c.arguments.question);
-		const grade = c.arguments.grade;
+		const args = healGradeArguments(c.arguments) as typeof c.arguments;
+		const question = str(args.question);
+		const grade = args.grade;
 		if (!question || out.has(question) || !(GRADES as readonly unknown[]).includes(grade)) continue;
-		const mis = isObject(c.arguments.misconception) ? c.arguments.misconception : undefined;
+		const mis = isObject(args.misconception) ? args.misconception : undefined;
 		const term = str(mis?.term);
 		const misconception =
 			term && (grade === "partly" || grade === "wrong")
@@ -136,9 +138,9 @@ function gradesOf(calls: readonly ToolCallBlock[], results: Map<string, ToolResu
 				: undefined;
 		out.set(question, {
 			grade: grade as Grade,
-			...(str(c.arguments.note) ? { note: str(c.arguments.note)! } : {}),
+			...(str(args.note) ? { note: str(args.note)! } : {}),
 			...(misconception ? { misconception } : {}),
-			...(typeof c.arguments.rung === "string" && (RUNGS as readonly string[]).includes(c.arguments.rung) ? { rung: c.arguments.rung } : {}),
+			...(typeof args.rung === "string" && (RUNGS as readonly string[]).includes(args.rung) ? { rung: args.rung } : {}),
 			at: iso(result.timestamp),
 		});
 	}

@@ -1,7 +1,7 @@
 "use client";
 
 import { ToolContentResponse } from "@/components/ai-elements/message";
-import type { ArtifactPartProps } from "@/src/core";
+import { healGradeArguments, type ArtifactPartProps } from "@/src/core";
 
 /**
  * The quiet chip for a recorded free-recall grade ("counted as: partly"):
@@ -20,7 +20,7 @@ const LABEL: Record<string, string> = {
 
 export function GradeChip({ part }: ArtifactPartProps) {
 	if (part.state === "output-error") return null;
-	const input = part.input as { grade?: unknown; note?: unknown } | undefined;
+	const input = healGradeArguments(part.input) as { grade?: unknown; note?: unknown } | undefined;
 	const label = typeof input?.grade === "string" ? LABEL[input.grade] : undefined;
 	if (!label) return null;
 	const note = typeof input?.note === "string" && input.note.length > 0 ? input.note : undefined;

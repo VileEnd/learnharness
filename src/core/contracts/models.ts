@@ -48,9 +48,12 @@ export type RolePins = Record<
  *  holds no model. The settings UI captions each slot row with it and the
  *  picker pre-fills from it. */
 export type SlotPins = Record<
-	ModelSlotName,
+	Exclude<ModelSlotName, "canvas">,
 	{ model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null
->;
+> & {
+	/** The EXPLICIT canvas slot (the model in force is `canvas` on the response). */
+	canvas?: { model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null;
+};
 
 /** GET /api/models response. */
 export interface ModelCatalogResponse {
@@ -73,6 +76,10 @@ export interface ModelCatalogResponse {
 	 *  are simply absent (the Keys page is the discovery surface, same
 	 *  discipline as the search engines). */
 	providers: CatalogProvider[];
+	/** The canvas model that would handle canvas turns right now (explicit
+	 *  slot, else the default, else the strong slot; vetted and keyed), or
+	 *  NULL: the canvas is unavailable and the pill reads disabled. */
+	canvas?: { model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null;
 }
 
 /** One row of the providers surface. */

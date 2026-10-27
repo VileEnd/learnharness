@@ -27,7 +27,7 @@ export interface AnnotateToolContext {
 
 export const ANNOTATE_DESCRIPTION =
 	"Mark up the learner's submitted drawing with teacher ink. Each mark has a `kind` (circle, underline, check, cross, note, arrow) " +
-	"and a `target` anchored to ONE of: a typed object id (`{\"object\":\"o2\"}`), a grid cell (`{\"cell\":\"C4\"}`) or a grid range (`{\"cells\":\"B2:D3\"}`); " +
+	"and a `target` anchored to ONE of: a typed object id (`{\"object\":\"o2\"}`), a freehand stroke id (`{\"stroke\":\"s4\"}`), a grid cell (`{\"cell\":\"C4\"}`) or a grid range (`{\"cells\":\"B2:D3\"}`); " +
 	"an arrow takes `from` and `to` instead of `target`. `label` is an optional short caption. " +
 	"`drawingId` is the id the submission names (`[drawing drw_...]`). The marks appear on his drawing; this call does not end your turn.";
 

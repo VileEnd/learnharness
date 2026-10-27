@@ -421,6 +421,9 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	);
 }
 
+/** The disabled pill's tooltip (owner, 2026-10-27). */
+export const CANVAS_UNAVAILABLE = "Canvas needs a tested model — set one in Settings → Models → Canvas";
+
 /**
  * THE CANVAS PILL (PR 2): the session's canvas toggle, beside the model control. ON lets the agent pose
  * canvas tasks (work / sketch, and practice problems with `canvas: true`). Hidden unless the device is
@@ -428,8 +431,12 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
  * OFF, handed to the create call through `onChange` (a controlled `value` wins). SESSION mode: the chat's
  * own record, read once and written with PUT { canvas }. `capable` overrides the device check (tests).
  */
-export function CanvasPill({ chatId, value, onChange, capable }: { chatId?: string; value?: boolean; onChange?: (next: boolean) => void; capable?: boolean }) {
+export function CanvasPill({ chatId, value, onChange, capable, available }: { chatId?: string; value?: boolean; onChange?: (next: boolean) => void; capable?: boolean; available?: boolean }) {
 	const detected = useCanvasCapable();
+	// Whether a tested canvas model resolves (GET /api/models `canvas`). Unknown
+	// (catalog not loaded yet) reads as available: the server gates the tools anyway.
+	const { catalog } = useModelCatalog();
+	const usable = available ?? (catalog ? catalog.canvas !== null : true);
 	const [local, setLocal] = useState(value ?? false);
 	const on = chatId ? local : (value ?? local);
 	useEffect(() => {
@@ -448,6 +455,23 @@ export function CanvasPill({ chatId, value, onChange, capable }: { chatId?: stri
 		};
 	}, [chatId]);
 	if (!(capable ?? detected)) return null;
+	if (!usable) {
+		return (
+			<Hint label={CANVAS_UNAVAILABLE} side="bottom">
+				<button
+					type="button"
+					data-testid="stats-canvas"
+					aria-pressed={false}
+					aria-disabled="true"
+					onClick={(e) => e.preventDefault()}
+					className="flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 text-muted-foreground opacity-50 shadow-lg backdrop-blur pointer-coarse:py-2"
+				>
+					<PenLineIcon className="size-3.5" />
+					<span>Canvas</span>
+				</button>
+			</Hint>
+		);
+	}
 	const toggle = () => {
 		const next = !on;
 		setLocal(next);

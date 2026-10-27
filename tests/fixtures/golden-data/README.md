@@ -40,6 +40,17 @@ core tool surface must appear in real data here.
   the `probe-handoff` steer and `plan_init`. Drafts are kept (`drafts/<callId>.json`).
   Stamped (`version: 1`). Replaces `chat_mvr0bwhl_d3a812e8`, whose hand-POSTed drawing
   had no grid and whose refused `probe_done` had flipped the phase.
+- `chats/chat_mvr78knt_bfaafe31.json` + `drawings/chat_mvr78knt_bfaafe31/` — the
+  cross-model canvas run (M6 live matrix, dev server on a scratch data dir, 2026-10-27,
+  prober on `openrouter:qwen/qwen3.8-flash`, `settings.canvas: true`; the drawings are
+  browser-exported scenes + PNGs uploaded through `POST /api/chats/<id>/drawings`): a
+  `sketch` task, a wrong drawing submission, a stroke-digest `annotate`
+  (`{"stroke":"sN"}` targets), a NUMBERED `hint-request` (content "Hint request 1 for this
+  task — give the next rung only.", `details: {callId, n: 1}`), the corrected submission,
+  a `grade` refused for a hallucinated question id (the refusal names the valid id), then
+  the clean `grade`, and a final `probe` question still waiting for the learner (so this
+  record is deliberately left out of the no-dangling-question check). Stamped
+  (`version: 1`).
 - `chats/chat_mv293wv5_10656952.json` — the practice lifecycle (owner-built,
   2026-10-10): graph-context (the bracketed preamble), problem ×2,
   practice-thinking ×2, conclude ×2, practice-next, problem-dismissed — the
@@ -52,7 +63,10 @@ core tool surface must appear in real data here.
   research job that finished (`delivery: {kind: "result", status:
   "delivered"}`) and one the learner aborted (`delivery: {kind: "abort",
   status: "delivered"}`), both with the saved dispatch `input`.
-- `settings.json` — the stamped settings record (version 1, model slots).
+- `settings.json` — the stamped settings record (version 1, model slots). Its agent
+  section was last written by the app's `PUT /api/settings/agent` (dev server on a
+  scratch copy of this dir, 2026-10-27) to carry `turnSpendCapUsd: 1` (the per-turn
+  spend cap) next to `quizMechanic`.
 
 ## Regenerating / extending
 

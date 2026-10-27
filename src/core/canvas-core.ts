@@ -261,7 +261,91 @@ function oneLine(s: string): string {
 }
 const cellText = (s: string) => oneLine(s).replace(/\|/g, "\\|");
 
-/** One line per typed object (tables add their markdown rows beneath), in id order. */
+export const MAX_STROKE_DIGEST_LINES = 40;
+
+type Pt = readonly [number, number, number];
+
+function pathLength(pts: readonly Pt[]): number {
+	let len = 0;
+	for (let i = 1; i < pts.length; i++) len += Math.hypot((pts[i] as Pt)[0] - (pts[i - 1] as Pt)[0], (pts[i] as Pt)[1] - (pts[i - 1] as Pt)[1]);
+	return len;
+}
+
+/**
+ * A shape hint computed purely from the points: "vertical line" / "horizontal line" / "line" (straight
+ * within tolerance), "closed loop", "curve, top at D2" / "curve, bottom at D7" (one dominant extreme,
+ * named by its grid cell), otherwise "freehand". Pure and deterministic (a code-side reading models can cite).
+ */
+export function strokeShapeHint(pts: readonly Pt[], grid: RegionGrid, box: Box): string {
+	if (pts.length < 2) return "freehand";
+	const first = pts[0] as Pt;
+	const last = pts[pts.length - 1] as Pt;
+	const xs = pts.map((p) => p[0]);
+	const ys = pts.map((p) => p[1]);
+	const w = Math.max(...xs) - Math.min(...xs);
+	const h = Math.max(...ys) - Math.min(...ys);
+	const len = pathLength(pts);
+	const chord = Math.hypot(last[0] - first[0], last[1] - first[1]);
+	const diag = Math.hypot(w, h);
+	if (diag === 0) return "freehand";
+	if (chord <= 0.2 * diag && len >= 2 * diag && Math.min(w, h) > 0.15 * diag) return "closed loop";
+	if (chord > 0) {
+		let dev = 0;
+		for (const p of pts) dev = Math.max(dev, Math.abs((p[0] - first[0]) * (last[1] - first[1]) - (p[1] - first[1]) * (last[0] - first[0])) / chord);
+		if (dev <= 0.06 * chord) {
+			if (w <= 0.15 * h) return "vertical line";
+			if (h <= 0.15 * w) return "horizontal line";
+			return "line";
+		}
+	}
+	const endY = [first[1], last[1]];
+	const top = pts.reduce((a, b) => (b[1] < a[1] ? b : a));
+	const bottom = pts.reduce((a, b) => (b[1] > a[1] ? b : a));
+	const topDominant = Math.min(...endY) - top[1] >= 0.3 * h;
+	const bottomDominant = bottom[1] - Math.max(...endY) >= 0.3 * h;
+	if (topDominant && !bottomDominant) return `curve, top at ${cellOf(grid, box, top[0], top[1])}`;
+	if (bottomDominant && !topDominant) return `curve, bottom at ${cellOf(grid, box, bottom[0], bottom[1])}`;
+	return "freehand";
+}
+
+/** The non-empty strokes of a scene (shapes are not strokes; an empty stroke has nothing to read or mark). */
+export function drawnStrokes(scene: DrawingScene): StrokeObject[] {
+	return scene.objects.filter((o): o is StrokeObject => o.type === "stroke" && o.points.length > 0);
+}
+
+const byIdNumber = (a: { id: string }, b: { id: string }) => Number(a.id.slice(1)) - Number(b.id.slice(1)) || a.id.localeCompare(b.id);
+
+/** The strokes the model is shown (the digest lines and the refusal's id list): every drawn stroke, or over
+ *  MAX_STROKE_DIGEST_LINES the LONGEST ones by path length (ties by id), so a curve or axis drawn after a lot of
+ *  handwriting is never cut in favour of short ticks (handwriting is read from the image). Always in id order.
+ *  `more` = how many were left out. The cap limits what is listed, never what a `stroke` target may name. */
+export function digestStrokes(scene: DrawingScene): { strokes: StrokeObject[]; more: number } {
+	const all = drawnStrokes(scene);
+	if (all.length <= MAX_STROKE_DIGEST_LINES) return { strokes: all.sort(byIdNumber), more: 0 };
+	const kept = all
+		.map((o) => ({ o, len: pathLength(o.points) }))
+		.sort((a, b) => b.len - a.len || byIdNumber(a.o, b.o))
+		.slice(0, MAX_STROKE_DIGEST_LINES)
+		.map((x) => x.o)
+		.sort(byIdNumber);
+	return { strokes: kept, more: all.length - MAX_STROKE_DIGEST_LINES };
+}
+
+/** One line per freehand stroke: `[s4 blue stroke, vertical line @D1-D5]`, capped (digestStrokes), the rest summarised. */
+function strokeDigestLines(scene: DrawingScene, grid: RegionGrid, box: Box): string[] {
+	const { strokes, more } = digestStrokes(scene);
+	const lines = strokes.map((o) => {
+		const xs = o.points.map((p) => p[0]);
+		const ys = o.points.map((p) => p[1]);
+		const a = cellOf(grid, box, Math.min(...xs), Math.min(...ys));
+		const b = cellOf(grid, box, Math.max(...xs), Math.max(...ys));
+		return `[${o.id} ${o.color} stroke, ${strokeShapeHint(o.points, grid, box)} @${a === b ? a : `${a}-${b}`}]`;
+	});
+	if (more > 0) lines.push(`+${more} more strokes`);
+	return lines;
+}
+
+/** One line per typed object (tables add their markdown rows beneath), in id order, then the stroke digest. */
 export function serializeSceneStructuredText(scene: DrawingScene, box: Box): string {
 	const grid = regionGrid(box);
 	const typed = scene.objects.filter(isTypedObject).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)) || a.id.localeCompare(b.id));
@@ -281,12 +365,13 @@ export function serializeSceneStructuredText(scene: DrawingScene, box: Box): str
 			});
 		}
 	}
+	lines.push(...strokeDigestLines(scene, grid, box));
 	return lines.join("\n");
 }
 
 // ---- teacher annotations (PR 3) ----
 
-export type AnnotationTarget = { object: string } | { cell: string } | { cells: string }; // cells: "B2:D3"
+export type AnnotationTarget = { object: string } | { cell: string } | { cells: string } | { stroke: string }; // cells: "B2:D3"
 export const MARK_KINDS = ["circle", "underline", "check", "cross", "note", "arrow"] as const;
 export type AnnotationMark =
 	| { kind: "circle" | "underline" | "check" | "cross" | "note"; target: AnnotationTarget; label?: string }
@@ -302,12 +387,19 @@ function gridRows(box: Box): number {
 /** What a model may legitimately cite for this drawing, appended to refusals so it can retry. */
 function validTargetsHint(scene: DrawingScene, box: Box): string {
 	const ids = scene.objects.filter(isTypedObject).map((o) => o.id);
-	return `valid cells are A1 to H${gridRows(box)}, ranges are written B2:D3` + (ids.length ? `; typed object ids: ${ids.join(", ")}` : "; this drawing has no typed objects (anchor by cell)");
+	const { strokes, more } = digestStrokes(scene);
+	const strokeIds = strokes.map((o) => o.id);
+	return (
+		`valid cells are A1 to H${gridRows(box)}, ranges are written B2:D3` +
+		(ids.length ? `; typed object ids: ${ids.join(", ")}` : "; this drawing has no typed objects (anchor by cell)") +
+		(strokeIds.length ? `; stroke ids: ${strokeIds.join(", ")}${more > 0 ? ` (+${more} more short strokes)` : ""}` : "")
+	);
 }
 
-function objectRect(o: DrawingObject): Box {
+function objectRect(o: DrawingObject): Box | null {
 	let x0: number, y0: number, x1: number, y1: number;
 	if (o.type === "stroke") {
+		if (o.points.length === 0) return null; // an empty stroke has no rect (Math.min() of nothing is Infinity)
 		const xs = o.points.map((p) => p[0]);
 		const ys = o.points.map((p) => p[1]);
 		x0 = Math.min(...xs); x1 = Math.max(...xs); y0 = Math.min(...ys); y1 = Math.max(...ys);
@@ -326,10 +418,14 @@ function unionBox(a: Box, b: Box): Box {
 
 /** The world-space rectangle a target points at, or null when it does not resolve in this scene/grid. */
 export function resolveTargetRect(target: AnnotationTarget, scene: DrawingScene, box: Box): Box | null {
-	const t = target as { object?: unknown; cell?: unknown; cells?: unknown };
+	const t = target as { object?: unknown; cell?: unknown; cells?: unknown; stroke?: unknown };
 	if (typeof t.object === "string") {
 		const o = scene.objects.find((x) => x.id === t.object);
 		return o ? objectRect(o) : null;
+	}
+	if (typeof t.stroke === "string") {
+		const o = scene.objects.find((x) => x.id === t.stroke);
+		return o && o.type === "stroke" ? objectRect(o) : null;
 	}
 	const grid = regionGrid(box);
 	// `cell` and `cells` resolve alike: a model that puts a range in `cell` (or one cell in `cells`) means it.
@@ -353,13 +449,13 @@ function rangeRect(grid: RegionGrid, box: Box, spec: string): Box | null {
 }
 
 function targetProblem(label: string, target: unknown, scene: DrawingScene, box: Box): string | null {
-	if (typeof target !== "object" || target === null) return `${label} is missing - give {"object": id}, {"cell": "C4"} or {"cells": "B2:D3"}; ${validTargetsHint(scene, box)}`;
-	const t = target as { object?: unknown; cell?: unknown; cells?: unknown };
-	const given = [t.object, t.cell, t.cells].filter((v) => v !== undefined).length;
-	if (given !== 1) return `${label} must have exactly one of object, cell, cells; ${validTargetsHint(scene, box)}`;
+	if (typeof target !== "object" || target === null) return `${label} is missing - give {"object": id}, {"stroke": id}, {"cell": "C4"} or {"cells": "B2:D3"}; ${validTargetsHint(scene, box)}`;
+	const t = target as { object?: unknown; cell?: unknown; cells?: unknown; stroke?: unknown };
+	const given = [t.object, t.cell, t.cells, t.stroke].filter((v) => v !== undefined).length;
+	if (given !== 1) return `${label} must have exactly one of object, stroke, cell, cells; ${validTargetsHint(scene, box)}`;
 	if (resolveTargetRect(target as AnnotationTarget, scene, box)) return null;
-	const what = t.object !== undefined ? `object ${JSON.stringify(t.object)}` : t.cell !== undefined ? `cell ${JSON.stringify(t.cell)}` : `cells ${JSON.stringify(t.cells)}`;
-	const spec = t.object === undefined ? (t.cell ?? t.cells) : undefined;
+	const what = t.object !== undefined ? `object ${JSON.stringify(t.object)}` : t.stroke !== undefined ? `stroke ${JSON.stringify(t.stroke)}` : t.cell !== undefined ? `cell ${JSON.stringify(t.cell)}` : `cells ${JSON.stringify(t.cells)}`;
+	const spec = t.object === undefined && t.stroke === undefined ? (t.cell ?? t.cells) : undefined;
 	if (typeof spec === "string" && !CELL_SPEC.test(spec)) {
 		return `${label}: ${what} is not a cell or a range - a cell is written C4 and ranges are written B2:D3; ${validTargetsHint(scene, box)}`;
 	}
@@ -380,7 +476,11 @@ export function annotationMarkProblems(mark: unknown, scene: DrawingScene, box: 
 		const t = targetProblem("to", m.to, scene, box);
 		if (f) out.push(f);
 		if (t) out.push(t);
+		if (m.target !== undefined) out.push("an arrow takes `from` and `to`, not `target`");
 	} else {
+		for (const key of ["from", "to"] as const) {
+			if (m[key] !== undefined) out.push(`only arrows take from/to - rename \`${key}\` to \`target\``);
+		}
 		const t = targetProblem("target", m.target, scene, box);
 		if (t) out.push(t);
 	}
@@ -393,10 +493,11 @@ const annotationTargetField = Type.Optional(
 	Type.Object(
 		{
 			object: Type.Optional(Type.String({ description: "A typed object id from the drawing's structured text, e.g. o2" })),
+			stroke: Type.Optional(Type.String({ description: "A freehand stroke id from the drawing's stroke digest, e.g. s4" })),
 			cell: Type.Optional(Type.String({ description: "One grid cell, e.g. C4" })),
 			cells: Type.Optional(Type.String({ description: "A grid range, top-left:bottom-right, e.g. B2:D3" })),
 		},
-		{ description: "Exactly ONE of object, cell, cells" },
+		{ description: "Exactly ONE of object, stroke, cell, cells" },
 	),
 );
 
@@ -438,6 +539,31 @@ function withoutNulls(o: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
+ * A non-arrow mark that anchors itself the wrong way: exactly one of from/to and no target moves
+ * that one into `target`; bare object/cell/cells keys on the mark are wrapped into `target`.
+ * Arrows keep from/to untouched. Identity-preserving when nothing applies.
+ */
+function moveIntoTarget(mark: Record<string, unknown>): Record<string, unknown> {
+	if (mark.kind === "arrow" || mark.target !== undefined) return mark;
+	const hasFrom = mark.from !== undefined;
+	const hasTo = mark.to !== undefined;
+	if (hasFrom !== hasTo) {
+		const { from, to, ...rest } = mark;
+		return { ...rest, target: hasFrom ? from : to };
+	}
+	if (hasFrom) return mark;
+	const bare = (["object", "stroke", "cell", "cells"] as const).filter((k) => mark[k] !== undefined);
+	if (bare.length === 0) return mark;
+	const rest = { ...mark };
+	const target: Record<string, unknown> = {};
+	for (const k of bare) {
+		target[k] = mark[k];
+		delete rest[k];
+	}
+	return { ...rest, target };
+}
+
+/**
  * The annotate heal: the standard top-level pass (a `marks` array sent as a JSON string) plus the nested
  * wobbles of this one tool - a mark, or a mark's `target`/`from`/`to`, sent as a JSON-encoded object, and
  * optional fields sent as null. Runs at the agent boundary (the tool's prepareArguments) AND in
@@ -458,6 +584,7 @@ export function healAnnotateArguments(args: unknown): unknown {
 			const clean = withoutNulls(t);
 			if (clean !== mark[key]) mark = { ...mark, [key]: clean };
 		}
+		mark = moveIntoTarget(mark);
 		if (mark !== raw) changed = true;
 		return mark;
 	});
@@ -484,8 +611,8 @@ export function parseAnnotateInput(raw: unknown): AnnotateInput | undefined {
 
 /** How a target reads in text: its object id, cell or range ("?" when it has none). */
 export function annotationTargetText(target: unknown): string {
-	const t = (isPlainObject(target) ? target : {}) as Partial<Record<"object" | "cell" | "cells", unknown>>;
-	const v = t.object ?? t.cell ?? t.cells;
+	const t = (isPlainObject(target) ? target : {}) as Partial<Record<"object" | "stroke" | "cell" | "cells", unknown>>;
+	const v = t.object ?? t.stroke ?? t.cell ?? t.cells;
 	return typeof v === "string" ? v : "?";
 }
 

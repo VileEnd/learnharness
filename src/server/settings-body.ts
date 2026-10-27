@@ -25,7 +25,7 @@ import type {
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { isCanvasVetted, CANVAS_VETTED_MODELS, TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 
@@ -239,6 +239,15 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 		}
 		settings.documentTools = documentTools.enabled === undefined ? {} : { enabled: documentTools.enabled };
 	}
+	// Per-turn spend cap (USD): 0 = unset (the default applies); else in range.
+	if (raw.turnSpendCapUsd !== undefined) {
+		const cap = raw.turnSpendCapUsd;
+		if (typeof cap !== "number" || !Number.isFinite(cap)) return { ok: false, error: "turnSpendCapUsd must be a number" };
+		if (cap !== 0 && (cap < TURN_SPEND_CAP_MIN_USD || cap > TURN_SPEND_CAP_MAX_USD)) {
+			return { ok: false, error: `turnSpendCapUsd must be 0 (default) or between ${TURN_SPEND_CAP_MIN_USD} and ${TURN_SPEND_CAP_MAX_USD}` };
+		}
+		if (cap !== 0) settings.turnSpendCapUsd = cap;
+	}
 	return { ok: true, settings };
 }
 
@@ -363,7 +372,7 @@ export function parseGraphSettingsBody(body: unknown): SettingsBodyResult<GraphS
 	return { ok: true, settings };
 }
 
-/** models: { strong?, cheap?, vision? } — the slot tiers (model slots
+/** models: { strong?, cheap?, vision?, canvas? } — the slot tiers (model slots
  *  wave, 2026-09-20). Each slot is the same shape as a role override; a
  *  present-but-empty slot object is rejected (absent slot = unset; say
  *  what you mean). Catalog validity is checked by the route
@@ -385,6 +394,11 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 		// absent slot key clears the tier (replace-whole section).
 		if (!parsed.override.model) {
 			return { ok: false, error: `slot "${key}" must set a model (thinkingLevel alone cannot run — absent slot = unset)` };
+		}
+		// The canvas slot takes ONLY tested models (CANVAS_VETTED_MODELS).
+		if (key === "canvas" && !isCanvasVetted(parsed.override.model)) {
+			const names = CANVAS_VETTED_MODELS.map((v) => `${v.provider}:${v.id}`).join(", ");
+			return { ok: false, error: `slot "canvas" takes only tested models (${names})` };
 		}
 		settings[key as (typeof MODEL_SLOTS)[number]] = parsed.override;
 	}
