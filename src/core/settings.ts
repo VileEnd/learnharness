@@ -246,6 +246,8 @@ export interface AgentSettings {
 	/** The quizzing mechanic. Absent: legacy `tools.explain` decides
 	 *  (true = free, false = choice), else Mixed (see resolveQuizMechanic). */
 	quizMechanic?: QuizMechanic;
+	/** Interactive question formats by name (absent key = enabled; see enabledFormats). */
+	formats?: Record<string, boolean>;
 	/** Background-role model/thinking overrides (absent role = config pin). */
 	models?: Partial<Record<BackgroundModelRole, RoleModelOverride>>;
 	/** Tool toggles keyed by tool id (absent key = enabled). User-level
@@ -553,6 +555,8 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 	}
 	const prompts = sanitizeBooleanMap(raw.prompts);
 	if (prompts) out.prompts = prompts;
+	const formats = sanitizeBooleanMap(raw.formats);
+	if (formats) out.formats = formats;
 	if (typeof raw.quizMechanic === "string" && (QUIZ_MECHANICS as readonly string[]).includes(raw.quizMechanic)) {
 		out.quizMechanic = raw.quizMechanic as QuizMechanic;
 	}
