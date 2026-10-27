@@ -49,6 +49,10 @@ resource "proxmox_virtual_environment_vm" "learnharness" {
 
   memory {
     dedicated = 12288
+    # The balloon device at the full size: Proxmox never takes memory away,
+    # but it can read the guest's real usage (without it, the page cache
+    # shows as ~100% "used").
+    floating = 12288
   }
 
   disk {
