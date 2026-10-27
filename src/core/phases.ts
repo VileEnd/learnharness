@@ -4,8 +4,10 @@
  * boundary a transcript event; the second is INFERRED (owner ruling
  * 2026-09-26, the verdict death):
  *
- *   probe  — until the prober's `probe_done` call CONCLUDES (a clean
- *            toolResult for it; the assessment rides the call's arguments)
+ *   probe  — until the prober's `probe_done` call CONCLUDES (a clean,
+ *            non-refused toolResult for it — native-messages.ts
+ *            isProbeConclusion; a {ok:false} refusal concludes nothing; the
+ *            assessment rides the call's arguments)
  *   plan   — probe concluded, until teaching actually BEGINS
  *   teach  — the first quiz tool call tagged with a `nodeId` (a question
  *            ABOUT a plan node — probe quizzes carry no nodeId in their
@@ -33,7 +35,8 @@
  * Both are strictly sequential; the two derivations agree on every settled
  * record (a call's part projects into the same view boundary).
  *
- * Pure: no imports, no runtime deps — safe on server, client, and tests.
+ * Pure: core-only imports (the shared isProbeConclusion predicate), no
+ * runtime deps — safe on server, client, and tests.
  */
 
 /** The three phases of a session, as the picker / header / dividers see them. */
@@ -80,7 +83,12 @@ function advance(
 		// plan → teach only via the first nodeId-tagged quiz CALL (the call,
 		// not its answer — an errored-and-retried call still proves teaching
 		// began, and the retry lands in the same group anyway).
-		if (phase === "probe" && part.type === "tool-probe_done" && part.state === "output-available") {
+		if (
+			phase === "probe" &&
+			part.type === "tool-probe_done" &&
+			part.state === "output-available" &&
+			isProbeConclusion({ output: part.output }, true)
+		) {
 			phase = "plan";
 		}
 		// plan → teach via the first nodeId-tagged quizzing CALL — quiz OR
@@ -153,7 +161,7 @@ export function phaseTimeline(messages: readonly PhaseMessage[]): Phase3[] {
 
 // ─── the native fold (Wave D: record-side phase over LhMessage[]) ───────────
 
-import type { LhMessage } from "./native-messages.ts";
+import { isProbeConclusion, type LhMessage } from "./native-messages.ts";
 
 /** The phase at `upToIndex` (inclusive; default: the last message) of a
  *  NATIVE record. probe→plan advances at the probe_done call's clean
@@ -167,12 +175,8 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
 		if (role === "toolResult") {
-			const result = m as { toolName?: string; isError?: boolean };
-			if (
-				phase === "probe" &&
-				result.toolName === "probe_done" &&
-				!result.isError
-			) {
+			const result = m as { toolName?: string; isError?: boolean; details?: unknown };
+			if (phase === "probe" && result.toolName === "probe_done" && isProbeConclusion(result)) {
 				phase = "plan";
 			}
 		} else if (role === "assistant") {

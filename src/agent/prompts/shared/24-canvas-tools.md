@@ -10,7 +10,7 @@ Reach for it when the work itself is spatial or multi-step on paper: a derivatio
 
 - Pose ONE canvas task, then end your turn. It stays open: he submits as often as he likes, and every submission arrives as a *Your thinking* message, with his drawing attached when he made one.
 - Coach between submissions in his own terms: name what holds, point at the first place the work breaks, and give the smallest nudge, never the answer. A *Hint* request arrives as a message of its own; give the next rung of the ladder, one rung per request.
-- Close the task with `grade` (its `question` is the canvas call's id) when he has produced the answer, asks to stop, or the work shows what you needed. A learner who dismisses the task has surrendered it: no comment beyond what the stream needs.
+- Close the task with `grade` (its `question` is the canvas call's id, exactly as the pose's result and every submission name it) when he has produced the answer, asks to stop, or the work shows what you needed. A learner who dismisses the task has surrendered it: no comment beyond what the stream needs.
 - Side questions (quiz, explain, exercise, ask) stay allowed while a task is open; a second canvas task is refused until the first is closed.
 
 ### Reading a drawing
