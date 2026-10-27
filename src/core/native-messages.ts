@@ -151,16 +151,31 @@ export function failedOutputCallIds(messages: readonly LhMessage[]): ReadonlySet
 	return failed;
 }
 
+/** THE learner/model-facing input boundary, named once: a user message, any
+ *  marker except the UI-only plan-block (the learner's own markers, a job's
+ *  steer/abort, the probe handoff, graph context, compaction), or a clean
+ *  question answer (a non-error QUESTION_TOOLS result). A refused check's
+ *  error result is not one. Shared by the teach-phase guard
+ *  (visibleTeachingSinceLastInput), the hint window (hintsFor) and the canvas
+ *  workspace's pending-hint check, so they never disagree on what "since the
+ *  last input" means. */
+export function isInputBoundary(message: unknown): boolean {
+	if (!message || typeof message !== "object") return false;
+	const m = message as { role?: unknown; customType?: unknown; isError?: unknown; toolName?: unknown };
+	if (m.role === "user") return true;
+	if (m.role === "custom") return m.customType !== "plan-block";
+	return m.role === "toolResult" && m.isError !== true && (QUESTION_TOOLS as readonly unknown[]).includes(m.toolName);
+}
+
 /** Non-whitespace characters of ordinary prose that count as teaching. */
 export const VISIBLE_TEACHING_MIN_CHARS = 200;
 
 /** TEACH-PHASE GUARD predicate: did visible teaching reach the learner since
  *  his last input? Scans `messages` then `pendingTurnMessages` (the in-flight
  *  turn) backwards to the last user message, answer result (a non-error
- *  question-tool result) or model-facing marker. Teaching = a text block of at
- *  least VISIBLE_TEACHING_MIN_CHARS non-whitespace characters, or a
- *  send_to_user call that did not fail. A refused check's error result is not
- *  an input boundary; the UI-only plan-block marker is not one either. */
+ *  question-tool result) or model-facing marker (isInputBoundary). Teaching =
+ *  a text block of at least VISIBLE_TEACHING_MIN_CHARS non-whitespace
+ *  characters, or a send_to_user call that did not fail. */
 export function visibleTeachingSinceLastInput(
 	messages: readonly unknown[],
 	pendingTurnMessages: readonly unknown[] = [],
@@ -168,12 +183,7 @@ export function visibleTeachingSinceLastInput(
 	const all = [...messages, ...pendingTurnMessages] as LhMessage[];
 	let start = 0;
 	for (let i = all.length - 1; i >= 0; i--) {
-		const m = all[i]!;
-		const boundary =
-			m.role === "user" ||
-			(m.role === "custom" && m.customType !== "plan-block") ||
-			(m.role === "toolResult" && !m.isError && (QUESTION_TOOLS as readonly string[]).includes(m.toolName));
-		if (boundary) {
+		if (isInputBoundary(all[i])) {
 			start = i + 1;
 			break;
 		}
@@ -517,6 +527,30 @@ export function newHintRequest(callId: string): LhMarkerMessage {
 		details: { callId },
 		timestamp: Date.now(),
 	};
+}
+
+/** The hints of one canvas task / practice problem: per `hint-request` marker for `callId`, in order, the
+ *  learner-facing text (plain text or a clean send_to_user) of the assistant messages up to the next input
+ *  boundary (isInputBoundary: a user message, any model-facing marker, including a job's steer, or a clean
+ *  question answer), so a wake turn's job commentary never joins a hint. `text: null` = no reply text (yet):
+ *  pending, or errored/aborted with nothing delivered. Derived at read time, never stored. */
+export function hintsFor(messages: readonly unknown[], callId: string): { requestId: string; text: string | null }[] {
+	const all = messages as readonly LhMessage[];
+	const failed = failedOutputCallIds(all);
+	const out: { requestId: string; text: string | null }[] = [];
+	for (let i = 0; i < all.length; i++) {
+		const m = all[i]!;
+		if (m.role !== "custom" || m.customType !== "hint-request") continue;
+		if ((m.details as { callId?: unknown } | null)?.callId !== callId) continue;
+		const parts: string[] = [];
+		for (let j = i + 1; j < all.length; j++) {
+			const n = all[j]!;
+			if (isInputBoundary(n)) break;
+			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed));
+		}
+		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
+	}
+	return out;
 }
 
 /** The active canvas task: the NEWEST cleanly-acked work/sketch call that no

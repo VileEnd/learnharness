@@ -25,12 +25,13 @@ import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
-import { annotationsOf, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
+import { annotationsOf, hintsFor, isInputBoundary, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
 import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
 import { TeacherInk } from "./teacher-ink";
 import { useDrawingScene } from "./use-drawing-scene";
+import { HintStrip, HintsButton } from "./hints";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
 
 export const AUTOSAVE_MS = 2000;
@@ -73,6 +74,8 @@ export interface CanvasWorkspaceProps {
 	compactionRunning?: boolean;
 	/** The session record: the teacher's marks on this task's submitted drawings are derived from it (annotationsOf). */
 	messages?: readonly unknown[];
+	/** A turn is running: a hint request without a reply yet is then "pending" (Getting a hint…), else it is just empty. */
+	turnBusy?: boolean;
 }
 
 /** Pure: may Submit fire? Something to send, and the required thinking present. */
@@ -89,7 +92,7 @@ function nextZ(scene: DrawingScene): number {
 	return z;
 }
 
-export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false, messages = [] }: CanvasWorkspaceProps) {
+export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false, messages = [], turnBusy = false }: CanvasWorkspaceProps) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const engineRef = useRef<CanvasEngine | null>(null);
 	const [scene, setScene] = useState<DrawingScene>(EMPTY_SCENE);
@@ -111,6 +114,24 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				.filter((d) => d.marks.length > 0),
 		[messages, callId],
 	);
+	// The replies to this task's hint requests, derived from the record (so they survive minimise and reload).
+	const hints = useMemo(() => hintsFor(messages, callId), [messages, callId]);
+	// Pending only while that request is still the newest input (isInputBoundary, the same rule hintsFor ends a
+	// hint's window on): a later submission, message, answer or job steer means the running turn is not "getting
+	// a hint".
+	const newestRequestIsLatestInput = useMemo(() => {
+		const id = hints[hints.length - 1]?.requestId;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i];
+			if (isInputBoundary(m)) return (m as { id?: string }).id === id;
+		}
+		return false;
+	}, [messages, hints]);
+	// The whole hint turn, not just until its first token: a second tap mid-stream would spend another rung.
+	const hintTurnBusy = turnBusy && newestRequestIsLatestInput;
+	const [hintsOpen, setHintsOpen] = useState(false);
+	const hintsOpenRef = useRef(false);
+	hintsOpenRef.current = hintsOpen;
 	const [loaded, setLoaded] = useState(false);
 	const [thinking, setThinking] = useState("");
 	const thinkingRef = useRef("");
@@ -131,7 +152,9 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			if (e.key !== "Escape") return;
 			e.preventDefault();
 			e.stopPropagation();
-			onMinimize();
+			// One Esc, one action: an open hints panel closes first.
+			if (hintsOpenRef.current) setHintsOpen(false);
+			else onMinimize();
 		};
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
@@ -403,7 +426,9 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 						{showInk ? <EyeIcon className="size-4" /> : <EyeOffIcon className="size-4" />} Teacher marks
 					</button>
 				)}
-				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" onClick={onMinimize} className="ml-auto rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+				<span className="ml-auto" />
+				<HintsButton hints={hints} open={hintsOpen} onToggle={() => setHintsOpen((v) => !v)} />
+				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" onClick={onMinimize} className="rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
 					<Minimize2Icon className="size-4" />
 				</button>
 			</div>
@@ -437,6 +462,9 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				}} />
 			</div>
 
+			{/* The newest hint, above the thinking box (capped, collapsible) */}
+			<HintStrip hints={hints} turnBusy={hintTurnBusy} />
+
 			{/* The bottom bar: Your thinking + Hint + Submit */}
 			<div data-testid="canvas-bottom" className="mt-2 shrink-0 rounded-[10px] border border-border/70 bg-card transition-colors focus-within:border-primary/50">
 				<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -467,7 +495,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
 						{onHint && (
-							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={compactionRunning || busy} onClick={onHint} className="h-9 rounded-[6px] px-3 text-sm">
+							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={compactionRunning || busy || hintTurnBusy} onClick={onHint} className="h-9 rounded-[6px] px-3 text-sm">
 								<LightbulbIcon className="size-4" /> Hint
 							</Button>
 						)}
