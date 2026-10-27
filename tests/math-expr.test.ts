@@ -51,3 +51,13 @@ test("parseExpr rejects unknown identifiers", () => {
 	assert.equal(parseExpr("(1").ok, false);
 	assert.equal(parseExpr("1 $ 2").ok, false);
 });
+
+test("adjacent single-letter variables multiply implicitly", () => {
+	assert.equal(parseExpr("xy").ok, true);
+	assert.equal(parseExpr("2xy").ok, true);
+	assert.equal(parseExpr("xpi").ok, true);
+	assert.equal(exprEquivalent("2xy", "2yx", ["x", "y"]), true);
+	assert.equal(exprEquivalent("2xy", "3xy", ["x", "y"]), false);
+	assert.equal(exprEquivalent("xpi", "pi*x", ["x"]), true);
+	assert.equal(parseExpr("sinx").ok, false);
+});
