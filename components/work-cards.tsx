@@ -2,7 +2,10 @@
 
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { ThinkingBlock } from "@/components/thinking-block";
-import type { ArtifactPartProps } from "@/src/core";
+import { createContext, useContext, useMemo } from "react";
+import { TeacherInk } from "@/components/canvas/teacher-ink";
+import { useDrawingScene } from "@/components/canvas/use-drawing-scene";
+import { annotationsOf, sceneBoundingBox, type ArtifactPartProps } from "@/src/core";
 
 /**
  * The canvas-task transcript cards (PR 2):
@@ -39,15 +42,31 @@ export interface WorkSubmissionData {
 	drawingId?: string;
 }
 
-/** A drawing thumbnail (the exported PNG), linking to the full image. Renders nothing for an absent id. */
+/** The session's record messages, for the derived teacher marks (annotationsOf). chat.tsx provides it. */
+export const SessionMessagesContext = createContext<readonly unknown[]>([]);
+
+/** The teacher's ink over a thumbnail: percent space over the PNG; nothing until the scene is known. */
+function ThumbInk({ chatId, drawingId }: { chatId: string; drawingId: string }) {
+	const messages = useContext(SessionMessagesContext);
+	const marks = useMemo(() => annotationsOf(messages, drawingId).flatMap((a) => a.marks), [messages, drawingId]);
+	const scene = useDrawingScene(chatId, marks.length > 0 ? drawingId : undefined);
+	const box = scene ? sceneBoundingBox(scene) : null;
+	if (!scene || !box) return null;
+	return <TeacherInk marks={marks} scene={scene} box={box} space="percent" theme="light" />;
+}
+
+/** A drawing thumbnail (the exported PNG), linking to the full image, with the teacher's marks over it. Renders nothing for an absent id. */
 export function DrawingThumb({ chatId, drawingId }: { chatId: string; drawingId?: string }) {
 	if (!drawingId) return null;
 	const src = drawingPngUrl(chatId, drawingId);
 	return (
-		<a href={src} target="_blank" rel="noreferrer" data-testid="drawing-thumb" className="mb-1 block w-fit">
-			{/* eslint-disable-next-line @next/next/no-img-element */}
-			<img src={src} alt="Your drawing" loading="lazy" className="max-h-40 max-w-full rounded-md border bg-white" />
-		</a>
+		<div className="relative mb-1 w-fit max-w-full" data-testid="drawing-thumb-wrap">
+			<a href={src} target="_blank" rel="noreferrer" data-testid="drawing-thumb" className="block w-fit">
+				{/* eslint-disable-next-line @next/next/no-img-element */}
+				<img src={src} alt="Your drawing" loading="lazy" className="max-h-40 max-w-full rounded-md border bg-white" />
+			</a>
+			<ThumbInk chatId={chatId} drawingId={drawingId} />
+		</div>
 	);
 }
 

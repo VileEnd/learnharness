@@ -8,6 +8,7 @@ import { DocumentCard } from "@/components/artifacts/document-card";
 import { GradeChip } from "@/components/artifacts/grade-chip";
 import { ToolCallCard } from "@/components/artifacts/tool-call-card";
 import { ProblemCard, ConcludeCard } from "@/components/practice-cards";
+import { AnnotateCard } from "@/components/artifacts/annotate-card";
 import { WorkCard } from "@/components/work-cards";
 
 /**
@@ -50,6 +51,8 @@ export const artifactRenderers: Record<string, ComponentType<ArtifactPartProps>>
 	// committed correctAnswer reveals at the closing grade.
 	work: WorkCard,
 	sketch: WorkCard,
+	// Teacher ink (PR 3): the mark list; the ink itself is drawn over the drawing.
+	annotate: AnnotateCard,
 	// The prober's graph tools (wave 7): same quiet expandable card —
 	// collapsed one-liner (tool name + the session id for
 	// list_propositions), the tool's own compact row-per-line output

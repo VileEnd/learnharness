@@ -398,3 +398,16 @@ export function annotationsOf(messages: readonly unknown[], drawingId: string): 
 	}
 	return out;
 }
+
+/** Drawing ids the learner submitted for one task (a work call or a practice problem), oldest first, deduplicated. */
+export function submittedDrawingIds(messages: readonly unknown[], taskCallId: string): string[] {
+	const ids: string[] = [];
+	for (const m of messages) {
+		const r = m as { role?: string; customType?: string; details?: { workCallId?: unknown; problemCallId?: unknown; drawingId?: unknown } | null };
+		if (r.role !== "custom") continue;
+		const task = r.customType === "work-submission" ? r.details?.workCallId : r.customType === "practice-thinking" ? r.details?.problemCallId : undefined;
+		const id = r.details?.drawingId;
+		if (task === taskCallId && typeof id === "string" && !ids.includes(id)) ids.push(id);
+	}
+	return ids;
+}

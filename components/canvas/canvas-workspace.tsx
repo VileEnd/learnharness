@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-	ArrowUpRightIcon, CircleIcon, EraserIcon, FileTextIcon, HandIcon, HighlighterIcon, ImageIcon, LightbulbIcon, MinusIcon, Minimize2Icon,
+	ArrowUpRightIcon, CircleIcon, EraserIcon, EyeIcon, EyeOffIcon, FileTextIcon, HandIcon, HighlighterIcon, ImageIcon, LightbulbIcon, MinusIcon, Minimize2Icon,
 	MousePointer2Icon, PencilIcon, PenLineIcon, Redo2Icon, ScanIcon, SigmaIcon, SquareIcon, TableIcon, TypeIcon, Undo2Icon,
 } from "lucide-react";
 import { ToolContentResponse } from "@/components/ai-elements/message";
@@ -25,10 +25,12 @@ import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
-import { nextObjectId, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
+import { annotationsOf, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
 import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
+import { TeacherInk } from "./teacher-ink";
+import { useDrawingScene } from "./use-drawing-scene";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
 
 export const AUTOSAVE_MS = 2000;
@@ -69,6 +71,8 @@ export interface CanvasWorkspaceProps {
 	onMinimize: () => void;
 	/** Compaction running: submit would block on the server's gate. */
 	compactionRunning?: boolean;
+	/** The session record: the teacher's marks on this task's submitted drawings are derived from it (annotationsOf). */
+	messages?: readonly unknown[];
 }
 
 /** Pure: may Submit fire? Something to send, and the required thinking present. */
@@ -85,7 +89,7 @@ function nextZ(scene: DrawingScene): number {
 	return z;
 }
 
-export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false }: CanvasWorkspaceProps) {
+export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false, messages = [] }: CanvasWorkspaceProps) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const engineRef = useRef<CanvasEngine | null>(null);
 	const [scene, setScene] = useState<DrawingScene>(EMPTY_SCENE);
@@ -98,6 +102,15 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	const [notice, setNotice] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [showInk, setShowInk] = useState(true);
+	// Teacher marks per submitted drawing of this task (newest last); empty until the teacher annotates.
+	const inkDrawings = useMemo(
+		() =>
+			submittedDrawingIds(messages, callId)
+				.map((id) => ({ id, marks: annotationsOf(messages, id).flatMap((a) => a.marks) }))
+				.filter((d) => d.marks.length > 0),
+		[messages, callId],
+	);
 	const [loaded, setLoaded] = useState(false);
 	const [thinking, setThinking] = useState("");
 	const thinkingRef = useRef("");
@@ -385,6 +398,11 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				<button type="button" title="Reset zoom" aria-label="Reset zoom" data-testid="canvas-zoom-reset" onClick={() => engineRef.current?.setView({ zoom: 1, x: 0, y: 0 })} className="flex items-center gap-1 rounded-md px-1.5 py-1 pointer-coarse:py-2.5 text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground">
 					<ScanIcon className="size-4" /> {zoomPct}%
 				</button>
+				{inkDrawings.length > 0 && (
+					<button type="button" title="Teacher marks" aria-label="Teacher marks" aria-pressed={showInk} data-testid="canvas-ink-toggle" onClick={() => setShowInk((v) => !v)} className={cn("flex items-center gap-1 rounded-md px-1.5 py-1 pointer-coarse:py-2.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground", showInk && "bg-accent text-foreground")}>
+						{showInk ? <EyeIcon className="size-4" /> : <EyeOffIcon className="size-4" />} Teacher marks
+					</button>
+				)}
 				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" onClick={onMinimize} className="ml-auto rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
 					<Minimize2Icon className="size-4" />
 				</button>
@@ -394,6 +412,15 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			<div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
 				<div ref={rootRef} data-testid="canvas-surface" className="absolute inset-0" />
 				<CanvasObjectsLayer chatId={chatId} scene={scene} view={view} interactive={interactive} selectedId={selected} onSelect={setSelected} onCommit={commit} />
+				{showInk && inkDrawings.length > 0 && (
+					<svg data-testid="canvas-ink" className="pointer-events-none absolute inset-0 size-full overflow-hidden" aria-hidden>
+						<g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
+							{inkDrawings.map((d) => (
+								<WorkspaceInk key={d.id} chatId={chatId} drawingId={d.id} marks={d.marks} live={scene} theme={theme} />
+							))}
+						</g>
+					</svg>
+				)}
 				{notice && (
 					<div role="status" data-testid="canvas-notice" className="absolute left-1/2 top-2 -translate-x-1/2 rounded-full border bg-popover px-3 py-1 text-xs shadow">
 						{notice}
@@ -452,6 +479,23 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			</div>
 		</div>
 	);
+}
+
+/**
+ * One submitted drawing's marks on the live canvas: cells are anchored to the SUBMITTED scene's grid box
+ * (fetched, immutable), object ids resolve against the live scene first (so a moved object carries its
+ * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped.
+ */
+function WorkspaceInk({ chatId, drawingId, marks, live, theme }: { chatId: string; drawingId: string; marks: AnnotationMark[]; live: DrawingScene; theme: "light" | "dark" }) {
+	const submitted = useDrawingScene(chatId, drawingId);
+	const box = submitted ? sceneBoundingBox(submitted) : null;
+	const merged = useMemo<DrawingScene | null>(() => {
+		if (!submitted) return null;
+		const ids = new Set(live.objects.map((o) => o.id));
+		return { ...live, objects: [...live.objects, ...submitted.objects.filter((o) => !ids.has(o.id))] };
+	}, [live, submitted]);
+	if (!merged || !box) return null;
+	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} />;
 }
 
 /** Re-encodes an image whose long side exceeds IMAGE_MAX_SIDE (PNG stays PNG, others JPEG); small or undecodable images pass through unchanged. */
