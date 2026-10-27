@@ -58,3 +58,10 @@ test("expression answers must declare their variables", async () => {
 	assert.deepEqual(exerciseSpecProblems("blanks", blanks({ variables: ["x"] })), []);
 	assert.equal(gradeExercise("numeric", { answer: "2x", mode: "expression", variables: ["x"] }, { value: "x+x" }).outcome, "correct");
 });
+
+test("table expression cells grade with their declared variables", async () => {
+	const { exerciseSpecProblems, gradeExercise } = await import("../src/core/exercise-core.ts");
+	const spec = { columns: ["A"], rows: [{ cells: [{ id: "c", accept: ["2x"], mode: "expression", variables: ["x"] }] }] };
+	assert.deepEqual(exerciseSpecProblems("table", spec), []);
+	assert.equal(gradeExercise("table", spec, { values: { c: "x+x" } }).outcome, "correct");
+});
