@@ -220,6 +220,26 @@ test("annotate refuses an unknown stroke id and lists the valid ones; empty stro
 	assert.equal(resolveTargetRect({ object: "s5" }, strokeScene, sceneBoundingBox(strokeScene)!), null);
 });
 
+test("the refusal's stroke-id list is capped like the digest (the ids the model can see), with a +N tail", async () => {
+	// Final review (M5 #2): the stroke-id list in a refusal was uncapped.
+	const objects = Array.from({ length: 45 }, (_, i) => ({
+		id: `s${i + 1}`, z: i, type: "stroke" as const, brush: "pen" as const, color: "ink", size: 3,
+		points: [[10 * i, 0, 1], [10 * i, i === 44 ? 400 : 5, 1]] as [number, number, number][],
+	}));
+	const many: DrawingScene = { version: 1, objects };
+	const t = annotateToolFor({ chatId: "c1", drawingStore: { getScene: () => many } });
+	const r = await run(t, { drawingId: "drw_a", marks: [{ kind: "circle", target: { stroke: "s99" } }] });
+	assert.equal(r.isError, true);
+	const listed = /stroke ids: ([^;\n]*)/.exec(text(r))![1]!;
+	assert.equal(listed.match(/\bs\d+\b/g)!.length, 40);
+	assert.match(listed, /\bs45\b/, "the longest stroke is listed");
+	assert.match(listed, /\+5 more/);
+	// A valid id outside the listed set still resolves (the cap limits the hint, never the target).
+	assert.doesNotMatch(listed, /\bs44\b/, "an equal-length tick past the cap is left out (ties by id)");
+	const ok = await run(t, { drawingId: "drw_a", marks: [{ kind: "circle", target: { stroke: "s44" } }] });
+	assert.equal(ok.isError, undefined);
+});
+
 test("a bare stroke key on a mark heals into a target, and the fold reads it", () => {
 	const raw = { drawingId: "drw_a", marks: [{ kind: "circle", stroke: "s4" }] };
 	const prepared = strokeTool.prepareArguments!(raw) as { marks: { target: unknown }[] };
