@@ -413,6 +413,17 @@ describe("canvas doctrine for weaker models (M3)", () => {
 		assert.ok(!(await run(gradeOf(coached), { question: "w1", grade: "wrong" })).isError);
 	});
 
+	it("a hint turn never closes the task: grade is refused while his latest input is a hint request on it", async () => {
+		const hinted = [...pose(), newWorkSubmission("w1", "first"), newWorkSubmission("w1", "second"), newHintRequest("w1", 1)];
+		for (const grade of ["wrong", "partly", "correct"]) {
+			const r = await run(gradeOf(hinted), { question: "w1", grade });
+			assert.equal(r.isError, true);
+			assert.match(r.content[0]!.text, /answers his hint request: give the next rung and leave the task open/);
+		}
+		// a resubmission after the hint lifts it
+		assert.ok(!(await run(gradeOf([...hinted, newWorkSubmission("w1", "third")]), { question: "w1", grade: "correct" })).isError);
+	});
+
 	it("RC7: hint markers number 1, 2, 3 per callId", () => {
 		let msgs = pose();
 		const seen: string[] = [];

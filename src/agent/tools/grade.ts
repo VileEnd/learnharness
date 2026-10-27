@@ -16,7 +16,7 @@ import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
 import { answeredRecallIds, gradedQuestionIds, ungradedAnsweredRecalls } from "../../core/learner.ts";
-import { visibleTeachingSinceLastInput, workSubmissionsOf, type LhMessage } from "../../core/native-messages.ts";
+import { isInputBoundary, visibleTeachingSinceLastInput, workSubmissionsOf, type LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 
 import { GRADE_NOTE_MAX, healGradeArguments } from "../../core/grade-heal.ts";
@@ -109,6 +109,22 @@ function firstSubmissionNeedsCoaching(messages: readonly LhMessage[], question: 
 	return !visibleTeachingSinceLastInput(messages, []);
 }
 
+/** The refusal of any grade in a turn that answers a hint request on the same task. */
+export const HINT_TURN_REFUSAL =
+	"This turn answers his hint request: give the next rung and leave the task open. Grade only after he resubmits, asks to stop, or repeats the error.";
+
+/** True when the learner's latest input (history plus the in-flight turn) is a hint request on `question`:
+ *  closing the task then would reveal the committed answer in place of the hint (GLM re-check, 2026-10-27). */
+function answersHintRequest(messages: readonly LhMessage[], question: string): boolean {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (!isInputBoundary(m)) continue;
+		const c = m as { customType?: unknown; details?: { callId?: unknown } | null };
+		return c.customType === "hint-request" && c.details?.callId === question;
+	}
+	return false;
+}
+
 export function gradeTool(ctx: {
 	chatId: string;
 	chatStore: Pick<ChatStore, "getChat">;
@@ -145,6 +161,9 @@ export function gradeTool(ctx: {
 				);
 			} else if (gradedQuestionIds(record.messages).has(input.question) || gradedThisTurn.has(input.question)) {
 				problems.push(`question "${input.question}" is already graded - one grade per question.`);
+			}
+			else if (answersHintRequest((ctx.turn?.messages() ?? record.messages) as readonly LhMessage[], input.question)) {
+				problems.push(HINT_TURN_REFUSAL);
 			}
 			else if (
 				(input.grade === "wrong" || input.grade === "partly") &&
