@@ -12,7 +12,7 @@
  * drawingId to onSubmit; an empty scene submits text only.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
 	ArrowUpRightIcon, CircleIcon, EraserIcon, FileTextIcon, HandIcon, HighlighterIcon, ImageIcon, LightbulbIcon, MinusIcon, Minimize2Icon,
 	MousePointer2Icon, PencilIcon, PenLineIcon, Redo2Icon, ScanIcon, SigmaIcon, SquareIcon, TableIcon, TypeIcon, Undo2Icon,
@@ -196,7 +196,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 		const root = rootRef.current;
 		if (!root) return;
 		const engine = new CanvasEngine(root, {
-			theme: () => (document.documentElement.classList.contains("dark") ? "dark" : "light"),
+			theme: readTheme,
 			onChange: onSceneChange,
 			onSelect: setSelected,
 			onViewChange: setView,
@@ -332,7 +332,8 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	};
 	useEnterSubmits(() => void submit());
 
-	const theme = "dark" as const;
+	const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as const);
+	useEffect(() => engineRef.current?.refresh(), [theme]);
 	const interactive = tool === "select" || PLACE_TOOLS.includes(tool);
 	const zoomPct = useMemo(() => Math.round(view.zoom * 100), [view.zoom]);
 
@@ -492,3 +493,12 @@ function imageSize(file: Blob): Promise<{ w: number; h: number }> {
 	});
 }
 
+/** The app theme is the `dark` class on <html>; swatches and the engine follow it live. */
+function readTheme(): "light" | "dark" {
+	return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+function subscribeTheme(onChange: () => void): () => void {
+	const observer = new MutationObserver(onChange);
+	observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+	return () => observer.disconnect();
+}
