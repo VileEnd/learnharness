@@ -29,6 +29,8 @@ export const PATHS = {
 	push: path.join(DATA_ROOT, "push"),
 	/** The document library: data/documents/<docId>/{document.md,meta.json} (src/store/documents.ts). */
 	documents: path.join(DATA_ROOT, "documents"),
+	/** Canvas drawings per chat: data/drawings/<chatId>/{<drw>.json,<drw>.png,assets/,drafts/} (src/store/drawings.ts). */
+	drawings: path.join(DATA_ROOT, "drawings"),
 	/** The OKF library bundle the agents' read/ls/find/grep tools are rooted at.
 	 *  Never created by the tools; absent = "the library is being built". */
 	okf: process.env.LH_LIBRARY_DIR ?? path.join(DATA_ROOT, "okf"),

@@ -41,6 +41,7 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 	const raw = body as {
 		model?: { provider?: unknown; id?: unknown };
 		thinkingLevel?: unknown;
+		canvas?: unknown;
 	};
 	const settings: ChatSettings = {};
 	if (raw.model !== undefined) {
@@ -59,6 +60,10 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 			return { ok: false, error: "thinkingLevel must be a string" };
 		}
 		settings.thinkingLevel = raw.thinkingLevel as ThinkingLevel;
+	}
+	if (raw.canvas !== undefined) {
+		if (typeof raw.canvas !== "boolean") return { ok: false, error: "canvas must be a boolean" };
+		settings.canvas = raw.canvas;
 	}
 	// Wave 7 killed the graph-context injection (owner: zero configuration
 	// beyond chat models — the prober reads its map through tools now); its

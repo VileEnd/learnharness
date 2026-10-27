@@ -78,6 +78,8 @@ export interface ChatSettings {
 	/** pi thinking level — must be in the chosen model's supported list
 	 *  (getSupportedThinkingLevels; enforced by the settings route). */
 	thinkingLevel?: ThinkingLevel;
+	/** Canvas workspace on for this session (work / sketch tools). Absent = off. */
+	canvas?: boolean;
 }
 
 
