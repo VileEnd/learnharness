@@ -1,0 +1,71 @@
+{
+	"id": "job_mvqv5fhr_cd425a41",
+	"kind": "research",
+	"chatId": "chat_mv27rrra_feff23b6",
+	"toolCallId": "chatcmpl-tool-8ea1db510343a714",
+	"input": {
+		"question": "What year was the Rust programming language 1.0 released?",
+		"context": "Wiring test for the background-job format — not a lesson. Just needs the release year and the primary source."
+	},
+	"status": "done",
+	"activity": "finished",
+	"createdAt": "2026-10-27T15:51:44.559Z",
+	"updatedAt": "2026-10-27T15:51:53.934Z",
+	"usage": {
+		"model": "openrouter:deepseek/deepseek-v4.1-flash",
+		"inputTokens": 5628,
+		"outputTokens": 571,
+		"cacheReadTokens": 3968,
+		"cacheWriteTokens": 0,
+		"reasoningTokens": 49,
+		"cacheWrite1hTokens": 0,
+		"steps": 3,
+		"calls": [
+			{
+				"inputTokens": 1566,
+				"outputTokens": 103,
+				"cacheReadTokens": 0,
+				"cacheWriteTokens": 0,
+				"cacheWrite1hTokens": 0,
+				"reasoningTokens": 14
+			},
+			{
+				"inputTokens": 1083,
+				"outputTokens": 76,
+				"cacheReadTokens": 1408,
+				"cacheWriteTokens": 0,
+				"cacheWrite1hTokens": 0,
+				"reasoningTokens": 15
+			},
+			{
+				"inputTokens": 2979,
+				"outputTokens": 392,
+				"cacheReadTokens": 2560,
+				"cacheWriteTokens": 0,
+				"cacheWrite1hTokens": 0,
+				"reasoningTokens": 20
+			}
+		],
+		"lastStep": {
+			"inputTokens": 2979,
+			"outputTokens": 392,
+			"cacheReadTokens": 2560,
+			"cacheWriteTokens": 0,
+			"cacheWrite1hTokens": 0,
+			"reasoningTokens": 20
+		}
+	},
+	"result": {
+		"brief": "## Summary\nRust 1.0 was released on **May 15, 2015**. The primary source is the official Rust Blog announcement, \"Announcing Rust 1.0,\" dated 2015/05/15.\n\n## Findings\n1. **Release year: 2015** — Rust 1.0 was released on May 15, 2015. The official announcement opens: \"Today we are very proud to announce the 1.0 release of Rust.\" The URL itself encodes the date: `/2015/05/15/Rust-1.0.html`. [Source](https://blog.rust-lang.org/2015/05/15/Rust-1.0.html)\n2. **What 1.0 signified** — The release marked the end of pre-1.0 churn and the start of the project's \"commitment to stability,\" with breaking changes largely out of scope thereafter. [Source](https://blog.rust-lang.org/2015/05/15/Rust-1.0.html)\n\n## Sources\n- Kept: Announcing Rust 1.0 — Rust Blog (https://blog.rust-lang.org/2015/05/15/Rust-1.0.html) — official primary source; dated announcement confirming the release year.\n- Dropped: Wikipedia, releases.rs, adesso blog — secondary/aggregator sources that agree but are not primary; unnecessary given the official announcement was retrieved directly.\n\n## Gaps\nNone material. The exact date (May 15, 2015) and year are confirmed by the primary source; no further research needed.\n\n## Tools\n- web_search ×2 (direct query + authoritative-source query)\n- web_fetch ×1 (official Rust Blog announcement)",
+		"sources": [
+			{
+				"title": "Source",
+				"url": "https://blog.rust-lang.org/2015/05/15/Rust-1.0.html"
+			}
+		]
+	},
+	"delivery": {
+		"kind": "result",
+		"status": "delivered"
+	}
+}

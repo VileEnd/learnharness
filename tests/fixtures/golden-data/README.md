@@ -27,8 +27,12 @@ core tool surface must appear in real data here.
   full marker cycle of a practice session, including the dismissal.
 - `graph/` — the real ledgers: nodes (282 lines), chains (160), sessions (8),
   coverage (93), sources (4), render-settings, positions.
-- `jobs/` — five records covering kind × status: research done + aborted by
-  learner, demo done, visual done, pdf error.
+- `jobs/` — five legacy records covering kind × status: research done +
+  aborted by learner, demo done, visual done, pdf error. Plus two
+  delivery-era records (dev server on a scratch data dir, 2026-10-27): a
+  research job that finished (`delivery: {kind: "result", status:
+  "delivered"}`) and one the learner aborted (`delivery: {kind: "abort",
+  status: "delivered"}`), both with the saved dispatch `input`.
 - `settings.json` — the stamped settings record (version 1, model slots).
 
 ## Regenerating / extending

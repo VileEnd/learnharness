@@ -1,0 +1,55 @@
+{
+	"id": "job_mvqv5fhu_71d106c0",
+	"kind": "research",
+	"chatId": "chat_mv27rrra_feff23b6",
+	"toolCallId": "chatcmpl-tool-8da7d7fd2b6a4eb1",
+	"input": {
+		"question": "Who proposed the Sapir-Whorf hypothesis?",
+		"context": "Wiring test for the background-job format — not a lesson. Just needs the attribution and the primary source."
+	},
+	"status": "error",
+	"activity": "aborted",
+	"createdAt": "2026-10-27T15:51:44.562Z",
+	"updatedAt": "2026-10-27T15:51:51.650Z",
+	"usage": {
+		"model": "openrouter:deepseek/deepseek-v4.1-flash",
+		"inputTokens": 4865,
+		"outputTokens": 266,
+		"cacheReadTokens": 0,
+		"cacheWriteTokens": 0,
+		"reasoningTokens": 39,
+		"cacheWrite1hTokens": 0,
+		"steps": 2,
+		"calls": [
+			{
+				"inputTokens": 1561,
+				"outputTokens": 149,
+				"cacheReadTokens": 0,
+				"cacheWriteTokens": 0,
+				"cacheWrite1hTokens": 0,
+				"reasoningTokens": 19
+			},
+			{
+				"inputTokens": 3304,
+				"outputTokens": 117,
+				"cacheReadTokens": 0,
+				"cacheWriteTokens": 0,
+				"cacheWrite1hTokens": 0,
+				"reasoningTokens": 20
+			}
+		],
+		"lastStep": {
+			"inputTokens": 3304,
+			"outputTokens": 117,
+			"cacheReadTokens": 0,
+			"cacheWriteTokens": 0,
+			"cacheWrite1hTokens": 0,
+			"reasoningTokens": 20
+		}
+	},
+	"error": "Aborted by learner",
+	"delivery": {
+		"kind": "abort",
+		"status": "delivered"
+	}
+}
