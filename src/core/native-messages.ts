@@ -512,19 +512,35 @@ export function newWorkDismissedMarker(workCallId: string): LhMarkerMessage {
 	};
 }
 
-/** The model-facing text of a hint request. */
+/** The model-facing text of a LEGACY hint request (records written before the numbered marker keep it). */
 export const HINT_REQUEST_TEXT = "Hint, please — give the next rung only.";
 
+/** The model-facing text of hint request `n` for one task: the number is the rung (never skip rungs). */
+export function hintRequestText(n: number): string {
+	return `Hint request ${n} for this task — give the next rung only.`;
+}
+
+/** The number the next hint request for `callId` takes: earlier hint-requests for it, plus one. Derived from
+ *  the record at creation time, never stored apart; old unnumbered markers count too. */
+export function nextHintNumber(messages: readonly unknown[], callId: string): number {
+	let n = 0;
+	for (const m of messages as readonly LhMessage[]) {
+		if (m.role !== "custom" || m.customType !== "hint-request") continue;
+		if ((m.details as { callId?: unknown } | null)?.callId === callId) n++;
+	}
+	return n + 1;
+}
+
 /** The learner asked for the next rung of help on the active canvas task or
- *  practice problem. */
-export function newHintRequest(callId: string): LhMarkerMessage {
+ *  practice problem. `n` numbers the request for that task; omitted = the legacy unnumbered text. */
+export function newHintRequest(callId: string, n?: number): LhMarkerMessage {
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "hint-request",
-		content: HINT_REQUEST_TEXT,
+		content: n === undefined ? HINT_REQUEST_TEXT : hintRequestText(n),
 		display: true,
-		details: { callId },
+		details: n === undefined ? { callId } : { callId, n },
 		timestamp: Date.now(),
 	};
 }

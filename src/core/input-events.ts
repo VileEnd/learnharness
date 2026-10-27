@@ -36,6 +36,7 @@ import {
 	danglingQuestionOf,
 	newAnswerResult,
 	newHintRequest,
+	nextHintNumber,
 	newNextMessage,
 	newProblemDismissedMarker,
 	newWorkDismissedMarker,
@@ -369,7 +370,7 @@ export function inputAppends(
 			if (danglingQuestionOf(record.messages) !== null) {
 				throw new ChatInputError("hint input refused: answer the open side question first");
 			}
-			return [newHintRequest(input.callId)];
+			return [newHintRequest(input.callId, nextHintNumber(record.messages, input.callId))];
 		}
 	}
 }
