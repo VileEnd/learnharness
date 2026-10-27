@@ -9,7 +9,7 @@ import { describe, it } from "node:test";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { DrawingStore } from "../src/core/ports.ts";
 import { drawingIdOf, type DrawingScene } from "../src/core/canvas-core.ts";
-import { ESTIMATED_IMAGE_CHARS } from "../src/core/compaction.ts";
+import { ESTIMATED_IMAGE_CHARS, estimateMessageTokens } from "../src/core/compaction.ts";
 import { newThinkingMessage, newWorkSubmission, toLlmMessages, type DrawingContext, type LhMessage } from "../src/core/native-messages.ts";
 import { createDrawingTranscriber } from "../src/agent/subagents/drawing-transcriber.ts";
 import { prepareDrawingContext } from "../src/server/drawing-context.ts";
@@ -137,7 +137,16 @@ describe("drawings in the model context", () => {
 		assert.match(textOf(out), /\[drawing drw_/);
 	});
 
-	it("compaction estimate counts the image", () => {
-		assert.equal(ESTIMATED_IMAGE_CHARS, 11_200);
+	it("compaction estimate counts the image", async () => {
+		// The drawing as the model receives it: the estimator must charge the
+		// image block its allowance (~2 800 tokens), not zero.
+		const messages = [...pose(), sub(0)];
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s });
+		const last = toLlmMessages(messages as never, { drawing: ctx }).at(-1)!;
+		const blocks = last.content as Array<{ type: string; text?: string }>;
+		assert.equal(blocks.filter((b) => b.type === "image").length, 1);
+		const textChars = blocks.reduce((n, b) => n + (b.type === "text" ? (b.text?.length ?? 0) : 0), 0);
+		assert.equal(estimateMessageTokens(last as never), Math.ceil((textChars + ESTIMATED_IMAGE_CHARS) / 4));
+		assert.ok(estimateMessageTokens(last as never) - Math.ceil(textChars / 4) >= 2_800);
 	});
 });

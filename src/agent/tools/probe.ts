@@ -4,6 +4,7 @@ import { probeDoneInputSchema, PROBE_DONE_ACK_TEXT } from "../../core/contracts.
 import { activeWorkOf, danglingQuestionOf, hasProbeDone, type LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 import { buildProbeHandoffSteer, type SteerMessage } from "../../core/contracts.ts";
+import type { WorkGate } from "./work.ts";
 
 /** What the probe_done tool closes over. */
 export interface ProbeDoneContext {
@@ -13,11 +14,16 @@ export interface ProbeDoneContext {
 	/** Queue the handoff steer (the wake pipeline — src/server/jobs.ts).
 	 *  Injected so this module never imports the server seam. */
 	deliver: (steer: SteerMessage) => void;
+	/** The turn's "graded this turn" view (shared with `grade`): the record
+	 *  is frozen at the turn's write-ahead, so a sketch graded earlier in THIS
+	 *  turn still reads as open there (live run, 2026-10-27: grade, then
+	 *  probe_done refused twice in the same turn). */
+	workGate?: WorkGate;
 }
 
-/** Does the transcript already carry a concluded probe (any state)?
- *  Wave B: the native scan (any probe_done tool call, any state) — same
- *  semantics the UIMessage part scan had. */
+/** Does the transcript already carry a concluded probe? A probe_done whose
+ *  result concluded (core isProbeConclusion): a refused or errored call
+ *  does not count. */
 function probeConcluded(messages: readonly LhMessage[]): boolean {
 	return hasProbeDone(messages);
 }
@@ -73,7 +79,8 @@ export function probeDoneTool(ctx: ProbeDoneContext): Record<string, AgentTool<a
 							"probe_done only fires with no question outstanding.",
 					};
 				}
-				if (activeWorkOf(record.messages) !== null) {
+				const openWork = activeWorkOf(record.messages);
+				if (openWork !== null && !ctx.workGate?.graded.has(openWork.toolCallId)) {
 					return {
 						ok: false,
 						error:

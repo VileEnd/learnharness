@@ -15,7 +15,8 @@
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
-import { answeredRecallIds, gradedQuestionIds } from "../../core/learner.ts";
+import { answeredRecallIds, gradedQuestionIds, ungradedAnsweredRecalls } from "../../core/learner.ts";
+import type { LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 
 export const GRADE_NOTE_MAX = 140;
@@ -59,6 +60,22 @@ export const gradeInputObject = Type.Object({
 	),
 });
 
+/** The refusal's retry aid: the ids `grade` accepts right now, each with its
+ *  tool name. A model never sees its own tool-call ids unless a result names
+ *  them; a wrong guess must be correctable in one retry. */
+function gradableNow(messages: readonly LhMessage[], gradedThisTurn: ReadonlySet<string>): string {
+	const names = new Map<string, string>();
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "assistant") continue;
+		for (const b of (m as { content: Array<{ type: string; id?: string; name?: string }> }).content) {
+			if (b.type === "toolCall" && b.id && b.name) names.set(b.id, b.name);
+		}
+	}
+	const open = ungradedAnsweredRecalls(messages).filter((id) => !gradedThisTurn.has(id));
+	if (open.length === 0) return "Nothing is gradable right now (no answered, ungraded question or canvas task with a submission).";
+	return `Gradable now: ${open.map((id) => `"${id}" (${names.get(id) ?? "call"})`).join(", ")}.`;
+}
+
 export function gradeTool(ctx: {
 	chatId: string;
 	chatStore: Pick<ChatStore, "getChat">;
@@ -85,7 +102,8 @@ export function gradeTool(ctx: {
 			const problems: string[] = [];
 			if (!record || !answeredRecallIds(record.messages).has(input.question)) {
 				problems.push(
-					`question "${input.question}" is not an answered explain or recall (or a work/sketch task with a submission) in this chat - copy the toolCallId of the call he answered.`,
+					`question "${input.question}" is not an answered explain or recall (or a work/sketch task with a submission) in this chat - copy the toolCallId of the call he answered. ` +
+						gradableNow(record?.messages ?? [], gradedThisTurn),
 				);
 			} else if (gradedQuestionIds(record.messages).has(input.question) || gradedThisTurn.has(input.question)) {
 				problems.push(`question "${input.question}" is already graded - one grade per question.`);

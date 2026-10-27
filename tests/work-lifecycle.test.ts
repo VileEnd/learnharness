@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import { Value } from "typebox/value";
 import {
 	activeWorkOf,
+	hasProbeDone,
 	needsContinuation,
 	endsInDismissal,
 	newHintRequest,
@@ -28,6 +29,7 @@ import {
 	parseDismissInput,
 } from "../src/core/input-events.ts";
 import { projectView } from "../src/core/index.ts";
+import { phaseAt3, phaseAt3Lh } from "../src/core/phases.ts";
 import { answeredRecallIds, gradedItems, ungradedAnsweredRecalls } from "../src/core/learner.ts";
 import { createProberTools, createTeacherTools, teachQuizToolFor, type TeacherToolContext } from "../src/agent/tools.ts";
 import { teachWorkToolFor, probeSketchToolFor } from "../src/agent/tools/work.ts";
@@ -38,7 +40,8 @@ import { workInputObject, sketchInputObject, workInputProblems, questionNeedsRev
 import { chat, call, result } from "./learner-helpers.ts";
 
 const WORK_ARGS = { type: "check", nodeId: "arith", question: "Sketch the graph of y = x^2", correctAnswer: "An upward parabola through the origin." };
-const ACK = "Canvas task posed — the turn ends here; the learner's submissions arrive as labeled messages until you grade.";
+const ACK = (id: string) =>
+	`Canvas task ${id} posed — the turn ends here; the learner's submissions arrive as labeled messages until you grade. To close it, call grade with question "${id}".`;
 
 /** A cleanly-acked work pose. */
 function pose(id = "w1", tool: "work" | "sketch" = "work", args: Record<string, unknown> = WORK_ARGS): LhMessage[] {
@@ -56,8 +59,8 @@ describe("the work fold", () => {
 		assert.deepEqual(activeWorkOf(messages)?.toolCallId, "w1");
 		assert.equal(activeWorkOf(messages)?.tool, "work");
 		assert.equal(needsContinuation(messages), false);
-		assert.equal(workResult().terminate, true);
-		assert.equal((workResult().content[0] as { text: string }).text, ACK);
+		assert.equal(workResult("w1").terminate, true);
+		assert.equal((workResult("w1").content[0] as { text: string }).text, ACK("w1"));
 		assert.deepEqual([...WORK_TOOLS], ["work", "sketch"]);
 	});
 
@@ -71,7 +74,7 @@ describe("the work fold", () => {
 		const [m] = inputAppends(record, { type: "work-submit", workCallId: "w1", text: "my first try", drawingId: "drw_abc" }, { drawingExists: drawingExists(["drw_abc"]) });
 		const marker = m as { customType: string; content: string; details: unknown };
 		assert.equal(marker.customType, "work-submission");
-		assert.match(marker.content, /^Your thinking:\nmy first try\n\[drawing drw_abc\]$/);
+		assert.equal(marker.content, 'Your thinking:\nmy first try\n[drawing drw_abc]\n[canvas task w1 — grade it with question "w1"]');
 		assert.deepEqual(marker.details, { workCallId: "w1", text: "my first try", drawingId: "drw_abc" });
 		assert.equal(activeWorkOf([...record.messages, m!])?.toolCallId, "w1", "a submission keeps it active");
 		assert.equal(newWorkSubmission("w1", "t").content.includes("[drawing"), false);
@@ -297,6 +300,56 @@ describe("the tools", () => {
 		const tools = probeDoneTool({ chatId: "c1", chatStore: { getChat: () => chat("c1", msgs) } as never, deliver: () => {} } as never);
 		const r = (await tools.probe_done!.execute("p", { assessment: "x" } as never)) as { isError?: boolean; content: { text: string }[] };
 		assert.match(JSON.stringify(r), /canvas task|sketch/i);
+	});
+
+	it("a refused probe_done concludes nothing: the prober stays and no handoff steer is queued", async () => {
+		const SKETCH = { question: "q", correctAnswer: "a" };
+		let messages: LhMessage[] = [...pose("s1", "sketch", SKETCH), newWorkSubmission("s1", "t")];
+		const steers: Array<{ id: string }> = [];
+		const tools = probeDoneTool({ chatId: "c1", chatStore: { getChat: () => chat("c1", messages) } as never, deliver: (s: { id: string }) => void steers.push(s) } as never);
+		const conclude = async (id: string) => {
+			const r = (await tools.probe_done!.execute(id, { assessment: { strands: [] } } as never)) as { details: unknown; isError?: boolean };
+			messages = [...messages, call(id, "probe_done", { assessment: { strands: [] } }), result(id, "probe_done", r.details, 2_000, r.isError === true)];
+		};
+		await conclude("p1");
+		assert.equal(steers.length, 0, "no handoff steer while the sketch is open");
+		assert.equal(hasProbeDone(messages), false, "the next turn still builds the prober");
+		assert.equal(phaseAt3Lh(messages), "probe");
+		assert.equal(phaseAt3(projectView(messages)), "probe", "the view fold agrees");
+		assert.equal(activeWorkOf(messages)?.toolCallId, "s1");
+		// The sketch closes (grade), and the retried probe_done concludes.
+		messages = [...messages, ...gradeMsgs("g1", "s1")];
+		await conclude("p2");
+		assert.deepEqual(steers.map((s) => s.id), ["steer_probe_c1"]);
+		assert.equal(hasProbeDone(messages), true);
+		assert.equal(phaseAt3Lh(messages), "plan");
+		assert.equal(phaseAt3(projectView(messages)), "plan");
+	});
+
+	it("a sketch graded earlier in the same turn no longer blocks probe_done (frozen record)", async () => {
+		// The record is frozen at the turn's write-ahead: grade's result is
+		// not in it yet. The prober registry shares one workGate across tools.
+		const messages = [...pose("s1", "sketch", { question: "q", correctAnswer: "a" }), newWorkSubmission("s1", "t")];
+		const steers: Array<{ id: string }> = [];
+		const tools = createProberTools({ ...ctxOf(messages, { quizMechanic: "choice", canvas: true }), deliver: (st: { id: string }) => void steers.push(st) } as never);
+		const graded = await tools.grade!.execute("g1", { question: "s1", grade: "partly", note: "n" });
+		assert.ok(!graded.isError);
+		const done = (await tools.probe_done!.execute("p1", { assessment: { strands: [] } } as never)) as { details: { ok: boolean } };
+		assert.equal(done.details.ok, true);
+		assert.deepEqual(steers.map((st) => st.id), ["steer_probe_c1"]);
+	});
+
+	it("the grade refusal names the open canvas task id so a wrong guess can retry", async () => {
+		const messages = [...pose("call_abc123", "sketch", { question: "q", correctAnswer: "a" }), newWorkSubmission("call_abc123", "t")];
+		const grade = gradeTool({ chatId: "c1", chatStore: { getChat: () => chat("c1", messages) } });
+		const r = await grade.execute("g1", { question: "sketch_1", grade: "correct", note: "n" });
+		assert.equal(r.isError, true);
+		assert.match((r.content[0] as { text: string }).text, /Gradable now: "call_abc123" \(sketch\)/);
+		const ok = await grade.execute("g2", { question: "call_abc123", grade: "correct", note: "n" });
+		assert.ok(!ok.isError);
+		// The pose ack and every submission carry the id the model must copy.
+		assert.match((workResult("call_abc123").content[0] as { text: string }).text, /question "call_abc123"/);
+		assert.match(newWorkSubmission("call_abc123", "t").content, /question "call_abc123"/);
 	});
 });
 

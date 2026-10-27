@@ -87,7 +87,7 @@ export function teachWorkToolFor(ctx: WorkToolContext): AgentTool<typeof workInp
 		parameters: workInputObject,
 		prepareArguments: prepareQuestionArgumentsFor<Static<typeof workInputObject>>(ctx.graphNodes),
 		executionMode: "sequential",
-		execute: async (_toolCallId, input) => {
+		execute: async (toolCallId, input) => {
 			const problems = [...workInputProblems(input), ...conceptsProblems(ctx.graphNodes, input.concepts)];
 			const nodeIdProblemText = nodeIdProblem(ctx as Parameters<typeof nodeIdProblem>[0], input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
@@ -96,7 +96,7 @@ export function teachWorkToolFor(ctx: WorkToolContext): AgentTool<typeof workInp
 			if (problems.length > 0) return invalidInputResult("work", problems);
 			const refusal = guard("work", input.type);
 			if (refusal) return invalidInputResult("work", [refusal]);
-			return workResult();
+			return workResult(toolCallId);
 		},
 	};
 }
@@ -110,12 +110,12 @@ export function probeSketchToolFor(ctx: Omit<WorkToolContext, "turn">): AgentToo
 		parameters: sketchInputObject,
 		prepareArguments: prepareQuestionArgumentsFor<Static<typeof sketchInputObject>>(ctx.graphNodes),
 		executionMode: "sequential",
-		execute: async (_toolCallId, input) => {
+		execute: async (toolCallId, input) => {
 			const problems = [...workInputProblems(input), ...conceptsProblems(ctx.graphNodes, input.concepts)];
 			const open = openTaskProblem(ctx);
 			if (open) problems.push(open);
 			if (problems.length > 0) return invalidInputResult("sketch", problems);
-			return workResult();
+			return workResult(toolCallId);
 		},
 	};
 }

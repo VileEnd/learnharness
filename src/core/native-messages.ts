@@ -462,16 +462,23 @@ export function concludedByDismissalPair(
  *  dismissal closes it. */
 export const WORK_TOOLS = ["work", "sketch"] as const;
 
+/** The model-facing line naming the task a submission belongs to: `grade`
+ *  closes a canvas task only by its exact call id, so every submission
+ *  repeats it. */
+export function workTaskLine(workCallId: string): string {
+	return `[canvas task ${workCallId} — grade it with question "${workCallId}"]`;
+}
+
 /** The learner's submission on the open canvas task: the same "Your
  *  thinking" label as a practice submission, plus a `[drawing <id>]` line
- *  when a drawing rides along. `details` keeps the raw payload for the
- *  transcript card. */
+ *  when a drawing rides along and the task line (workTaskLine). `details`
+ *  keeps the raw payload for the transcript card. */
 export function newWorkSubmission(workCallId: string, text: string, drawingId?: string): LhMarkerMessage {
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "work-submission",
-		content: `${THINKING_LABEL}:\n${text}${drawingId ? `\n[drawing ${drawingId}]` : ""}`,
+		content: `${THINKING_LABEL}:\n${text}${drawingId ? `\n[drawing ${drawingId}]` : ""}\n${workTaskLine(workCallId)}`,
 		display: true,
 		details: { workCallId, text, ...(drawingId ? { drawingId } : {}) },
 		timestamp: Date.now(),
@@ -959,13 +966,27 @@ export function danglingQuestionOf(
 	return null;
 }
 
-/** The probe→teach construction seam (chat-handler): a probe_done call in
- *  the transcript — any state — means the probe is concluded: teach. */
+/** Does this probe_done RESULT conclude the probe? Only a clean result
+ *  (not isError) whose details are not a refusal ({ok:false}: an open
+ *  question, an open canvas task, already concluded). A refused call
+ *  concludes nothing: the prober stays, the handoff steer was never queued.
+ *  The one predicate both the construction seam (hasProbeDone) and the phase
+ *  folds (core/phases.ts) read. */
+export function isProbeConclusion(result: { isError?: boolean; details?: unknown; output?: unknown }, view = false): boolean {
+	if (result.isError) return false;
+	const payload = view ? result.output : result.details;
+	return (payload as { ok?: unknown } | null | undefined)?.ok !== false;
+}
+
+/** The probe→teach construction seam (chat-handler): a probe_done call with
+ *  a CONCLUDING result (isProbeConclusion) means the probe is concluded:
+ *  teach. A refused or errored call, or one with no result yet, keeps the
+ *  prober. */
 export function hasProbeDone(messages: readonly LhMessage[]): boolean {
 	for (const m of messages) {
-		if ((m as { role?: string }).role !== "assistant") continue;
-		const assistant = m as AssistantMessage;
-		if (assistant.content.some((b) => b.type === "toolCall" && b.name === "probe_done")) return true;
+		if ((m as { role?: string }).role !== "toolResult") continue;
+		const result = m as ToolResultMessage;
+		if (result.toolName === "probe_done" && isProbeConclusion(result)) return true;
 	}
 	return false;
 }
