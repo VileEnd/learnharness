@@ -224,3 +224,15 @@ describe("sessionMarkdown", () => {
 		}
 	});
 });
+
+describe("sessionMarkdown — annotate (PR 3)", () => {
+	it("an annotate result lists the call's marks, healed like the record fold", () => {
+		const md = sessionMarkdown([
+			callMsg("m1", "a1", "annotate", { drawingId: "drw_a", marks: JSON.stringify([{ kind: "circle", target: { object: "o2" }, label: "sign slip" }, { kind: "check", target: { cells: "B2:D3" } }]) }),
+			result("m2", "a1", "annotate", undefined),
+		], { anchors: false });
+		assert.match(md, /### Marked up/);
+		assert.match(md, /- circle o2: sign slip/);
+		assert.match(md, /- check B2:D3/);
+	});
+});

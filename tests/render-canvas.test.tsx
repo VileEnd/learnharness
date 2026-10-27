@@ -302,6 +302,11 @@ describe("AnnotateCard", () => {
 		assert.match(html, /A1/);
 		assert.match(html, /B2:D3/);
 	});
+	it("AnnotateCard lists marks the model sent as a JSON string (the record keeps raw arguments)", () => {
+		const html = renderToStaticMarkup(<AnnotateCard part={part({ input: { drawingId: "drw_a", marks: JSON.stringify([{ kind: "cross", target: { cell: "C4" } }]) } })} />);
+		assert.match(html, /cross/);
+		assert.match(html, /C4/);
+	});
 	it("a refused call or a malformed input renders nothing; the renderer is registered", () => {
 		assert.equal(renderToStaticMarkup(<AnnotateCard part={part({ state: "output-error", input: { drawingId: "d", marks: [{ kind: "check", target: { cell: "A1" } }] } })} />), "");
 		assert.equal(renderToStaticMarkup(<AnnotateCard part={part({ input: { drawingId: "d" } })} />), "");

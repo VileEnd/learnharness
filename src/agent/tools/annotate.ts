@@ -7,35 +7,13 @@
  */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type, type Static } from "typebox";
-import { annotationMarkProblems, MAX_ANNOTATION_MARKS, sceneBoundingBox } from "../../core/canvas-core.ts";
+import type { Static } from "typebox";
+import { annotateInputSchema, annotationMarkProblems, healAnnotateArguments, sceneBoundingBox } from "../../core/canvas-core.ts";
 import type { DrawingStore } from "../../core/ports.ts";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
 
-const targetField = Type.Optional(
-	Type.Object(
-		{
-			object: Type.Optional(Type.String({ description: "A typed object id from the drawing's structured text, e.g. o2" })),
-			cell: Type.Optional(Type.String({ description: "One grid cell, e.g. C4" })),
-			cells: Type.Optional(Type.String({ description: "A grid range, top-left:bottom-right, e.g. B2:D3" })),
-		},
-		{ description: "Exactly ONE of object, cell, cells" },
-	),
-);
-
-export const annotateInputObject = Type.Object({
-	drawingId: Type.String({ description: "The drawing to mark, exactly as the submission names it (drw_...)" }),
-	marks: Type.Array(
-		Type.Object({
-			kind: Type.String({ description: "circle | underline | check | cross | note | arrow" }),
-			target: targetField,
-			from: targetField,
-			to: targetField,
-			label: Type.Optional(Type.String({ description: "Short caption (at most 80 characters)" })),
-		}),
-		{ minItems: 1, maxItems: MAX_ANNOTATION_MARKS, description: "1 to 20 marks" },
-	),
-});
+/** The input schema lives in core (canvas-core), so the record folds parse with exactly what the model faced. */
+export const annotateInputObject = annotateInputSchema;
 
 /** Anything that can hand back a chat record's messages (ChatStore and the practice context both do). */
 type MessageSource = { getChat(id: string): { messages: readonly unknown[] } | null };
@@ -70,6 +48,9 @@ export function annotateToolFor(ctx: AnnotateToolContext): AgentTool<typeof anno
 		description: ANNOTATE_DESCRIPTION,
 		parameters: annotateInputObject,
 		executionMode: "sequential",
+		// The nested wobbles (a stringified mark or target, null optionals) heal here; parseAnnotateInput runs
+		// the same pass on the raw record, so what the tool accepted is what every reader folds.
+		prepareArguments: (args: unknown) => healAnnotateArguments(args) as Static<typeof annotateInputObject>,
 		execute: async (_toolCallId, input: Static<typeof annotateInputObject>) => {
 			const scene = ctx.drawingStore.getScene(ctx.chatId, input.drawingId);
 			if (!scene) {

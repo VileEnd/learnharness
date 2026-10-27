@@ -32,6 +32,7 @@ import {
 	type LhMarkerMessage,
 } from "./native-messages.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { annotationMarkPlace, parseAnnotateInput } from "./canvas-core.ts";
 import type { QuestionAnswerData } from "./question-core.ts";
 
 /** The practice join context (owner-approved, 2026-10-06 export round):
@@ -174,15 +175,9 @@ function toolResultBody(result: ToolResultMessage, ctx?: MarkdownContext): { hea
 	// ANNOTATE (PR 3): the teacher's marks on the learner's drawing - the
 	// call's arguments hold the mark list; the result is an ack.
 	if (ctx !== undefined && result.toolName === "annotate") {
-		const marks = ctx.calls.get(result.toolCallId)?.args?.marks;
-		const lines = (Array.isArray(marks) ? marks : [])
-			.map((m) => {
-				const mark = m as { target?: unknown; note?: unknown; text?: unknown; label?: unknown } | null;
-				const text = [mark?.note, mark?.text, mark?.label].find((v): v is string => typeof v === "string" && v.trim().length > 0);
-				const target = typeof mark?.target === "string" ? `${mark.target}: ` : "";
-				return text !== undefined ? `- ${target}${text.trim()}` : null;
-			})
-			.filter((l): l is string => l !== null);
+		// parseAnnotateInput: the record keeps RAW arguments, healed here as at the boundary.
+		const input = parseAnnotateInput(ctx.calls.get(result.toolCallId)?.args);
+		const lines = (input?.marks ?? []).map((m) => `- ${m.kind} ${annotationMarkPlace(m)}${m.label?.trim() ? `: ${m.label.trim()}` : ""}`);
 		return { heading: "Marked up", body: lines.length > 0 ? [lines.join("\n")] : ["*annotations delivered*"] };
 	}
 
