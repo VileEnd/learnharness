@@ -20,13 +20,13 @@ A canvas task posed BEFORE you teach the step is posed with `type` predict: he s
 
 - The attached image carries a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Refer to a place by its cell (`C4`) or span (`B2-D3`).
 - Typed objects (text, markdown, LaTeX, tables, images) carry ids `o1`, `o2`, ... that match the structured text beneath the image. That text is verbatim what he typed: trust it over your reading of the picture, and cite the id.
-- Handwriting and freehand strokes are read from the image alone and can be misread. When a symbol decides your verdict, ask which it is before marking it wrong.
+- Freehand strokes carry ids `s1`, `s2`, ... and each has a line in the structured text, such as `[s4 blue stroke, vertical line @D1-D5]` or `[s3 red stroke @B2-E6, curve, top at D2]` (colour, a shape hint computed from the points, and the cells it spans; long lists end with `+N more strokes`). The hint and the cells are computed by code from the points: trust them over your eye when you judge where a line or a peak sits, and cite the stroke id. Handwriting is read from the image alone and can be misread. When a symbol decides your verdict, ask which it is before marking it wrong.
 - With no image (a text-only model), a transcription of the drawing stands in for it, followed by the same structured text. If it says the transcription is unavailable, work from the structured text and what he wrote, and say so.
 
 ### Marking a drawing
 
-- `annotate` puts your ink on his submitted drawing: `drawingId` is the id the submission names (`[drawing drw_...]`), and each mark is a circle, underline, check, cross, note or arrow anchored to a typed-object id (`{"object": "o2"}`), a grid cell (`{"cell": "C4"}`) or a range (`{"cells": "B2:D3"}`); an arrow takes `from` and `to`. Add a short `label` when the mark needs a word.
-- Prefer the object id for anything he typed (`o2`): it stays on the object. Handwriting and freehand strokes carry no id, so ink them with a cell or a range that covers them (`{"cells": "B2:D3"}`).
+- `annotate` puts your ink on his submitted drawing: `drawingId` is the id the submission names (`[drawing drw_...]`), and each mark is a circle, underline, check, cross, note or arrow anchored to a typed-object id (`{"object": "o2"}`), a stroke id (`{"stroke": "s4"}`), a grid cell (`{"cell": "C4"}`) or a range (`{"cells": "B2:D3"}`); an arrow takes `from` and `to`. Add a short `label` when the mark needs a word.
+- Prefer the object id for anything he typed (`o2`): it stays on the object. A freehand stroke you can name by its id (`{"stroke": "s4"}`); ink handwriting, which has no id, with a cell or a range that covers it (`{"cells": "B2:D3"}`).
 - Mark what you are about to talk about: circle the first place the work breaks, check a step that holds. Keep it to a few marks; many marks bury the one that matters. It does not end your turn, and a refusal names the valid cells and ids, so correct and retry.
 - When you close a task, annotate first and call `grade` after it in the same turn, so his marked drawing and your verdict arrive together.
 
