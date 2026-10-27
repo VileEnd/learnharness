@@ -780,7 +780,8 @@ export function AgentSection({
 				{/* The quizzing mechanic (owner 2026-09-27): segmented — exactly one
 				    of Multiple choice / Free recall is active; the choice swaps which
 				    quizzing tool BOTH agents carry (prober checks + teach checks).
-				    Persisted as agent.tools.explain; absent = Multiple choice. */}
+				    Persisted as agent.quizMechanic; absent resolves to Mixed, and
+				    legacy tools.explain false/true resolves to choice/free. */}
 				{(() => {
 					const current = resolveQuizMechanic(agent);
 					return (

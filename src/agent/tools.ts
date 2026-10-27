@@ -352,8 +352,8 @@ export function createProberTools(
 		searchAvailable: ctx.searchAvailable,
 	});
 	// Quizzing mechanics (owner 2026-09-27): free-recall swaps the probe
-	// quiz for the probe explain — one quizzing tool at a time, whichever
-	// the settings arm. ask stays always-on. The registry keys are the
+	// quiz for the probe explain; Mixed arms both. Whichever the settings
+	// resolve to. ask stays always-on. The registry keys are the
 	// PHASE names (probe/recall, owner 2026-10-09) — distinct from the
 	// teach tools so the schema boundary is visible to the model.
 	const mechanics = ctx.quizMechanic ?? resolveQuizMechanic({ tools: enabled as Record<string, boolean> });
@@ -478,15 +478,9 @@ export interface TeacherToolContext extends PlanToolContext {
  * future toggleables (question-tool variants, …) need no change here.
  * Absent/undefined = enabled — tests and old records see today's set.
  */
-/** The quizzing mechanics: choice = the quiz, free = explain (+ grade),
- *  mixed = both instruments (+ grade). Resolved by resolveQuizMechanic and
- *  carried on the tool contexts. Mechanics-managed, NOT individually
- *  toggleable: quiz/explain never pass through filterEnabledTools (the
- *  2026-09-19 wedge ruling stands — a quiz-less prober collapses its
- *  assessment flow). */
-
 /** Strip the mechanics keys so filterEnabledTools can never drop the
- *  quizzing tools (the derivation above is their only switch). */
+ *  quizzing tools (resolveQuizMechanic is their only switch; the 2026-09-19
+ *  wedge ruling stands — a quiz-less prober collapses its assessment flow). */
 function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
 	if (!enabled) return undefined;
 	const { explain: _e, quiz: _q, ...rest } = enabled;
@@ -515,8 +509,8 @@ export function createTeacherTools(
 	enabled?: EnabledTools,
 ): Record<string, AgentTool<any>> {
 	// Quizzing mechanics (owner 2026-09-27): free-recall swaps the teach
-	// quiz for the teach explain — one quizzing tool at a time, whichever
-	// the settings arm. ask stays always-on.
+	// quiz for the teach explain; Mixed arms both. Whichever the settings
+	// resolve to. ask stays always-on.
 	const mechanics = ctx.quizMechanic ?? resolveQuizMechanic({ tools: enabled as Record<string, boolean> });
 	// Same widening as the prober's (see above) — the conditional spread of
 	// two differently-typed literals collapses into an unusable union type.

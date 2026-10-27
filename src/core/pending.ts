@@ -79,8 +79,8 @@ export const TOGGLEABLE_TOOLS = ["research", "demo", "visual"] as const;
 
 /** The keys the settings WRITE side accepts in agent.tools: the plain
  *  toggleables PLUS the quizzing-mechanics switch (`explain: true` arms
- *  free-recall quizzing and drops the MC quiz — see quizMechanics in
- *  agent/tools.ts; owner 2026-09-27). `quiz` itself stays unwritable:
+ *  free-recall quizzing and drops the MC quiz — see resolveQuizMechanic in
+ *  core/settings-resolution.ts; owner 2026-09-27). `quiz` itself stays unwritable:
  *  mechanics-managed, never individually toggleable. */
 export const WRITABLE_TOOL_KEYS = [...TOGGLEABLE_TOOLS, "explain"] as const;
 
