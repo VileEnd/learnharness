@@ -34,7 +34,7 @@
 
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
-import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText } from "./native-messages.ts";
+import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, WORK_TOOLS } from "./native-messages.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
@@ -293,7 +293,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
  *  but the ConcludeCard reads the call's input, and output-available with
  *  output undefined renders fine). */
 function isPlaceholderResultTool(name: string): boolean {
-	return (QUESTION_TOOLS as readonly string[]).includes(name) || name === "problem";
+	return (QUESTION_TOOLS as readonly string[]).includes(name) || name === "problem" || WORK_TOOLS.includes(name as "work");
 }
 
 /** A tool call block → its view part, with the live execution layer.
@@ -445,6 +445,28 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 			});
 			return;
 		}
+		case "work-submission": {
+			// The learner's canvas submission: a user-side card keyed on the
+			// structured details (workCallId, text, drawingId).
+			out.push({
+				id: marker.id,
+				role: "user",
+				parts: [{ type: "data-work-submission", id: `ws_${marker.id}`, data: marker.details }],
+			});
+			return;
+		}
+		case "work-dismissed": {
+			out.push({
+				id: marker.id,
+				role: "user",
+				parts: [{ type: "data-work-dismissed", id: `wd_${marker.id}`, data: marker.details }],
+			});
+			return;
+		}
+		case "hint-request":
+			// The Hint button is its own feedback (the dock reveals the rung
+			// when the agent answers); the transcript shows no bubble for it.
+			return;
 		case "problem-dismissed":
 			// UI-only (the ask-style dismissal): the synthesized conclude
 			// pair — which rides the NEXT input — carries the record's face.

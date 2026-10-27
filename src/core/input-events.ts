@@ -31,11 +31,15 @@ import type { ThinkingAttempt } from "./native-messages.ts";
 import type { LhMessage } from "./native-messages.ts";
 import {
 	activeProblemOf,
+	activeWorkOf,
 	concludedByDismissalPair,
 	danglingQuestionOf,
 	newAnswerResult,
+	newHintRequest,
 	newNextMessage,
 	newProblemDismissedMarker,
+	newWorkDismissedMarker,
+	newWorkSubmission,
 	newThinkingMessage,
 	newUserMessage,
 	pendingProblemDismissalOf,
@@ -56,7 +60,13 @@ export type ChatInput =
 	 *  explicit go-ahead during the between-problems pause — the Next
 	 *  chip or Enter on an empty composer. Practice sessions only, and
 	 *  only with nothing active (mid-problem input rides the dock). */
-	| { type: "next" };
+	| { type: "next" }
+	/** A submission on the open canvas task (work/sketch): text and/or a
+	 *  drawing (decision 12 - one lane while a task is open). */
+	| { type: "work-submit"; workCallId: string; text: string; drawingId?: string }
+	/** The Hint button on the active canvas task or practice problem: the
+	 *  agent answers with the next rung only. */
+	| { type: "hint"; callId: string };
 
 /** A wake-pipeline steer delivery — same turn composition, server-origin.
  *  Wave C (2026-09-26): the idle wake carries EVERY queued marker as its
@@ -79,7 +89,10 @@ export type DismissInput =
 	/** The problem discard (practice, owner 2026-10-04): ask-style — the
 	 *  silent route appends the UI-only marker and wakes nothing; the
 	 *  conclude pair rides the user's NEXT input (inputAppends). */
-	| { type: "dismiss-problem"; problemCallId: string };
+	| { type: "dismiss-problem"; problemCallId: string }
+	/** The canvas-task discard: ask-style like dismiss-problem - the marker
+	 *  closes the task, nothing wakes. */
+	| { type: "dismiss-work"; workCallId: string };
 
 /** Parse and validate a dismissal event off a request body. */
 export function parseDismissInput(input: unknown): DismissInput {
@@ -90,6 +103,12 @@ export function parseDismissInput(input: unknown): DismissInput {
 			throw new ChatInputError("dismiss-problem input requires problemCallId");
 		}
 		return { type: "dismiss-problem", problemCallId: i.problemCallId };
+	}
+	if (i.type === "dismiss-work") {
+		if (typeof i.workCallId !== "string" || i.workCallId.length === 0) {
+			throw new ChatInputError("dismiss-work input requires workCallId");
+		}
+		return { type: "dismiss-work", workCallId: i.workCallId };
 	}
 	if (i.type !== "dismiss") throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	if (typeof i.toolCallId !== "string" || i.toolCallId.length === 0) {
@@ -139,6 +158,13 @@ export function dismissAppends(record: { messages: LhMessage[] }, input: Dismiss
 		}
 		return [newProblemDismissedMarker(input.problemCallId)];
 	}
+	if (input.type === "dismiss-work") {
+		const active = activeWorkOf(record.messages);
+		if (!active || active.toolCallId !== input.workCallId) {
+			throw new ChatInputError("dismiss-work input targets no active canvas task");
+		}
+		return [newWorkDismissedMarker(input.workCallId)];
+	}
 	const pending = danglingQuestionOf(record.messages);
 	if (!pending || pending.toolCallId !== input.toolCallId) {
 		throw new ChatInputError("dismiss input targets no pending question call");
@@ -187,6 +213,28 @@ export function parseChatInput(input: unknown): ChatInput {
 			};
 		case "next":
 			return { type: "next" };
+		case "work-submit":
+			if (typeof i.workCallId !== "string" || i.workCallId.length === 0) {
+				throw new ChatInputError("work-submit input requires workCallId");
+			}
+			if (typeof i.text !== "string") throw new ChatInputError("work-submit input requires text");
+			if (i.drawingId !== undefined && (typeof i.drawingId !== "string" || i.drawingId.length === 0)) {
+				throw new ChatInputError("work-submit drawingId must be a non-empty string");
+			}
+			if (i.text.trim().length === 0 && i.drawingId === undefined) {
+				throw new ChatInputError("work-submit input requires text or a drawing");
+			}
+			return {
+				type: "work-submit",
+				workCallId: i.workCallId,
+				text: i.text,
+				...(i.drawingId !== undefined ? { drawingId: i.drawingId as string } : {}),
+			};
+		case "hint":
+			if (typeof i.callId !== "string" || i.callId.length === 0) {
+				throw new ChatInputError("hint input requires callId");
+			}
+			return { type: "hint", callId: i.callId };
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
@@ -227,6 +275,14 @@ function verifiedAttempt(active: { input: unknown }, attempt: ThinkingAttempt): 
 	return { format: attempt.format, response: attempt.response, verdict: stripExpected(server) };
 }
 
+/** What input validation needs from outside core (injected by the
+ *  composition root: core never touches the stores). */
+export interface InputDeps {
+	/** Does a drawing submission with this id exist for the chat? Absent =
+	 *  the reference is not checked (tests, bare callers). */
+	drawingExists?: (chatId: string, drawingId: string) => boolean;
+}
+
 /**
  * The native appends an input event makes to the record (pure). The caller
  * persists them write-ahead; the agent's context is the record plus these.
@@ -237,8 +293,9 @@ function verifiedAttempt(active: { input: unknown }, attempt: ThinkingAttempt): 
  * double-answering.
  */
 export function inputAppends(
-	record: { messages: LhMessage[]; kind?: string },
+	record: { id?: string; messages: LhMessage[]; kind?: string },
 	input: ChatInput,
+	deps: InputDeps = {},
 ): LhMessage[] {
 	switch (input.type) {
 		case "text":
@@ -272,6 +329,32 @@ export function inputAppends(
 				throw new ChatInputError("next input requires no active problem");
 			}
 			return [...dismissalConclusion(record), newNextMessage()];
+		}
+		case "work-submit": {
+			const active = activeWorkOf(record.messages);
+			if (!active || active.toolCallId !== input.workCallId) {
+				throw new ChatInputError("work-submit input targets no active canvas task");
+			}
+			// A side question (quiz/explain/exercise/ask) answers first: a
+			// submission landing on a dangling call would strand it.
+			if (danglingQuestionOf(record.messages) !== null) {
+				throw new ChatInputError("work-submit input refused: answer the open side question first");
+			}
+			if (input.drawingId !== undefined && deps.drawingExists && !deps.drawingExists(record.id ?? "", input.drawingId)) {
+				throw new ChatInputError(`work-submit input names an unknown drawing: ${input.drawingId}`);
+			}
+			return [newWorkSubmission(input.workCallId, input.text, input.drawingId)];
+		}
+		case "hint": {
+			const work = activeWorkOf(record.messages);
+			const problem = activeProblemOf(record.messages);
+			if (work?.toolCallId !== input.callId && problem?.toolCallId !== input.callId) {
+				throw new ChatInputError("hint input targets no active canvas task or problem");
+			}
+			if (danglingQuestionOf(record.messages) !== null) {
+				throw new ChatInputError("hint input refused: answer the open side question first");
+			}
+			return [newHintRequest(input.callId)];
 		}
 	}
 }

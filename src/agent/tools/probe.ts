@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import { probeDoneInputSchema, PROBE_DONE_ACK_TEXT } from "../../core/contracts.ts";
-import { danglingQuestionOf, hasProbeDone, type LhMessage } from "../../core/native-messages.ts";
+import { activeWorkOf, danglingQuestionOf, hasProbeDone, type LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 import { buildProbeHandoffSteer, type SteerMessage } from "../../core/contracts.ts";
 
@@ -71,6 +71,14 @@ export function probeDoneTool(ctx: ProbeDoneContext): Record<string, AgentTool<a
 						error:
 							"A question is still open — resolve it (or let him answer) before concluding the probe. " +
 							"probe_done only fires with no question outstanding.",
+					};
+				}
+				if (activeWorkOf(record.messages) !== null) {
+					return {
+						ok: false,
+						error:
+							"A canvas task is still open - let the learner finish it (grade it, or he dismisses it) " +
+							"before concluding the probe. probe_done only fires with no sketch outstanding.",
 					};
 				}
 				if (probeConcluded(record.messages)) {

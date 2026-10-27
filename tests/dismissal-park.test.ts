@@ -30,6 +30,8 @@ const { beginTurn, endTurn, isTurnRunning } = await import("../src/server/turn-l
 const { subscribe } = await import("../src/core/events.ts");
 const {
 	activeProblemOf,
+	activeWorkOf,
+	endsInDismissal,
 	answeredCallIds,
 	danglingQuestionOf,
 	dismissedAnswer,
@@ -77,6 +79,29 @@ function chatWithActiveProblem(): string {
 		],
 	} as never;
 	chatStore.saveMessages(chat.id, [assistant]);
+	return chat.id;
+}
+
+/** A record with an OPEN canvas task (cleanly-acked work pose). */
+function chatWithOpenWork(): string {
+	const chat = chatStore.createChat("park: open work");
+	chatStore.saveMessages(chat.id, [
+		{
+			id: newMessageId(),
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call-work-1", name: "work", arguments: { question: "Sketch it", correctAnswer: "a" } }],
+		} as never,
+		{
+			id: newMessageId(),
+			role: "toolResult",
+			toolCallId: "call-work-1",
+			toolName: "work",
+			content: [{ type: "text", text: "Canvas task posed" }],
+			details: null,
+			isError: false,
+			timestamp: 1,
+		} as never,
+	]);
 	return chat.id;
 }
 
@@ -132,6 +157,16 @@ describe("applyParkedDismissal — against real records", () => {
 		assert.equal(activeProblemOf(chatStore.getChat(chat)!.messages), null);
 	});
 
+	it("applies a parked canvas-task dismissal: closes it and pauses the session", () => {
+		const chat = chatWithOpenWork();
+		assert.equal(activeWorkOf(chatStore.getChat(chat)!.messages)?.toolCallId, "call-work-1");
+		parkDismissal(chat, { type: "dismiss-work", workCallId: "call-work-1" });
+		applyParkedDismissal(chatStore, chat);
+		const messages = chatStore.getChat(chat)!.messages;
+		assert.equal(activeWorkOf(messages), null);
+		assert.equal(endsInDismissal(messages), true);
+	});
+
 	it("drops a park that targets nothing (never materialized — silence)", () => {
 		const chat = chatWithDanglingQuiz("drop");
 		const before = chatStore.getChat(chat)!.messages.length;
@@ -182,6 +217,22 @@ describe("the dismiss route — the park contract (202)", () => {
 		endTurn(chat);
 		assert.equal(danglingQuestionOf(chatStore.getChat(chat)!.messages), null);
 		assert.equal(takeParkedDismissal(chat), null);
+	});
+
+	it("dismiss-work with no turn appends the marker and wakes nothing (200)", async () => {
+		const chat = chatWithOpenWork();
+		const dismissRoute = await import("../app/api/chats/[id]/dismiss/route.ts");
+		const res = await dismissRoute.POST(
+			new Request(`http://test/api/chats/${chat}/dismiss`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ input: { type: "dismiss-work", workCallId: "call-work-1" } }),
+			}),
+			{ params: Promise.resolve({ id: chat }) },
+		);
+		assert.equal(res.status, 200);
+		assert.equal(activeWorkOf(chatStore.getChat(chat)!.messages), null);
+		assert.ok(!isTurnRunning(chat));
 	});
 
 	it("still refuses honestly (400) with no turn and nothing dangling", async () => {

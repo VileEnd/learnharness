@@ -75,6 +75,9 @@ export interface LhMarkerMessage {
 		| "practice-thinking"
 		| "practice-next"
 		| "problem-dismissed"
+		| "work-submission"
+		| "work-dismissed"
+		| "hint-request"
 		| "compaction";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
@@ -452,6 +455,122 @@ export function concludedByDismissalPair(
 	];
 }
 
+// ─── the canvas task (work / sketch) ─────────────────────────────────────────
+
+/** The two canvas-task tools: `work` (teacher) and `sketch` (prober). One
+ *  canvas task is open at a time; submissions are markers, `grade` or a
+ *  dismissal closes it. */
+export const WORK_TOOLS = ["work", "sketch"] as const;
+
+/** The learner's submission on the open canvas task: the same "Your
+ *  thinking" label as a practice submission, plus a `[drawing <id>]` line
+ *  when a drawing rides along. `details` keeps the raw payload for the
+ *  transcript card. */
+export function newWorkSubmission(workCallId: string, text: string, drawingId?: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "work-submission",
+		content: `${THINKING_LABEL}:\n${text}${drawingId ? `\n[drawing ${drawingId}]` : ""}`,
+		display: true,
+		details: { workCallId, text, ...(drawingId ? { drawingId } : {}) },
+		timestamp: Date.now(),
+	};
+}
+
+/** What the model reads when the learner discards the open canvas task. */
+export const WORK_DISMISSED_TEXT = "The learner dismissed the open canvas task without finishing it.";
+
+/** The canvas-task dismissal (ask-style discard): closes the task and
+ *  pauses the session (endsInDismissal); wakes nothing. */
+export function newWorkDismissedMarker(workCallId: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "work-dismissed",
+		content: WORK_DISMISSED_TEXT,
+		display: true,
+		details: { workCallId },
+		timestamp: Date.now(),
+	};
+}
+
+/** The model-facing text of a hint request. */
+export const HINT_REQUEST_TEXT = "Hint, please — give the next rung only.";
+
+/** The learner asked for the next rung of help on the active canvas task or
+ *  practice problem. */
+export function newHintRequest(callId: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "hint-request",
+		content: HINT_REQUEST_TEXT,
+		display: true,
+		details: { callId },
+		timestamp: Date.now(),
+	};
+}
+
+/** The active canvas task: the NEWEST cleanly-acked work/sketch call that no
+ *  clean `grade` call (its `question` is the call id) and no dismissal marker
+ *  has closed. Honest activation, as for problems: errored and dangling
+ *  poses never count. */
+export function activeWorkOf(
+	messages: readonly LhMessage[],
+): { toolCallId: string; tool: "work" | "sketch"; input: unknown } | null {
+	const clean = cleanToolCallIds(messages);
+	const closed = new Set<string>();
+	for (const m of messages) {
+		const role = (m as { role?: string }).role;
+		if (role === "custom") {
+			const marker = m as LhMarkerMessage;
+			if (marker.customType === "work-dismissed") {
+				const id = (marker.details as { workCallId?: unknown } | null)?.workCallId;
+				if (typeof id === "string") closed.add(id);
+			}
+		} else if (role === "assistant") {
+			for (const block of (m as AssistantMessage).content) {
+				if (block.type !== "toolCall" || block.name !== "grade" || !clean.has(block.id)) continue;
+				const question = (block.arguments as { question?: unknown } | undefined)?.question;
+				if (typeof question === "string") closed.add(question);
+			}
+		}
+	}
+	for (let mi = messages.length - 1; mi >= 0; mi--) {
+		const m = messages[mi]!;
+		if ((m as { role?: string }).role !== "assistant") continue;
+		const assistant = m as AssistantMessage;
+		for (let bi = assistant.content.length - 1; bi >= 0; bi--) {
+			const block = assistant.content[bi]!;
+			if (block.type !== "toolCall" || !(WORK_TOOLS as readonly string[]).includes(block.name)) continue;
+			if (!clean.has(block.id)) continue;
+			return closed.has(block.id) ? null : { toolCallId: block.id, tool: block.name as "work" | "sketch", input: block.arguments };
+		}
+	}
+	return null;
+}
+
+/** The submissions made on one canvas task, in order. */
+export function workSubmissionsOf(
+	messages: readonly LhMessage[],
+	workCallId: string,
+): Array<{ text: string; drawingId?: string }> {
+	const out: Array<{ text: string; drawingId?: string }> = [];
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "custom") continue;
+		const marker = m as LhMarkerMessage;
+		if (marker.customType !== "work-submission") continue;
+		const d = marker.details as { workCallId?: unknown; text?: unknown; drawingId?: unknown } | null;
+		if (d?.workCallId !== workCallId) continue;
+		out.push({
+			text: typeof d.text === "string" ? d.text : "",
+			...(typeof d.drawingId === "string" ? { drawingId: d.drawingId } : {}),
+		});
+	}
+	return out;
+}
+
 /** The active-problem fold (the conclude-before-next-problem gate): the
  *  NEWEST problem tool call with nothing concluding after it — either a
  *  conclude call or a dismissal marker deactivates. The ack result at pose
@@ -785,7 +904,9 @@ function isDismissedResult(m: LhMessage): boolean {
  *  user message flips it off by changing the record. */
 export function endsInDismissal(messages: readonly LhMessage[]): boolean {
 	const last = messages[messages.length - 1];
-	return last !== undefined && isDismissedResult(last);
+	if (last === undefined) return false;
+	if ((last as { role?: string }).role === "custom" && (last as LhMarkerMessage).customType === "work-dismissed") return true;
+	return isDismissedResult(last);
 }
 
 export function needsContinuation(messages: readonly LhMessage[]): boolean {
@@ -831,6 +952,12 @@ export function needsContinuation(messages: readonly LhMessage[]): boolean {
 		(m) => m.toolName === PRACTICE_PROBLEM_TOOL && !m.isError && m.details == null,
 	);
 	if (posedProblem) return false;
+	// CANVAS TASKS: the same law - the pose ack terminates the turn on
+	// purpose; the learner's first submission is the next turn.
+	const posedWork = results.some(
+		(m) => (WORK_TOOLS as readonly string[]).includes(m.toolName) && !m.isError && m.details == null,
+	);
+	if (posedWork) return false;
 	const answered = new Set(results.map((m) => m.toolCallId));
 	const calls = (content as Array<{ type?: string; id?: string }>).filter(
 		(b) => b.type === "toolCall" && typeof b.id === "string",

@@ -20,7 +20,7 @@ import { sendToUserTool } from "./tools/send-to-user.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
-import { SEND_TO_USER_TOOL, toLlmMessages } from "../core/native-messages.ts";
+import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS } from "../core/native-messages.ts";
 
 /**
  * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
@@ -152,7 +152,11 @@ export interface AgentBuildOptions {
  * (owner ruling 2026-09-25: no maximum-agent-turns net on the teaching
  * turn).
  */
-function makeQuestionStopper(turnEnders: readonly string[] = QUESTION_TOOLS) {
+/** Teach/probe poses whose resolved call ends the turn: the question tools
+ *  and the canvas tasks (work/sketch ack and wait for the learner). */
+const TEACH_TURN_ENDERS: readonly string[] = [...QUESTION_TOOLS, ...WORK_TOOLS];
+
+function makeQuestionStopper(turnEnders: readonly string[] = TEACH_TURN_ENDERS) {
 	return (context: {
 		message: { content: Array<{ type: string; id?: string; name?: string }> };
 		toolResults: Array<{ toolCallId: string; isError?: boolean }>;
@@ -182,7 +186,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	const engine = opts.engine ?? piEngineFor(kind as "prober" | "teacher");
 	// Practice poses end the turn the way questions do, mixed batch included
 	// (upstream 87b04cc idea). Later turn-ending tools join with one name here.
-	const stopper = makeQuestionStopper(kind === "practice" ? PRACTICE_TURN_ENDERS : QUESTION_TOOLS);
+	const stopper = makeQuestionStopper(kind === "practice" ? PRACTICE_TURN_ENDERS : TEACH_TURN_ENDERS);
 	const systemPrompt = opts.promptSwitches
 		? composeInstructions(kind, opts.promptSwitches)
 		: composedInstructions[kind]!;
