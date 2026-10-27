@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ArrowDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
@@ -10,6 +10,9 @@ import { ToolContentResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import {
 	buildAnswer,
+	buildExerciseAnswer,
+	gradeExercise,
+	parseExerciseInput,
 	repairMathForDisplay,
 	normalizeQuizType,
 	CONFIDENCE_STOPS,
@@ -28,6 +31,7 @@ import {
 	type AnswerRequest,
 	type AskToolInput,
 	type DockSelection,
+	type ExerciseToolInput,
 	type ExplainToolInput,
 	type QuestionAnswerData,
 	type QuestionFormDraft,
@@ -38,6 +42,14 @@ import {
 	type Phase3,
 } from "@/src/core";
 import { CONFIDENCE_COLORS, confidenceRailStyle } from "@/components/confidence-rail";
+import { ExerciseWidget } from "@/components/exercise/exercise-widget";
+import {
+	emptyResponse,
+	exerciseAttemptReducer,
+	hasAnyText,
+	initialAttemptState,
+	type ExerciseAttemptState,
+} from "@/components/exercise/attempt-state";
 
 /**
  * The question dock — a pending quiz/ask REPLACES the chat composer: the
@@ -60,9 +72,9 @@ import { CONFIDENCE_COLORS, confidenceRailStyle } from "@/components/confidence-
  */
 
 export interface QuestionDockProps {
-	toolName: "quiz" | "probe" | "ask_user_question" | "explain" | "recall";
+	toolName: "quiz" | "probe" | "ask_user_question" | "explain" | "recall" | "exercise" | "assess";
 	toolCallId: string;
-	input: QuizToolInput | AskToolInput | ExplainToolInput;
+	input: QuizToolInput | AskToolInput | ExplainToolInput | ExerciseToolInput;
 	/** Collapse state, owned by the DockOverlay (it drives the shell's height morph). */
 	expanded: boolean;
 	/**
@@ -96,6 +108,9 @@ export interface QuestionDockProps {
 	 *  and say so in the hint row. The server registry is the real gate;
 	 *  this is the affordance. */
 	compactionRunning?: boolean;
+	/** Exercise calls only: the attempt-loop state to start from (recovery,
+	 *  and the seam the render tests drive). Fresh questions start empty. */
+	initialAttempt?: ExerciseAttemptState;
 }
 
 export function QuestionDock({
@@ -112,13 +127,20 @@ export function QuestionDock({
 	phase = "probe",
 	dictationClaim = true,
 	compactionRunning = false,
+	initialAttempt,
 }: QuestionDockProps) {
 	// The probe-phase names (owner, 2026-10-09) canonicalize onto their
 	// teach twins for every dock concern — parse dispatch, labels, kinds:
 	// the probe quiz ("probe") is quiz-shaped, the probe free-recall
 	// ("recall") is explain-shaped. Old records keep the teach names.
 	const canonical =
-		toolName === "probe" ? "quiz" : toolName === "recall" ? "explain" : toolName;
+		toolName === "probe"
+			? "quiz"
+			: toolName === "recall"
+				? "explain"
+				: toolName === "assess"
+					? "exercise"
+					: toolName;
 	// The chip's display name carries the tool's OWN name (owner
 	// 2026-10-09): probe-phase questions label Probe/Recall in the
 	// composer; teach tools keep the standing labels.
@@ -129,8 +151,17 @@ export function QuestionDock({
 	// bridge), so this is pure defense in depth — but it is STRUCTURAL now:
 	// anything that slips through renders the quiet fallback, never a
 	// crash on `.map` over model-authored bytes.
+	const exerciseParse = canonical === "exercise" ? parseExerciseInput(input) : undefined;
 	const parsed =
-		canonical === "quiz" ? parseQuizInput(input) : canonical === "explain" ? parseExplainInput(input) : parseAskInput(input);
+		canonical === "quiz"
+			? parseQuizInput(input)
+			: canonical === "explain"
+				? parseExplainInput(input)
+				: exerciseParse
+					? exerciseParse.ok
+						? exerciseParse.input
+						: undefined
+					: parseAskInput(input);
 	if (!parsed) {
 		return (
 			<div data-testid="malformed-question" className="rounded-xl border border-dashed bg-card/60 p-3 text-sm text-muted-foreground">
@@ -168,6 +199,7 @@ export function QuestionDock({
 					onEscape={onEscape}
 					dictationClaim={dictationClaim}
 					compactionRunning={compactionRunning}
+					initialAttempt={initialAttempt}
 				/>
 			</div>
 		</>
@@ -199,7 +231,7 @@ export function QuestionDockBar({
 	label,
 	toolLabel,
 }: {
-	toolName: "quiz" | "ask_user_question" | "explain";
+	toolName: "quiz" | "ask_user_question" | "explain" | "exercise";
 	question: string;
 	onExpand: () => void;
 	variant?: "collapsed" | "reveal";
@@ -242,7 +274,7 @@ export function QuestionDockBar({
 			<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				{label ??
 							toolLabel ??
-							(toolName === "quiz" ? "Check" : toolName === "explain" ? "Explain" : "Question")}
+							(toolName === "quiz" ? "Check" : toolName === "explain" ? "Explain" : toolName === "exercise" ? "Exercise" : "Question")}
 			</span>
 			<span className="min-w-0 flex-1 truncate text-muted-foreground">{teaserText(question)}</span>
 			<span className="flex shrink-0 items-center gap-1 text-xs font-medium">
@@ -265,8 +297,12 @@ function QuestionDockForm({
 	onEscape,
 	dictationClaim = true,
 	compactionRunning = false,
+	initialAttempt,
 }: Omit<QuestionDockProps, "expanded" | "onExpand" | "reveal">) {
 	const kind = toolQuestionKind(toolName);
+	// Exercise calls (exercise / assess): the widget replaces the option list.
+	const exInput = kind === "exercise" ? (input as ExerciseToolInput) : null;
+	const requireThinking = (input as { requireThinking?: boolean }).requireThinking === true;
 
 	// Canonical QuestionData, built once per question. Quiz options are
 	// deterministically shuffled (seeded by toolCallId) so position never leaks
@@ -278,7 +314,9 @@ function QuestionDockForm({
 		const explainInput = kind === "explain" ? (input as ExplainToolInput) : null;
 		const multi = input instanceof Object && "multiSelect" in input ? input.multiSelect === true : false;
 		const mode: QuestionMode =
-			kind === "quiz"
+			kind === "exercise"
+				? "single-select"
+				: kind === "quiz"
 				? multi
 					? "multi-select"
 					: "single-select"
@@ -340,6 +378,19 @@ function QuestionDockForm({
 	// between questions, so each question starts fresh at 50.
 	const [confIdx, setConfIdx] = useState<number>(initialDraft?.confidenceIndex ?? DEFAULT_CONFIDENCE_INDEX);
 	const selectMode: SelectMode = qd.mode === "multi-select" ? "multi-select" : "single-select";
+	// The attempt loop (exercise calls): Check → marks → edit → Check again.
+	const [attempt, dispatch] = useReducer(
+		exerciseAttemptReducer,
+		undefined,
+		() => initialAttempt ?? initialAttemptState(exInput ? emptyResponse(exInput.format, exInput.spec) : null),
+	);
+	const hints = exInput?.hints ?? [];
+	const hintsLeft = Math.max(0, hints.length - attempt.hintsUsed);
+	// requireThinking gates Check / Submit / Show answer on the thinking field
+	// (the field only exists in the select-mode and exercise docks); "I don't
+	// know" stays available.
+	const thinkingOk = !requireThinking || qd.mode === "text" || thinking.trim().length > 0;
+	const hasConfidence = kind === "quiz" || kind === "exercise";
 
 	// The PRIMARY dictation input (owner, STT round 1): while a question
 	// waits, dictated finals land HERE, never in the hidden composer — text
@@ -372,12 +423,32 @@ function QuestionDockForm({
 	const toggle = (idx: number) => setSel(toggleOption(selectMode, sel, idx));
 
 	const canSubmit =
-		qd.mode === "text"
-			? text.trim().length > 0
-			: sel.dontKnow || (sel.otherSelected && other.trim().length > 0) || sel.selected.size > 0;
+		kind === "exercise"
+			? sel.dontKnow || thinkingOk
+			: (qd.mode === "text"
+					? text.trim().length > 0
+					: sel.dontKnow || (sel.otherSelected && other.trim().length > 0) || sel.selected.size > 0) &&
+				(sel.dontKnow || thinkingOk);
+
+	// Check grades locally and keeps only the marks; a correct Check closes
+	// the loop (the effect below submits).
+	const canCheck = !!exInput && !sel.dontKnow && thinkingOk && !compactionRunning && !attempt.submitting && hasAnyText(attempt.response);
+	const check = () => {
+		if (!exInput || !canCheck) return;
+		dispatch({
+			type: "check",
+			verdict: gradeExercise(exInput.format, exInput.spec, attempt.response),
+			confidence: CONFIDENCE_STOPS[confIdx],
+		});
+	};
+	const canClose = !!exInput && thinkingOk && !compactionRunning && !attempt.submitting;
 
 	const submit = () => {
 		if (!canSubmit || compactionRunning) return;
+		if (exInput && !sel.dontKnow) {
+			check();
+			return;
+		}
 		/* FINISH DICTATION FIRST (owner, 2026-10-01): Enter may arrive while
 		 * a run is live with reasoning still in Deepgram's hands. Stop the
 		 * run, let the last finals land in the target field, and only then
@@ -392,6 +463,33 @@ function QuestionDockForm({
 	};
 	const doSubmit = () => {
 		if (!canSubmit) return;
+		if (exInput) {
+			onSaveDraft?.({
+				selection: { ...sel, selected: new Set(sel.selected) },
+				thinking: thinkingTextRef.current,
+				other,
+				text: answerTextRef.current,
+				confidenceIndex: confIdx,
+			});
+			onSubmit(
+				buildExerciseAnswer(
+					exInput,
+					attempt.response,
+					{
+						dontKnow: sel.dontKnow,
+						thinking: thinkingTextRef.current.trim() || undefined,
+						confidence: CONFIDENCE_STOPS[confIdx],
+						attempts: attempt.attempts,
+						hintsUsed: attempt.hintsUsed,
+						gaveUp: attempt.gaveUp,
+						firstAttempt: attempt.firstAttempt,
+					},
+					toolName,
+					toolCallId,
+				),
+			);
+			return;
+		}
 		const req: AnswerRequest = {
 			dontKnow: sel.dontKnow,
 			values: [...sel.selected].map((i) => qd.options[i]!.value),
@@ -413,6 +511,16 @@ function QuestionDockForm({
 		});
 		onSubmit(buildAnswer(qd, req, toolName));
 	};
+
+	// The loop closed (correct Check, Submit, Show answer): send the answer
+	// once, dictation finished first like every submit.
+	const finalSent = useRef(false);
+	useEffect(() => {
+		if (!attempt.submitting || finalSent.current) return;
+		finalSent.current = true;
+		if (!isDictationActive()) doSubmit();
+		else void finishDictation().then(doSubmit);
+	});
 
 	/* ENTER SUBMITS FROM ANYWHERE (owner round 6, 2026-10-05): the same
 	 * law as the practice dock — dictated answers rarely focus the field.
@@ -484,9 +592,22 @@ function QuestionDockForm({
 	};
 
 	useEffect(() => {
-		if (!active || rowCount === 0) return;
+		if (!active || (rowCount === 0 && kind !== "exercise")) return;
 		const onKeyDown = (e: KeyboardEvent) => {
 			const t = e.target as HTMLElement | null;
+			// Exercise docks: the widget's inputs are a typing surface and Tab
+			// walks its cells natively, so the row machine is off; only the
+			// global confidence cycling (←/→, outside typing) stays.
+			if (kind === "exercise") {
+				const typingHere =
+					!!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) && (t as HTMLInputElement).type !== "range";
+				if (typingHere || e.altKey || e.metaKey || e.ctrlKey) return;
+				if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !sel.dontKnow) {
+					e.preventDefault();
+					setConfIdx((i) => Math.min(CONFIDENCE_STOPS.length - 1, Math.max(0, i + (e.key === "ArrowRight" ? 1 : -1))));
+				}
+				return;
+			}
 			// A TYPING field is where keys mean text (owner round 4): the
 			// thinking/answer fields, search boxes, renames — never a range
 			// input, whose focus after a click or drag must not kill the
@@ -582,6 +703,8 @@ function QuestionDockForm({
 									: "Check"
 									: kind === "explain"
 										? "Explain"
+										: kind === "exercise"
+											? "Exercise"
 											: "Question"}
 					{qd.mode === "multi-select" && " · select all that apply"}
 				</div>
@@ -594,7 +717,49 @@ function QuestionDockForm({
 					</div>
 				)}
 
-				{qd.mode !== "text" && (
+				{exInput && (
+					<div data-testid="exercise-block" className="flex flex-col gap-2 pb-2">
+						<ExerciseWidget
+							format={exInput.format}
+							spec={exInput.spec}
+							toolCallId={toolCallId}
+							value={attempt.response}
+							onChange={(response) => dispatch({ type: "edit", response })}
+							review={attempt.verdict}
+							marksOnly
+							readOnly={sel.dontKnow || attempt.submitting}
+						/>
+						{hints.slice(0, attempt.hintsUsed).map((h, i) => (
+							<div key={i} data-testid="exercise-hint" className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+								<span className="font-medium text-foreground">Hint {i + 1}: </span>
+								<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{h}</ToolContentResponse>
+							</div>
+						))}
+						<button
+							type="button"
+							onClick={() =>
+								setSel((prev) => ({ ...prev, selected: new Set(), otherSelected: false, dontKnow: !prev.dontKnow }))
+							}
+							aria-pressed={sel.dontKnow}
+							className={cn(
+								"flex items-start gap-3 rounded-lg border border-dashed px-3 py-2 text-left text-sm outline-none transition-colors",
+								sel.dontKnow ? "border-primary text-foreground" : "text-muted-foreground",
+							)}
+						>
+							<span
+								className={cn(
+									"mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
+									sel.dontKnow ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
+								)}
+							>
+								{sel.dontKnow && <span className="size-1.5 rounded-full bg-current" />}
+							</span>
+							<span>I don't know</span>
+						</button>
+					</div>
+				)}
+
+				{kind !== "exercise" && qd.mode !== "text" && (
 					<div className="flex flex-col gap-2 pb-2" role={qd.mode === "multi-select" ? "group" : "radiogroup"}>
 						{qd.options.map((opt, i) => {
 							const isSel = sel.selected.has(i);
@@ -759,7 +924,7 @@ function QuestionDockForm({
 				app-wide). Clicking and dragging are native. "I don't know"
 				GRAYS it out — the layout holds, no value is sent, the IDK
 				signal stands alone. */}
-			{kind === "quiz" && (
+			{hasConfidence && (
 				<div className="border-t border-border/60 px-4 py-2.5 max-md:shrink-0">
 					<div className="flex items-center gap-3">
 						<span
@@ -927,18 +1092,63 @@ function QuestionDockForm({
 							)}
 						/>
 					)}
-					<div className="flex items-center justify-between gap-2 p-1">
-						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
+					{exInput && !sel.dontKnow ? (
+						<div className="flex flex-wrap items-center justify-between gap-2 p-1">
+							<div className="flex flex-wrap items-center gap-1.5">
+								{hintsLeft > 0 && (
+									<Button
+										type="button"
+										variant="outline"
+										disabled={attempt.submitting}
+										onClick={() => dispatch({ type: "hint", total: hints.length })}
+										className="h-9 rounded-[6px] px-3 text-sm"
+									>
+										{`Hint (${hintsLeft} left)`}
+									</Button>
+								)}
+								<Button
+									type="button"
+									variant="outline"
+									disabled={!canClose}
+									onClick={() => dispatch({ type: "giveUp" })}
+									className="h-9 rounded-[6px] px-3 text-sm"
+								>
+									Show answer
+								</Button>
+								{attempt.attempts > 0 && (
+									<Button
+										type="button"
+										variant="outline"
+										disabled={!canClose}
+										onClick={() => dispatch({ type: "submit" })}
+										className="h-9 rounded-[6px] px-3 text-sm"
+									>
+										Submit
+									</Button>
+								)}
+							</div>
+							<Button
+								type="submit"
+								disabled={!canCheck}
+								className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
+							>
+								Check
+							</Button>
+						</div>
+					) : (
+						<div className="flex items-center justify-between gap-2 p-1">
+							<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
 								{compactionRunning ? "compacting session…" : coarse ? "" : "↵ submits · ⇧↵ newline"}
-						</span>
-						<Button
-							type="submit"
-							disabled={!canSubmit || compactionRunning}
-							className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
-						>
-							Submit answer
-						</Button>
-					</div>
+							</span>
+							<Button
+								type="submit"
+								disabled={!canSubmit || compactionRunning}
+								className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
+							>
+								Submit answer
+							</Button>
+						</div>
+					)}
 				</div>
 			</form>
 		</div>

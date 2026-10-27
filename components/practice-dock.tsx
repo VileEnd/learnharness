@@ -8,6 +8,14 @@ import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { cn } from "@/lib/utils";
+import { ExerciseWidget } from "@/components/exercise/exercise-widget";
+import { emptyResponse, hasAnyText } from "@/components/exercise/attempt-state";
+import { gradeExercise, parseExerciseInput, stripExpected, type ExerciseVerdict, type ThinkingAttempt } from "@/src/core";
+
+/** Before the hint input lands (PR 2) a hint is asked for in words. */
+export const HINT_REQUEST_TEXT = "I'd like a hint.";
+/** The thinking sent with a Check that carries no words of its own. */
+const CHECK_TEXT = "Here is my attempt.";
 
 /**
  * The practice dock (practice sessions, owner design 2026-10-04): an
@@ -34,12 +42,12 @@ export interface PracticeDockProps {
 	problemCallId: string;
 	/** The pose's arguments — only the statement is the learner's (the
 	 *  mode badge would edge toward announcing the target; dropped). */
-	input: { statement: string };
+	input: { statement: string; format?: unknown; spec?: unknown };
 	/** Collapse state, owned by the DockOverlay. */
 	expanded: boolean;
 	onExpand: () => void;
 	/** text — POST {type:"thinking"} (one lane; the register is read from the text). */
-	onSubmit: (text: string) => void;
+	onSubmit: (text: string, attempt?: ThinkingAttempt) => void;
 	/** Escape in the thinking field stops dictation (threaded from the page). */
 	onEscape?: () => void;
 	/** Compaction is running for this chat (owner round 14): the thinking
@@ -47,10 +55,20 @@ export interface PracticeDockProps {
 	 *  and say so in the hint row. The server registry is the real gate;
 	 *  this is the affordance. */
 	compactionRunning?: boolean;
+	/** Exercise problems: the attempt to start from (marks only; the seam
+	 *  the render tests drive). Fresh problems start empty. */
+	initialAttempt?: { response: unknown; verdict?: ExerciseVerdict };
 }
 
-export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onEscape, compactionRunning = false }: PracticeDockProps) {
+export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onEscape, compactionRunning = false, initialAttempt }: PracticeDockProps) {
 	const [thinking, setThinking] = useState("");
+	// An interactive problem (`format` + `spec` on the pose): the widget sits
+	// under the statement; Check grades locally, shows ✓/✗ without the key and
+	// sends the attempt with the thinking. The key shows only after conclude.
+	const parsedEx = input.format !== undefined ? parseExerciseInput({ question: input.statement, explanation: "", hints: [], ...input }) : undefined;
+	const ex = parsedEx?.ok ? parsedEx.input : undefined;
+	const [response, setResponse] = useState<unknown>(() => initialAttempt?.response ?? (ex ? emptyResponse(ex.format, ex.spec) : null));
+	const [verdict, setVerdict] = useState<ExerciseVerdict | undefined>(initialAttempt?.verdict);
 	// Ref MIRRORS the field ("nothing gets lost", the question-dock
 	// discipline): a submit resuming after `await finishDictation()` reads
 	// the tail, never a stale closure.
@@ -79,6 +97,22 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 		thinkingRef.current = "";
 		setThinking("");
 		onSubmit(text);
+	};
+
+	const canCheck = !!ex && !compactionRunning && hasAnyText(response);
+	const check = () => {
+		if (!ex || !canCheck) return;
+		const full = gradeExercise(ex.format, ex.spec, response);
+		const marks = stripExpected(full);
+		setVerdict(marks);
+		const text = thinkingRef.current.trim() || CHECK_TEXT;
+		thinkingRef.current = "";
+		setThinking("");
+		onSubmit(text, { format: ex.format, response, verdict: marks });
+	};
+	const askForHint = () => {
+		if (compactionRunning) return;
+		onSubmit(HINT_REQUEST_TEXT);
 	};
 
 	/* ENTER SUBMITS FROM ANYWHERE (owner round 6, 2026-10-05): dictation
@@ -115,6 +149,19 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 				<div className="lh-prose text-[15px]">
 					<ToolContentResponse>{input.statement}</ToolContentResponse>
 				</div>
+				{ex && (
+					<div className="mt-2">
+						<ExerciseWidget
+							format={ex.format}
+							spec={ex.spec}
+							toolCallId={problemCallId}
+							value={response}
+							onChange={setResponse}
+							review={verdict}
+							marksOnly
+						/>
+					</div>
+				)}
 			</div>
 
 			{/* The learner's half: Enter SENDS (owner round 2, 2026-10-05);
@@ -164,15 +211,40 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 					<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
 						{compactionRunning ? "compacting session…" : coarse ? "" : "↵ submits · ⇧↵ newline"}
 					</span>
-					<Button
-						type="button"
-						data-testid="practice-send"
-						disabled={thinking.trim().length === 0 || compactionRunning}
-						onClick={() => submit()}
-						className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
-					>
-						Submit thinking
-					</Button>
+					<div className="ml-auto flex items-center gap-1.5">
+						{/* Hint: the agent answers with the next rung only. */}
+						<Button
+							type="button"
+							variant="outline"
+							data-testid="practice-hint"
+							disabled={compactionRunning}
+							onClick={askForHint}
+							className="h-9 rounded-[6px] px-3 text-sm"
+						>
+							Hint
+						</Button>
+						{ex && (
+							<Button
+								type="button"
+								variant="outline"
+								data-testid="practice-check"
+								disabled={!canCheck}
+								onClick={check}
+								className="h-9 rounded-[6px] px-3 text-sm"
+							>
+								Check
+							</Button>
+						)}
+						<Button
+							type="button"
+							data-testid="practice-send"
+							disabled={thinking.trim().length === 0 || compactionRunning}
+							onClick={() => submit()}
+							className="h-9 rounded-[6px] px-3.5 text-sm font-medium"
+						>
+							Submit thinking
+						</Button>
+					</div>
 				</div>
 			</div>
 		</div>
