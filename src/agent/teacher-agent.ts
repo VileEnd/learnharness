@@ -149,14 +149,14 @@ export interface AgentBuildOptions {
  * (owner ruling 2026-09-25: no maximum-agent-turns net on the teaching
  * turn).
  */
-function makeQuestionStopper() {
+function makeQuestionStopper(turnEnders: readonly string[] = QUESTION_TOOLS) {
 	return (context: {
 		message: { content: Array<{ type: string; id?: string; name?: string }> };
 		toolResults: Array<{ toolCallId: string; isError?: boolean }>;
 	}): boolean => {
 		const called = new Set(
 			context.message.content
-				.filter((c) => c.type === "toolCall" && c.name !== undefined && (QUESTION_TOOLS as readonly string[]).includes(c.name!))
+				.filter((c) => c.type === "toolCall" && c.name !== undefined && turnEnders.includes(c.name!))
 				.map((c) => c.id!),
 		);
 		if (called.size === 0) return false;
@@ -168,13 +168,18 @@ function makeQuestionStopper() {
 	};
 }
 
+/** Practice tools whose resolved call ends the turn (pose: the learner answers next). */
+const PRACTICE_TURN_ENDERS = ["problem"] as const;
+
 function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: AgentTool<any, any>[]) {
 	// Practice never reaches the role fallback (the handler ALWAYS injects
 	// the session's conversation engine — practice rides the same
 	// conversation-spec resolution as teaching); the cast keeps AgentKind
 	// ("practice" is not a ModelRole) honest about that.
 	const engine = opts.engine ?? piEngineFor(kind as "prober" | "teacher");
-	const stopper = makeQuestionStopper();
+	// Practice poses end the turn the way questions do, mixed batch included
+	// (upstream 87b04cc idea). Later turn-ending tools join with one name here.
+	const stopper = makeQuestionStopper(kind === "practice" ? PRACTICE_TURN_ENDERS : QUESTION_TOOLS);
 	const systemPrompt = opts.promptSwitches
 		? composeInstructions(kind, opts.promptSwitches)
 		: composedInstructions[kind]!;
@@ -294,9 +299,8 @@ export function bareQuestionTools(): Record<string, AgentTool<any>> {
  * no plan tools, no question tools. Its ENTIRE registry is
  * problem + conclude (tools/practice.ts); the doctrine prompt
  * (prompts/practice/) carries the method. The question-stop rule does
- * not apply (problem rides terminate: true natively —
- * QUESTION_TOOLS does not include it), so baseAgentOptions's stopper is
- * a no-op here; it stays wired for uniformity.
+ * use QUESTION_TOOLS here; problem rides terminate: true natively AND
+ * baseAgentOptions wires PRACTICE_TURN_ENDERS so a mixed batch ends too.
  */
 export function createPracticeAgent(ctx: PracticeToolContext, opts: AgentBuildOptions = {}) {
 	const tools = opts.tools ?? practiceTools(ctx);
