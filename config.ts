@@ -62,7 +62,8 @@ export type ModelRole =
 	| "visualMaker"
 	| "extractor"
 	| "auditor"
-	| "describer";
+	| "describer"
+	| "transcriber";
 
 /**
  * The LIVE graph store (src/store/graph.ts) — owned by the app's extraction

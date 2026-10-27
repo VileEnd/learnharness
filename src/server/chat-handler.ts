@@ -10,6 +10,8 @@ import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
 import { createTopicist } from "../agent/subagents/topics.ts";
+import { createDrawingTranscriber } from "../agent/subagents/drawing-transcriber.ts";
+import { prepareDrawingContext } from "./drawing-context.ts";
 import { createAttributor } from "../agent/subagents/attribution.ts";
 import { createAttributionService } from "./attribution.ts";
 import { PATHS, type ModelRole } from "../../config.ts";
@@ -402,8 +404,24 @@ export async function handleChatInput(
 	// enabled). The definitive toggleable set is TOGGLEABLE_TOOLS — the
 	// sub-agent JOB tools (research/demo/visual; adjudicated with the
 	// user: quiz/ask/fs/plan/probe_done are always-on).
+	// DRAWINGS (PR 2, Task 10): the active task's drawing as the model reads
+	// it (image, or a cached vision-slot transcript). Never fails the turn.
+	let drawing: Awaited<ReturnType<typeof prepareDrawingContext>> | undefined;
+	try {
+		drawing = await prepareDrawingContext(
+			{ id: chatId, messages: merged },
+			engine,
+			{
+				drawingStore: stores.drawingStore,
+				transcriber: createDrawingTranscriber({ engineFor: (role) => resolveEngine(role) }),
+			},
+		);
+	} catch (err) {
+		console.error(`[chat ${chatId}] drawing context failed:`, err);
+	}
 	const agentOpts: AgentBuildOptions = {
 		engine,
+		drawing,
 		messages: asAgentMessages(merged),
 		onUsage: collectUsage,
 		toolToggles: effective.agent.tools,

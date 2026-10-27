@@ -20,7 +20,7 @@ import { sendToUserTool } from "./tools/send-to-user.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
-import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS } from "../core/native-messages.ts";
+import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext } from "../core/native-messages.ts";
 
 /**
  * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
@@ -128,6 +128,8 @@ export interface AgentBuildOptions {
 	 *  <chatId>.jsonl via providerEventObserver — the GLM-truncation /
 	 *  DeepSeek-id incident layer. Absent or env-off → no observer. */
 	chatId?: string;
+	/** The active task's drawings as the model sees them (server/drawing-context.ts). */
+	drawing?: DrawingContext;
 }
 
 /**
@@ -237,7 +239,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		// UI-only markers (plan-block) drop, the app's id fields strip, and
 		// an abort's dangling question call gets its INTERRUPTED result. It
 		// must never throw (pi's convertToLlm contract).
-		convertToLlm: toLlmMessages,
+		convertToLlm: (m) => toLlmMessages(m, { drawing: opts.drawing }),
 	});
 	if (opts.onUsage) {
 		agent.subscribe((event: AgentEvent) => {
