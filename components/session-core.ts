@@ -22,6 +22,7 @@ import {
 	measuredContextTokens,
 	newAnswerResult,
 	newHintRequest,
+	nextHintNumber,
 	newNextMessage,
 	newProblemDismissedMarker,
 	newThinkingMessage,
@@ -718,7 +719,7 @@ export class SessionModel {
 			// The canvas submission card lands the moment Submit fires.
 			optimistic.push({ ...newWorkSubmission(input.workCallId, input.text, input.drawingId), id: localId() });
 		} else if (input.type === "hint") {
-			optimistic.push({ ...newHintRequest(input.callId), id: localId() });
+			optimistic.push({ ...newHintRequest(input.callId, nextHintNumber([...this.base, ...this.tail], input.callId)), id: localId() });
 		} else if (input.type === "next") {
 			// The move-on signal (owner round 16): the NEXT PROBLEM line
 			// renders the instant the chip/Enter fires.

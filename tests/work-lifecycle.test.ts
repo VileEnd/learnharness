@@ -13,6 +13,7 @@ import {
 	needsContinuation,
 	endsInDismissal,
 	newHintRequest,
+	nextHintNumber,
 	newWorkDismissedMarker,
 	newWorkSubmission,
 	newThinkingMessage,
@@ -136,8 +137,8 @@ describe("the work fold", () => {
 		const [h] = inputAppends({ id: "c1", messages: pose() }, { type: "hint", callId: "w1" });
 		const marker = h as { customType: string; content: string; details: unknown };
 		assert.equal(marker.customType, "hint-request");
-		assert.equal(marker.content, "Hint, please — give the next rung only.");
-		assert.deepEqual(marker.details, { callId: "w1" });
+		assert.equal(marker.content, "Hint request 1 for this task — give the next rung only.");
+		assert.deepEqual(marker.details, { callId: "w1", n: 1 });
 		assert.equal(newHintRequest("x").customType, "hint-request");
 		assert.throws(() => inputAppends({ id: "c1", messages: pose() }, { type: "hint", callId: "w2" }), ChatInputError);
 		assert.throws(() => inputAppends({ id: "c1", messages: [...pose(), ...gradeMsgs("g1", "w1")] }, { type: "hint", callId: "w1" }), ChatInputError);
@@ -149,10 +150,10 @@ describe("the work fold", () => {
 	it("markers: wire text, view parts", () => {
 		const sub = newWorkSubmission("w1", "my try", "drw_a");
 		const dismissed = newWorkDismissedMarker("w1");
-		const wire = toLlmMessages(asAgentMessages([...pose(), sub, newHintRequest("w1")]));
+		const wire = toLlmMessages(asAgentMessages([...pose(), sub, newHintRequest("w1", 1)]));
 		const texts = wire.filter((w) => w.role === "user").map((w) => JSON.stringify(w.content));
 		assert.ok(texts.some((t) => t.includes("Your thinking:") && t.includes("[drawing drw_a]")));
-		assert.ok(texts.some((t) => t.includes("Hint, please")));
+		assert.ok(texts.some((t) => t.includes("Hint request 1 for this task")));
 		const view = projectView([...pose(), sub, dismissed] as never);
 		const types = view.flatMap((m) => m.parts.map((p) => p.type));
 		assert.ok(types.includes("data-work-submission"));
@@ -273,6 +274,7 @@ describe("the tools", () => {
 		const refused = await run(tool, WORK_ARGS);
 		assert.equal(refused.isError, true);
 		assert.match(refused.content[0]!.text, /No visible teaching/);
+		assert.match(refused.content[0]!.text, /If this task comes before you teach the step, pose it with type predict instead\./);
 		assert.ok(!(await run(teachWorkToolFor({ ...ctxOf([]), turn } as never), { ...WORK_ARGS, type: "predict" })).isError);
 	});
 
@@ -332,7 +334,7 @@ describe("the tools", () => {
 		const messages = [...pose("s1", "sketch", { question: "q", correctAnswer: "a" }), newWorkSubmission("s1", "t")];
 		const steers: Array<{ id: string }> = [];
 		const tools = createProberTools({ ...ctxOf(messages, { quizMechanic: "choice", canvas: true }), deliver: (st: { id: string }) => void steers.push(st) } as never);
-		const graded = await tools.grade!.execute("g1", { question: "s1", grade: "partly", note: "n" });
+		const graded = await tools.grade!.execute("g1", { question: "s1", grade: "correct", note: "n" });
 		assert.ok(!graded.isError);
 		const done = (await tools.probe_done!.execute("p1", { assessment: { strands: [] } } as never)) as { details: { ok: boolean } };
 		assert.equal(done.details.ok, true);
@@ -356,5 +358,61 @@ describe("the tools", () => {
 describe("practice thinking drawing hook is untouched", () => {
 	it("newThinkingMessage keeps its shape", () => {
 		assert.equal(newThinkingMessage("p1", "t").customType, "practice-thinking");
+	});
+});
+
+describe("canvas doctrine for weaker models (M3)", () => {
+	const gradeOf = (messages: LhMessage[]) => gradeTool({ chatId: "c1", chatStore: { getChat: () => chat("c1", messages) } as never });
+	const run = async (tool: ReturnType<typeof gradeOf>, input: Record<string, unknown>) =>
+		(await tool.execute("g", { note: "n", ...input } as never)) as { isError?: boolean; content: { text: string }[] };
+	const SOFT = /Coach this first submission and leave the task open; grade after he resubmits, asks to stop, or repeats the error\./;
+
+	it("RC6: a wrong grade on the first submission is refused once, then allowed", async () => {
+		const open = [...pose(), newWorkSubmission("w1", "first")];
+		const first = await run(gradeOf(open), { question: "w1", grade: "wrong" });
+		assert.equal(first.isError, true);
+		assert.match(first.content[0]!.text, SOFT);
+		// the refused grade is in the record now: the same grade passes
+		const retried = [...open, call("g1", "grade", { question: "w1", grade: "wrong", note: "n" }), result("g1", "grade", null, 2, true)];
+		assert.ok(!(await run(gradeOf(retried), { question: "w1", grade: "wrong" })).isError);
+		// partly is covered too
+		assert.equal((await run(gradeOf(open), { question: "w1", grade: "partly" })).isError, true);
+	});
+
+	it("RC6: one tool instance refuses once, from the in-flight view", async () => {
+		const open = [...pose(), newWorkSubmission("w1", "first")];
+		const pending: LhMessage[] = [];
+		const tool = gradeTool({
+			chatId: "c1",
+			chatStore: { getChat: () => chat("c1", open) } as never,
+			turn: { messages: () => [...open, ...pending], hasSendToUser: () => false },
+		} as never);
+		assert.equal((await run(tool, { question: "w1", grade: "wrong" })).isError, true);
+		pending.push(call("g1", "grade", { question: "w1", grade: "wrong", note: "n" }), result("g1", "grade", null, 2, true));
+		assert.ok(!(await run(tool, { question: "w1", grade: "wrong" })).isError);
+	});
+
+	it("RC6: correct is never refused; second submission and coaching lift the refusal", async () => {
+		const open = [...pose(), newWorkSubmission("w1", "first")];
+		assert.ok(!(await run(gradeOf(open), { question: "w1", grade: "correct" })).isError);
+		const two = [...open, newWorkSubmission("w1", "second")];
+		assert.ok(!(await run(gradeOf(two), { question: "w1", grade: "wrong" })).isError);
+		const coached = [...open, { ...call("x", "send_to_user", { message: "You have the axis right; what happens at x = 0?" }) } as LhMessage];
+		assert.ok(!(await run(gradeOf(coached), { question: "w1", grade: "wrong" })).isError);
+	});
+
+	it("RC7: hint markers number 1, 2, 3 per callId", () => {
+		let msgs = pose();
+		const seen: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			const [h] = inputAppends({ id: "c1", messages: msgs }, { type: "hint", callId: "w1" });
+			seen.push((h as { content: string }).content);
+			msgs = [...msgs, h as LhMessage];
+		}
+		assert.deepEqual(seen.map((t) => t.match(/\d+/)![0]), ["1", "2", "3"]);
+		// another callId counts on its own
+		assert.equal(nextHintNumber(msgs, "other"), 1);
+		// an old marker (no n) still counts toward the next number
+		assert.equal(nextHintNumber([{ ...newHintRequest("w1"), content: "Hint, please — give the next rung only.", details: { callId: "w1" } } as LhMessage], "w1"), 2);
 	});
 });

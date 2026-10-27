@@ -16,7 +16,7 @@ import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
 import { answeredRecallIds, gradedQuestionIds, ungradedAnsweredRecalls } from "../../core/learner.ts";
-import type { LhMessage } from "../../core/native-messages.ts";
+import { visibleTeachingSinceLastInput, workSubmissionsOf, type LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 
 import { GRADE_NOTE_MAX, healGradeArguments } from "../../core/grade-heal.ts";
@@ -78,9 +78,42 @@ function gradableNow(messages: readonly LhMessage[], gradedThisTurn: ReadonlySet
 	return `Gradable now: ${open.map((id) => `"${id}" (${names.get(id) ?? "call"})`).join(", ")}.`;
 }
 
+/** The soft refusal of a wrong/partly grade on a canvas task's first, uncoached submission. */
+export const FIRST_SUBMISSION_REFUSAL =
+	"Coach this first submission and leave the task open; grade after he resubmits, asks to stop, or repeats the error.";
+
+/** RC6: true when `grade` of `question` should be refused ONCE: a work/sketch task (not a prediction) with
+ *  exactly one submission, no learner-visible coaching since it, and no earlier refused grade for it. All
+ *  derived from `messages` (history plus the in-flight turn), never stored. */
+function firstSubmissionNeedsCoaching(messages: readonly LhMessage[], question: string): boolean {
+	let tool: string | undefined;
+	let args: { type?: unknown } = {};
+	const gradeCalls = new Set<string>();
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "assistant") continue;
+		for (const b of (m as { content: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }).content) {
+			if (b.type !== "toolCall" || !b.id) continue;
+			if (b.id === question && (b.name === "work" || b.name === "sketch")) {
+				tool = b.name;
+				args = (b.arguments ?? {}) as { type?: unknown };
+			}
+			if (b.name === "grade" && (b.arguments as { question?: unknown } | undefined)?.question === question) gradeCalls.add(b.id);
+		}
+	}
+	if (tool === undefined || args.type === "predict") return false;
+	for (const m of messages) {
+		const r = m as { role?: string; toolCallId?: string; isError?: boolean };
+		if (r.role === "toolResult" && r.isError && r.toolCallId && gradeCalls.has(r.toolCallId)) return false;
+	}
+	if (workSubmissionsOf(messages, question).length !== 1) return false;
+	return !visibleTeachingSinceLastInput(messages, []);
+}
+
 export function gradeTool(ctx: {
 	chatId: string;
 	chatStore: Pick<ChatStore, "getChat">;
+	/** The in-flight turn (history plus this turn's messages), when the registry has one. */
+	turn?: { messages: () => readonly unknown[] };
 	/** Called with every question id this registry graded (the work tool's
 	 *  intra-turn view of "closed"). */
 	onGraded?: (questionId: string) => void;
@@ -112,6 +145,12 @@ export function gradeTool(ctx: {
 				);
 			} else if (gradedQuestionIds(record.messages).has(input.question) || gradedThisTurn.has(input.question)) {
 				problems.push(`question "${input.question}" is already graded - one grade per question.`);
+			}
+			else if (
+				(input.grade === "wrong" || input.grade === "partly") &&
+				firstSubmissionNeedsCoaching((ctx.turn?.messages() ?? record.messages) as readonly LhMessage[], input.question)
+			) {
+				problems.push(FIRST_SUBMISSION_REFUSAL);
 			}
 			if (problems.length > 0) return invalidInputResult("grade", problems);
 			gradedThisTurn.add(input.question);

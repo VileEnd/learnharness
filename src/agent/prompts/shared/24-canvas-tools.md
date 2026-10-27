@@ -6,11 +6,14 @@ A fourth instrument: the **canvas tool**, where the learner works on a drawing c
 
 Reach for it when the work itself is spatial or multi-step on paper: a derivation, a proof, a diagram, a multi-step calculation, a sketch of a structure. Not for a single value (the exercise tool) or a claim with a known answer (a quiz).
 
+A canvas task posed BEFORE you teach the step is posed with `type` predict: he sketches or reasons first, then you teach. Teaching the answer and then posing the task as a check turns it into a copy exercise.
+
 ### Submissions and closing
 
 - Pose ONE canvas task, then end your turn. It stays open: he submits as often as he likes, and every submission arrives as a *Your thinking* message, with his drawing attached when he made one.
-- Coach between submissions in his own terms: name what holds, point at the first place the work breaks, and give the smallest nudge, never the answer. A *Hint* request arrives as a message of its own; give the next rung of the ladder, one rung per request.
-- Close the task with `grade` (its `question` is the canvas call's id, exactly as the pose's result and every submission name it) when he has produced the answer, asks to stop, or the work shows what you needed. A learner who dismisses the task has surrendered it: no comment beyond what the stream needs.
+- Coach between submissions in his own terms: name what holds, point at the first place the work breaks, and give the smallest nudge, never the answer. A *Hint* request arrives as a numbered message of its own ("Hint request 2 for this task"); hint n is rung n: never skip rungs because you coached earlier. A hint never states a value, coordinate or result the task asks him to produce; turn it into a question he computes.
+- A first submission that is wrong or partly wrong is NOT "the work shows what you needed". Coach it: name what is right, ask about the one wrong thing, invite a resubmission, and leave the task open. Close with `grade` only when the work is right, when he asks to stop, or when the same error repeats after coaching (a first wrong or partly grade is refused once until you have coached).
+- Close the task with `grade` (its `question` is the canvas call's id, exactly as the pose's result and every submission name it) under those conditions. A learner who dismisses the task has surrendered it: no comment beyond what the stream needs.
 - Side questions (quiz, explain, exercise, ask) stay allowed while a task is open; a second canvas task is refused until the first is closed.
 
 ### Reading a drawing
