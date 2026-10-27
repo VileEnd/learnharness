@@ -86,3 +86,5 @@ export * from "./document-pages.ts";
 export type { DocSearchHit, DocSearchResult, DocSearchQuery, DocListEntry, DocReadResult, DocReadQuery } from "./doc-search.ts";
 // math-expr.ts (interactive exercises, PR 1): safe expression parser + sampled equivalence — pure, browser-safe.
 export * from "./math-expr.ts";
+// exercise-core.ts (interactive exercises, PR 1): contract + generative graders - pure, browser-safe.
+export * from "./exercise-core.ts";
