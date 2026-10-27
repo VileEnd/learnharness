@@ -10,6 +10,7 @@
  *
  * The grading contract (question-core) is shared and untouched by both.
  */
+import { annotateInputObject } from "../src/agent/tools/annotate.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -483,7 +484,7 @@ describe("tool descriptions carry mechanics only, no question-craft", () => {
 	});
 	it("24-canvas-tools.md cites only real tool and field names", async () => {
 		const frag = await fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared/24-canvas-tools.md"), "utf-8");
-		const known = new Set<string>(["20-question-tools", "grade", "question", "quiz", "explain", "exercise", "o1", "o2", "C4", "B2-D3"]);
+		const known = new Set<string>(["20-question-tools", "grade", "question", "quiz", "explain", "exercise", "o1", "o2", "C4", "B2-D3", "annotate", ...Object.keys(annotateInputObject.properties), "from", "to", "label"]);
 		const cited = [...frag.matchAll(/`([A-Za-z_0-9-]+)`/g)].map((m) => m[1]!);
 		assert.ok(cited.length >= 3, "the fragment cites names");
 		for (const name of cited) assert.ok(known.has(name) || name in workInputObject.properties, `\`${name}\` is not a real name`);
