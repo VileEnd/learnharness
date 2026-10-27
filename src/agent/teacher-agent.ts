@@ -199,10 +199,13 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			thinkingLevel: engine.level,
 			// Conditional registry inclusion, like the graph-tool gates: when
 			// closed, neither the tool nor its usage instructions reach the model.
-			// Anthropic models only (BYOK fork). Explicit test registries remain caller-owned.
+			// Claude models only, matched on the model id across providers
+			// (anthropic, OpenRouter, Bedrock — same model, same text-after-tool
+			// conversion), as upstream 87b04cc gates it — not on the API
+			// transport. Explicit test registries remain caller-owned.
 			tools: [
 				...tools,
-				...(opts.tools === undefined && engine.model.provider === "anthropic"
+				...(opts.tools === undefined && /claude/i.test(engine.model.id)
 					? [withArgumentHeal(sendToUserTool)]
 					: []),
 			],

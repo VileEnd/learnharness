@@ -84,9 +84,10 @@ describe("send_to_user model gate", () => {
 	for (const [provider, id, enabled] of [
 		["anthropic", "claude-opus-5-5", true],
 		["anthropic", "claude-haiku-4-5-20251001", true],
-		["anthropic", "opaque-alias", true],
-		["openrouter", "anthropic/claude-opus-5.5", false],
-		["amazon-bedrock", "us.anthropic.claude-opus-5-5-v1:0", false],
+		["anthropic", "opaque-alias", false],
+		["openrouter", "anthropic/claude-opus-5.5", true],
+		["openrouter", "anthropic/claude-sonnet-5.5", true],
+		["amazon-bedrock", "us.anthropic.claude-opus-5-5-v1:0", true],
 		["openrouter", "z-ai/glm-5.3-flash", false],
 		["openai", "gpt-4o-mini", false],
 	] as const) {
@@ -101,8 +102,10 @@ describe("send_to_user model gate", () => {
 					assert.equal(typeof output!.prepareArguments, "function", "standard argument healing is wired");
 				}
 				assert.equal(agent.state.systemPrompt, composeInstructions(kind as keyof typeof factories));
-				// V2: the prompt is model-independent; the one shared paragraph is conditional on holding the tool.
-				assert.ok(agent.state.systemPrompt.includes("when you hold `send_to_user`"), "conditional delivery paragraph");
+				// The prompt is model-independent; the shared delivery bullet is phase-neutral
+				// and conditional on holding the tool. Teach-before-check doctrine is teacher-only.
+				assert.ok(agent.state.systemPrompt.includes("Delivery: when you hold `send_to_user`"), "conditional delivery bullet");
+				assert.equal(agent.state.systemPrompt.includes("a check posed before any teaching has reached him is refused"), kind === "teacher", kind);
 			}
 		});
 	}

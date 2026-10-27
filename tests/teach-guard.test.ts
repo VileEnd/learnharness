@@ -140,6 +140,22 @@ describe("teach quiz/explain guard", () => {
 		assert.doesNotMatch(text, /send_to_user/);
 	});
 
+	it("Claude through OpenRouter/Bedrock holds send_to_user, so the refusal never asks for normal text", async () => {
+		for (const [provider, id] of [["openrouter", "anthropic/claude-opus-5.5"], ["amazon-bedrock", "us.anthropic.claude-opus-5-5-v1:0"]]) {
+			const chat = makeChat();
+			const { engine } = scripted([
+				fauxAssistantMessage([fauxToolCall("quiz", quizArgs(), { id: "q1" })], { stopReason: "toolUse" }),
+				fauxAssistantMessage("stop"),
+			], provider, id);
+			const agent = agentFor(chat.id, engine);
+			await agent.prompt("go");
+			const r = agent.state.messages.find((m) => m.role === "toolResult" && m.toolName === "quiz");
+			const text = JSON.stringify(r && r.role === "toolResult" ? r.content : "");
+			assert.match(text, /send your teaching with `send_to_user`, then pose the check/, provider);
+			assert.doesNotMatch(text, /normal text/, provider);
+		}
+	});
+
 	it("allows a check after a 300-character text block", async () => {
 		const chat = makeChat();
 		const { engine, faux } = scripted([
