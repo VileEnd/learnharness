@@ -20,7 +20,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; graphContext?: unknown };
+	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; graphContext?: unknown; canvas?: unknown };
 	const title = typeof body.title === "string" ? body.title : "";
 	// Practice sessions (owner, 2026-10-04): kind "practice" marks the
 	// record — the practice agent + its tools from turn 1, no extraction.
@@ -34,10 +34,11 @@ export async function POST(req: Request) {
 	// boot) → no stamp; the turn gate's 503 models_not_configured envelope
 	// refuses honestly until the setup flow fills the slot.
 	const strong = readSettingsRecord()?.models?.strong;
-	if (strong?.model) {
+	const canvas = body.canvas === true ? true : undefined;
+	if (strong?.model || canvas) {
 		stores.chatStore.saveSettings(chat.id, {
-			model: { provider: strong.model.provider, id: strong.model.id },
-			thinkingLevel: strong.thinkingLevel,
+			...(strong?.model ? { model: { provider: strong.model.provider, id: strong.model.id }, thinkingLevel: strong.thinkingLevel } : {}),
+			...(canvas ? { canvas } : {}),
 		});
 	}
 	// The session's map context (owner, 2026-10-04): the picked

@@ -19,7 +19,7 @@ import type { QuizMechanic } from "../core/settings.ts";
 import { resolveQuizMechanic } from "../core/settings-resolution.ts";
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import { resolveTargetId } from "../core/chains.ts";
-import { visibleTeachingSinceLastInput } from "../core/native-messages.ts";
+import { activeWorkOf, visibleTeachingSinceLastInput } from "../core/native-messages.ts";
 import { ungradedAnsweredRecalls } from "../core/learner.ts";
 import type { GraphNode, JobRecord } from "../core/contracts.ts";
 import type { ChatStore, JobStore } from "../core/ports.ts";
@@ -32,6 +32,7 @@ import { lsToolFor } from "./tools/ls.ts";
 import { findToolFor } from "./tools/find.ts";
 import { grepToolFor } from "./tools/grep.ts";
 import { gradeTool } from "./tools/grade.ts";
+import { newWorkGate, probeSketchToolFor, teachWorkToolFor, type WorkGate } from "./tools/work.ts";
 import { healToolRecord } from "./tools/heal.ts";
 
 export { jobTools };
@@ -77,7 +78,7 @@ export type { ProbeDoneContext } from "./tools/probe.ts";
  *  graph off) = no validation. */
 export type ConceptNodes = () => ReadonlyArray<Pick<GraphNode, "id" | "name">>;
 
-function prepareQuestionArgumentsFor<T extends object>(graphNodes?: ConceptNodes): (args: unknown) => T {
+export function prepareQuestionArgumentsFor<T extends object>(graphNodes?: ConceptNodes): (args: unknown) => T {
 	return (args: unknown): T => {
 		if (!(args && typeof args === "object" && !Array.isArray(args))) return args as T;
 		let out = args as { options?: unknown; concepts?: unknown };
@@ -454,6 +455,12 @@ export interface ProberToolContext extends ProbeDoneContext {
 	quizMechanic?: QuizMechanic;
 	/** The interactive formats switched on (agent.formats). Empty/absent = no `assess` tool. */
 	formats?: InteractiveFormat[];
+	/** This turn may use the canvas tools: the chat's canvas setting AND a
+	 *  canvas-capable device (a phone turn and job wakes pass false). Arms
+	 *  `sketch`; `grade` is armed whenever it is true or a task is open. */
+	canvas?: boolean;
+	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
+	workGate?: WorkGate;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -463,9 +470,10 @@ export interface ProberToolContext extends ProbeDoneContext {
  *  from the registry. probe_done stays always-on regardless — it is how
  *  the phase ENDS; a prober that can never conclude is a lockout. */
 export function createProberTools(
-	ctx: ProberToolContext,
+	baseCtx: ProberToolContext,
 	enabled?: EnabledTools,
 ): Record<string, AgentTool<any>> {
+	const ctx: ProberToolContext = { ...baseCtx, workGate: baseCtx.workGate ?? newWorkGate() };
 	// probe_done is re-added AFTER the filter, always-on by construction — it
 	// is how the phase ENDS; a prober that can never conclude is a lockout.
 	const done = probeDoneTool(ctx);
@@ -517,6 +525,8 @@ export function createProberTools(
 				...(jobs.research ? { research: jobs.research } : {}),
 				...(ctx.documents ? documentTools(ctx.documents) : {}),
 				...gradeFor(ctx, mechanics),
+				// The canvas task (sketch): only on a canvas-capable turn.
+				...(ctx.canvas === true ? { sketch: probeSketchToolFor(ctx) } : {}),
 				...done,
 			},
 				withoutMechanics(enabled),
@@ -547,7 +557,7 @@ export interface TeachTurnView {
 const GUARD_MAX_REFUSALS = 2;
 export function teachGuardFor(view: TeachTurnView | undefined) {
 	const refusals = new Map<string, number>();
-	return (tool: "quiz" | "explain" | "exercise", type: string | undefined): string | null => {
+	return (tool: "quiz" | "explain" | "exercise" | "work", type: string | undefined): string | null => {
 		if (!view || type !== "check") return null;
 		if (visibleTeachingSinceLastInput(view.messages(), [])) return null;
 		const n = refusals.get(tool) ?? 0;
@@ -567,7 +577,7 @@ export function teachGuardFor(view: TeachTurnView | undefined) {
 
 /** The nodeId-against-live-tree check the teacher's quiz chains after the
  *  shared authoring contract (the old superRefine, verbatim). */
-function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeId: string): string | null {
+export function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeId: string): string | null {
 	const record = ctx.chatStore.getChat(ctx.chatId);
 	const known = record?.tree?.nodes.map((n) => n.id) ?? [];
 	if (!known.includes(nodeId)) {
@@ -638,6 +648,10 @@ export interface TeacherToolContext extends PlanToolContext {
 	quizMechanic?: QuizMechanic;
 	/** The interactive formats switched on (agent.formats). Empty/absent = no `exercise` tool. */
 	formats?: InteractiveFormat[];
+	/** This turn may use the canvas tools (see ProberToolContext.canvas). Arms `work`. */
+	canvas?: boolean;
+	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
+	workGate?: WorkGate;
 }
 
 /**
@@ -661,26 +675,28 @@ function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
 }
 
 /** The `grade` tool's registration law: present whenever the free-recall
- *  or mixed mechanic is armed, OR an answered explain/recall in the record still
+ *  or mixed mechanic is armed, OR canvas tasks are on for this turn, OR an
+ *  answered explain/recall (or an open canvas task) in the record still
  *  waits for its grade (the mechanic may have been switched off mid-session,
- *  and a pending answer must stay gradeable). Read from the live record at
- *  registry construction (one registry per turn). */
+ *  and a pending answer must stay gradeable - on a phone too). Read from the
+ *  live record at registry construction (one registry per turn). */
 function gradeFor(
-	ctx: { chatId: string; chatStore: ChatStore },
+	ctx: { chatId: string; chatStore: ChatStore; canvas?: boolean; workGate?: WorkGate },
 	mechanics: QuizMechanic,
 ): Record<string, AgentTool<any>> {
-	if (mechanics === "choice") {
+	if (mechanics === "choice" && ctx.canvas !== true) {
 		// Optional chain: partial test contexts carry no store (no record = nothing pending).
 		const record = ctx.chatStore?.getChat?.(ctx.chatId);
-		if (!record || ungradedAnsweredRecalls(record.messages).length === 0) return {};
+		if (!record || (ungradedAnsweredRecalls(record.messages).length === 0 && activeWorkOf(record.messages) === null)) return {};
 	}
-	return { grade: gradeTool(ctx) };
+	return { grade: gradeTool({ chatId: ctx.chatId, chatStore: ctx.chatStore, onGraded: (id) => ctx.workGate?.graded.add(id) }) };
 }
 
 export function createTeacherTools(
-	ctx: TeacherToolContext,
+	baseCtx: TeacherToolContext,
 	enabled?: EnabledTools,
 ): Record<string, AgentTool<any>> {
+	const ctx: TeacherToolContext = { ...baseCtx, workGate: baseCtx.workGate ?? newWorkGate() };
 	// Quizzing mechanics (owner 2026-09-27): free-recall swaps the teach
 	// quiz for the teach explain; Mixed arms both. Whichever the settings
 	// resolve to. ask stays always-on.
@@ -711,6 +727,8 @@ export function createTeacherTools(
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
 			...(ctx.documents ? documentTools(ctx.documents) : {}),
 			...gradeFor(ctx, mechanics),
+			// The canvas task (work): only on a canvas-capable turn.
+			...(ctx.canvas === true ? { work: teachWorkToolFor(ctx) } : {}),
 		},
 		withoutMechanics(enabled),
 		),

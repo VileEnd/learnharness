@@ -28,6 +28,8 @@ import {
 	problemInputForConclude,
 	SEND_TO_USER_TOOL,
 	userFacingTextOf,
+	WORK_TOOLS,
+	type LhMarkerMessage,
 } from "./native-messages.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { QuestionAnswerData } from "./question-core.ts";
@@ -159,6 +161,31 @@ function toolResultBody(result: ToolResultMessage, ctx?: MarkdownContext): { hea
 		return { heading: "Concluded", body };
 	}
 
+	// CANVAS TASKS: the pose ack carries nothing - the task lives in the
+	// call's arguments (the practice pose's join).
+	if (ctx !== undefined && (WORK_TOOLS as readonly string[]).includes(result.toolName)) {
+		const question = ctx.calls.get(result.toolCallId)?.args?.question;
+		return {
+			heading: "Canvas task",
+			body: [`**Task:** ${typeof question === "string" && question.trim() ? question.trim() : "(no task text)"}`],
+		};
+	}
+
+	// ANNOTATE (PR 3): the teacher's marks on the learner's drawing - the
+	// call's arguments hold the mark list; the result is an ack.
+	if (ctx !== undefined && result.toolName === "annotate") {
+		const marks = ctx.calls.get(result.toolCallId)?.args?.marks;
+		const lines = (Array.isArray(marks) ? marks : [])
+			.map((m) => {
+				const mark = m as { target?: unknown; note?: unknown; text?: unknown; label?: unknown } | null;
+				const text = [mark?.note, mark?.text, mark?.label].find((v): v is string => typeof v === "string" && v.trim().length > 0);
+				const target = typeof mark?.target === "string" ? `${mark.target}: ` : "";
+				return text !== undefined ? `- ${target}${text.trim()}` : null;
+			})
+			.filter((l): l is string => l !== null);
+		return { heading: "Marked up", body: lines.length > 0 ? [lines.join("\n")] : ["*annotations delivered*"] };
+	}
+
 	if (result.toolName === "ask_user_question") {
 		const question = typeof out?.questionText === "string" && out.questionText ? out.questionText : "(no question text)";
 		const body = [`**Q:** ${question}`];
@@ -205,9 +232,19 @@ export function messageMarkdown(
 		if (result.isError || result.toolName === SEND_TO_USER_TOOL) return null; // retry context or output ack, not learning evidence
 		const { heading, body } = toolResultBody(result, ctx);
 		parts.push(`### ${heading}${anchor}\n\n${body.join("\n\n")}`);
+	} else if (role === "custom") {
+		// Most markers are invisible, same as the extraction view; the
+		// learner's canvas submissions are learning evidence.
+		const marker = message as LhMarkerMessage;
+		if (marker.customType === "work-submission") {
+			const d = marker.details as { text?: unknown; drawingId?: unknown } | null;
+			const text = typeof d?.text === "string" ? d.text.trim() : "";
+			const drawing = typeof d?.drawingId === "string" ? `![drawing](${d.drawingId})` : "";
+			const body = [text, drawing].filter(Boolean).join("\n\n");
+			if (body) parts.push(`### Learner submission${anchor}\n\n${body}`);
+		}
 	}
 
-	// custom markers are invisible, same as the extraction view.
 	return parts.length > 0 ? parts.join("\n\n") : null;
 }
 

@@ -255,7 +255,7 @@ export function normalizeQuizType(raw: unknown): QuizQuestionType | undefined {
  *  truth. Records that predate the `type` field carry none — they render
  *  as checks, the standing default. */
 export function questionNeedsReveal(tool: string, rawInput: unknown, phase: string): boolean {
-	if ((tool !== "quiz" && tool !== "explain" && tool !== "exercise") || phase !== "teach") return false;
+	if ((tool !== "quiz" && tool !== "explain" && tool !== "exercise" && tool !== "work") || phase !== "teach") return false;
 	return normalizeQuizType((rawInput as { type?: unknown } | null)?.type) !== "predict";
 }
 
@@ -453,6 +453,59 @@ export type ExerciseToolInput = Omit<Static<typeof exerciseInputObject>, "nodeId
 	type?: string;
 	nodeId?: string;
 };
+
+// ─── the canvas tools (work / sketch) ──────────────────────────────────────
+//
+// A canvas task is multi-turn and coached: the learner works on the canvas,
+// submits (text and/or a drawing), the agent coaches, until `grade` closes
+// it. The commitment rule is the explain tool's: `correctAnswer` is what a
+// good solution looks like, committed BEFORE the task is posed.
+
+export const workInputBase = Type.Object({
+	question: Type.String({
+		description: "The canvas task as the learner sees it. ONE canvas task at a time: pose it, then end your turn.",
+	}),
+	correctAnswer: Type.String({
+		description:
+			"REQUIRED. What a correct solution contains, in your own words - COMMITTED before the learner sees the task. " +
+			"Grade strictly against it when `grade` closes the task; never revise it after seeing his work.",
+	}),
+	requireThinking: requireThinkingField,
+	details: Type.Optional(
+		Type.String({ description: "Optional extra context or instructions shown under the task." }),
+	),
+	concepts: conceptsField,
+});
+
+/** The TEACH-side `work` object: the role + plan-position pair leads. */
+export const workInputObject = Type.Object({
+	type: predictCheckType,
+	nodeId: Type.String({
+		description:
+			"REQUIRED plan-tree node id this task is about - must EXACTLY match one of this session's " +
+			"plan_init node slugs (validated at call time).",
+	}),
+	...workInputBase.properties,
+});
+
+/** The PROBE-side `sketch` object: no `type`, no `nodeId`. */
+export const sketchInputObject = workInputBase;
+
+/** The DISPLAY parse for persisted work/sketch calls: the base + an optional lenient `type`. */
+export const workDisplayInputSchema = Type.Object({
+	...workInputBase.properties,
+	type: Type.Optional(Type.String()),
+});
+
+/** The work/sketch authoring contract: the task and its commitment must exist. */
+export function workInputProblems(input: { question: string; correctAnswer: string }): string[] {
+	const problems: string[] = [];
+	if (input.question.trim().length === 0) problems.push("question is required - state the canvas task.");
+	if (input.correctAnswer.trim().length === 0) {
+		problems.push("correctAnswer is required - commit to what a correct solution contains BEFORE posing the task.");
+	}
+	return problems;
+}
 
 /** The tool names that carry the quizzing mechanic — the teach seam
  *  (phases), the plan-position fold, and the pending gate all recognize

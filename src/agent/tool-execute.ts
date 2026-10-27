@@ -250,6 +250,27 @@ export function problemResult(): AgentToolResult<null> {
 	};
 }
 
+/** The canvas-task pose ack (work/sketch): final and persisted like the
+ *  practice pose - the learner's submissions arrive as MESSAGES, never as
+ *  this call's result; terminate: true ends the turn at the pose. The ack
+ *  NAMES the call id: `grade` closes the task only by that exact id, and a
+ *  model never sees its own tool-call ids otherwise (live run, 2026-10-27:
+ *  it guessed "sketch_1", "call_12", ...). */
+export function workResult(toolCallId: string): AgentToolResult<null> {
+	return {
+		content: [
+			{
+				type: "text",
+				text:
+					`Canvas task ${toolCallId} posed — the turn ends here; the learner's submissions arrive as labeled messages until you grade. ` +
+					`To close it, call grade with question "${toolCallId}".`,
+			},
+		],
+		details: null,
+		terminate: true,
+	};
+}
+
 /** The conclude ack: NOT terminate — the turn continues so the same reply
  *  can reveal + pose the next problem. Text single-sourced in contracts
  *  (CONCLUDE_ACK_TEXT — shared with the dismissal-synthesized pair). */

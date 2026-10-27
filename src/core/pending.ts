@@ -158,6 +158,9 @@ const ACTIVITY_LABELS: Record<string, string> = {
 	list_documents: "Listing your documents…",
 	plan_init: "Drawing up the plan…",
 	probe_done: "Concluding the assessment…",
+	work: "Posing a canvas task…",
+	sketch: "Posing a canvas task…",
+	annotate: "Marking up your work…",
 };
 
 /** The activity label for ONE running tool (owner, streaming round

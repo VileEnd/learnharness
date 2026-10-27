@@ -27,6 +27,7 @@ import { useEffect, useRef, useState } from "react";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { MenuShell } from "@/components/menu-shell";
+import { DrawingThumb } from "@/components/work-cards";
 
 /* TARGET NAMES (owner round 17, 2026-10-06): targets are normalized to
  * opaque node ids at the record seam (owner round 9 — the mastery trace
@@ -58,6 +59,8 @@ export interface PracticeThinkingData {
 	/** An interactive problem's Check: the learner's response and its marks
 	 *  (never the expected values; they stay out of the record until conclude). */
 	attempt?: ThinkingAttempt;
+	/** A canvas problem's drawing submitted with the thinking. */
+	drawingId?: string;
 }
 
 export function ProblemCard({ part }: ArtifactPartProps) {
@@ -298,13 +301,14 @@ function MetadataPopover({
 	);
 }
 
-export function ThinkingCard({ data }: { data: PracticeThinkingData }) {
+export function ThinkingCard({ data, chatId }: { data: PracticeThinkingData; chatId?: string }) {
 	// The unified row (owner rounds, 2026-10-05): one style, one label —
 	// 50%-italic quote block on expand. Legacy records' commit flag is
 	// deliberately unread (one lane now). A TRANSCRIPT row (owner round,
 	// 2026-10-07): full-width band + rail, arriving expanded.
 	return (
 		<>
+			{chatId && <DrawingThumb chatId={chatId} drawingId={data.drawingId} />}
 			<ThinkingBlock testId="thinking-card" label="YOUR THINKING" text={data.text} defaultOpen />
 			{data.attempt && (
 				<div data-testid="thinking-attempt" className="mb-1 px-1 text-xs text-muted-foreground">

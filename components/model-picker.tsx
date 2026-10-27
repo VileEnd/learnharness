@@ -8,6 +8,8 @@ import { ModelMenuList, ThinkingMenuList } from "@/components/settings/model-men
 import { composeSlotModel } from "@/components/settings/agent-section";
 import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
+import { PenLineIcon } from "lucide-react";
+import { useCanvasCapable } from "@/components/use-canvas-capable";
 import { notifySettingsSaved, onSettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
 
@@ -222,7 +224,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// shows the stored value). No notifySettingsSaved: the write touches
 	// one session's record, not the slots — no other surface reads it.
 	const saveChat = useCallback(
-		async (next: ChatSettings) => {
+		async (next: ChatSettings | { model: ChatSettings["model"]; thinkingLevel: ThinkingLevel | null }) => {
 			setError(null);
 			try {
 				const res = await fetch(`/api/chats/${chatId}/settings`, {
@@ -236,7 +238,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					return;
 				}
 				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
-				setSession(stored?.settings ?? next);
+				setSession(stored?.settings ?? { model: next.model, thinkingLevel: next.thinkingLevel ?? undefined });
 				setOpen(null);
 			} catch {
 				setError("Could not reach the server — try again.");
@@ -252,7 +254,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined) => {
 			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level });
+				// The route merges: null (not undefined, which JSON drops) clears the old level.
+				void saveChat({ model: { provider, id }, thinkingLevel: level ?? null });
 			} else {
 				// composeSlotModel's empty-string convention: no level = unset.
 				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
@@ -415,5 +418,66 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				</MenuShell>
 			)}
 		</div>
+	);
+}
+
+/**
+ * THE CANVAS PILL (PR 2): the session's canvas toggle, beside the model control. ON lets the agent pose
+ * canvas tasks (work / sketch, and practice problems with `canvas: true`). Hidden unless the device is
+ * canvas-capable (a phone never sees it). DRAFT mode (no chatId, home and /chat/new): local state, default
+ * OFF, handed to the create call through `onChange` (a controlled `value` wins). SESSION mode: the chat's
+ * own record, read once and written with PUT { canvas }. `capable` overrides the device check (tests).
+ */
+export function CanvasPill({ chatId, value, onChange, capable }: { chatId?: string; value?: boolean; onChange?: (next: boolean) => void; capable?: boolean }) {
+	const detected = useCanvasCapable();
+	const [local, setLocal] = useState(value ?? false);
+	const on = chatId ? local : (value ?? local);
+	useEffect(() => {
+		if (!chatId) return;
+		let alive = true;
+		fetch(`/api/chats/${chatId}`)
+			.then((r) => r.json() as Promise<{ settings?: ChatSettings }>)
+			.then((body) => {
+				if (alive) setLocal(body.settings?.canvas === true);
+			})
+			.catch(() => {
+				/* read-only posture, like the model control */
+			});
+		return () => {
+			alive = false;
+		};
+	}, [chatId]);
+	if (!(capable ?? detected)) return null;
+	const toggle = () => {
+		const next = !on;
+		setLocal(next);
+		if (!chatId) {
+			onChange?.(next);
+			return;
+		}
+		fetch(`/api/chats/${chatId}/settings`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ canvas: next }),
+		})
+			.then((r) => {
+				if (!r.ok) setLocal(!next);
+				else onChange?.(next);
+			})
+			.catch(() => setLocal(!next));
+	};
+	return (
+		<Hint label={on ? "Canvas on: the teacher may pose drawing tasks" : "Canvas off"} side="bottom">
+			<button
+				type="button"
+				data-testid="stats-canvas"
+				aria-pressed={on}
+				onClick={toggle}
+				className={`flex shrink-0 items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted pointer-coarse:py-2 ${on ? "border-primary/60 text-primary" : "text-muted-foreground"}`}
+			>
+				<PenLineIcon className="size-3.5" />
+				<span>Canvas</span>
+			</button>
+		</Hint>
 	);
 }

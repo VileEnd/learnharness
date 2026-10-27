@@ -8,6 +8,7 @@ import { DocumentCard } from "@/components/artifacts/document-card";
 import { GradeChip } from "@/components/artifacts/grade-chip";
 import { ToolCallCard } from "@/components/artifacts/tool-call-card";
 import { ProblemCard, ConcludeCard } from "@/components/practice-cards";
+import { WorkCard } from "@/components/work-cards";
 
 /**
  * Artifact renderer registry — the extension point for tool-part UI.
@@ -45,6 +46,10 @@ export const artifactRenderers: Record<string, ComponentType<ArtifactPartProps>>
 	// the conclusion carries the outcome + verdict + the reveal.
 	problem: ProblemCard,
 	conclude: ConcludeCard,
+	// The canvas tasks (PR 2): the pose renders the question only; the
+	// committed correctAnswer reveals at the closing grade.
+	work: WorkCard,
+	sketch: WorkCard,
 	// The prober's graph tools (wave 7): same quiet expandable card —
 	// collapsed one-liner (tool name + the session id for
 	// list_propositions), the tool's own compact row-per-line output

@@ -32,7 +32,7 @@ import type {
 	LearnerSnapshot,
 } from "./contracts.ts";
 import { coverageOf } from "./coverage.ts";
-import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, type LhMessage } from "./native-messages.ts";
+import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, WORK_TOOLS, workSubmissionsOf, type LhMessage } from "./native-messages.ts";
 import { normalizeQuizType, type QuestionAnswerData } from "./question-core.ts";
 import type { ExerciseVerdict } from "./exercise-core.ts";
 
@@ -48,6 +48,9 @@ export const MIN_SPACING_HOURS = 20;
 const QUIZ_CALLS = ["quiz", "probe"] as const;
 const RECALL_CALLS = ["explain", "recall"] as const;
 const EXERCISE_CALLS = ["exercise", "assess"] as const;
+/** The R0-R5 hint ladder; a canvas task graded correct at R2 or above counts as helped. */
+const RUNGS = ["R0", "R1", "R2", "R3", "R4", "R5"] as const;
+const HELPED_RUNG_INDEX = 2;
 const GRADES = ["correct", "partly", "wrong", "dontKnow"] as const;
 const PRACTICE_OUTCOMES = ["solved", "solvedWithHints", "movedOn", "surrendered"] as const;
 
@@ -110,6 +113,8 @@ interface RecordedGrade {
 	grade: Grade;
 	note?: string;
 	misconception?: EvidenceEvent["misconception"];
+	/** work/sketch only: the highest hint rung given. */
+	rung?: string;
 	at: string;
 }
 
@@ -133,6 +138,7 @@ function gradesOf(calls: readonly ToolCallBlock[], results: Map<string, ToolResu
 			grade: grade as Grade,
 			...(str(c.arguments.note) ? { note: str(c.arguments.note)! } : {}),
 			...(misconception ? { misconception } : {}),
+			...(typeof c.arguments.rung === "string" && (RUNGS as readonly string[]).includes(c.arguments.rung) ? { rung: c.arguments.rung } : {}),
 			at: iso(result.timestamp),
 		});
 	}
@@ -146,25 +152,36 @@ function answerOf(result: ToolResultMessage | undefined): QuestionAnswerData | n
 	return d as unknown as QuestionAnswerData;
 }
 
-/** The ids of answered explain/recall calls that no `grade` call covers yet
- *  (the `grade` tool stays registered while any exist). */
+/** Is this call "answered" for grading: an explain/recall with a real
+ *  answer, or a canvas task (work/sketch) with at least one submission? */
+function isAnsweredGradable(
+	call: ToolCallBlock,
+	results: Map<string, ToolResultMessage>,
+	messages: readonly LhMessage[],
+): boolean {
+	if ((RECALL_CALLS as readonly string[]).includes(call.name)) return answerOf(results.get(call.id)) !== null;
+	if ((WORK_TOOLS as readonly string[]).includes(call.name)) {
+		return results.has(call.id) && workSubmissionsOf(messages, call.id).length > 0;
+	}
+	return false;
+}
+
+/** The ids of answered explain/recall calls (and canvas tasks with a
+ *  submission) that no `grade` call covers yet (the `grade` tool stays
+ *  registered while any exist). */
 export function ungradedAnsweredRecalls(messages: readonly LhMessage[]): string[] {
 	const calls = toolCallsOf(messages);
 	const results = cleanResults(messages);
 	const graded = gradesOf(calls, results);
-	return calls
-		.filter((c) => (RECALL_CALLS as readonly string[]).includes(c.name))
-		.filter((c) => answerOf(results.get(c.id)) !== null && !graded.has(c.id))
-		.map((c) => c.id);
+	return calls.filter((c) => isAnsweredGradable(c, results, messages) && !graded.has(c.id)).map((c) => c.id);
 }
 
-/** The answered explain/recall call ids of a record (what `grade` may target). */
+/** The answered explain/recall call ids (plus work/sketch calls with a
+ *  submission) of a record - what `grade` may target. */
 export function answeredRecallIds(messages: readonly LhMessage[]): Set<string> {
 	const calls = toolCallsOf(messages);
 	const results = cleanResults(messages);
-	return new Set(
-		calls.filter((c) => (RECALL_CALLS as readonly string[]).includes(c.name) && answerOf(results.get(c.id)) !== null).map((c) => c.id),
-	);
+	return new Set(calls.filter((c) => isAnsweredGradable(c, results, messages)).map((c) => c.id));
 }
 
 /** The question ids a clean `grade` call already covers. */
@@ -278,6 +295,32 @@ export function gradedItems(chat: ChatRecord): GradedItem[] {
 	for (const call of calls) {
 		const isQuiz = (QUIZ_CALLS as readonly string[]).includes(call.name);
 		const isRecall = (RECALL_CALLS as readonly string[]).includes(call.name);
+		if ((WORK_TOOLS as readonly string[]).includes(call.name)) {
+			// Predictions are posed before the teaching: not evidence.
+			if (normalizeQuizType(call.arguments.type) === "predict") continue;
+			if (!isAnsweredGradable(call, results, chat.messages)) continue;
+			const g = grades.get(call.id);
+			if (!g) continue; // work nobody graded produces no evidence
+			const last = workSubmissionsOf(chat.messages, call.id).at(-1);
+			const answer = [last?.text.trim() ?? "", last?.drawingId ? "[drawing]" : ""].filter(Boolean).join(" ");
+			// Help honoured (decision 24): correct at rung R2 or above is weak.
+			const helped = g.grade === "correct" && g.rung !== undefined && (RUNGS as readonly string[]).indexOf(g.rung) >= HELPED_RUNG_INDEX;
+			out.push({
+				chatId: chat.id,
+				toolCallId: call.id,
+				kind: call.name as "work" | "sketch",
+				at: g.at,
+				raw: helped ? "correctWithHelp" : g.grade,
+				result: helped ? "weak" : GRADE_RESULT[g.grade],
+				...(g.note ? { note: g.note } : {}),
+				...(g.misconception ? { misconception: g.misconception } : {}),
+				tags: strings(call.arguments.concepts),
+				question: str(call.arguments.question) ?? "",
+				correct: str(call.arguments.correctAnswer) ?? "",
+				answer,
+			});
+			continue;
+		}
 		if ((EXERCISE_CALLS as readonly string[]).includes(call.name)) {
 			if (normalizeQuizType(call.arguments.type) === "predict") continue;
 			const result = results.get(call.id);

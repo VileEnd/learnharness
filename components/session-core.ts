@@ -21,10 +21,13 @@ import {
 	answeredCallIds,
 	measuredContextTokens,
 	newAnswerResult,
+	newHintRequest,
 	newNextMessage,
 	newProblemDismissedMarker,
 	newThinkingMessage,
 	newUserMessage,
+	newWorkDismissedMarker,
+	newWorkSubmission,
 	projectView,
 	type ChatInput,
 	type LhMarkerMessage,
@@ -215,6 +218,9 @@ export interface SessionModelOptions extends SessionModelDeps {
 	initialError?: string;
 	/** Fires on every state change (the hook re-renders). */
 	onChange?: () => void;
+	/** Is this device canvas-capable (min screen side >= 600)? Read at every
+	 *  POST: the canvas tools exist only on a turn that says so. */
+	canvasCapable?: () => boolean;
 	/** The reattach settled terminal (turn-settled): no turn running, the
 	 *  record is current — the caller refetches it. */
 	onReattachSettled?: () => void;
@@ -231,6 +237,8 @@ export class SessionModel {
 	private onReattachSettled?: () => void;
 	/** The hook's re-render trigger (set by the adapter). */
 	onChange?: () => void;
+	/** Canvas capability of this device (set by the adapter each render). */
+	canvasCapable: () => boolean;
 
 	// THE STATE: the record (server canon) + the live tail (this client's
 	// optimistic appends and the streaming turn's messages). The tail dies
@@ -272,6 +280,7 @@ export class SessionModel {
 		this.pollMs = opts.pollMs ?? TURN_POLL_MS;
 		this.waitMaxMs = opts.waitMaxMs ?? TURN_WAIT_MAX_MS;
 		this.onChange = opts.onChange;
+		this.canvasCapable = opts.canvasCapable ?? (() => false);
 		this.onReattachSettled = opts.onReattachSettled;
 	}
 
@@ -348,7 +357,9 @@ export class SessionModel {
 	 *  never persisted (write-ahead happens only on acceptance), so the
 	 *  retry waits out the running turn and re-POSTs the SAME body. */
 	async postInputEvent(input: ChatInput, signal?: AbortSignal): Promise<Response> {
-		const body = JSON.stringify({ chatId: this.chatId, input });
+		// canvasCapable rides EVERY chat POST: the server arms the canvas tools
+		// only for a capable device (a phone turn runs without them).
+		const body = JSON.stringify({ chatId: this.chatId, input, canvasCapable: this.canvasCapable() });
 		const init: RequestInit = {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -699,7 +710,15 @@ export class SessionModel {
 			// The practice submissions (2026-10-04): the marker lands
 			// optimistically — the card renders from its details the
 			// moment the button fires.
-			optimistic.push({ ...newThinkingMessage(input.problemCallId, input.text), id: localId() });
+			optimistic.push({
+				...newThinkingMessage(input.problemCallId, input.text, input.drawingId ? { drawingId: input.drawingId } : {}),
+				id: localId(),
+			});
+		} else if (input.type === "work-submit") {
+			// The canvas submission card lands the moment Submit fires.
+			optimistic.push({ ...newWorkSubmission(input.workCallId, input.text, input.drawingId), id: localId() });
+		} else if (input.type === "hint") {
+			optimistic.push({ ...newHintRequest(input.callId), id: localId() });
 		} else if (input.type === "next") {
 			// The move-on signal (owner round 16): the NEXT PROBLEM line
 			// renders the instant the chip/Enter fires.
@@ -853,6 +872,36 @@ export class SessionModel {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ input: { type: "dismiss-problem", problemCallId } }),
+			});
+			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
+		} catch (err) {
+			this.setError((err as Error).message);
+		}
+	}
+
+	/** A submission on the open canvas task: text and/or a drawing, ONE lane.
+	 *  The submission card lands optimistically; the agent coaches. */
+	submitWork(workCallId: string, text: string, drawingId?: string): Promise<void> {
+		return this.send({ type: "work-submit", workCallId, text, ...(drawingId ? { drawingId } : {}) });
+	}
+
+	/** The Hint button on the active canvas task or practice problem. */
+	requestHint(callId: string): Promise<void> {
+		return this.send({ type: "hint", callId });
+	}
+
+	/** The canvas-task discard: the ask-style dismissal (marker lands
+	 *  optimistically, the silent route persists it, nothing wakes). */
+	async dismissWork(workCallId: string): Promise<void> {
+		if (!this.readyRef) return;
+		this.mutate(() => {
+			this.tail = [...this.tail, { ...newWorkDismissedMarker(workCallId), id: localId() }];
+		});
+		try {
+			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ input: { type: "dismiss-work", workCallId } }),
 			});
 			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
 		} catch (err) {
