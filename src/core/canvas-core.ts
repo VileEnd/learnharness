@@ -380,7 +380,11 @@ export function annotationMarkProblems(mark: unknown, scene: DrawingScene, box: 
 		const t = targetProblem("to", m.to, scene, box);
 		if (f) out.push(f);
 		if (t) out.push(t);
+		if (m.target !== undefined) out.push("an arrow takes `from` and `to`, not `target`");
 	} else {
+		for (const key of ["from", "to"] as const) {
+			if (m[key] !== undefined) out.push(`only arrows take from/to - rename \`${key}\` to \`target\``);
+		}
 		const t = targetProblem("target", m.target, scene, box);
 		if (t) out.push(t);
 	}
@@ -438,6 +442,31 @@ function withoutNulls(o: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
+ * A non-arrow mark that anchors itself the wrong way: exactly one of from/to and no target moves
+ * that one into `target`; bare object/cell/cells keys on the mark are wrapped into `target`.
+ * Arrows keep from/to untouched. Identity-preserving when nothing applies.
+ */
+function moveIntoTarget(mark: Record<string, unknown>): Record<string, unknown> {
+	if (mark.kind === "arrow" || mark.target !== undefined) return mark;
+	const hasFrom = mark.from !== undefined;
+	const hasTo = mark.to !== undefined;
+	if (hasFrom !== hasTo) {
+		const { from, to, ...rest } = mark;
+		return { ...rest, target: hasFrom ? from : to };
+	}
+	if (hasFrom) return mark;
+	const bare = (["object", "cell", "cells"] as const).filter((k) => mark[k] !== undefined);
+	if (bare.length === 0) return mark;
+	const rest = { ...mark };
+	const target: Record<string, unknown> = {};
+	for (const k of bare) {
+		target[k] = mark[k];
+		delete rest[k];
+	}
+	return { ...rest, target };
+}
+
+/**
  * The annotate heal: the standard top-level pass (a `marks` array sent as a JSON string) plus the nested
  * wobbles of this one tool - a mark, or a mark's `target`/`from`/`to`, sent as a JSON-encoded object, and
  * optional fields sent as null. Runs at the agent boundary (the tool's prepareArguments) AND in
@@ -458,6 +487,7 @@ export function healAnnotateArguments(args: unknown): unknown {
 			const clean = withoutNulls(t);
 			if (clean !== mark[key]) mark = { ...mark, [key]: clean };
 		}
+		mark = moveIntoTarget(mark);
 		if (mark !== raw) changed = true;
 		return mark;
 	});

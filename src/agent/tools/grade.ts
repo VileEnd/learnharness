@@ -12,14 +12,16 @@
  * the prompts.
  */
 
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
 import { answeredRecallIds, gradedQuestionIds, ungradedAnsweredRecalls } from "../../core/learner.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 
-export const GRADE_NOTE_MAX = 140;
+import { GRADE_NOTE_MAX, healGradeArguments } from "../../core/grade-heal.ts";
+
+export { GRADE_NOTE_MAX };
 
 export const gradeInputObject = Type.Object({
 	question: Type.String({
@@ -94,9 +96,12 @@ export function gradeTool(ctx: {
 			"Record how the learner's free-text answer to an explain or recall question - or his work on a canvas task - counts, judged against the answer you committed. " +
 			"Call it once per answered question; an answer you never grade is not counted as evidence. " +
 			"Grading a work or sketch call closes the task (set rung to the highest hint rung you gave). " +
-			"misconception is allowed only with partly or wrong.",
+			"misconception only counts with partly or wrong (it is ignored otherwise).",
 		parameters: gradeInputObject,
 		executionMode: "sequential",
+		// Heal parity: an over-long note is cut and a misconception with correct/dontKnow is dropped here,
+		// and core/learner.ts + the grade chip run the same healGradeArguments on the raw record.
+		prepareArguments: (args: unknown) => healGradeArguments(args) as Static<typeof gradeInputObject>,
 		execute: async (_toolCallId, input) => {
 			const record = ctx.chatStore.getChat(ctx.chatId);
 			const problems: string[] = [];
@@ -107,9 +112,6 @@ export function gradeTool(ctx: {
 				);
 			} else if (gradedQuestionIds(record.messages).has(input.question) || gradedThisTurn.has(input.question)) {
 				problems.push(`question "${input.question}" is already graded - one grade per question.`);
-			}
-			if (input.misconception && input.grade !== "partly" && input.grade !== "wrong") {
-				problems.push("misconception is allowed only with grade partly or wrong.");
 			}
 			if (problems.length > 0) return invalidInputResult("grade", problems);
 			gradedThisTurn.add(input.question);
