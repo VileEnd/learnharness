@@ -225,12 +225,18 @@ function verdict(items: ItemVerdict[], earned: number, total: number, noun: stri
 const valuesOf = (response: unknown): Rec => (isRec(response) && isRec(response.values) ? response.values : {});
 const str = (v: unknown) => (isStr(v) ? v : "");
 
-function gradeNumeric(spec: NumericSpec, response: unknown): ExerciseVerdict {
+/** The typed numeric answer, its unit (when the spec has one) stripped. */
+function numericGiven(spec: NumericSpec, response: unknown): string {
 	let given = isRec(response) ? str(response.value).trim() : "";
 	if (spec.unit) {
 		const u = spec.unit.trim();
 		if (u && given.toLowerCase().endsWith(u.toLowerCase())) given = given.slice(0, given.length - u.length).trim();
 	}
+	return given;
+}
+
+function gradeNumeric(spec: NumericSpec, response: unknown): ExerciseVerdict {
+	const given = numericGiven(spec, response);
 	let correct = false;
 	if (given) {
 		if (spec.mode === "expression") correct = exprEquivalent(given, spec.answer, spec.variables ?? []);
@@ -307,6 +313,51 @@ export function gradeExercise(format: InteractiveFormat, spec: unknown, response
 	}
 }
 
+/** True when a filled number/expression entry does not parse (text and bit entries always read). */
+function unreadable(given: string, mode: string): boolean {
+	const g = norm(given);
+	if (!g) return false;
+	if (mode === "number") return parseNumberLike(g) === null;
+	if (mode === "expression") return !parseExpr(g).ok;
+	return false;
+}
+
+/** The ids (as the verdict's items name them) of filled entries the grader
+ *  cannot read: a number or expression that does not parse ("1 000", "3 x 4").
+ *  The docks refuse a Check over these with "couldn't read" instead of
+ *  grading them wrong, so a notation slip never counts as an attempt. Never
+ *  throws; a malformed spec reads as nothing unreadable. */
+export function unreadableItems(format: InteractiveFormat, spec: unknown, response: unknown): string[] {
+	try {
+		if (exerciseSpecProblems(format, spec).length > 0) return [];
+		switch (format) {
+			case "numeric": {
+				const s = spec as NumericSpec;
+				return unreadable(numericGiven(s, response), s.mode) ? ["answer"] : [];
+			}
+			case "blanks": {
+				const vals = valuesOf(response);
+				return (spec as BlanksSpec).blanks.filter((b) => unreadable(str(vals[b.id]), b.mode ?? "text")).map((b) => b.id);
+			}
+			case "table": {
+				const vals = valuesOf(response);
+				const out: string[] = [];
+				for (const row of (spec as TableSpec).rows) {
+					for (const c of row.cells) if ("id" in c && unreadable(str(vals[c.id]), c.mode ?? "text")) out.push(c.id);
+				}
+				return out;
+			}
+			case "multipart": {
+				const parts = isRec(response) && isRec(response.parts) ? response.parts : {};
+				return (spec as MultipartSpec).parts.flatMap((p) => unreadableItems(p.format, p.spec, parts[p.id]).map((id) => `${p.id}.${id}`));
+			}
+			default: return [];
+		}
+	} catch {
+		return [];
+	}
+}
+
 /** Marks-only view: removes the expected answers. */
 export function stripExpected(v: ExerciseVerdict): ExerciseVerdict {
 	return { ...v, items: v.items.map(({ expected: _e, ...rest }) => rest) };
@@ -332,14 +383,20 @@ function answerValues(format: string, spec: unknown): string[] {
 }
 
 /** The accepted answer values a hint leaks (empty = clean). Case-insensitive on
- *  whitespace-normalised text; values shorter than 2 characters are ignored. */
+ *  whitespace-normalised text; values shorter than 2 characters are ignored. A
+ *  value leaks only as a whole token: no letter or digit may touch it on either
+ *  side, so "in" does not leak through "Think" nor "10" through "100". */
 export function hintLeaks(format: string, spec: unknown, hints: readonly string[]): string[] {
 	const fold = (s: string) => norm(s).toLowerCase();
 	const values = [...new Set(answerValues(format, spec).map(fold))].filter((v) => v.length >= 2);
+	const patterns = values.map((v) => ({
+		v,
+		re: new RegExp(`(?<![\\p{L}\\p{N}])${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u"),
+	}));
 	const leaked = new Set<string>();
 	for (const h of hints) {
 		const hint = fold(h);
-		for (const v of values) if (hint.includes(v)) leaked.add(v);
+		for (const { v, re } of patterns) if (re.test(hint)) leaked.add(v);
 	}
 	return [...leaked];
 }

@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { exerciseSpecProblems, gradeExercise, stripExpected } from "../src/core/exercise-core.ts";
+import { exerciseSpecProblems, gradeExercise, stripExpected, unreadableItems } from "../src/core/exercise-core.ts";
 
 test("numeric honours tolerance", () => {
 	const spec = { answer: "1/3", mode: "number", tolerance: { abs: 0.001 } };
@@ -64,4 +64,26 @@ test("table expression cells grade with their declared variables", async () => {
 	const spec = { columns: ["A"], rows: [{ cells: [{ id: "c", accept: ["2x"], mode: "expression", variables: ["x"] }] }] };
 	assert.deepEqual(exerciseSpecProblems("table", spec), []);
 	assert.equal(gradeExercise("table", spec, { values: { c: "x+x" } }).outcome, "correct");
+});
+
+test("unreadableItems names filled number/expression entries that do not parse", () => {
+	const num = { answer: "1000", mode: "number", unit: "m" };
+	assert.deepEqual(unreadableItems("numeric", num, { value: "1 000 m" }), ["answer"]);
+	assert.deepEqual(unreadableItems("numeric", num, { value: "1000 m" }), []);
+	assert.deepEqual(unreadableItems("numeric", num, { value: "" }), []);
+	const blanks = {
+		text: "{{a}} {{b}} {{c}}",
+		blanks: [{ id: "a", accept: ["in"] }, { id: "b", accept: ["2x"], mode: "expression", variables: ["x"] }, { id: "c", accept: ["4"], mode: "number" }],
+	};
+	assert.deepEqual(unreadableItems("blanks", blanks, { values: { a: "1 $ 2", b: "2 +", c: "4" } }), ["b"]);
+	const part = (id: string) => ({ id, label: id, format: "numeric", spec: { answer: "12", mode: "number" } });
+	const multipart = { parts: [part("p"), part("q")] };
+	assert.deepEqual(unreadableItems("multipart", multipart, { parts: { p: { value: "2 3" }, q: { value: "12" } } }), ["p.answer"]);
+	assert.deepEqual(unreadableItems("numeric", { answer: "nope" }, { value: "x" }), [], "a malformed spec reads as nothing unreadable");
+});
+
+test("typed notation grades right", () => {
+	assert.equal(gradeExercise("numeric", { answer: "12", mode: "number" }, { value: "3×4" }).outcome, "correct");
+	assert.equal(gradeExercise("numeric", { answer: "x^2", mode: "expression", variables: ["x"] }, { value: "x²" }).outcome, "correct");
+	assert.equal(gradeExercise("numeric", { answer: "1000", mode: "number" }, { value: "1,000,000" }).outcome, "wrong");
 });

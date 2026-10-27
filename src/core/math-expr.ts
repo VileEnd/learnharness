@@ -7,6 +7,12 @@
  * multiplication (2x, 2pi, x(y+1)), parentheses, functions
  * sqrt sin cos tan asin acos atan ln log exp abs, constants pi π e.
  * Free variables are single letters (other than `e`).
+ *
+ * Typed notation is normalised first (normalizeMathInput): × · ∙ ⋅ → *,
+ * ÷ → /, Unicode minus/dashes → -, superscripts (x², x⁻¹) → ^(…), √ → sqrt.
+ * A function may take a bare argument (sinx, sin 2x, √2 = sqrt(2)): the
+ * juxtaposed factors up to the next operator. Two numbers side by side
+ * ("1 000", "2 3") are refused, never silently multiplied.
  */
 
 import { seededRandom } from "./question-core.ts";
@@ -42,6 +48,34 @@ function isFn(s: string): s is MathFn {
 	return Object.hasOwn(FUNCS, s);
 }
 
+const SUPERSCRIPT: Readonly<Record<string, string>> = {
+	"⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁻": "-", "⁺": "+",
+};
+
+/** Common typed math notation → the parser's ASCII grammar. */
+export function normalizeMathInput(src: string): string {
+	return src
+		.replace(/[−–—]/g, "-")
+		.replace(/[×·∙⋅✕]/g, "*")
+		.replace(/÷/g, "/")
+		.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+/g, (run) => `^(${[...run].map((c) => SUPERSCRIPT[c]).join("")})`)
+		.replace(/√/g, " sqrt ");
+}
+
+/** Function names, longest first (a bare-argument run like `asinx` takes the longest prefix). */
+const FN_NAMES = (Object.keys(FUNCS) as MathFn[]).sort((a, b) => b.length - a.length);
+
+/** Single letters and `pi` of a run with no function in it: implicit multiplication. */
+function pushLetters(toks: Tok[], run: string): void {
+	for (let m = 0; m < run.length; ) {
+		const piece = run.startsWith("pi", m) ? "pi" : run[m]!;
+		toks.push({ k: "id", s: piece });
+		m += piece.length;
+	}
+}
+
+const containsFn = (run: string) => FN_NAMES.some((f) => run.includes(f));
+
 function tokenize(src: string): Tok[] | string {
 	const toks: Tok[] = [];
 	let i = 0;
@@ -63,16 +97,18 @@ function tokenize(src: string): Tok[] | string {
 			if (j === i) j = i + 1; // lone π
 			const run = src.slice(i, j);
 			const whole = src[j] === "(" || isFn(run) || Object.hasOwn(CONSTS, run) || run.length === 1;
-			const hasFn = Object.keys(FUNCS).some((f) => run.includes(f));
-			if (whole || hasFn) {
+			const fnPrefix = FN_NAMES.find((f) => run.startsWith(f));
+			if (whole) {
 				toks.push({ k: "id", s: run });
+			} else if (fnPrefix && !containsFn(run.slice(fnPrefix.length))) {
+				// a function with a bare argument: `sinx`, `sqrtx` → sin x, sqrt x
+				toks.push({ k: "id", s: fnPrefix });
+				pushLetters(toks, run.slice(fnPrefix.length));
+			} else if (containsFn(run)) {
+				toks.push({ k: "id", s: run }); // unknown identifier
 			} else {
 				// adjacent single-letter variables / pi: `xy`, `2xy`, `xpi` → implicit multiplication
-				for (let m = 0; m < run.length; ) {
-					const piece = run.startsWith("pi", m) ? "pi" : run[m]!;
-					toks.push({ k: "id", s: piece });
-					m += piece.length;
-				}
+				pushLetters(toks, run);
 			}
 			i = j;
 			continue;
@@ -122,6 +158,26 @@ class Parser {
 		return t !== undefined && (t.k === "num" || t.k === "id" || (t.k === "op" && t.s === "("));
 	}
 
+	/** Two numbers side by side ("1 000", "2 3") are unreadable, not a product. */
+	private refuseNumberJuxtaposition(): void {
+		if (this.peek()?.k === "num" && this.toks[this.i - 1]?.k === "num") throw new ParseError("two numbers side by side");
+	}
+
+	/** A bare function argument: juxtaposed number/variable/constant factors
+	 *  (each with its own exponent) up to the next operator, parenthesis or
+	 *  function — `sin 2x` = sin(2x), `sin x cos x` = sin(x)·cos(x). */
+	private bareArgument(fn: string): Expr {
+		const t = this.peek();
+		if (!t || t.k === "op" || (t.k === "id" && isFn(t.s))) throw new ParseError(`${fn} needs an argument`);
+		let a = this.power();
+		for (;;) {
+			const n = this.peek();
+			if (!n || n.k === "op" || (n.k === "id" && isFn(n.s))) return a;
+			this.refuseNumberJuxtaposition();
+			a = { t: "bin", op: "*", a, b: this.power() };
+		}
+	}
+
 	/** term := unary (('*' | '/') unary | implicit-mult unary)* */
 	private term(): Expr {
 		let a = this.unary();
@@ -130,6 +186,7 @@ class Parser {
 				const op = (this.toks[this.i++] as { s: "*" | "/" }).s;
 				a = { t: "bin", op, a, b: this.unary() };
 			} else if (this.startsFactor()) {
+				this.refuseNumberJuxtaposition();
 				a = { t: "bin", op: "*", a, b: this.power() };
 			} else return a;
 		}
@@ -170,7 +227,7 @@ class Parser {
 		}
 		const s = t.s;
 		if (isFn(s)) {
-			if (!this.isOp("(")) throw new ParseError(`${s} needs parentheses`);
+			if (!this.isOp("(")) return { t: "call", fn: s, a: this.bareArgument(s) };
 			this.i++;
 			const a = this.additive();
 			if (!this.isOp(")")) throw new ParseError('missing ")"');
@@ -184,7 +241,7 @@ class Parser {
 }
 
 export function parseExpr(src: string): { ok: true; expr: Expr } | { ok: false; error: string } {
-	const toks = tokenize(src);
+	const toks = tokenize(normalizeMathInput(src));
 	if (typeof toks === "string") return { ok: false, error: toks };
 	try {
 		return { ok: true, expr: new Parser(toks).parseAll() };
@@ -224,11 +281,17 @@ export function evalExpr(expr: Expr, vars: Readonly<Record<string, number>>): nu
 	}
 }
 
-/** Numeric value of a typed answer ("1/3", "−5", "0,5", "1e-3", "2pi"), or null. */
+/** Numeric value of a typed answer ("1/3", "−5", "0,5", "1e-3", "2pi",
+ *  "1,000,000", "1,000.5"), or null. A comma is a decimal comma ("0,5") unless
+ *  it groups thousands unambiguously (two or more groups, or a decimal point
+ *  after them). "1,000" alone reads both ways (German 1.0, English 1000), so
+ *  it is refused as unreadable rather than guessed. */
 export function parseNumberLike(src: string): number | null {
 	let s = src.trim().replace(/[−–—]/g, "-");
 	if (!s) return null;
-	if (!s.includes(".") && /^-?\d+,\d+$/.test(s)) s = s.replace(",", ".");
+	if (/^-?[1-9]\d{0,2},\d{3}$/.test(s)) return null;
+	if (/^-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$/.test(s)) s = s.replace(/,/g, "");
+	else if (!s.includes(".") && /^-?\d+,\d+$/.test(s)) s = s.replace(",", ".");
 	const r = parseExpr(s);
 	if (!r.ok) return null;
 	const v = evalExpr(r.expr, {});

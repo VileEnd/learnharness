@@ -9,8 +9,9 @@ import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { ExerciseWidget } from "@/components/exercise/exercise-widget";
+import { UnreadableNotice } from "@/components/exercise/widget-shared";
 import { emptyResponse, hasAnyText } from "@/components/exercise/attempt-state";
-import { gradeExercise, parseExerciseInput, stripExpected, type ExerciseVerdict, type ThinkingAttempt } from "@/src/core";
+import { gradeExercise, parseExerciseInput, stripExpected, unreadableItems, type ExerciseVerdict, type ThinkingAttempt } from "@/src/core";
 
 /** Before the hint input lands (PR 2) a hint is asked for in words. */
 export const HINT_REQUEST_TEXT = "I'd like a hint.";
@@ -100,8 +101,13 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	};
 
 	const canCheck = !!ex && !compactionRunning && hasAnyText(response);
+	// Unreadable entries refuse the Check: nothing is sent, nothing counts.
+	const [unreadableCount, setUnreadableCount] = useState(0);
 	const check = () => {
 		if (!ex || !canCheck) return;
+		const unread = unreadableItems(ex.format, ex.spec, response);
+		setUnreadableCount(unread.length);
+		if (unread.length > 0) return;
 		const full = gradeExercise(ex.format, ex.spec, response);
 		const marks = stripExpected(full);
 		setVerdict(marks);
@@ -156,10 +162,14 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 							spec={ex.spec}
 							toolCallId={problemCallId}
 							value={response}
-							onChange={setResponse}
+							onChange={(next) => {
+								setUnreadableCount(0);
+								setResponse(next);
+							}}
 							review={verdict}
 							marksOnly
 						/>
+						<UnreadableNotice count={unreadableCount} />
 					</div>
 				)}
 			</div>

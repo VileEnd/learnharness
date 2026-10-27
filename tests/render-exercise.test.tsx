@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ExerciseWidget } from "../components/exercise/exercise-widget.tsx";
+import { UnreadableNotice } from "../components/exercise/widget-shared.tsx";
 import {
 	emptyResponse,
 	exerciseAttemptReducer,
@@ -293,5 +294,15 @@ describe("answered exercise card", () => {
 		const html = renderToStaticMarkup(<AnsweredCard answer={answer} input={input} />);
 		assert.match(html, /gave up/);
 		assert.match(html, /42/);
+	});
+});
+
+describe("couldn't read", () => {
+	it("the notice renders only when entries were unreadable", () => {
+		assert.equal(renderToStaticMarkup(<UnreadableNotice count={0} />), "");
+		const html = renderToStaticMarkup(<UnreadableNotice count={2} />);
+		assert.match(html, /data-testid="exercise-unreadable"/);
+		assert.match(html, /Couldn(&#x27;|')t read 2 entries/);
+		assert.match(html, /didn(&#x27;|')t count/);
 	});
 });
