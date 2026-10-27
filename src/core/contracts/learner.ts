@@ -19,7 +19,7 @@ export interface EvidenceEvent {
 	chatId: string;
 	/** The question/problem call this came from (a practice event carries the conclude call's id). */
 	toolCallId: string;
-	kind: "quiz" | "probe" | "explain" | "recall" | "exercise" | "assess" | "practice";
+	kind: "quiz" | "probe" | "explain" | "recall" | "exercise" | "assess" | "work" | "sketch" | "practice";
 	/** correct | miss | dontKnow | partly | wrong | solved | solvedWithHints | movedOn | surrendered | tentative | correctWithHelp | miss */
 	raw: string;
 	result: EvidenceResult;

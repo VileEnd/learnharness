@@ -87,7 +87,7 @@ function advance(
 		// explain, whichever mechanic the settings armed (both carry nodeId).
 		if (
 			phase === "plan" &&
-			(part.type === "tool-quiz" || part.type === "tool-explain" || part.type === "tool-exercise") &&
+			(part.type === "tool-quiz" || part.type === "tool-explain" || part.type === "tool-exercise" || part.type === "tool-work") &&
 			taggedNodeId(part.input)
 		) {
 			phase = "teach";
@@ -122,7 +122,7 @@ export function teachStepIndex(
 			continue;
 		}
 		if (
-			(part.type === "tool-quiz" || part.type === "tool-explain" || part.type === "tool-exercise") &&
+			(part.type === "tool-quiz" || part.type === "tool-explain" || part.type === "tool-exercise" || part.type === "tool-work") &&
 			taggedNodeId(part.input)
 		) {
 			// The call's governing step: 0–1 step-starts seen = the message's
@@ -181,7 +181,7 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 				for (const block of content) {
 					if (
 						block.type === "toolCall" &&
-						(block.name === "quiz" || block.name === "explain" || block.name === "exercise") &&
+						(block.name === "quiz" || block.name === "explain" || block.name === "exercise" || block.name === "work") &&
 						taggedNodeId(block.arguments)
 					) {
 						phase = "teach";

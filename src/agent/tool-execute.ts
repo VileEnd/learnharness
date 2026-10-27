@@ -250,6 +250,22 @@ export function problemResult(): AgentToolResult<null> {
 	};
 }
 
+/** The canvas-task pose ack (work/sketch): final and persisted like the
+ *  practice pose - the learner's submissions arrive as MESSAGES, never as
+ *  this call's result; terminate: true ends the turn at the pose. */
+export function workResult(): AgentToolResult<null> {
+	return {
+		content: [
+			{
+				type: "text",
+				text: "Canvas task posed — the turn ends here; the learner's submissions arrive as labeled messages until you grade.",
+			},
+		],
+		details: null,
+		terminate: true,
+	};
+}
+
 /** The conclude ack: NOT terminate — the turn continues so the same reply
  *  can reveal + pose the next problem. Text single-sourced in contracts
  *  (CONCLUDE_ACK_TEXT — shared with the dismissal-synthesized pair). */

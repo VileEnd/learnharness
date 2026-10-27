@@ -22,7 +22,8 @@ export const GRADE_NOTE_MAX = 140;
 
 export const gradeInputObject = Type.Object({
 	question: Type.String({
-		description: "The toolCallId of the explain or recall call you are grading (it must already have his answer).",
+		description:
+			"The toolCallId of the explain, recall, work or sketch call you are grading (it must already have his answer or a submission). Grading a work or sketch call closes it.",
 	}),
 	grade: Type.Union(
 		[Type.Literal("correct"), Type.Literal("partly"), Type.Literal("wrong"), Type.Literal("dontKnow")],
@@ -32,6 +33,20 @@ export const gradeInputObject = Type.Object({
 		maxLength: GRADE_NOTE_MAX,
 		description: `REQUIRED - one short line (at most ${GRADE_NOTE_MAX} characters): what he had right and what he missed.`,
 	}),
+	rung: Type.Optional(
+		Type.Union(
+			[
+				Type.Literal("R0"),
+				Type.Literal("R1"),
+				Type.Literal("R2"),
+				Type.Literal("R3"),
+				Type.Literal("R4"),
+				Type.Literal("R5"),
+				Type.Null(),
+			],
+			{ description: "Only for a work or sketch call: the highest hint rung you gave (R0 to R5), or null when you gave none." },
+		),
+	),
 	misconception: Type.Optional(
 		Type.Object(
 			{
@@ -44,7 +59,13 @@ export const gradeInputObject = Type.Object({
 	),
 });
 
-export function gradeTool(ctx: { chatId: string; chatStore: Pick<ChatStore, "getChat"> }): AgentTool<typeof gradeInputObject> {
+export function gradeTool(ctx: {
+	chatId: string;
+	chatStore: Pick<ChatStore, "getChat">;
+	/** Called with every question id this registry graded (the work tool's
+	 *  intra-turn view of "closed"). */
+	onGraded?: (questionId: string) => void;
+}): AgentTool<typeof gradeInputObject> {
 	// Intra-turn truth (the practice gate's idiom): the record freezes at the
 	// turn's write-ahead, so two grades of one question in one turn would
 	// both pass the record scan; this set closes that window.
@@ -53,8 +74,9 @@ export function gradeTool(ctx: { chatId: string; chatStore: Pick<ChatStore, "get
 		name: "grade",
 		label: "grade",
 		description:
-			"Record how the learner's free-text answer to an explain or recall question counts, judged against the answer you committed. " +
+			"Record how the learner's free-text answer to an explain or recall question - or his work on a canvas task - counts, judged against the answer you committed. " +
 			"Call it once per answered question; an answer you never grade is not counted as evidence. " +
+			"Grading a work or sketch call closes the task (set rung to the highest hint rung you gave). " +
 			"misconception is allowed only with partly or wrong.",
 		parameters: gradeInputObject,
 		executionMode: "sequential",
@@ -63,7 +85,7 @@ export function gradeTool(ctx: { chatId: string; chatStore: Pick<ChatStore, "get
 			const problems: string[] = [];
 			if (!record || !answeredRecallIds(record.messages).has(input.question)) {
 				problems.push(
-					`question "${input.question}" is not an answered explain or recall in this chat - copy the toolCallId of the call he answered.`,
+					`question "${input.question}" is not an answered explain or recall (or a work/sketch task with a submission) in this chat - copy the toolCallId of the call he answered.`,
 				);
 			} else if (gradedQuestionIds(record.messages).has(input.question) || gradedThisTurn.has(input.question)) {
 				problems.push(`question "${input.question}" is already graded - one grade per question.`);
@@ -73,6 +95,7 @@ export function gradeTool(ctx: { chatId: string; chatStore: Pick<ChatStore, "get
 			}
 			if (problems.length > 0) return invalidInputResult("grade", problems);
 			gradedThisTurn.add(input.question);
+			ctx.onGraded?.(input.question);
 			return toToolResult(`Recorded: ${input.grade}.`);
 		},
 	};

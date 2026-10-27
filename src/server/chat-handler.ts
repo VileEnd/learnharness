@@ -165,7 +165,8 @@ export const extraction = createExtractionPipeline({
 // marker, appended natively under the turn claim), and crash recovery
 // re-spawns orphaned sub-agent loops through THIS runner.
 setTurnRunner(async (chatId, input) => {
-	const res = await handleChatInput(chatId, input);
+	// Server-initiated turns (job wakes, handoffs) are never canvas-capable.
+	const res = await handleChatInput(chatId, input, undefined, { canvasCapable: false });
 	// Drive the stream to completion server-side — nobody else will read it,
 	// and onFinish (persist, extraction, endTurn) only runs when it drains.
 	await res.arrayBuffer().catch(() => undefined);
@@ -187,7 +188,7 @@ export async function handleChatRequest(
 	req: Request,
 	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
 ): Promise<Response> {
-	let body: { chatId?: unknown; input?: unknown };
+	let body: { chatId?: unknown; input?: unknown; canvasCapable?: unknown };
 	try {
 		body = await req.json();
 	} catch {
@@ -204,7 +205,9 @@ export async function handleChatRequest(
 		}
 		throw err;
 	}
-	return handleChatInput(chatId, input, buildAgent);
+	// The client's device report (decision 13): tablet/desktop only. Absent or
+	// anything but `true` = not canvas-capable.
+	return handleChatInput(chatId, input, buildAgent, { canvasCapable: body.canvasCapable === true });
 }
 
 /**
@@ -216,6 +219,7 @@ export async function handleChatInput(
 	chatId: string,
 	input: TurnInput,
 	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	turnOpts: { canvasCapable?: boolean } = {},
 ): Promise<Response> {
 	let record = stores.chatStore.getChat(chatId);
 	if (!record) {
@@ -296,7 +300,9 @@ export async function handleChatInput(
 		appends =
 			input.type === "steers"
 				? input.steers.filter((s) => !steerDelivered(record.messages, s.id))
-				: inputAppends(record, input);
+				: inputAppends(record, input, {
+						drawingExists: (id, drawingId) => stores.drawingStore.getScene(id, drawingId) !== null,
+					});
 	} catch (err) {
 		if (err instanceof ChatInputError) {
 			return Response.json({ error: err.message }, { status: 400 });
@@ -415,6 +421,11 @@ export async function handleChatInput(
 	// split, no plan/question/job tools; the whole registry is
 	// problem + conclude. buildAgent stays honored (the test seam is
 	// uniform across kinds).
+	// The canvas tools exist only when the chat enabled the canvas AND this
+	// request came from a canvas-capable device (a phone turn and every
+	// server-initiated turn run without them; `grade` stays armed whenever a
+	// task is open - tools.ts gradeFor).
+	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true;
 	const constructed: TeachingAgent = buildAgent
 		? buildAgent({ ...agentOpts, teaching })
 		: record.kind === "practice"
@@ -460,6 +471,7 @@ export async function handleChatInput(
 						// The questions' `concepts` tags validate against the whole graph.
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
+						canvas,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -480,6 +492,7 @@ export async function handleChatInput(
 						// The questions' `concepts` tags validate against the whole graph.
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
+						canvas,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
