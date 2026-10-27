@@ -12,14 +12,16 @@
  * the prompts.
  */
 
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
 import { answeredRecallIds, gradedQuestionIds, ungradedAnsweredRecalls } from "../../core/learner.ts";
-import type { LhMessage } from "../../core/native-messages.ts";
+import { isInputBoundary, visibleTeachingSinceLastInput, workSubmissionsOf, type LhMessage } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
 
-export const GRADE_NOTE_MAX = 140;
+import { GRADE_NOTE_MAX, healGradeArguments } from "../../core/grade-heal.ts";
+
+export { GRADE_NOTE_MAX };
 
 export const gradeInputObject = Type.Object({
 	question: Type.String({
@@ -76,9 +78,58 @@ function gradableNow(messages: readonly LhMessage[], gradedThisTurn: ReadonlySet
 	return `Gradable now: ${open.map((id) => `"${id}" (${names.get(id) ?? "call"})`).join(", ")}.`;
 }
 
+/** The soft refusal of a wrong/partly grade on a canvas task's first, uncoached submission. */
+export const FIRST_SUBMISSION_REFUSAL =
+	"Coach this first submission and leave the task open; grade after he resubmits, asks to stop, or repeats the error.";
+
+/** RC6: true when `grade` of `question` should be refused ONCE: a work/sketch task (not a prediction) with
+ *  exactly one submission, no learner-visible coaching since it, and no earlier refused grade for it. All
+ *  derived from `messages` (history plus the in-flight turn), never stored. */
+function firstSubmissionNeedsCoaching(messages: readonly LhMessage[], question: string): boolean {
+	let tool: string | undefined;
+	let args: { type?: unknown } = {};
+	const gradeCalls = new Set<string>();
+	for (const m of messages) {
+		if ((m as { role?: string }).role !== "assistant") continue;
+		for (const b of (m as { content: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }).content) {
+			if (b.type !== "toolCall" || !b.id) continue;
+			if (b.id === question && (b.name === "work" || b.name === "sketch")) {
+				tool = b.name;
+				args = (b.arguments ?? {}) as { type?: unknown };
+			}
+			if (b.name === "grade" && (b.arguments as { question?: unknown } | undefined)?.question === question) gradeCalls.add(b.id);
+		}
+	}
+	if (tool === undefined || args.type === "predict") return false;
+	for (const m of messages) {
+		const r = m as { role?: string; toolCallId?: string; isError?: boolean };
+		if (r.role === "toolResult" && r.isError && r.toolCallId && gradeCalls.has(r.toolCallId)) return false;
+	}
+	if (workSubmissionsOf(messages, question).length !== 1) return false;
+	return !visibleTeachingSinceLastInput(messages, []);
+}
+
+/** The refusal of any grade in a turn that answers a hint request on the same task. */
+export const HINT_TURN_REFUSAL =
+	"This turn answers his hint request: give the next rung and leave the task open. Grade only after he resubmits, asks to stop, or repeats the error.";
+
+/** True when the learner's latest input (history plus the in-flight turn) is a hint request on `question`:
+ *  closing the task then would reveal the committed answer in place of the hint (GLM re-check, 2026-10-27). */
+function answersHintRequest(messages: readonly LhMessage[], question: string): boolean {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (!isInputBoundary(m)) continue;
+		const c = m as { customType?: unknown; details?: { callId?: unknown } | null };
+		return c.customType === "hint-request" && c.details?.callId === question;
+	}
+	return false;
+}
+
 export function gradeTool(ctx: {
 	chatId: string;
 	chatStore: Pick<ChatStore, "getChat">;
+	/** The in-flight turn (history plus this turn's messages), when the registry has one. */
+	turn?: { messages: () => readonly unknown[] };
 	/** Called with every question id this registry graded (the work tool's
 	 *  intra-turn view of "closed"). */
 	onGraded?: (questionId: string) => void;
@@ -94,9 +145,12 @@ export function gradeTool(ctx: {
 			"Record how the learner's free-text answer to an explain or recall question - or his work on a canvas task - counts, judged against the answer you committed. " +
 			"Call it once per answered question; an answer you never grade is not counted as evidence. " +
 			"Grading a work or sketch call closes the task (set rung to the highest hint rung you gave). " +
-			"misconception is allowed only with partly or wrong.",
+			"misconception only counts with partly or wrong (it is ignored otherwise).",
 		parameters: gradeInputObject,
 		executionMode: "sequential",
+		// Heal parity: an over-long note is cut and a misconception with correct/dontKnow is dropped here,
+		// and core/learner.ts + the grade chip run the same healGradeArguments on the raw record.
+		prepareArguments: (args: unknown) => healGradeArguments(args) as Static<typeof gradeInputObject>,
 		execute: async (_toolCallId, input) => {
 			const record = ctx.chatStore.getChat(ctx.chatId);
 			const problems: string[] = [];
@@ -108,8 +162,14 @@ export function gradeTool(ctx: {
 			} else if (gradedQuestionIds(record.messages).has(input.question) || gradedThisTurn.has(input.question)) {
 				problems.push(`question "${input.question}" is already graded - one grade per question.`);
 			}
-			if (input.misconception && input.grade !== "partly" && input.grade !== "wrong") {
-				problems.push("misconception is allowed only with grade partly or wrong.");
+			else if (answersHintRequest((ctx.turn?.messages() ?? record.messages) as readonly LhMessage[], input.question)) {
+				problems.push(HINT_TURN_REFUSAL);
+			}
+			else if (
+				(input.grade === "wrong" || input.grade === "partly") &&
+				firstSubmissionNeedsCoaching((ctx.turn?.messages() ?? record.messages) as readonly LhMessage[], input.question)
+			) {
+				problems.push(FIRST_SUBMISSION_REFUSAL);
 			}
 			if (problems.length > 0) return invalidInputResult("grade", problems);
 			gradedThisTurn.add(input.question);

@@ -88,6 +88,8 @@ The economics first: revealed information cannot be unrevealed, and the learner 
 
 The rule: **from the thinking trace, diagnose the first question in the loop the learner cannot answer — or has answered wrongly — and respond to exactly that question, at the coarsest grain that unblocks. One rung per request.**
 
+A canvas hint request arrives numbered ("Hint request n for this task"): hint n is rung n, so never skip rungs because you coached earlier. A hint never states a value, coordinate or result the task asks him to produce, nor the corrected reading, nor an instruction to redraw somewhere: if he could copy your hint onto the canvas without thinking, it went a rung too far. Turn it into a question he computes.
+
 The ladder, least to most revealing:
 
 - **R0 — attention redirect.** "Re-read the second given." Costs nothing.

@@ -58,8 +58,11 @@ import { defaultOrderLevel, populateLevel } from "@/components/thinking-default"
 import type React from "react";
 import {
 	COMPACTION_THRESHOLD_FLOOR,
+	DEFAULT_TURN_SPEND_CAP_USD,
+	resolveTurnSpendCap,
 	IMPLEMENTED_FORMATS,
 	MODEL_SLOTS,
+	isCanvasVetted,
 	resolveSettings,
 	type AgentSettings,
 	type CompactionSettings,
@@ -83,7 +86,17 @@ const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 	strong: { label: "Strong", roster: "The main model for your sessions" },
 	cheap: { label: "Cheap", roster: "The assistants that research, build demos, and grade your work" },
 	vision: { label: "Vision", roster: "The assistant that draws figures" },
+	canvas: { label: "Canvas", roster: "Reads your drawings, gives canvas hints, marks and grades canvas tasks" },
 };
+
+/** The models a slot's picker offers. Vision: image-capable only. Canvas: ONLY
+ *  the tested models (CANVAS_VETTED_MODELS). Pure - exported for tests. */
+export function slotCatalogFor(slot: ModelSlotName, catalog: ModelCatalogEntry[] | null): ModelCatalogEntry[] | undefined {
+	if (!catalog) return undefined;
+	if (slot === "vision") return catalog.filter((m) => m.input.includes("image"));
+	if (slot === "canvas") return catalog.filter((m) => isCanvasVetted(m));
+	return catalog;
+}
 
 /** The search engines this wave ships (src/core/search.ts) + their labels. */
 const SEARCH_ENGINES = ["tavily", "brave"] as const;
@@ -109,7 +122,9 @@ interface ModelsBody {
 	/** The three tiers' RESOLVED pins (BYOK: NULL per unset tier — no
 	 *  factory floor) — machinery only (the thinking list fallback); the
 	 *  rows' displays read the record override, never a phantom pin. */
-	slots: Record<ModelSlotName, { model: { provider: string; id: string }; thinkingLevel?: string } | null>;
+	slots: Partial<Record<ModelSlotName, { model: { provider: string; id: string }; thinkingLevel?: string } | null>>;
+	/** The canvas model in force (default, vetted, keyed) or null. */
+	canvas?: { model: { provider: string; id: string }; thinkingLevel?: string } | null;
 }
 
 /** Compose: one tool toggled, the rest of the section carried verbatim.
@@ -144,6 +159,16 @@ export function composeGraphTools(agent: AgentSettings | undefined, on: boolean)
  *  absent = ON, the write explicit either way. Pure - exported for tests. */
 export function composeDocumentTools(agent: AgentSettings | undefined, on: boolean): AgentSettings {
 	return { ...agent, documentTools: { enabled: on } };
+}
+
+/** Compose the per-turn spend cap: empty = unset (the default applies);
+ *  junk = no change; otherwise clamped to the server's range. Pure - exported
+ *  for tests. */
+export function composeTurnSpendCap(agent: AgentSettings | undefined, raw: string): AgentSettings {
+	if (raw.trim() === "") return { ...agent, turnSpendCapUsd: undefined };
+	const n = Number(raw);
+	if (!Number.isFinite(n) || n <= 0) return { ...agent };
+	return { ...agent, turnSpendCapUsd: resolveTurnSpendCap(n) };
 }
 
 /** Compose: one slot's model/thinking override. Empty model = absent
@@ -326,6 +351,8 @@ export function AgentSection({
 	/** The three tiers' resolved pins — GET /api/models `slots`. The rows'
 	 *  Default hints and thinking lists resolve from it. */
 	const [slots, setSlots] = useState<ModelsBody["slots"] | null>(null);
+	/** The canvas model in force - the Canvas row shows it while the slot is unset. */
+	const [canvasInForce, setCanvasInForce] = useState<ModelsBody["canvas"]>(null);
 	/** The live search state (/api/search) — the row's reason line. */
 	const [search, setSearch] = useState<{ available: boolean; engine: string | null; reason: string } | null>(null);
 	/** Which search engines have a key (/api/keys) — the no-keys-anywhere
@@ -376,6 +403,7 @@ export function AgentSection({
 				if (!modelsMounted.current || request !== modelsRequest.current) return;
 				setCatalog(body.models);
 				setSlots(body.slots);
+				setCanvasInForce(body.canvas ?? null);
 			})
 			.catch(() => { if (modelsMounted.current && request === modelsRequest.current) setCatalog(null); });
 	}, []);
@@ -640,8 +668,11 @@ export function AgentSection({
 			<SettingsGroup label="Models" testid="group-models">
 				{MODEL_SLOTS.map((slot) => {
 					const override = models?.[slot];
-					const modelId = override?.model?.id ?? "";
-					const provider = override?.model?.provider ?? "";
+					// The canvas slot has a default: while unset the row shows the
+					// model in force, with the thinking level of the slot (none).
+					const inForce = slot === "canvas" && !override?.model ? canvasInForce?.model : undefined;
+					const modelId = override?.model?.id ?? inForce?.id ?? "";
+					const provider = override?.model?.provider ?? inForce?.provider ?? "";
 					const thinking = override?.thinkingLevel ?? "";
 					// The tier's resolved pin is machinery only now (owner, fix
 					// wave): the UI never names the factory fallback — the hint
@@ -652,13 +683,12 @@ export function AgentSection({
 					// The model whose levels govern the thinking list: the
 					// override, else the resolved pin (when it's in the federated
 					// catalog); the standard ladder as the last fallback.
-					const coord = override?.model ?? pin?.model;
+					const coord = override?.model ?? pin?.model ?? inForce;
 					const chosen = coord ? catalog?.find((m) => m.id === coord.id && m.provider === coord.provider) : undefined;
 					const levels = chosen ? chosen.supportedLevels : THINKING_LEVELS;
 					const thisMenuOpen = openMenu?.target === slot ? openMenu.kind : null;
-					// Vision slots pick from image-capable models only.
-					const slotCatalog =
-						slot === "vision" ? catalog?.filter((m) => m.input.includes("image")) : catalog;
+					// Vision slots pick from image-capable models only; canvas from tested ones.
+					const slotCatalog = slotCatalogFor(slot, catalog);
 					return (
 						<SettingsRow
 							key={slot}
@@ -715,7 +745,9 @@ export function AgentSection({
 											footer={
 												catalog && catalog.length === 0
 													? "No models — add a provider key in Keys"
-													: "Runs every agent of this tier"
+													: slot === "canvas"
+														? "Tested models only"
+														: "Runs every agent of this tier"
 											}
 										/>
 									</MenuShell>
@@ -782,6 +814,23 @@ export function AgentSection({
 						checked={agent?.documentTools?.enabled ?? true}
 						label="document tools"
 						onChange={(on) => onSectionChange(composeDocumentTools(agent, on))}
+					/>
+				</SettingsRow>
+				{/* The per-turn spend ceiling (owner 2026-10-27): a runaway turn stops
+				    cleanly once its cost reaches this. agent.turnSpendCapUsd; empty =
+				    the default. */}
+				<SettingsRow
+					label="Max spend per turn (USD)"
+					hint={`A turn stops once it costs this much (default ${DEFAULT_TURN_SPEND_CAP_USD.toFixed(2)})`}
+					testid="turn-spend-cap-row"
+				>
+					<CommitInput
+						type="number"
+						value={String(agent?.turnSpendCapUsd ?? "")}
+						placeholder={DEFAULT_TURN_SPEND_CAP_USD.toFixed(2)}
+						ariaLabel="max spend per turn in USD"
+						testid="input-turn-spend-cap"
+						onCommit={(v) => onSectionChange(composeTurnSpendCap(agent, v))}
 					/>
 				</SettingsRow>
 				{/* The quizzing mechanic (owner 2026-09-27): segmented — exactly one

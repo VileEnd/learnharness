@@ -464,6 +464,9 @@ export interface ProberToolContext extends ProbeDoneContext {
 	drawingStore?: Pick<DrawingStore, "getScene">;
 	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
 	workGate?: WorkGate;
+	/** The in-flight turn's view (late-bound by the prober agent): lets `grade` see a
+	 *  refusal or coaching from earlier in the SAME turn. Absent = record only. */
+	turn?: TeachTurnView;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -574,7 +577,10 @@ export function teachGuardFor(view: TeachTurnView | undefined) {
 			"No visible teaching reached the learner before this check. " +
 			(view.hasSendToUser()
 				? "Text you write after a tool result may not be delivered; send your teaching with `send_to_user`, then pose the check."
-				: "Write your teaching as normal text first, then pose the check.")
+				: "Write your teaching as normal text first, then pose the check.") +
+			(tool === "work" || tool === "quiz"
+				? " If this task comes before you teach the step, pose it with type predict instead."
+				: "")
 		);
 	};
 }
@@ -687,7 +693,7 @@ function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
  *  and a pending answer must stay gradeable - on a phone too). Read from the
  *  live record at registry construction (one registry per turn). */
 function gradeFor(
-	ctx: { chatId: string; chatStore: ChatStore; canvas?: boolean; workGate?: WorkGate },
+	ctx: { chatId: string; chatStore: ChatStore; canvas?: boolean; workGate?: WorkGate; turn?: TeachTurnView },
 	mechanics: QuizMechanic,
 ): Record<string, AgentTool<any>> {
 	if (mechanics === "choice" && ctx.canvas !== true) {
@@ -695,7 +701,7 @@ function gradeFor(
 		const record = ctx.chatStore?.getChat?.(ctx.chatId);
 		if (!record || (ungradedAnsweredRecalls(record.messages).length === 0 && activeWorkOf(record.messages) === null)) return {};
 	}
-	return { grade: gradeTool({ chatId: ctx.chatId, chatStore: ctx.chatStore, onGraded: (id) => ctx.workGate?.graded.add(id) }) };
+	return { grade: gradeTool({ chatId: ctx.chatId, chatStore: ctx.chatStore, turn: ctx.turn, onGraded: (id) => ctx.workGate?.graded.add(id) }) };
 }
 
 export function createTeacherTools(

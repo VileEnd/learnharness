@@ -78,6 +78,7 @@ export interface LhMarkerMessage {
 		| "work-submission"
 		| "work-dismissed"
 		| "hint-request"
+		| "turn-nudge"
 		| "compaction";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
@@ -121,16 +122,95 @@ export function sendToUserText(block: unknown): string | undefined {
 /** Learner-facing prose, in content order. Only the explicit output tool
  * joins ordinary text here — thinking and all other tool inputs stay out.
  * Shared by coverage/extraction and Markdown; native history stays intact. */
-export function userFacingTextOf(content: unknown, failedOutputCalls?: ReadonlySet<string>): string[] {
+export function userFacingTextOf(
+	content: unknown,
+	failedOutputCalls?: ReadonlySet<string>,
+	redundant?: ReadonlySet<object>,
+): string[] {
 	if (typeof content === "string") return content.trim() ? [content] : [];
 	if (!Array.isArray(content)) return [];
 	const out: string[] = [];
 	for (const block of content) {
 		if (!block || typeof block !== "object") continue;
 		if (block.type === "toolCall" && failedOutputCalls?.has(block.id)) continue;
+		if (redundant?.has(block)) continue;
 		const text = block.type === "text" ? block.text : sendToUserText(block);
 		if (typeof text === "string" && text.trim()) out.push(text);
 	}
+	return out;
+}
+
+/** Normalized-token overlap, measured against the LONGER of the two token
+ *  sets, at or above which an ordinary text block is a repeat of a
+ *  send_to_user message of the same turn. */
+export const DUPLICATE_TEXT_OVERLAP = 0.8;
+/** Texts shorter than this many tokens are never judged a duplicate: a short
+ *  meta line ("I marked up your sketch") stays visible (over-hiding is worse). */
+const DUPLICATE_MIN_TOKENS = 5;
+
+function tokenSetOf(text: string): Set<string> {
+	return new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+}
+
+/** RC4 (cross-model robustness): within ONE turn (the span between two input
+ *  boundaries) that used a send_to_user call, an ordinary text block that
+ *  substantially repeats a send_to_user message (shared tokens >=
+ *  DUPLICATE_TEXT_OVERLAP of the LONGER token set, so neither a long text
+ *  beside a short message nor a short line beside a long message is ever a
+ *  repeat) is redundant for DISPLAY. A turn
+ *  with no (successful) send_to_user hides nothing: that is the #102 safety
+ *  net. Returns the redundant text blocks by identity. Consumers that render
+ *  to the learner (projectView, hintsFor, session markdown) skip them;
+ *  coverage/extraction deliberately still counts BOTH (they read
+ *  userFacingTextOf without this set: counting a repeat twice only brings an
+ *  extraction chunk slightly earlier and never loses teaching). */
+export function redundantTextBlocks(messages: readonly unknown[]): ReadonlySet<object> {
+	const all = messages as readonly LhMessage[];
+	const out = new Set<object>();
+	if (!all.some((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "toolCall" && b.name === SEND_TO_USER_TOOL))) return out;
+	const failed = failedOutputCallIds(all);
+	let start = 0;
+	const flush = (end: number) => {
+		const sent: Set<string>[] = [];
+		const texts: Array<{ block: object; tokens: Set<string> }> = [];
+		for (let i = start; i < end; i++) {
+			const m = all[i]!;
+			if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+			for (const block of m.content) {
+				if (block.type === "toolCall") {
+					const t = failed.has(block.id) ? undefined : sendToUserText(block);
+					if (t !== undefined) sent.push(tokenSetOf(t));
+				} else if (block.type === "text") {
+					texts.push({ block, tokens: tokenSetOf(block.text) });
+				}
+			}
+		}
+		if (sent.length === 0) return;
+		for (const { block, tokens } of texts) {
+			if (tokens.size < DUPLICATE_MIN_TOKENS) continue;
+			for (const s of sent) {
+				// Measured against the LONGER token set: the text's own tokens must
+				// be >= 0.8 shared (so a long teaching text next to a short message
+				// stays) AND so must the message's (so a short line whose words all
+				// occur in a long message stays). Together this bounds the size
+				// ratio to [0.8, 1.25]: only a near-restatement is a repeat.
+				const longer = Math.max(tokens.size, s.size);
+				let common = 0;
+				for (const t of tokens) if (s.has(t)) common++;
+				if (common / longer >= DUPLICATE_TEXT_OVERLAP) {
+					out.add(block);
+					break;
+				}
+			}
+		}
+	};
+	for (let i = 0; i < all.length; i++) {
+		if (isInputBoundary(all[i])) {
+			flush(i);
+			start = i + 1;
+		}
+	}
+	flush(all.length);
 	return out;
 }
 
@@ -512,19 +592,35 @@ export function newWorkDismissedMarker(workCallId: string): LhMarkerMessage {
 	};
 }
 
-/** The model-facing text of a hint request. */
+/** The model-facing text of a LEGACY hint request (records written before the numbered marker keep it). */
 export const HINT_REQUEST_TEXT = "Hint, please — give the next rung only.";
 
+/** The model-facing text of hint request `n` for one task: the number is the rung (never skip rungs). */
+export function hintRequestText(n: number): string {
+	return `Hint request ${n} for this task — give the next rung only.`;
+}
+
+/** The number the next hint request for `callId` takes: earlier hint-requests for it, plus one. Derived from
+ *  the record at creation time, never stored apart; old unnumbered markers count too. */
+export function nextHintNumber(messages: readonly unknown[], callId: string): number {
+	let n = 0;
+	for (const m of messages as readonly LhMessage[]) {
+		if (m.role !== "custom" || m.customType !== "hint-request") continue;
+		if ((m.details as { callId?: unknown } | null)?.callId === callId) n++;
+	}
+	return n + 1;
+}
+
 /** The learner asked for the next rung of help on the active canvas task or
- *  practice problem. */
-export function newHintRequest(callId: string): LhMarkerMessage {
+ *  practice problem. `n` numbers the request for that task; omitted = the legacy unnumbered text. */
+export function newHintRequest(callId: string, n?: number): LhMarkerMessage {
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "hint-request",
-		content: HINT_REQUEST_TEXT,
+		content: n === undefined ? HINT_REQUEST_TEXT : hintRequestText(n),
 		display: true,
-		details: { callId },
+		details: n === undefined ? { callId } : { callId, n },
 		timestamp: Date.now(),
 	};
 }
@@ -537,6 +633,7 @@ export function newHintRequest(callId: string): LhMarkerMessage {
 export function hintsFor(messages: readonly unknown[], callId: string): { requestId: string; text: string | null }[] {
 	const all = messages as readonly LhMessage[];
 	const failed = failedOutputCallIds(all);
+	const redundant = redundantTextBlocks(all);
 	const out: { requestId: string; text: string | null }[] = [];
 	for (let i = 0; i < all.length; i++) {
 		const m = all[i]!;
@@ -546,7 +643,7 @@ export function hintsFor(messages: readonly unknown[], callId: string): { reques
 		for (let j = i + 1; j < all.length; j++) {
 			const n = all[j]!;
 			if (isInputBoundary(n)) break;
-			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed));
+			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant));
 		}
 		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
 	}
@@ -998,6 +1095,21 @@ export function danglingQuestionOf(
 		return null; // the newest assistant message's questions are all answered
 	}
 	return null;
+}
+
+/** The question that still BLOCKS probe_done: a dangling question, unless
+ *  the learner superseded it with later input (he typed a message instead of
+ *  answering: the question was interrupted, not open). RC10(b). */
+export function openQuestionOf(messages: readonly LhMessage[]): ReturnType<typeof danglingQuestionOf> {
+	const pending = danglingQuestionOf(messages);
+	if (!pending) return null;
+	const at = messages.findIndex(
+		(m) => m.role === "assistant" && m.content.some((b) => b.type === "toolCall" && b.id === pending.toolCallId),
+	);
+	for (let i = at + 1; i < messages.length; i++) {
+		if (messages[i]!.role === "user") return null;
+	}
+	return pending;
 }
 
 /** Does this probe_done RESULT conclude the probe? Only a clean result

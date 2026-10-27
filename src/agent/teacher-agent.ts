@@ -17,10 +17,12 @@ import {
 import { practiceTools, type PracticeToolContext } from "./tools/practice.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserTool } from "./tools/send-to-user.ts";
+import { createTurnGuard } from "./turn-guard.ts";
+import { newTurnNudge, nextNudge, withEmptyErrorRetry } from "./turn-nudge.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
-import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext } from "../core/native-messages.ts";
+import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext, type LhMessage } from "../core/native-messages.ts";
 
 /**
  * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
@@ -130,6 +132,11 @@ export interface AgentBuildOptions {
 	chatId?: string;
 	/** The active task's drawings as the model sees them (server/drawing-context.ts). */
 	drawing?: DrawingContext;
+	/** Per-turn spend ceiling in USD (turn-guard.ts); absent = no cap. */
+	spendCapUsd?: number;
+	/** Cost of one assistant step (the handler binds the money channel's
+	 *  callCost); null/absent = unknown, counted as 0. */
+	stepCost?: (usage: Usage) => number | null;
 }
 
 /**
@@ -152,7 +159,11 @@ export interface AgentBuildOptions {
  * has the same wait-for-the-learner contract, including mixed output/problem
  * batches; failed poses must still retry. maxTurns is gone
  * (owner ruling 2026-09-25: no maximum-agent-turns net on the teaching
- * turn).
+ * turn). OWNER RULING 2026-10-27 overrides that ONLY as specified in
+ * turn-guard.ts: an identical-failure breaker (3rd identical failure of a
+ * tool in one turn = final refusal and the tool is dropped; 2 more calls end
+ * the turn) and a per-turn spend cap (agent.turnSpendCapUsd). Normal long
+ * turns are untouched: successes are never counted.
  */
 /** Teach/probe poses whose resolved call ends the turn: the question tools
  *  and the canvas tasks (work/sketch ack and wait for the learner). */
@@ -177,6 +188,21 @@ function makeQuestionStopper(turnEnders: readonly string[] = TEACH_TURN_ENDERS) 
 	};
 }
 
+/** The guard's learner-facing notice as a plain assistant text message (zero
+ *  usage, never a billed step: the money channel counts message_end only). */
+function guardNoticeMessage(model: PiEngine["model"], text: string): AgentMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		stopReason: "stop",
+		timestamp: Date.now(),
+	};
+}
+
 /** Practice tools whose resolved call ends the turn (pose: the learner answers next). */
 const PRACTICE_TURN_ENDERS = ["problem"] as const;
 
@@ -189,6 +215,9 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	// Practice poses end the turn the way questions do, mixed batch included
 	// (upstream 87b04cc idea). Later turn-ending tools join with one name here.
 	const stopper = makeQuestionStopper(kind === "practice" ? PRACTICE_TURN_ENDERS : TEACH_TURN_ENDERS);
+	const guard = createTurnGuard({ spendCapUsd: opts.spendCapUsd, stepCost: opts.stepCost });
+	// RC9/RC10: at most one hidden re-prompt per turn (turn-nudge.ts).
+	const nudged = { used: false };
 	const systemPrompt = opts.promptSwitches
 		? composeInstructions(kind, opts.promptSwitches)
 		: composedInstructions[kind]!;
@@ -217,14 +246,28 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			],
 			messages: opts.messages ?? [],
 		},
-		streamFn: engine.streamFn,
+		streamFn: withEmptyErrorRetry(engine.streamFn),
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
 		// 0.87.1: shouldStopAfterTurn → finishTurn. Same call point (after
 		// tool results attach, before turn_end) and `{ action: "end" }` still
 		// exits BEFORE the steering poll — the parked-marker stranding our
 		// Wave C registerLiveAgent-before-runPiTurn design depends on.
 		// undefined preserves normal scheduling (the old boolean false).
-		finishTurn: (turn) => (stopper(turn) ? { action: "end" } : undefined),
+		finishTurn: (turn) => {
+			// The guard always observes (it rewrites a tripped breaker's
+			// results); a posed question ending the turn outranks its notice.
+			const asked = stopper(turn);
+			const stop = guard.finishTurn(turn as never, asked);
+			if (asked || stop) return { action: "end" };
+			// A step with no tool calls ends the run: if the learner is left
+			// with nothing usable, queue ONE steer for the loop's follow-up poll.
+			if (turn.message.stopReason === "stop" && !turn.message.content.some((c) => c.type === "toolCall")) {
+				const text = nextNudge(turn.context.messages as unknown as LhMessage[], nudged);
+				if (text !== undefined) agent.followUp(newTurnNudge(text) as unknown as AgentMessage);
+			}
+			return undefined;
+		},
+		beforeToolCall: async ({ toolCall }) => guard.beforeToolCall(toolCall.name),
 		// Wave C (2026-09-26, owner correction same day): markers handed to a
 		// live run drain from pi's STEERING queue — the lesson loop is one
 		// continuous teach→quiz→teach run, so delivery must inject at turn
@@ -241,16 +284,26 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		// must never throw (pi's convertToLlm contract).
 		convertToLlm: (m) => toLlmMessages(m, { drawing: opts.drawing }),
 	});
-	if (opts.onUsage) {
-		agent.subscribe((event: AgentEvent) => {
-			if (event.type === "message_end" && event.message.role === "assistant" && "usage" in event.message) {
-				// A cancelled call is not a billed step (partial/estimated
-				// usage on an aborted message is not money spent).
-				if (event.message.stopReason === "aborted") return;
-				opts.onUsage!(event.message.usage);
+	agent.subscribe((event: AgentEvent) => {
+		if (event.type === "message_end" && event.message.role === "assistant" && "usage" in event.message) {
+			// A cancelled call is not a billed step (partial/estimated
+			// usage on an aborted message is not money spent).
+			if (event.message.stopReason === "aborted") return;
+			guard.observeUsage(event.message.usage);
+			opts.onUsage?.(event.message.usage);
+		} else if (event.type === "agent_end") {
+			// The steer is scaffolding: it never reaches the record.
+			const msgs = agent.state.messages as unknown as Array<{ role?: string; customType?: string }>;
+			for (let i = msgs.length - 1; i >= 0; i--) {
+				if (msgs[i]!.role === "custom" && msgs[i]!.customType === "turn-nudge") msgs.splice(i, 1);
 			}
-		});
-	}
+			// The guard's stop notice rides the record as the turn's last
+			// assistant line (state is reduced before listeners run, and the
+			// settle seam reads state after this listener).
+			const text = guard.notice();
+			if (text) agent.state.messages.push(guardNoticeMessage(engine.model, text));
+		}
+	});
 	return agent;
 }
 
@@ -263,7 +316,16 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
  * handler keys teacher construction on.
  */
 export function createProberAgent(ctx: ProberToolContext, opts: AgentBuildOptions = {}) {
-	return baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, ...ctx }, opts.toolToggles)));
+	// Late-bound turn view (as the teacher's): grade's first-submission refusal
+	// must see this turn's own messages or a retried grade is refused again.
+	const holder: { agent?: ReturnType<typeof baseAgentOptions> } = {};
+	const turn = {
+		messages: () => holder.agent?.state.messages ?? [],
+		hasSendToUser: () => holder.agent?.state.tools.some((t) => t.name === SEND_TO_USER_TOOL) ?? false,
+	};
+	const agent = baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, turn, ...ctx }, opts.toolToggles)));
+	holder.agent = agent;
+	return agent;
 }
 
 /**

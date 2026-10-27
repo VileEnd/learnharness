@@ -90,3 +90,4 @@ export * from "./math-expr.ts";
 export * from "./exercise-core.ts";
 // canvas-core.ts (canvas workspace, PR 2): drawing scene contract, region grid, content ids - pure, browser-safe (pure-JS sha256).
 export * from "./canvas-core.ts";
+export * from "./grade-heal.ts";

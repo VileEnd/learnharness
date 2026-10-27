@@ -54,6 +54,8 @@ const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 	strong: { label: "Strong", roster: "Prober, teacher" },
 	cheap: { label: "Cheap", roster: "Researcher, demo builder, extractor, auditor, describer" },
 	vision: { label: "Vision", roster: "Visual maker, drawing transcriber" },
+	// Not part of first-run setup (SLOT_ORDER): the canvas model has a default.
+	canvas: { label: "Canvas", roster: "Canvas turns" },
 };
 const SLOT_ORDER: readonly ModelSlotName[] = ["strong", "cheap", "vision"];
 
@@ -64,7 +66,7 @@ interface ModelsBody {
 	/** The three tiers' RESOLVED pins (BYOK: NULL per unset tier) — the
 	 *  PREFILL + "needed" marks (owner, 2026-09-22): pinned tiers open
 	 *  with their pick, unpinned tiers carry the mark. */
-	slots?: Record<ModelSlotName, { model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null>;
+	slots?: Partial<Record<ModelSlotName, { model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null>>;
 }
 
 /** Pure: which stage the flow opens at — no keyed provider = keys first
@@ -83,7 +85,7 @@ export function setupStage(
  *  for tests. */
 export function prefillFromSlots(
 	models: ModelCatalogEntry[],
-	slots: Record<ModelSlotName, { model: { provider: string; id: string } } | null> | undefined,
+	slots: Partial<Record<ModelSlotName, { model: { provider: string; id: string } } | null>> | undefined,
 ): Partial<Record<ModelSlotName, ModelCatalogEntry>> {
 	const pre: Partial<Record<ModelSlotName, ModelCatalogEntry>> = {};
 	for (const slot of SLOT_ORDER) {
