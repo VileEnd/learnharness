@@ -23,6 +23,7 @@
 import type { LhMessage } from "./native-messages.ts";
 import {
 	failedOutputCallIds,
+	hintReplyMessages,
 	PRACTICE_CONCLUDE_TOOL,
 	PRACTICE_PROBLEM_TOOL,
 	problemInputForConclude,
@@ -50,6 +51,9 @@ export interface MarkdownContext {
 	failedOutputCalls?: ReadonlySet<string>;
 	/** Text blocks that repeat a send_to_user message of their turn (RC4). */
 	redundantText?: ReadonlySet<object>;
+	/** Assistant messages answering a hint request or a submission: the only
+	 *  ones whose mid-text rung labels are stripped (hintReplyMessages). */
+	hintReplies?: ReadonlySet<unknown>;
 }
 
 function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
@@ -68,7 +72,13 @@ function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
 			}
 		}
 	}
-	return { messages, calls, failedOutputCalls: failedOutputCallIds(messages), redundantText: redundantTextBlocks(messages) };
+	return {
+		messages,
+		calls,
+		failedOutputCalls: failedOutputCallIds(messages),
+		redundantText: redundantTextBlocks(messages),
+		hintReplies: hintReplyMessages(messages),
+	};
 }
 
 /** solvedWithHints → "Solved with hints" — the outcome enum reads as prose. */
@@ -224,7 +234,7 @@ export function messageMarkdown(
 		}
 	} else if (role === "assistant") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]), ctx?.redundantText)) {
-			parts.push(`### Teacher${anchor}\n\n${stripInternalLabels(text).trim()}`);
+			parts.push(`### Teacher${anchor}\n\n${stripInternalLabels(text, ctx?.hintReplies?.has(message) === true).trim()}`);
 		}
 	} else if (role === "toolResult") {
 		const result = message as ToolResultMessage;

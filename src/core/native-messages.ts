@@ -45,7 +45,7 @@ import {
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
 import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
-import { stripInternalLabels } from "./internal-labels.ts";
+import { isHintScopedInput, stripInternalLabels } from "./internal-labels.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -246,6 +246,20 @@ export function isInputBoundary(message: unknown): boolean {
 	if (m.role === "user") return true;
 	if (m.role === "custom") return m.customType !== "plan-block";
 	return m.role === "toolResult" && m.isError !== true && (QUESTION_TOOLS as readonly unknown[]).includes(m.toolName);
+}
+
+/** The assistant messages that answer a hint request or a submission: the
+ *  last input boundary before them is hint-scoped (isHintScopedInput). The
+ *  read seams strip mid-text rung labels from these replies only. Derived at
+ *  read time from record order; the set holds the given message objects. */
+export function hintReplyMessages(messages: readonly unknown[]): ReadonlySet<unknown> {
+	const out = new Set<unknown>();
+	let scoped = false;
+	for (const m of messages) {
+		if (isInputBoundary(m)) scoped = isHintScopedInput(m);
+		else if (scoped && (m as { role?: unknown } | null)?.role === "assistant") out.add(m);
+	}
+	return out;
 }
 
 /** Non-whitespace characters of ordinary prose that count as teaching. */
@@ -644,7 +658,7 @@ export function hintsFor(messages: readonly unknown[], callId: string): { reques
 		for (let j = i + 1; j < all.length; j++) {
 			const n = all[j]!;
 			if (isInputBoundary(n)) break;
-			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant).map(stripInternalLabels).filter((t) => t.trim() !== ""));
+			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant).map((t) => stripInternalLabels(t, true)).filter((t) => t.trim() !== ""));
 		}
 		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
 	}
@@ -1023,6 +1037,8 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 	// DRAWINGS: only the newest submission of the ACTIVE task rides as an
 	// image; earlier ones are superseded stubs, a closed task's collapse.
 	const drawingPlan = opts.drawing ? planDrawings(lhMessages, start) : null;
+	// Scoped over the WHOLE record, so a reply whose hint request sits before the cut still counts.
+	const hintReplies = hintReplyMessages(messages);
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
@@ -1052,14 +1068,16 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 		const { id: _id, ...native } = m as LhMessage;
 		// Assistant prose is stripped of internal rung labels on the way back
 		// to the model (the record keeps them raw), so a leaked label is not
-		// copied forward by example. Tool calls and other roles pass as-is.
+		// copied forward by example; the mid-text rule only in a hint or
+		// submission reply. Tool calls and other roles pass as-is.
 		if (role === "assistant") {
 			const a = native as AssistantMessage;
+			const hintReply = hintReplies.has(m);
 			// A block that was only a label strips to nothing and is dropped
 			// (providers reject empty text blocks); if that would empty the
 			// whole message, the original blocks ride unchanged.
 			const content = a.content
-				.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text) } : b))
+				.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text, hintReply) } : b))
 				.filter((b) => b.type !== "text" || b.text.trim() !== "");
 			out.push(content.length > 0 ? { ...a, content } : a);
 		} else out.push(native as Message);
