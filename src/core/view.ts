@@ -35,7 +35,7 @@
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripInternalLabels } from "./internal-labels.ts";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
-import { modelSolutionForConclude, redundantTextBlocks, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, WORK_TOOLS, workAnswerForGrade } from "./native-messages.ts";
+import { hintReplyMessages, modelSolutionForConclude, redundantTextBlocks, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, WORK_TOOLS, workAnswerForGrade } from "./native-messages.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
@@ -137,6 +137,9 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 	// RC4: ordinary text that repeats a send_to_user message of the same turn
 	// is redundant for display (never in a turn without send_to_user).
 	const redundant = redundantTextBlocks(messages);
+	// Replies to a hint request or a submission: the only prose the mid-text
+	// rung-label strip touches (the header strip runs everywhere).
+	const hintReplies = hintReplyMessages(messages);
 
 	const lastAssistant = (): LhViewMessage | undefined => {
 		const last = out[out.length - 1];
@@ -224,10 +227,11 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			// back to a spinner mid-transcript; live cards belong at the
 			// bottom, and this gate is what puts them there by construction).
 			const streamingMessage = live?.streamingIds.has(m.id) === true;
+			const hintReply = hintReplies.has(m);
 			for (const block of assistant.content) {
 				if (block.type === "text") {
 					if (redundant.has(block)) continue;
-					const text = stripInternalLabels(block.text);
+					const text = stripInternalLabels(block.text, hintReply);
 					// A block that was only a label strips to nothing: no empty text part.
 					if (text.trim() === "" && block.text.trim() !== "") continue;
 					rest.push({ type: "text", id: `${m.id}-t${textN++}`, text, state: "done" });
@@ -245,7 +249,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 							rest.push(part);
 						} else {
 							const raw = sendToUserText(block);
-							const text = raw === undefined ? undefined : stripInternalLabels(raw);
+							const text = raw === undefined ? undefined : stripInternalLabels(raw, hintReply);
 							if (text !== undefined && !(text.trim() === "" && raw!.trim() !== "")) {
 								rest.push({ type: "text", id: `${m.id}-t${textN++}`, text, state: "done" });
 							}
