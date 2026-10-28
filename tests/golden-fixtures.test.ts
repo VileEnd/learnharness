@@ -168,7 +168,8 @@ test("cross-model canvas chat: numbered hint request, refused grade, stroke-dige
 	assert.equal(hints.length, 1);
 	const { callId, n } = hints[0]!.details;
 	assert.equal(n, 1, "the marker carries its number");
-	assert.equal(hints[0]!.content, hintRequestText(1));
+	// the fixture is a raw record written before the rewording: it keeps its old marker text
+	assert.equal(hints[0]!.content, "Hint request 1 for this task — give the next rung only.");
 	assert.equal(nextHintNumber(ms, callId), 2, "the next request derives n = 2 from the record");
 	const [hint] = hintsFor(ms, callId);
 	assert.ok(hint && typeof hint.text === "string" && hint.text.length > 0, "the hint reply derives from the record");

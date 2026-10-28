@@ -20,6 +20,7 @@ export * from "./ports.ts";
 export * from "./chains.ts";
 export * from "./render-settings.ts";
 export * from "./learner-colors.ts";
+export * from "./internal-labels.ts";
 
 export * from "./question-core.ts";
 // The event bus (push architecture, 2026-10-02): vocabulary + emit/subscribe
