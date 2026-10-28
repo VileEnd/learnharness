@@ -1,6 +1,7 @@
 /**
  * DRAWINGS IN THE MODEL CONTEXT (PR 2, Task 10): the newest active drawing
- * is an image (or a cached vision transcript for a text-only model); earlier
+ * is an image plus the reader's cached vision transcript (a text-only model
+ * gets the transcript alone); earlier
  * and closed ones collapse to text stubs; a failed transcription never fails
  * the turn.
  */
@@ -49,15 +50,32 @@ const textOf = (out: ReturnType<typeof toLlmMessages>) => userBlocks(out).filter
 const images = (out: ReturnType<typeof toLlmMessages>) => userBlocks(out).filter((b) => b.type === "image");
 
 describe("drawings in the model context", () => {
-	it("active drawing sent as image to multimodal model", async () => {
+	it("multimodal model gets the image AND the reader's transcript", async () => {
 		const messages = [...pose(), sub(0)];
-		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s });
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("<fake transcript>")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber });
+		const resolved = ctx.resolve(IDS[0]!);
+		assert.ok(resolved?.png);
+		assert.equal(resolved.transcript, "<fake transcript>");
 		const out = toLlmMessages(messages as never, { drawing: ctx });
-		const last = out[out.length - 1]!;
-		assert.equal(last.role, "user");
-		assert.ok((last.content as Array<{ type: string }>).some((b) => b.type === "image"));
+		assert.equal(images(out).length, 1);
 		assert.match(textOf(out), /columns A-H/);
+		assert.match(textOf(out), /Transcription:\n<fake transcript>/);
 		assert.match(textOf(out), /note 1/);
+	});
+
+	it("transcriber failure keeps the image", async () => {
+		const messages = [...pose(), sub(0)];
+		const f = createFauxCore({});
+		f.setResponses([() => { throw new Error("boom"); }]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber });
+		const resolved = ctx.resolve(IDS[0]!);
+		assert.ok(resolved?.png);
+		assert.equal(resolved.transcript, undefined);
+		assert.equal(images(toLlmMessages(messages as never, { drawing: ctx })).length, 1);
 	});
 
 	it("closed task collapses to stub", async () => {
@@ -108,6 +126,19 @@ describe("drawings in the model context", () => {
 		const onUsage = () => { usages++; };
 		await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber, onUsage });
 		await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber, onUsage });
+		assert.equal(usages, 1);
+	});
+
+	it("transcription usage is reported once for a vision engine too", async () => {
+		const messages = [...pose(), sub(0)];
+		const { s } = store();
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("[C4] y")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		let usages = 0;
+		const onUsage = () => { usages++; };
+		await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: s, transcriber, onUsage });
+		await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: s, transcriber, onUsage });
 		assert.equal(usages, 1);
 	});
 

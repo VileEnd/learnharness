@@ -937,7 +937,7 @@ function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPla
 	if (!resolved) return text(`${marker.content}\n[Drawing ${d.drawingId}: unavailable]`);
 	if (resolved.png) {
 		return user([
-			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${structured}` },
+			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${resolved.transcript ? `\nTranscription:\n${resolved.transcript}` : ""}${structured}` },
 			{ type: "image", data: resolved.png.data, mimeType: resolved.png.mimeType },
 		]);
 	}
@@ -948,7 +948,8 @@ function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPla
 /** What the model sees of a drawing. Supplied by the server per turn
  *  (server/drawing-context.ts); core stays free of stores. */
 export interface DrawingContext {
-	/** Called for the drawings of the ACTIVE task (image / transcript) and,
+	/** Called for the drawings of the ACTIVE task (image and/or the reader's
+	 *  transcript: the reader always runs, so a vision tutor gets both) and,
 	 *  for closed tasks, to re-resolve the structured text only. */
 	resolve(drawingId: string): {
 		png?: { data: string; mimeType: "image/png" };
