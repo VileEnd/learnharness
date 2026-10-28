@@ -381,6 +381,10 @@ export async function handleChatInput(
 	const collectUsage = (usage: Usage) => {
 		steps.push(callUsageOf(usage));
 	};
+	// The drawing reader runs on the vision slot, not the session model: its
+	// calls go into their OWN entry stamped with the reader's model, so they
+	// are priced at its rates (the compaction precedent: one entry per model).
+	const reader: { id: string; model?: string; steps: CallUsage[] } = { id: crypto.randomUUID(), steps: [] };
 
 	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
 	// is the seam — a probe_done call in the record means the probe is
@@ -411,7 +415,8 @@ export async function handleChatInput(
 	// sub-agent JOB tools (research/demo/visual; adjudicated with the
 	// user: quiz/ask/fs/plan/probe_done are always-on).
 	// DRAWINGS (PR 2, Task 10): the active task's drawing as the model reads
-	// it (image, or a cached vision-slot transcript). Never fails the turn.
+	// it (the image for a vision model, plus the vision-slot reader's
+	// transcript, cached per drawing). Time-bounded; never fails the turn.
 	let drawing: Awaited<ReturnType<typeof prepareDrawingContext>> | undefined;
 	try {
 		drawing = await prepareDrawingContext(
@@ -420,7 +425,10 @@ export async function handleChatInput(
 			{
 				drawingStore: stores.drawingStore,
 				transcriber: createDrawingTranscriber({ engineFor: (role) => resolveEngine(role) }),
-				onUsage: collectUsage,
+				onUsage: (usage, model) => {
+					reader.model = model;
+					reader.steps.push(callUsageOf(usage));
+				},
 			},
 		);
 	} catch (err) {
@@ -598,6 +606,16 @@ export async function handleChatInput(
 				// refolds this on the client after the turn settles. The
 				// provenance message is the turn's FIRST new assistant message.
 				const response = stamped.find((m) => (m as { role?: string }).role === "assistant");
+				// The reader ran first, so its entry goes first.
+				if (response && reader.model !== undefined && reader.steps.length > 0) {
+					stores.chatStore.appendTurnUsage(chatId, {
+						id: reader.id,
+						messageId: response.id,
+						at: new Date().toISOString(),
+						model: reader.model,
+						steps: reader.steps,
+					});
+				}
 				if (response && steps.length > 0) {
 					stores.chatStore.appendTurnUsage(chatId, {
 						id: turnUsageId,
