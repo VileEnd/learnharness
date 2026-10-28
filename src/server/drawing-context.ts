@@ -1,9 +1,11 @@
 /**
  * Drawings in the model context (PR 2, Task 10). Builds the per-turn
- * DrawingContext: a multimodal model gets the newest active drawing as an
- * image; a text-only model gets a vision-slot transcription, cached per
- * drawing (DrawingStore transcript cache). A failed transcription is
- * contained: the resolver then yields the "transcription unavailable" line.
+ * DrawingContext: the vision-slot reader ALWAYS transcribes the newest active
+ * drawing, cached per drawing (DrawingStore transcript cache), whether or not
+ * the session model can see images. A multimodal model gets the image AND the
+ * transcript; a text-only model gets the transcript alone. A failed
+ * transcription is contained: a multimodal model keeps the image, a text-only
+ * one gets the "transcription unavailable" line.
  */
 
 import {
@@ -56,27 +58,25 @@ export async function prepareDrawingContext(
 	const modelReadsImages = engine.model.input.includes("image");
 	const transcripts = new Map<string, string>();
 
-	if (!modelReadsImages) {
-		// Only the NEWEST active drawing is ever sent; earlier ones are stubs.
-		const newest = activeDrawingIds(record.messages as readonly LhMessage[]).at(-1);
-		if (newest !== undefined) {
-			try {
-				const cached = drawingStore.readTranscript(chatId, newest);
-				if (cached) transcripts.set(newest, cached.text);
-				else if (deps.transcriber) {
-					const png = drawingStore.getPng(chatId, newest);
-					const scene = drawingStore.getScene(chatId, newest);
-					if (png) {
-						const box = scene ? sceneBoundingBox(scene) : null;
-						const structured = scene && box ? serializeSceneStructuredText(scene, box) : "";
-						const t = await deps.transcriber.transcribe(png, structured, deps.onUsage);
-						drawingStore.writeTranscript(chatId, newest, t);
-						transcripts.set(newest, t.text);
-					}
+	// Only the NEWEST active drawing is ever sent; earlier ones are stubs.
+	const newest = activeDrawingIds(record.messages as readonly LhMessage[]).at(-1);
+	if (newest !== undefined) {
+		try {
+			const cached = drawingStore.readTranscript(chatId, newest);
+			if (cached) transcripts.set(newest, cached.text);
+			else if (deps.transcriber) {
+				const png = drawingStore.getPng(chatId, newest);
+				const scene = drawingStore.getScene(chatId, newest);
+				if (png) {
+					const box = scene ? sceneBoundingBox(scene) : null;
+					const structured = scene && box ? serializeSceneStructuredText(scene, box) : "";
+					const t = await deps.transcriber.transcribe(png, structured, deps.onUsage);
+					drawingStore.writeTranscript(chatId, newest, t);
+					transcripts.set(newest, t.text);
 				}
-			} catch (err) {
-				console.error(`[chat ${chatId}] drawing transcription failed:`, err);
 			}
+		} catch (err) {
+			console.error(`[chat ${chatId}] drawing transcription failed:`, err);
 		}
 	}
 
@@ -88,9 +88,12 @@ export async function prepareDrawingContext(
 			const structured = box ? serializeSceneStructuredText(scene, box) : "";
 			if (modelReadsImages) {
 				const png = drawingStore.getPng(chatId, drawingId);
-				return png
-					? { png: { data: Buffer.from(png).toString("base64"), mimeType: "image/png" }, structured }
-					: { structured };
+				const transcript = transcripts.get(drawingId);
+				return {
+					...(png ? { png: { data: Buffer.from(png).toString("base64"), mimeType: "image/png" as const } } : {}),
+					...(transcript !== undefined ? { transcript } : {}),
+					structured,
+				};
 			}
 			const transcript = transcripts.get(drawingId);
 			return transcript !== undefined ? { transcript, structured } : { structured };
