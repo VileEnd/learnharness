@@ -26,16 +26,28 @@ export interface DrawingTranscriberDeps {
 	engineFor(role: "transcriber"): PiEngine | undefined;
 }
 
+export interface TranscribeOptions {
+	/** The money channel, one call per model request, stamped with the
+	 *  reader's own provider-qualified model (priced at its rates). */
+	onUsage?: (usage: Usage, model: string) => void;
+	/** Cancels the request (the caller's time bound). */
+	signal?: AbortSignal;
+	/** Debug: LH_PROVIDER_EVENTS=1 records the raw provider events under
+	 *  this chat, context "job:transcriber". */
+	chatId?: string;
+}
+
 export interface DrawingTranscriber {
-	/** onUsage: the money channel, one call per model request. */
-	transcribe(png: Uint8Array, structured: string, onUsage?: (usage: Usage) => void): Promise<{ model: string; text: string }>;
+	transcribe(png: Uint8Array, structured: string, opts?: TranscribeOptions): Promise<{ model: string; text: string }>;
 }
 
 export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingTranscriber {
 	return {
-		async transcribe(png, structured, onUsage) {
+		async transcribe(png, structured, opts = {}) {
 			const engine = deps.engineFor("transcriber");
 			if (!engine) throw new Error("no transcriber model configured");
+			const model = `${engine.model.provider}:${engine.model.id}`;
+			const { onUsage } = opts;
 			const message: AgentMessage = {
 				role: "user",
 				content: [
@@ -50,11 +62,13 @@ export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingT
 				systemPrompt: TRANSCRIBE_PROMPT,
 				messages: [message],
 				maxTurns: 1,
-				onUsage,
+				...(onUsage ? { onUsage: (usage: Usage) => onUsage(usage, model) } : {}),
+				...(opts.signal ? { abortSignal: opts.signal } : {}),
+				...(opts.chatId ? { chatId: opts.chatId } : {}),
 			});
 			const out = text.trim();
 			if (!out) throw new Error("the transcriber returned nothing");
-			return { model: `${engine.model.provider}:${engine.model.id}`, text: out };
+			return { model, text: out };
 		},
 	};
 }

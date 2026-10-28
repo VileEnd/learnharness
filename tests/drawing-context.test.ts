@@ -16,6 +16,10 @@ import { createDrawingTranscriber, TRANSCRIBE_PROMPT } from "../src/agent/subage
 import { prepareDrawingContext } from "../src/server/drawing-context.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import { call, chat, result } from "./learner-helpers.ts";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { providerEventsDir } from "../src/agent/provider-events.ts";
 
 const WORK_ARGS = { type: "check", nodeId: "n", question: "Sketch y = x^2", correctAnswer: "A parabola." };
 const sceneOf = (n: number): DrawingScene =>
@@ -160,6 +164,65 @@ describe("drawings in the model context", () => {
 		const ctx: DrawingContext = await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber });
 		assert.equal(transcripts.size, 0, "nothing cached");
 		assert.match(textOf(toLlmMessages(messages as never, { drawing: ctx })), /transcription unavailable/);
+	});
+
+	it("a reader that never answers is cut off: the turn proceeds without a transcript", async () => {
+		const messages = [...pose(), sub(0)];
+		let signal: AbortSignal | undefined;
+		const transcriber = {
+			transcribe: (_png: Uint8Array, _s: string, opts?: { signal?: AbortSignal }) => {
+				signal = opts?.signal;
+				return new Promise<never>(() => {});
+			},
+		};
+		const { s, transcripts } = store();
+		const vision = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: s, transcriber, readerTimeoutMs: 20 });
+		assert.ok(vision.resolve(IDS[0]!)?.png);
+		assert.equal(vision.resolve(IDS[0]!)?.transcript, undefined);
+		assert.equal(signal?.aborted, true, "the reader's request is aborted");
+		const blind = await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber, readerTimeoutMs: 20 });
+		assert.match(textOf(toLlmMessages(messages as never, { drawing: blind })), /transcription unavailable/);
+		assert.equal(transcripts.size, 0, "nothing cached");
+	});
+
+	it("the reader's usage arrives stamped with the reader's model", async () => {
+		const messages = [...pose(), sub(0)];
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("[C4] y")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const models: string[] = [];
+		await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber, onUsage: (_u, model) => void models.push(model) });
+		assert.deepEqual(models, [`${f.getModel().provider}:${f.getModel().id}`]);
+	});
+
+	it("the reader's raw provider events are recorded under its own context", async () => {
+		const dir = mkdtempSync(path.join(tmpdir(), "lh-reader-events-"));
+		const previous = { dir: providerEventsDir.current, env: process.env.LH_PROVIDER_EVENTS };
+		providerEventsDir.current = dir;
+		process.env.LH_PROVIDER_EVENTS = "1";
+		try {
+			const f = createFauxCore({});
+			f.setResponses([fauxAssistantMessage("[C4] y")]);
+			let observer: ((data: unknown, model: unknown) => void) | undefined;
+			const transcriber = createDrawingTranscriber({
+				engineFor: () => ({
+					model: f.getModel(),
+					streamFn: (model, context, options) => {
+						observer = (options as { onProviderStreamEvent?: typeof observer }).onProviderStreamEvent;
+						return f.streamSimple(model, context, options);
+					},
+				}),
+			});
+			await transcriber.transcribe(new Uint8Array([1]), "", { chatId: "chat_r" });
+			assert.equal(typeof observer, "function");
+			observer!({ type: "x" }, { provider: "p", id: "m" });
+			assert.match(readFileSync(path.join(dir, "chat_r.jsonl"), "utf-8"), /"ctx":"job:transcriber"/);
+		} finally {
+			providerEventsDir.current = previous.dir;
+			if (previous.env === undefined) delete process.env.LH_PROVIDER_EVENTS;
+			else process.env.LH_PROVIDER_EVENTS = previous.env;
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("the reader's prompt does not assume a blind tutor", () => {
