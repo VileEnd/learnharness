@@ -61,7 +61,7 @@ test("serializeSceneStructuredText tags typed objects with cells", () => {
 		{ id: "o1", z: 1, type: "latex", x: 250, y: 350, w: 50, h: 20, source: "\\int_0^1 x\\,dx" },
 		{ id: "o2", z: 2, type: "table", x: 150, y: 550, w: 250, h: 150, cells: [["a", "b"], ["1", "2"]] },
 	] });
-	assert.equal(serializeSceneStructuredText(scene, box), "[o1 latex @C4] $\\int_0^1 x\\,dx$\n[o2 table @B6-D7]\n| a | b |\n| --- | --- |\n| 1 | 2 |\n[s1 ink stroke, line @A1]");
+	assert.equal(serializeSceneStructuredText(scene, box), "[o1 latex @C4] $\\int_0^1 x\\,dx$\n[o2 table @B6-D7]\n| a | b |\n| --- | --- |\n| 1 | 2 |\n[s1 ink stroke, line @A1; grid x 0.10-0.30, y 0.20-0.40]");
 	assert.deepEqual(objectsAt(scene, box).C4, ["o1"]);
 	assert.deepEqual(objectsAt(scene, box).C7, ["o2"]);
 	assert.equal(nextObjectId(scene), "o3");
@@ -102,8 +102,12 @@ const digestOf = (objects: unknown[]) => {
 const line = (n: number, f: (t: number) => [number, number]) => Array.from({ length: n }, (_, i) => f(i / (n - 1)));
 
 test("stroke digest: a vertical line, a horizontal line and a slanted line", () => {
-	assert.equal(digestOf([strokeOf("s4", "blue", line(20, (t) => [350, 50 + 700 * t]))]), "[s4 blue stroke, vertical line @D1-D8]");
-	assert.match(digestOf([strokeOf("s1", "ink", line(20, (t) => [50 + 700 * t, 400]))]), /^\[s1 ink stroke, horizontal line @A\d-H\d\]$/);
+	assert.equal(digestOf([strokeOf("s4", "blue", line(20, (t) => [350, 50 + 700 * t]))]), "[s4 blue stroke, vertical line @D1-D8; grid x 3.50-3.50, y 0.50-7.50]");
+	// Two vertical lines in ONE column still read as apart (MiMo misread a one-unit gap as "on top of").
+	const pair = digestOf([strokeOf("s2", "gray", line(20, (t) => [310, 50 + 700 * t])), strokeOf("s4", "blue", line(20, (t) => [390, 50 + 700 * t]))]);
+	assert.match(pair, /\[s2 gray stroke, vertical line @D1-D8; grid x 3\.10-3\.10/);
+	assert.match(pair, /\[s4 blue stroke, vertical line @D1-D8; grid x 3\.90-3\.90/);
+	assert.match(digestOf([strokeOf("s1", "ink", line(20, (t) => [50 + 700 * t, 400]))]), /^\[s1 ink stroke, horizontal line @A\d-H\d; grid x [0-9.]+-[0-9.]+, y [0-9.]+-[0-9.]+\]$/);
 	assert.match(digestOf([strokeOf("s2", "ink", line(20, (t) => [50 + 700 * t, 50 + 700 * t]))]), /, line @/);
 });
 
@@ -112,9 +116,9 @@ test("stroke digest: a parabola names the cell of its top (and a cup its bottom)
 	const peak = line(41, (t) => [50 + 600 * t, 100 + 600 * (2 * t - 1) ** 2]);
 	const [px, py] = peak.reduce((a, b) => (b[1] < a[1] ? b : a));
 	assert.equal(`${Math.floor(px / 100)},${Math.floor(py / 100)}`, "3,1");
-	assert.match(digestOf([strokeOf("s3", "red", peak)]), /^\[s3 red stroke, curve, top at D2 @/);
+	assert.match(digestOf([strokeOf("s3", "red", peak)]), /^\[s3 red stroke, curve, top at D2 \(x 3\.50, y 1\.00\) @/);
 	const cup = line(41, (t) => [50 + 600 * t, 700 - 600 * (2 * t - 1) ** 2]);
-	assert.match(digestOf([strokeOf("s3", "red", cup)]), /curve, bottom at D8 @/);
+	assert.match(digestOf([strokeOf("s3", "red", cup)]), /curve, bottom at D8 \(x 3\.50, y 7\.00\) @/);
 });
 
 test("stroke digest: a closed loop, and freehand otherwise", () => {
