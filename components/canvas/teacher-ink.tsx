@@ -100,12 +100,13 @@ const NOTE_CHAR_EM = 0.6;
 /**
  * The note size: today's badge size x 1.15 (u*2.6*1.15). The chat thumbnail is drawn at most 160px tall
  * (DrawingThumb, max-h-40), where that comes out near 6px, so in percent space a note is at least 7% of the
- * box height (about 11px there; owner: "clearly readable", 2026-10-28). Never so large that a full line
- * overflows the drawing's width.
+ * box height (about 11px there; owner: "clearly readable", 2026-10-28). In world space (the workspace, zoom 1
+ * by default) a note is at least 14 world px, i.e. 14px unzoomed; it is not counter-scaled with the zoom,
+ * which is the learner's choice. Never so large that a full line overflows the drawing's width.
  */
 function noteSize(u: number, percent: boolean, w: number, h: number): number {
 	const base = u * 2.6 * 1.15;
-	const size = percent ? Math.max(base, h * 0.07) : base;
+	const size = Math.max(base, percent ? h * 0.07 : 14);
 	return Math.min(size, w / (NOTE_LINE_CHARS * NOTE_CHAR_EM));
 }
 
@@ -192,12 +193,13 @@ function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: numbe
 		const ang = Math.atan2(y2 - my, x2 - mx);
 		const hl = c.u * 4;
 		const barb = (d: number): [number, number] => [x2 - hl * Math.cos(ang + d), y2 - hl * Math.sin(ang + d)];
+		// The label sits clear of the shaft: right of the bowed middle, and below (or above) it by a unit.
 		const head = wobblePath([[x2, y2], barb(-0.45)], seed + 1, c.u * 0.25) + wobblePath([[x2, y2], barb(0.45)], seed + 2, c.u * 0.25);
 		return (
 			<g data-mark="arrow">
 				<path d={wobblePath([[x1, y1], [mx, my], [x2, y2]], seed, c.u * 0.5)} {...common} />
 				<path d={head} {...common} />
-				{mark.label ? note((x1 + x2) / 2, (y1 + y2) / 2, (y1 + y2) / 2, "below", mark.label) : null}
+				{mark.label ? note(Math.max((x1 + x2) / 2, mx) + c.u, Math.min((y1 + y2) / 2, my) - c.u, Math.max((y1 + y2) / 2, my) + c.u, "below", mark.label) : null}
 			</g>
 		);
 	}
