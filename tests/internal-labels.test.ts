@@ -97,6 +97,10 @@ describe("other learner-facing readers and empty results", () => {
 		const wire = toLlmMessages([assistant("**Hint 1 (R1):**")] as never);
 		assert.equal((wire[0] as { content: Array<{ text: string }> }).content[0]!.text, "**Hint 1 (R1):**");
 	});
+	it("the session export emits no empty Teacher section for a label-only block", () => {
+		const md = sessionMarkdown([user("hi"), assistant("**Hint 1 (R1):**")]);
+		assert.ok(!md.includes("### Teacher"), md);
+	});
 	it("the session export strips teacher prose", () => {
 		const md = sessionMarkdown([user("hi"), assistant("**Hint 1 (R1):** Look")]);
 		assert.ok(md.includes("Look") && !md.includes("Hint 1"));

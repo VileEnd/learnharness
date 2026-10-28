@@ -234,7 +234,9 @@ export function messageMarkdown(
 		}
 	} else if (role === "assistant") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]), ctx?.redundantText)) {
-			parts.push(`### Teacher${anchor}\n\n${stripInternalLabels(text, ctx?.hintReplies?.has(message) === true).trim()}`);
+			// A block that was only a label strips to nothing: no empty section.
+			const body = stripInternalLabels(text, ctx?.hintReplies?.has(message) === true).trim();
+			if (body !== "") parts.push(`### Teacher${anchor}\n\n${body}`);
 		}
 	} else if (role === "toolResult") {
 		const result = message as ToolResultMessage;
