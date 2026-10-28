@@ -13,7 +13,7 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { WorkDock } from "../components/work-dock.tsx";
-import { CANVAS_UNAVAILABLE, CanvasPill } from "../components/model-picker.tsx";
+import { CanvasPill } from "../components/model-picker.tsx";
 import { StatsBar } from "../components/stats-bar.tsx";
 import { DrawingThumb, WorkSubmissionCard, drawingPngUrl } from "../components/work-cards.tsx";
 import { GradeChip } from "../components/artifacts/grade-chip.tsx";
@@ -72,18 +72,6 @@ describe("CanvasPill", () => {
 		// SSR / first paint is never capable (useCanvasCapable's server snapshot is false).
 		assert.equal(renderToStaticMarkup(<CanvasPill />), "");
 		assert.ok(!renderToStaticMarkup(<StatsBar turns={[]} />).includes("stats-canvas"));
-	});
-
-	it("disabled, with the explaining tooltip, when no tested canvas model resolves", () => {
-		const html = renderToStaticMarkup(<CanvasPill capable available={false} />);
-		assert.match(html, /data-testid="stats-canvas"/);
-		assert.match(html, /aria-disabled="true"/);
-		assert.match(html, /aria-pressed="false"/);
-		assert.equal(CANVAS_UNAVAILABLE, "Canvas needs a tested model — set one in Settings → Models → Canvas");
-		// a usable model keeps the live pill
-		assert.doesNotMatch(renderToStaticMarkup(<CanvasPill capable available />), /aria-disabled/);
-		// still hidden on a phone, available or not
-		assert.equal(renderToStaticMarkup(<CanvasPill capable={false} available={false} />), "");
 	});
 
 	it("off by default in a draft", () => {

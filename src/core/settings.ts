@@ -68,56 +68,8 @@ export interface RoleModelOverride {
  *  starting point); cheap = researcher, demo-builder, extractor, auditor,
 ; vision = visual-maker. Resolution per role:
  *  ROLE OVERRIDE → slot → factory pin. */
-export const MODEL_SLOTS = ["strong", "cheap", "vision", "canvas"] as const;
+export const MODEL_SLOTS = ["strong", "cheap", "vision"] as const;
 export type ModelSlotName = (typeof MODEL_SLOTS)[number];
-
-/** `canvas` is optional by design: it has a default (CANVAS_DEFAULT_MODEL), no
- *  agent role draws from it, and the first-run gate (slotsConfigured) ignores it.
- *  It names the model that handles CANVAS TURNS (see CANVAS_VETTED_MODELS).
- *
- *  One model the canvas has been tested on. */
-export interface CanvasVettedModel {
-	provider: string;
-	id: string;
-	/** Short provenance: when it was tested and on what. */
-	note: string;
-}
-
-/** THE CANVAS ALLOWLIST (owner, 2026-10-27: "we only allow the models you
- *  tested and that worked well"). Canvas turns (work/sketch/annotate, and
- *  practice problems with `canvas: true`) run only on these. Filled from
- *  the cross-model matrix: the M6 re-run (2026-10-27, 0.25.0 + robustness
- *  commits) for the three flash models, the earlier 0.24.0 run for the
- *  Sonnet control. NOT allowlisted because not passing or not re-tested:
- *  Haiku, Gemini, Kimi, Qwen max/27b, every openai/* model.
- *
- *  Before adding a model: re-run the canvas matrix on it AND check its
- *  context window. Compaction (threshold and kick) uses the TUTOR's window,
- *  so a canvas model with a smaller window could overflow on a long chat;
- *  all four entries below report >= 1M in pi's catalog. */
-export const CANVAS_VETTED_MODELS: readonly CanvasVettedModel[] = [
-	{
-		provider: "openrouter",
-		id: "z-ai/glm-5.3-flash",
-		// GIVE-AWAY RE-CHECK (2026-10-27): in M6 GLM stated the target in
-		// coaching and in a hint. Under the final prompt the failing state (a
-		// hint right after a coached wrong submission) was re-run n=3: no hint
-		// text stated a value (3/3). One run instead closed the task with grade
-		// inside the hint turn, revealing the committed answer; grade is now
-		// refused while the latest input is a hint request (grade.ts).
-		note: "tested 2026-10-27 (prober and teacher scenarios pass); hint after a coached wrong submission re-run n=3, no value stated; grade in a hint turn now refused",
-	},
-	{ provider: "openrouter", id: "qwen/qwen3.8-flash", note: "tested 2026-10-27 (prober and teacher scenarios pass)" },
-	{ provider: "openrouter", id: "deepseek/deepseek-v4.1-flash", note: "tested 2026-10-27 (prober and teacher scenarios pass)" },
-	{ provider: "anthropic", id: "claude-sonnet-5-5", note: "tested 2026-10-27 on 0.24.0 (control run; not re-tested since)" },
-];
-
-/** The canvas model when the slot is unset and an OpenRouter key exists. */
-export const CANVAS_DEFAULT_MODEL = { provider: "openrouter", id: "z-ai/glm-5.3-flash" } as const;
-
-export function isCanvasVetted(model: { provider: string; id: string } | undefined | null): boolean {
-	return !!model && CANVAS_VETTED_MODELS.some((v) => v.provider === model.provider && v.id === model.id);
-}
 
 /** The DEFAULT thinking level for UNSET levels only (owner, 2026-09-22):
  *  a slot/override/chat that names a model but no thinking level resolves
@@ -253,9 +205,6 @@ export interface ModelsSettings {
 	strong?: ModelSlot;
 	cheap?: ModelSlot;
 	vision?: ModelSlot;
-	/** The model that handles canvas turns (CANVAS_VETTED_MODELS only).
-	 *  Unset: see resolveCanvasModel. Optional, never part of the first-run gate. */
-	canvas?: ModelSlot;
 }
 
 /** First-run gate (model-slots wave, owner 2026-09-20): the app refuses

@@ -51,7 +51,7 @@ function qwenModel() {
 
 describe("the model catalog projection", () => {
 	it("serves the keyed providers' catalogs with the picker's DTO shape", () => {
-		const { models, defaults, providers, slots, canvas } = modelCatalog();
+		const { models, defaults, providers, slots } = modelCatalog();
 		// 0.85.1 ships 366 OpenRouter models — the exact count is pi's, but
 		// the shape and the config models' presence are ours to pin.
 		assert.ok(models.length > 300, `expected a full catalog, got ${models.length}`);
@@ -73,9 +73,7 @@ describe("the model catalog projection", () => {
 		const openrouter = providers.find((p) => p.id === "openrouter");
 		assert.ok(openrouter && openrouter.keyPresent, "openrouter federated (key pinned above)");
 		assert.ok(providers.some((p) => !p.keyPresent), "keyless providers listed for discovery");
-		assert.deepEqual(Object.keys(slots), ["strong", "cheap", "vision", "canvas"]);
-		// the canvas model in force: OpenRouter is keyed here, so a vetted model always resolves
-		assert.ok(canvas, "a vetted canvas model resolves with the OpenRouter key present");
+		assert.deepEqual(Object.keys(slots), ["strong", "cheap", "vision"]);
 		// a keyless provider's models never reach the picker
 		const keyless = providers.filter((p) => !p.keyPresent).map((p) => p.id);
 		for (const id of keyless) {
@@ -95,7 +93,7 @@ describe("the model catalog projection", () => {
 		} else {
 			assert.equal(defaults, null);
 		}
-		for (const name of ["strong", "cheap", "vision", "canvas"] as const) {
+		for (const name of ["strong", "cheap", "vision"] as const) {
 			const stored = record?.models?.[name];
 			if (stored?.model) {
 				assert.ok(slots[name], name);
