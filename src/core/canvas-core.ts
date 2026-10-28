@@ -211,6 +211,14 @@ export function cellOf(grid: RegionGrid, box: Box, x: number, y: number): string
 	return `${COL_LETTERS[c]}${r + 1}`;
 }
 
+/** A position in grid units (columns from the left edge, rows from the top, 2 decimals): finer than a cell, so
+ *  two strokes in one column still read as apart (a cell can be a whole unit of his sketch). */
+export function gridPos(grid: RegionGrid, box: Box, x: number, y: number): string {
+	const gx = (x - box.x) / grid.cellW;
+	const gy = (y - box.y) / grid.cellH;
+	return `x ${gx.toFixed(2)}, y ${gy.toFixed(2)}`;
+}
+
 /** The rectangle of a cell label, or null if it is not a cell of this grid. */
 export function cellRect(grid: RegionGrid, box: Box, cell: string): Box | null {
 	const m = /^([A-H])(\d{1,2})$/.exec(cell.trim().toUpperCase());
@@ -303,8 +311,8 @@ export function strokeShapeHint(pts: readonly Pt[], grid: RegionGrid, box: Box):
 	const bottom = pts.reduce((a, b) => (b[1] > a[1] ? b : a));
 	const topDominant = Math.min(...endY) - top[1] >= 0.3 * h;
 	const bottomDominant = bottom[1] - Math.max(...endY) >= 0.3 * h;
-	if (topDominant && !bottomDominant) return `curve, top at ${cellOf(grid, box, top[0], top[1])}`;
-	if (bottomDominant && !topDominant) return `curve, bottom at ${cellOf(grid, box, bottom[0], bottom[1])}`;
+	if (topDominant && !bottomDominant) return `curve, top at ${cellOf(grid, box, top[0], top[1])} (${gridPos(grid, box, top[0], top[1])})`;
+	if (bottomDominant && !topDominant) return `curve, bottom at ${cellOf(grid, box, bottom[0], bottom[1])} (${gridPos(grid, box, bottom[0], bottom[1])})`;
 	return "freehand";
 }
 
@@ -331,7 +339,7 @@ export function digestStrokes(scene: DrawingScene): { strokes: StrokeObject[]; m
 	return { strokes: kept, more: all.length - MAX_STROKE_DIGEST_LINES };
 }
 
-/** One line per freehand stroke: `[s4 blue stroke, vertical line @D1-D5]`, capped (digestStrokes), the rest summarised. */
+/** One line per freehand stroke: `[s4 blue stroke, vertical line @D1-D5; grid x 3.48-3.52, y 0.10-4.90]`, capped (digestStrokes), the rest summarised. */
 function strokeDigestLines(scene: DrawingScene, grid: RegionGrid, box: Box): string[] {
 	const { strokes, more } = digestStrokes(scene);
 	const lines = strokes.map((o) => {
@@ -339,7 +347,8 @@ function strokeDigestLines(scene: DrawingScene, grid: RegionGrid, box: Box): str
 		const ys = o.points.map((p) => p[1]);
 		const a = cellOf(grid, box, Math.min(...xs), Math.min(...ys));
 		const b = cellOf(grid, box, Math.max(...xs), Math.max(...ys));
-		return `[${o.id} ${o.color} stroke, ${strokeShapeHint(o.points, grid, box)} @${a === b ? a : `${a}-${b}`}]`;
+		const span = `grid x ${((Math.min(...xs) - box.x) / grid.cellW).toFixed(2)}-${((Math.max(...xs) - box.x) / grid.cellW).toFixed(2)}, y ${((Math.min(...ys) - box.y) / grid.cellH).toFixed(2)}-${((Math.max(...ys) - box.y) / grid.cellH).toFixed(2)}`;
+		return `[${o.id} ${o.color} stroke, ${strokeShapeHint(o.points, grid, box)} @${a === b ? a : `${a}-${b}`}; ${span}]`;
 	});
 	if (more > 0) lines.push(`+${more} more strokes`);
 	return lines;
