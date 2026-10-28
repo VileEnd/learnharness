@@ -71,7 +71,7 @@ The owner's model of the canvas: **a reader turns the canvas into content, the t
 ### No internal labels
 - `hintRequestText(n)` (`src/core/native-messages.ts`) drops the word "rung": "Hint request n for this task — give the next, smallest hint only."
 - The canvas and formatting prompts say rung numbers and names are an internal scale and never appear in visible text.
-- **Code backstop:** a leading `**Hint n (…)**`-style header, or a parenthesised `R0`–`R5` / `rung` / `Rang` / `Stufe` label, is stripped from visible assistant text at the stream boundary.
+- **Code backstop:** a leading `**Hint n (…)**`-style header, or a parenthesised `R0`–`R5` / `rung` / `Rang` / `Stufe` label, is stripped at read time — in the view projection (what the learner sees, live and settled) and in the model conversion (so the model never sees its own label in history). The record stays raw (builder's call: the record is the source of truth; derive at read time).
 
 ### The canvas model slot
 - Remove the canvas slot from settings:
@@ -103,7 +103,7 @@ Canvas turns are billed at the session model's price; with Sonnet 5.5 that is we
   - the guard steers once when a submission turn has no `annotate`;
   - label stripping;
   - teacher-ink renders each mark kind.
-- **A live check** on a scratch server with the owner's real model choice (Sonnet 5.5), English and German: wrong submission, then hint, then corrected submission. Pass means:
+- **A live check** on a scratch server with a cheap tested session model (DeepSeek V4.1 Flash; the owner's standing rule is no Sonnet/Opus test spend, and the mechanics are model-independent), English and German: wrong submission, then hint, then corrected submission. Pass means:
   - marks appear on every submission reply;
   - no labels and no foreign script;
   - no give-away;
