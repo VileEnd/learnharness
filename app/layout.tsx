@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Source_Sans_3 } from "next/font/google";
+import { JetBrains_Mono, Shantell_Sans, Source_Sans_3 } from "next/font/google";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import { AppShell, SidebarProvider } from "@/components/sidebar";
@@ -13,6 +13,8 @@ import { SessionWatch } from "@/components/session-watch";
 // Serif (the bundled lh-cmu @font-face in globals.css — no CDN).
 const ui = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 const prose = Source_Sans_3({ subsets: ["latin"], variable: "--font-sans3" });
+// The teacher's red-pen hand on the canvas marks (components/canvas/teacher-ink.tsx, B2 2026-10-28).
+const teacherHand = Shantell_Sans({ subsets: ["latin"], weight: ["500"], variable: "--font-teacher-hand" });
 
 export const metadata: Metadata = {
 	title: "Learning Harness",
@@ -35,7 +37,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en" className={`dark ${ui.variable} ${prose.variable}`}>
+		<html lang="en" className={`dark ${ui.variable} ${prose.variable} ${teacherHand.variable}`}>
 			<body className="min-h-dvh antialiased">
 			{/* The notification channel rides OUTSIDE everything: sidebar, dock,
 				 and pages all subscribe as the polls retire (push S3, 2026-10-02). */}

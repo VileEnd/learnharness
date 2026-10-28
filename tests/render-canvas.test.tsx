@@ -13,13 +13,13 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { WorkDock } from "../components/work-dock.tsx";
-import { CANVAS_UNAVAILABLE, CanvasPill } from "../components/model-picker.tsx";
+import { CanvasPill } from "../components/model-picker.tsx";
 import { StatsBar } from "../components/stats-bar.tsx";
 import { DrawingThumb, WorkSubmissionCard, drawingPngUrl } from "../components/work-cards.tsx";
 import { GradeChip } from "../components/artifacts/grade-chip.tsx";
 import { AnnotateCard } from "../components/artifacts/annotate-card.tsx";
 import { artifactRenderers } from "../components/artifacts/index.ts";
-import { TeacherInk } from "../components/canvas/teacher-ink.tsx";
+import { TeacherInk, wobblePath } from "../components/canvas/teacher-ink.tsx";
 import { canSubmitWork, CanvasWorkspace } from "../components/canvas/canvas-workspace.tsx";
 import { pickDraft } from "../components/canvas/draft.ts";
 import { tableAddCol, tableAddRow, tableNextCell, tableRemoveCol, tableRemoveRow } from "../components/canvas/object-edit.ts";
@@ -72,18 +72,6 @@ describe("CanvasPill", () => {
 		// SSR / first paint is never capable (useCanvasCapable's server snapshot is false).
 		assert.equal(renderToStaticMarkup(<CanvasPill />), "");
 		assert.ok(!renderToStaticMarkup(<StatsBar turns={[]} />).includes("stats-canvas"));
-	});
-
-	it("disabled, with the explaining tooltip, when no tested canvas model resolves", () => {
-		const html = renderToStaticMarkup(<CanvasPill capable available={false} />);
-		assert.match(html, /data-testid="stats-canvas"/);
-		assert.match(html, /aria-disabled="true"/);
-		assert.match(html, /aria-pressed="false"/);
-		assert.equal(CANVAS_UNAVAILABLE, "Canvas needs a tested model — set one in Settings → Models → Canvas");
-		// a usable model keeps the live pill
-		assert.doesNotMatch(renderToStaticMarkup(<CanvasPill capable available />), /aria-disabled/);
-		// still hidden on a phone, available or not
-		assert.equal(renderToStaticMarkup(<CanvasPill capable={false} available={false} />), "");
 	});
 
 	it("off by default in a draft", () => {
@@ -262,10 +250,11 @@ describe("teacher ink", () => {
 	const box = sceneBoundingBox(inkScene)!;
 	const ink = (marks: AnnotationMark[], space: "world" | "percent") => renderToStaticMarkup(<TeacherInk marks={marks} scene={inkScene} box={box} space={space} />);
 
-	it("TeacherInk renders a circle for an object target", () => {
+	it("TeacherInk renders a circle for an object target as a hand-drawn path", () => {
 		const html = ink([{ kind: "circle", target: { object: "o1" } }], "world");
 		assert.match(html, /data-testid="teacher-ink"/);
-		assert.match(html, /<ellipse[^>]*cx="200"[^>]*cy="130"/);
+		assert.match(html, /data-mark="circle"><path d="M/);
+		assert.ok(!html.includes("<ellipse"));
 	});
 
 	it("each kind draws its glyph, an arrow joins two rects, an unresolved target is skipped", () => {
@@ -289,6 +278,78 @@ describe("teacher ink", () => {
 	it("colours come from the palette helper, not literals in the component", () => {
 		assert.match(ink([{ kind: "circle", target: { object: "o1" } }], "world"), /#f87171/);
 		assert.match(renderToStaticMarkup(<TeacherInk marks={[{ kind: "circle", target: { object: "o1" } }]} scene={inkScene} box={box} space="percent" theme="light" />), /#d62828/);
+	});
+
+	// B2 red-pen hand (2026-10-28): every mark red but the green check, notes in Shantell Sans on a paper halo.
+	const light = (marks: AnnotationMark[]) => renderToStaticMarkup(<TeacherInk marks={marks} scene={inkScene} box={box} space="percent" theme="light" />);
+	const allKinds: AnnotationMark[] = [
+		{ kind: "circle", target: { object: "o1" } },
+		{ kind: "underline", target: { object: "o1" } },
+		{ kind: "check", target: { object: "o2" } },
+		{ kind: "cross", target: { object: "o2" } },
+		{ kind: "arrow", from: { object: "o1" }, to: { object: "o2" } },
+		{ kind: "note", target: { object: "o2" }, label: "sign slip" },
+	];
+	/** The markup of each mark, keyed by kind (each `data-mark` group up to the next one). */
+	const byKind = (html: string) => Object.fromEntries(html.split('data-mark="').slice(1).map((seg) => [seg.slice(0, seg.indexOf('"')), seg]));
+
+	it("every kind renders; the check is green, every other mark red", () => {
+		const parts = byKind(light(allKinds));
+		assert.deepEqual(Object.keys(parts).sort(), ["arrow", "check", "circle", "cross", "note", "underline"]);
+		assert.match(parts.check!, /stroke="#15803d"/);
+		assert.ok(!parts.check!.includes("#d62828"));
+		for (const k of ["circle", "underline", "cross", "arrow", "note"]) {
+			assert.match(parts[k]!, /stroke="#d62828"|fill="#d62828"/, k);
+			assert.ok(!parts[k]!.includes("#15803d"), k);
+		}
+	});
+
+	it("a note and a label are written in the teacher hand on a paper halo", () => {
+		const parts = byKind(light([{ kind: "note", target: { object: "o2" }, label: "sign slip" }, { kind: "check", target: { object: "o1" }, label: "right" }]));
+		for (const [k, colour] of [["note", "#d62828"], ["check", "#15803d"]] as const) {
+			const text = parts[k]!.match(/<text[^>]*>/)?.[0] ?? "";
+			assert.match(text, /font-family="[^"]*var\(--font-teacher-hand\)/, k);
+			assert.match(text, /paint-order="stroke"/, k);
+			assert.match(text, /stroke="#f5f5f5"/, k); // the paper: the opposite-theme ink
+			assert.match(text, new RegExp(`fill="${colour}"`), k); // a label takes its mark's colour
+		}
+	});
+
+	it("a long label wraps to two lines at most; the tooltip keeps the full text", () => {
+		const long = "The sign of the second term flips when you move it across!!!";
+		assert.equal(long.length, 60);
+		const html = light([{ kind: "circle", target: { object: "o1" }, label: long }]);
+		assert.equal(html.match(/<tspan/g)?.length, 2);
+		assert.match(html, /\u2026<\/tspan>/);
+		assert.ok(html.includes(`<title>${long}</title>`));
+	});
+
+	it("a thumbnail note is 7% of the drawing's height (about 11px on the 160px chat thumbnail), unless a 24-char line would overflow the width", () => {
+		const html = light([{ kind: "note", target: { object: "o2" }, label: "sign slip" }]);
+		const vbH = Number(html.match(/viewBox="0 0 100 ([\d.]+)"/)?.[1]);
+		const fs = Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
+		assert.ok(Math.abs(fs - Math.min(vbH * 0.07, 100 / (24 * 0.6))) < 0.01, `${fs} vs ${vbH}`);
+	});
+
+	it("a note on a small drawing is at least 14px on the workspace (world space, zoom 1)", () => {
+		const html = ink([{ kind: "note", target: { object: "o2" }, label: "sign slip" }], "world");
+		assert.ok(Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]) >= 14);
+	});
+
+	it("an arrow's label sits clear of its shaft's midpoint", () => {
+		// o1 -> o2 is a vertical arrow from (200, 130) to (200, 330); the world unit u is 3 on this drawing.
+		const html = ink([{ kind: "arrow", from: { object: "o1" }, to: { object: "o2" }, label: "moves down" }], "world");
+		const fs = Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
+		const [, x, y] = html.match(/<tspan x="([\d.]+)" y="([\d.]+)"/)!.map(Number);
+		const top = y! - fs * 0.9; // the first tspan's baseline is 0.9em below the label's top
+		assert.ok(Math.abs(top - 230) >= 3, `label top ${top}`);
+		assert.ok(x! >= 200 + 3, `label x ${x}`);
+	});
+
+	it("the wobble is seeded by the mark: re-rendering gives identical markup", () => {
+		assert.equal(light(allKinds), light(allKinds));
+		assert.equal(wobblePath([[0, 0], [10, 0], [20, 5]], 7, 1), wobblePath([[0, 0], [10, 0], [20, 5]], 7, 1));
+		assert.notEqual(wobblePath([[0, 0], [10, 0], [20, 5]], 7, 1), wobblePath([[0, 0], [10, 0], [20, 5]], 8, 1));
 	});
 
 	it("submittedDrawingIds lists the drawings submitted for one task, in order", () => {

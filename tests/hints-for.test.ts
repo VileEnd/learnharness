@@ -28,8 +28,8 @@ describe("hintsFor", () => {
 	it("pairs each request with its reply text, in order", () => {
 		const m = [req("w", "r1"), say("a1", "**Hint (rung 0):** look at the axes"), req("w", "r2"), say("a2", "**Hint (rung 1):** try x = 2")];
 		assert.deepEqual(hintsFor(m, "w"), [
-			{ requestId: "r1", text: "**Hint (rung 0):** look at the axes" },
-			{ requestId: "r2", text: "**Hint (rung 1):** try x = 2" },
+			{ requestId: "r1", text: "**Hint:** look at the axes" }, // the internal rung label is stripped at the read seam
+			{ requestId: "r2", text: "**Hint:** try x = 2" },
 		]);
 	});
 

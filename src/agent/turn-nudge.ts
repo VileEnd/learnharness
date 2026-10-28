@@ -29,6 +29,12 @@ import {
 
 export const SILENT_TURN_STEER =
 	"The learner saw only your marks/grade - tell him in plain text what you saw and what to do next.";
+/** `spoke`: the turn already has visible prose, so ask only for the marks
+ *  (asking for the reply again would make him read the coaching twice). */
+export const markSteer = (drawingId: string, spoke = false) =>
+	`You have not marked his drawing yet. Call annotate on drawing ${drawingId}: a mark on the first place the work breaks, or a check on what holds. ${
+		spoke ? "You have already replied in text, so just mark the drawing; you need not repeat what you said." : "Then tell him in plain text what you saw and what to do next."
+	}`;
 export const PLAN_INIT_STEER = "Call plan_init with that plan.";
 
 export function newTurnNudge(text: string): LhMarkerMessage {
@@ -53,24 +59,52 @@ function sinceInput(messages: readonly LhMessage[]): { boundary: LhMessage | und
 
 const POSE_TOOLS: readonly string[] = [...QUESTION_TOOLS, ...WORK_TOOLS, PRACTICE_PROBLEM_TOOL];
 
+/** Does the turn so far reach him: learner-visible prose (a text block or a
+ *  clean send_to_user), or, with `orPose`, a question or task posed? */
+function turnSpeaks(since: readonly LhMessage[], orPose: boolean): boolean {
+	const failed = failedOutputCallIds(since);
+	for (const m of since) {
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const block of m.content) {
+			if (block.type === "text" && block.text.trim()) return true;
+			if (block.type === "toolCall") {
+				if (orPose && POSE_TOOLS.includes(block.name)) return true;
+				if (!failed.has(block.id) && sendToUserText(block) !== undefined) return true;
+			}
+		}
+	}
+	return false;
+}
+
 /** RC9: the turn answers a work submission / hint request, yet nothing in it
  *  is learner-visible prose and no question or task was posed. */
 export function silentAfterSubmission(messages: readonly LhMessage[]): boolean {
 	const { boundary, since } = sinceInput(messages);
 	if (boundary?.role !== "custom") return false;
 	if (boundary.customType !== "work-submission" && boundary.customType !== "hint-request") return false;
-	const failed = failedOutputCallIds(since);
+	return !turnSpeaks(since, true);
+}
+
+/** A drawn submission (canvas task or practice thinking) whose turn has no
+ *  successful annotate ON THAT DRAWING yet: returns the drawing id to mark. A
+ *  refused annotate, or one on another drawing, does not count. Hint requests
+ *  and drawing-less submissions are exempt. */
+export function unmarkedSubmission(messages: readonly LhMessage[]): string | undefined {
+	const { boundary, since } = sinceInput(messages);
+	if (boundary?.role !== "custom") return undefined;
+	if (boundary.customType !== "work-submission" && boundary.customType !== "practice-thinking") return undefined;
+	const drawingId = (boundary.details as { drawingId?: unknown } | null | undefined)?.drawingId;
+	if (typeof drawingId !== "string") return undefined;
+	const onThis = new Set<string>();
 	for (const m of since) {
 		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
 		for (const block of m.content) {
-			if (block.type === "text" && block.text.trim()) return false;
-			if (block.type === "toolCall") {
-				if (POSE_TOOLS.includes(block.name)) return false;
-				if (!failed.has(block.id) && sendToUserText(block) !== undefined) return false;
-			}
+			if (block.type !== "toolCall" || block.name !== "annotate") continue;
+			if ((block.arguments as { drawingId?: unknown } | undefined)?.drawingId === drawingId) onThis.add(block.id);
 		}
 	}
-	return true;
+	for (const m of since) if (m.role === "toolResult" && m.toolName === "annotate" && !m.isError && onThis.has(m.toolCallId)) return undefined;
+	return drawingId;
 }
 
 const PLAN_DIAGRAM = /```\s*mermaid|^\s*(?:graph|flowchart)\s+(?:TD|TB|LR|RL|BT)\b/im;
@@ -97,11 +131,18 @@ export function planWrittenAsProse(messages: readonly LhMessage[]): boolean {
  *  caller's per-turn flag holder. */
 export function nextNudge(messages: readonly LhMessage[], done: { used: boolean }): string | undefined {
 	if (done.used) return undefined;
-	const text = silentAfterSubmission(messages)
-		? SILENT_TURN_STEER
-		: planWrittenAsProse(messages)
-			? PLAN_INIT_STEER
-			: undefined;
+	// The mark steer also asks for the plain-text reply when the turn has
+	// none, so it covers the silent-turn case for a drawn submission; after
+	// visible prose it asks only for the marks.
+	const unmarked = unmarkedSubmission(messages);
+	const text =
+		unmarked !== undefined
+			? markSteer(unmarked, turnSpeaks(sinceInput(messages).since, false))
+			: silentAfterSubmission(messages)
+				? SILENT_TURN_STEER
+				: planWrittenAsProse(messages)
+					? PLAN_INIT_STEER
+					: undefined;
 	if (text !== undefined) done.used = true;
 	return text;
 }

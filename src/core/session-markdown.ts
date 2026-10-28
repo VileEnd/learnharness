@@ -23,6 +23,7 @@
 import type { LhMessage } from "./native-messages.ts";
 import {
 	failedOutputCallIds,
+	hintReplyMessages,
 	PRACTICE_CONCLUDE_TOOL,
 	PRACTICE_PROBLEM_TOOL,
 	problemInputForConclude,
@@ -33,6 +34,7 @@ import {
 	type LhMarkerMessage,
 } from "./native-messages.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { stripInternalLabels } from "./internal-labels.ts";
 import { annotationMarkPlace, parseAnnotateInput } from "./canvas-core.ts";
 import type { QuestionAnswerData } from "./question-core.ts";
 
@@ -49,6 +51,9 @@ export interface MarkdownContext {
 	failedOutputCalls?: ReadonlySet<string>;
 	/** Text blocks that repeat a send_to_user message of their turn (RC4). */
 	redundantText?: ReadonlySet<object>;
+	/** Assistant messages answering a hint request or a submission: the only
+	 *  ones whose mid-text rung labels are stripped (hintReplyMessages). */
+	hintReplies?: ReadonlySet<unknown>;
 }
 
 function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
@@ -67,7 +72,13 @@ function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
 			}
 		}
 	}
-	return { messages, calls, failedOutputCalls: failedOutputCallIds(messages), redundantText: redundantTextBlocks(messages) };
+	return {
+		messages,
+		calls,
+		failedOutputCalls: failedOutputCallIds(messages),
+		redundantText: redundantTextBlocks(messages),
+		hintReplies: hintReplyMessages(messages),
+	};
 }
 
 /** solvedWithHints → "Solved with hints" — the outcome enum reads as prose. */
@@ -223,7 +234,9 @@ export function messageMarkdown(
 		}
 	} else if (role === "assistant") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]), ctx?.redundantText)) {
-			parts.push(`### Teacher${anchor}\n\n${text.trim()}`);
+			// A block that was only a label strips to nothing: no empty section.
+			const body = stripInternalLabels(text, ctx?.hintReplies?.has(message) === true).trim();
+			if (body !== "") parts.push(`### Teacher${anchor}\n\n${body}`);
 		}
 	} else if (role === "toolResult") {
 		const result = message as ToolResultMessage;

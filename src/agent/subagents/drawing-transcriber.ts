@@ -1,7 +1,8 @@
 /**
  * The drawing transcriber (PR 2, Task 10): a vision-slot, single-call
  * sub-agent that turns a learner's drawing (PNG + its structured text) into
- * text for a model that cannot read images. Rules ported from the OCR
+ * text. It always runs (2026-10-28): a text-only tutor reads the transcript
+ * instead of the image, a vision tutor gets both. Rules ported from the OCR
  * sidecar's SCAN_PROMPT (services/ocr/app/pipeline.py): LaTeX for math,
  * Mermaid for diagrams, ~~struck~~ for crossed-out work.
  */
@@ -11,7 +12,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { PiEngine } from "../models.ts";
 import { runSubagent } from "./pi-run.ts";
 
-export const TRANSCRIBE_PROMPT = `You are transcribing a learner's hand-drawn canvas (an image) into text for a tutor who cannot see images.
+export const TRANSCRIBE_PROMPT = `You are transcribing a learner's hand-drawn canvas (an image) into text for a tutor (who may or may not also see the image).
 The image has a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text you are given. Freehand strokes appear there as [s4 blue stroke, vertical line @D1-D5] with a code-computed shape hint; trust the hint and the cell span over your reading of the picture.
 Transcribe EVERYTHING drawn, faithfully, in the drawing's own language:
 - Handwriting and text as plain text; math as LaTeX ($...$ inline, $$...$$ display); tables as markdown tables.
@@ -25,16 +26,28 @@ export interface DrawingTranscriberDeps {
 	engineFor(role: "transcriber"): PiEngine | undefined;
 }
 
+export interface TranscribeOptions {
+	/** The money channel, one call per model request, stamped with the
+	 *  reader's own provider-qualified model (priced at its rates). */
+	onUsage?: (usage: Usage, model: string) => void;
+	/** Cancels the request (the caller's time bound). */
+	signal?: AbortSignal;
+	/** Debug: LH_PROVIDER_EVENTS=1 records the raw provider events under
+	 *  this chat, context "job:transcriber". */
+	chatId?: string;
+}
+
 export interface DrawingTranscriber {
-	/** onUsage: the money channel, one call per model request. */
-	transcribe(png: Uint8Array, structured: string, onUsage?: (usage: Usage) => void): Promise<{ model: string; text: string }>;
+	transcribe(png: Uint8Array, structured: string, opts?: TranscribeOptions): Promise<{ model: string; text: string }>;
 }
 
 export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingTranscriber {
 	return {
-		async transcribe(png, structured, onUsage) {
+		async transcribe(png, structured, opts = {}) {
 			const engine = deps.engineFor("transcriber");
 			if (!engine) throw new Error("no transcriber model configured");
+			const model = `${engine.model.provider}:${engine.model.id}`;
+			const { onUsage } = opts;
 			const message: AgentMessage = {
 				role: "user",
 				content: [
@@ -49,11 +62,13 @@ export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingT
 				systemPrompt: TRANSCRIBE_PROMPT,
 				messages: [message],
 				maxTurns: 1,
-				onUsage,
+				...(onUsage ? { onUsage: (usage: Usage) => onUsage(usage, model) } : {}),
+				...(opts.signal ? { abortSignal: opts.signal } : {}),
+				...(opts.chatId ? { chatId: opts.chatId } : {}),
 			});
 			const out = text.trim();
 			if (!out) throw new Error("the transcriber returned nothing");
-			return { model: `${engine.model.provider}:${engine.model.id}`, text: out };
+			return { model, text: out };
 		},
 	};
 }
