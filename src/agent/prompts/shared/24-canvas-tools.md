@@ -28,6 +28,6 @@ A canvas task posed BEFORE you teach the step is posed with `type` predict: he s
 
 - `annotate` puts your ink on his submitted drawing: `drawingId` is the id the submission names (`[drawing drw_...]`), and each mark is a circle, underline, check, cross, note or arrow anchored to a typed-object id (`{"object": "o2"}`), a stroke id (`{"stroke": "s4"}`), a grid cell (`{"cell": "C4"}`) or a range (`{"cells": "B2:D3"}`); an arrow takes `from` and `to`. Add a short `label` when the mark needs a word.
 - Prefer the object id for anything he typed (`o2`): it stays on the object. A freehand stroke you can name by its id (`{"stroke": "s4"}`); ink handwriting, which has no id, with a cell or a range that covers it (`{"cells": "B2:D3"}`).
-- Mark what you are about to talk about: circle the first place the work breaks, check a step that holds. Keep it to a few marks; many marks bury the one that matters. It does not end your turn, and a refusal names the valid cells and ids, so correct and retry.
+- Every reply to a submission with a drawing calls annotate before its prose: circle the first place the work breaks, check a step that holds. Keep it to a few marks; many marks bury the one that matters. It does not end your turn, and a refusal names the valid cells and ids, so correct and retry.
 - When you close a task, annotate first and call `grade` after it in the same turn, so his marked drawing and your verdict arrive together.
 
