@@ -28,12 +28,14 @@ const RUNG_HEADER = new RegExp(
 );
 
 // (b) An inline label after whitespace: "(R1: …)" (the colon keeps a bare
-// "(R1)" such as a register name intact), or a named rung: "rung/Rang/Stufe"
-// + number + separator + name ("(Rang 1 — Muster benennen)"; "rung" alone
-// may skip the number: "(rung: name the pattern)"). "(Rang 2)" and
-// "(Stufe 2 der Chomsky-Hierarchie)" have no separator and stay.
+// "(R1)" such as a register name intact); the English "rung" with a number
+// or a separator ("(rung 0)", "(rung: name the pattern)"); or German
+// "Rang"/"Stufe" + number + separator + name ("(Rang 1 — Muster benennen)").
+// The German words are also course vocabulary (matrix rank, a hierarchy
+// level), so "(Rang 2)" and "(Stufe 2 der Chomsky-Hierarchie)" stay.
+const SEP = String.raw`\s*(?::|—|–|\s-\s)\s*`;
 const INLINE_LABEL = new RegExp(
-	String.raw`\s+\((?:R[0-5]:|(?:(?:[Rr]ung|[Rr]ang|[Ss]tufe)\s*\d+|[Rr]ung)\s*(?::|—|–|\s-\s)\s*[^\s()])${BODY}\)`,
+	String.raw`\s+\((?:R[0-5]:|[Rr]ung\s*\d|[Rr]ung${SEP}|(?:[Rr]ang|[Ss]tufe)\s*\d+${SEP}[^\s()])${BODY}\)`,
 	"g",
 );
 
