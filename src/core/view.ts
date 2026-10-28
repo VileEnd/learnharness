@@ -227,7 +227,10 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			for (const block of assistant.content) {
 				if (block.type === "text") {
 					if (redundant.has(block)) continue;
-					rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: stripInternalLabels(block.text), state: "done" });
+					const text = stripInternalLabels(block.text);
+					// A block that was only a label strips to nothing: no empty text part.
+					if (text.trim() === "" && block.text.trim() !== "") continue;
+					rest.push({ type: "text", id: `${m.id}-t${textN++}`, text, state: "done" });
 				} else if (block.type === "thinking") {
 					reasoning.push({ type: "reasoning", id: `${m.id}-r${reasoningN++}`, text: block.thinking, state: "done" });
 				} else if (block.type === "toolCall") {
@@ -241,9 +244,10 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 						if (part.state === "output-error") {
 							rest.push(part);
 						} else {
-							const text = sendToUserText(block);
-							if (text !== undefined) {
-								rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: stripInternalLabels(text), state: "done" });
+							const raw = sendToUserText(block);
+							const text = raw === undefined ? undefined : stripInternalLabels(raw);
+							if (text !== undefined && !(text.trim() === "" && raw!.trim() !== "")) {
+								rest.push({ type: "text", id: `${m.id}-t${textN++}`, text, state: "done" });
 							}
 						}
 						// No live tool card or acknowledgement: this channel is
