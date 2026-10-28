@@ -29,6 +29,8 @@ import {
 
 export const SILENT_TURN_STEER =
 	"The learner saw only your marks/grade - tell him in plain text what you saw and what to do next.";
+export const markSteer = (drawingId: string) =>
+	`You have not marked his drawing yet. Call annotate on drawing ${drawingId}: a mark on the first place the work breaks, or a check on what holds. Then tell him in plain text what you saw and what to do next.`;
 export const PLAN_INIT_STEER = "Call plan_init with that plan.";
 
 export function newTurnNudge(text: string): LhMarkerMessage {
@@ -73,6 +75,19 @@ export function silentAfterSubmission(messages: readonly LhMessage[]): boolean {
 	return true;
 }
 
+/** A drawn submission (canvas task or practice thinking) whose turn has no
+ *  successful annotate yet: returns the drawing id to mark. A refused annotate
+ *  does not count. Hint requests and drawing-less submissions are exempt. */
+export function unmarkedSubmission(messages: readonly LhMessage[]): string | undefined {
+	const { boundary, since } = sinceInput(messages);
+	if (boundary?.role !== "custom") return undefined;
+	if (boundary.customType !== "work-submission" && boundary.customType !== "practice-thinking") return undefined;
+	const drawingId = (boundary.details as { drawingId?: unknown } | null | undefined)?.drawingId;
+	if (typeof drawingId !== "string") return undefined;
+	for (const m of since) if (m.role === "toolResult" && m.toolName === "annotate" && !m.isError) return undefined;
+	return drawingId;
+}
+
 const PLAN_DIAGRAM = /```\s*mermaid|^\s*(?:graph|flowchart)\s+(?:TD|TB|LR|RL|BT)\b/im;
 
 /** RC10(a): the probe-handoff (planning) turn wrote a plan-looking diagram
@@ -97,11 +112,17 @@ export function planWrittenAsProse(messages: readonly LhMessage[]): boolean {
  *  caller's per-turn flag holder. */
 export function nextNudge(messages: readonly LhMessage[], done: { used: boolean }): string | undefined {
 	if (done.used) return undefined;
-	const text = silentAfterSubmission(messages)
-		? SILENT_TURN_STEER
-		: planWrittenAsProse(messages)
-			? PLAN_INIT_STEER
-			: undefined;
+	// The mark steer also asks for the plain-text reply, so it covers the
+	// silent-turn case for a drawn submission.
+	const unmarked = unmarkedSubmission(messages);
+	const text =
+		unmarked !== undefined
+			? markSteer(unmarked)
+			: silentAfterSubmission(messages)
+				? SILENT_TURN_STEER
+				: planWrittenAsProse(messages)
+					? PLAN_INIT_STEER
+					: undefined;
 	if (text !== undefined) done.used = true;
 	return text;
 }
