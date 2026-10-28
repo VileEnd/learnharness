@@ -12,7 +12,7 @@ import type { DrawingStore } from "../src/core/ports.ts";
 import { drawingIdOf, type DrawingScene } from "../src/core/canvas-core.ts";
 import { ESTIMATED_IMAGE_CHARS, estimateMessageTokens } from "../src/core/compaction.ts";
 import { newThinkingMessage, newWorkSubmission, toLlmMessages, type DrawingContext, type LhMessage } from "../src/core/native-messages.ts";
-import { createDrawingTranscriber } from "../src/agent/subagents/drawing-transcriber.ts";
+import { createDrawingTranscriber, TRANSCRIBE_PROMPT } from "../src/agent/subagents/drawing-transcriber.ts";
 import { prepareDrawingContext } from "../src/server/drawing-context.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import { call, chat, result } from "./learner-helpers.ts";
@@ -162,6 +162,9 @@ describe("drawings in the model context", () => {
 		assert.match(textOf(toLlmMessages(messages as never, { drawing: ctx })), /transcription unavailable/);
 	});
 
+	it("the reader's prompt does not assume a blind tutor", () => {
+		assert.ok(TRANSCRIBE_PROMPT.includes("for a tutor (who may or may not also see the image)"));
+	});
 	it("without a drawing context the marker renders as before", () => {
 		const out = toLlmMessages([...pose(), sub(0)] as never);
 		assert.equal(images(out).length, 0);
