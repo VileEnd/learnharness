@@ -33,6 +33,7 @@ import {
 	type LhMarkerMessage,
 } from "./native-messages.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { stripInternalLabels } from "./internal-labels.ts";
 import { annotationMarkPlace, parseAnnotateInput } from "./canvas-core.ts";
 import type { QuestionAnswerData } from "./question-core.ts";
 
@@ -223,7 +224,7 @@ export function messageMarkdown(
 		}
 	} else if (role === "assistant") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]), ctx?.redundantText)) {
-			parts.push(`### Teacher${anchor}\n\n${text.trim()}`);
+			parts.push(`### Teacher${anchor}\n\n${stripInternalLabels(text).trim()}`);
 		}
 	} else if (role === "toolResult") {
 		const result = message as ToolResultMessage;

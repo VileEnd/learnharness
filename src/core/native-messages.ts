@@ -644,7 +644,7 @@ export function hintsFor(messages: readonly unknown[], callId: string): { reques
 		for (let j = i + 1; j < all.length; j++) {
 			const n = all[j]!;
 			if (isInputBoundary(n)) break;
-			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant));
+			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant).map(stripInternalLabels).filter((t) => t.trim() !== ""));
 		}
 		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
 	}
@@ -1055,10 +1055,13 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 		// copied forward by example. Tool calls and other roles pass as-is.
 		if (role === "assistant") {
 			const a = native as AssistantMessage;
-			out.push({
-				...a,
-				content: a.content.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text) } : b)),
-			});
+			// A block that was only a label strips to nothing and is dropped
+			// (providers reject empty text blocks); if that would empty the
+			// whole message, the original blocks ride unchanged.
+			const content = a.content
+				.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text) } : b))
+				.filter((b) => b.type !== "text" || b.text.trim() !== "");
+			out.push(content.length > 0 ? { ...a, content } : a);
 		} else out.push(native as Message);
 		// Dangling-call synthesis: an assistant message whose toolCalls have
 		// no results in the remaining tail (abort mid-question) — the
