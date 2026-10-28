@@ -39,7 +39,6 @@ import {
 	extractionEnabled,
 	documentToolsEnabled,
 	enabledFormats,
-	resolveCanvasModel,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -59,7 +58,6 @@ import { asAgentMessages } from "../core/native-messages.ts";
 import {
 	ChatInputError,
 	inputAppends,
-	isCanvasInput,
 	parseChatInput,
 	type TurnInput,
 } from "../core/input-events.ts";
@@ -395,23 +393,11 @@ export async function handleChatInput(
 	// turn gate above (chat.model override → strong slot → refused) — the
 	// engine build is pure from here; thinking levels clamp natively.
 	// (Built once above the compaction gate; reused verbatim.)
-	// THE CANVAS MODEL (owner, 2026-10-27): a turn whose triggering input is
-	// canvas input (a work submission, a hint on a canvas task, drawn practice
-	// thinking) runs on the canvas slot's model; posing a task and every other
-	// turn stay with the tutor. The send_to_user gate, the usage stamp, the
-	// spend-cap price and the drawing context all read this per-turn engine.
-	// A canvas model whose engine cannot be built counts as no vetted model:
-	// canvas tools stay off rather than run on the unvetted tutor.
-	let canvasModel = resolveCanvasModel(effective.models, providerKeyPresent);
-	let canvasEngine: ReturnType<typeof piEngineForSpec> | null = null;
-	if (canvasModel) {
-		try { canvasEngine = piEngineForSpec(canvasModel); }
-		catch (err) {
-			console.error(`[chat ${chatId}] canvas model unavailable, canvas off this turn:`, err);
-			canvasModel = null;
-		}
-	}
-	const engine = canvasEngine && isCanvasInput(record.messages, input) ? canvasEngine : conversationEngine;
+	// CANVAS TURNS RUN ON THE SESSION MODEL (owner, 2026-10-28): there is no
+	// canvas model slot; the conversation engine (chat model, else the strong
+	// slot) runs every turn. The send_to_user gate, the usage stamp, the
+	// spend-cap price and the drawing context all read it.
+	const engine = conversationEngine;
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;
@@ -468,8 +454,7 @@ export async function handleChatInput(
 	// request came from a canvas-capable device (a phone turn and every
 	// server-initiated turn run without them; `grade` stays armed whenever a
 	// task is open - tools.ts gradeFor).
-	// ... AND a vetted canvas model resolves (CANVAS_VETTED_MODELS).
-	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true && canvasModel !== null;
+	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true;
 	const constructed: TeachingAgent = buildAgent
 		? buildAgent({ ...agentOpts, teaching, canvas })
 		: record.kind === "practice"
@@ -496,8 +481,7 @@ export async function handleChatInput(
 						libraryBeforeAccess: () => library.ensureFresh(),
 						formats: enabledFormats(effective),
 						canvas,
-						// annotate (armed by the drawing store) needs a vetted canvas model too.
-						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
+						drawingStore: stores.drawingStore,
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
@@ -519,8 +503,7 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
-						// annotate (armed by the drawing store) needs a vetted canvas model too.
-						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
+						drawingStore: stores.drawingStore,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -542,8 +525,7 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
-						// annotate (armed by the drawing store) needs a vetted canvas model too.
-						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
+						drawingStore: stores.drawingStore,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,

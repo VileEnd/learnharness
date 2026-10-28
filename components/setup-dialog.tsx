@@ -54,8 +54,6 @@ const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 	strong: { label: "Strong", roster: "Prober, teacher" },
 	cheap: { label: "Cheap", roster: "Researcher, demo builder, extractor, auditor, describer" },
 	vision: { label: "Vision", roster: "Visual maker, drawing transcriber" },
-	// Not part of first-run setup (SLOT_ORDER): the canvas model has a default.
-	canvas: { label: "Canvas", roster: "Canvas turns" },
 };
 const SLOT_ORDER: readonly ModelSlotName[] = ["strong", "cheap", "vision"];
 

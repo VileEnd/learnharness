@@ -375,30 +375,6 @@ export function inputAppends(
 	}
 }
 
-/** Does this input make the next turn a CANVAS turn (owner, 2026-10-27)? Canvas
- *  turns run on the canvas model; posing a task stays with the tutor. Canvas
- *  input is: a work submission; a practice thinking submission carrying a
- *  drawing; a hint on an open canvas task or on a practice problem posed with
- *  `canvas: true`. Judged against the record BEFORE the input's appends. */
-export function isCanvasInput(messages: readonly LhMessage[], input: TurnInput): boolean {
-	switch (input.type) {
-		case "work-submit":
-			return true;
-		case "thinking":
-			return input.drawingId !== undefined;
-		case "hint": {
-			if (activeWorkOf(messages)?.toolCallId === input.callId) return true;
-			const problem = activeProblemOf(messages);
-			return (
-				problem?.toolCallId === input.callId &&
-				(problem.input as { canvas?: unknown } | null | undefined)?.canvas === true
-			);
-		}
-		default:
-			return false;
-	}
-}
-
 /** The deferred conclude synthesis (owner ruling, 2026-10-04): a
  *  problem-dismissal marker waits for the user's next input — the pair
  *  (synthetic conclude call + ack) rides ahead of it, so the agent reads
