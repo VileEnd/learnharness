@@ -189,6 +189,7 @@ export const quizInputBase = Type.Object({
 			"REQUIRED. The answer options (2 or more) as a JSON ARRAY of option objects — never a " +
 			"JSON-encoded string. Options only — there is no free-text mode. " +
 			"Give each option a stable `value`; you reference the correct one by that value in correctAnswer. " +
+			"The learner sees the options shuffled: never name one by letter, number or position in the question, explanation or feedback - name it by its content. " +
 			"Never add your own 'I don't know' option — that choice is added for you.",
 	}),
 	multiSelect: Type.Optional(
