@@ -18,6 +18,7 @@ const inlineCases: Array<[string, string]> = [
 	["welche Regel liegt zugrunde? (R1: Das ist eine Bausteinkonstruktion, kein freies Aufzählen.)", "welche Regel liegt zugrunde?"],
 	["Schau hin (Rang 1 — Muster benennen) und dann weiter.", "Schau hin und dann weiter."],
 	["look (rung: name the pattern) first", "look first"],
+	["**Hint (rung 0):** look at the axes", "**Hint:** look at the axes"],
 	["look (R1: f(x) = 2) here", "look here"],
 ];
 // Real course content: survives in every scope.
