@@ -489,6 +489,11 @@ describe("tool descriptions carry mechanics only, no question-craft", () => {
 		assert.ok(cited.length >= 3, "the fragment cites names");
 		for (const name of cited) assert.ok(known.has(name) || name in workInputObject.properties, `\`${name}\` is not a real name`);
 	});
+	it("24-canvas-tools.md bans give-away hints in every language and ranks a transcription below the image", async () => {
+		const frag = await fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared/24-canvas-tools.md"), "utf-8");
+		assert.ok(frag.includes("A hint names the idea, never the equation to solve or the step to compute, and these bans hold in every language the session uses."));
+		assert.ok(frag.includes("A transcription, when present, is another model's reading of the drawing: the image and the structured text win over it."));
+	});
 	it("22-exercise-tools.md cites only schema field names", async () => {
 		const frag = await fs.promises.readFile(
 			path.join(PATHS.root, "src/agent/prompts/shared/22-exercise-tools.md"),
