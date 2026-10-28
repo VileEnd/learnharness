@@ -35,6 +35,10 @@ describe("unmarkedSubmission", () => {
 	it("a practice drawn thinking submission is unmarked too", () => {
 		assert.equal(unmarkedSubmission([newThinkingMessage("p1", "x", { drawingId: "drw_2" })]), "drw_2");
 	});
+	it("an annotate on another drawing does not mark this one", () => {
+		const other = [sub, call("a1", "annotate", { drawingId: "drw_9", marks: [] }), result("a1", "annotate", null)];
+		assert.equal(unmarkedSubmission(other), "drw_1");
+	});
 	it("a submission without a drawing and a hint request are exempt", () => {
 		assert.equal(unmarkedSubmission([newWorkSubmission("w1", "x")]), undefined);
 		assert.equal(unmarkedSubmission([newHintRequest("w1", 1)]), undefined);
@@ -43,11 +47,18 @@ describe("unmarkedSubmission", () => {
 
 describe("nextNudge", () => {
 	it("steers once with the drawing id, then never again this turn", () => {
-		const unmarked = [sub, assistantText("Look again.")];
+		const unmarked = [sub, call("g1", "grade", { question: "w1" }), result("g1", "grade", "ok")];
 		const done = { used: false };
 		const first = nextNudge(unmarked, done);
 		assert.match(first!, /annotate/);
 		assert.equal(first, markSteer("drw_1"));
+		assert.match(first!, /tell him in plain text/);
 		assert.equal(nextNudge(unmarked, done), undefined);
+	});
+	it("after visible prose, asks only for the marks", () => {
+		const first = nextNudge([sub, assistantText("Look again.")], { used: false });
+		assert.equal(first, markSteer("drw_1", true));
+		assert.match(first!, /mark the drawing; you need not repeat what you said\./);
+		assert.doesNotMatch(first!, /tell him in plain text/);
 	});
 });
