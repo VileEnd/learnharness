@@ -331,6 +331,21 @@ describe("teacher ink", () => {
 		assert.ok(Math.abs(fs - Math.min(vbH * 0.07, 100 / (24 * 0.6))) < 0.01, `${fs} vs ${vbH}`);
 	});
 
+	it("a note on a small drawing is at least 14px on the workspace (world space, zoom 1)", () => {
+		const html = ink([{ kind: "note", target: { object: "o2" }, label: "sign slip" }], "world");
+		assert.ok(Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]) >= 14);
+	});
+
+	it("an arrow's label sits clear of its shaft's midpoint", () => {
+		// o1 -> o2 is a vertical arrow from (200, 130) to (200, 330); the world unit u is 3 on this drawing.
+		const html = ink([{ kind: "arrow", from: { object: "o1" }, to: { object: "o2" }, label: "moves down" }], "world");
+		const fs = Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
+		const [, x, y] = html.match(/<tspan x="([\d.]+)" y="([\d.]+)"/)!.map(Number);
+		const top = y! - fs * 0.9; // the first tspan's baseline is 0.9em below the label's top
+		assert.ok(Math.abs(top - 230) >= 3, `label top ${top}`);
+		assert.ok(x! >= 200 + 3, `label x ${x}`);
+	});
+
 	it("the wobble is seeded by the mark: re-rendering gives identical markup", () => {
 		assert.equal(light(allKinds), light(allKinds));
 		assert.equal(wobblePath([[0, 0], [10, 0], [20, 5]], 7, 1), wobblePath([[0, 0], [10, 0], [20, 5]], 7, 1));
