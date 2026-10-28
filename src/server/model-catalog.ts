@@ -32,7 +32,7 @@ import type {
 	RolePins,
 	SlotPins,
 } from "../core/contracts/models.ts";
-import { resolveCanvasModel, type EffectiveModelSpec, type EffectiveSlot } from "../core/settings-resolution.ts";
+import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolution.ts";
 import { AUTH_PROVIDER_KEYS } from "../core/auth-keys.ts";
 import { BACKGROUND_MODEL_ROLES, MODEL_SLOTS, type BackgroundModelRole, type ModelSlotName, type ModelsSettings } from "../core/settings.ts";
 
@@ -192,21 +192,7 @@ export function modelCatalog(): ModelCatalogResponse {
 		rolePins: catalogRolePins(),
 		slots: catalogSlots(),
 		providers: catalogProviders(),
-		canvas: catalogCanvas(),
 	};
-}
-
-/** The canvas model in force (resolveCanvasModel over the live keys): the
- *  one answer the pill and the Canvas settings row read, so they cannot
- *  drift from the chat handler. */
-export function catalogCanvas(): ModelCatalogResponse["canvas"] {
-	const spec = resolveCanvasModel(effectiveSettings().models, providerKeyPresent);
-	return spec
-		? {
-				model: { provider: spec.provider, id: spec.id },
-				...(spec.thinkingLevel !== undefined ? { thinkingLevel: spec.thinkingLevel } : {}),
-			}
-		: null;
 }
 
 /** One validated outcome for a settings write. */

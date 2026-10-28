@@ -275,24 +275,13 @@ describe("parseModelsSettingsBody (model slots wave, 2026-09-20)", () => {
 	it("unknown slots are 400s with the supported list", () => {
 		const bad = parseModelsSettingsBody({ mega: { thinkingLevel: "high" } });
 		assert.equal(bad.ok, false);
-		if (!bad.ok) assert.match(bad.error, /unknown slot "mega" \(supported: strong, cheap, vision, canvas\)/);
+		if (!bad.ok) assert.match(bad.error, /unknown slot "mega" \(supported: strong, cheap, vision\)/);
 	});
 
-	it("the canvas slot takes only allowlisted models", () => {
-		const ok = parseModelsSettingsBody({ canvas: { model: { provider: "openrouter", id: "qwen/qwen3.8-flash" }, thinkingLevel: "low" } });
-		assert.ok(ok.ok);
-		assert.deepEqual(ok.settings.canvas, { model: { provider: "openrouter", id: "qwen/qwen3.8-flash" }, thinkingLevel: "low" });
-		for (const model of [
-			{ provider: "anthropic", id: "claude-haiku-5-5" },
-			{ provider: "openrouter", id: "moonshotai/kimi-k3" },
-			{ provider: "openai", id: "gpt-4" },
-		]) {
-			const bad = parseModelsSettingsBody({ canvas: { model } });
-			assert.equal(bad.ok, false, model.id);
-			if (!bad.ok) assert.match(bad.error, /slot "canvas" takes only tested models/);
-		}
-		// the other slots stay unrestricted
-		assert.ok(parseModelsSettingsBody({ strong: { model: { provider: "openai", id: "gpt-4" } } }).ok);
+	it("a legacy canvas slot is dropped, not rejected", () => {
+		const r = parseModelsSettingsBody({ strong: { model: { provider: "openrouter", id: "qwen/qwen3.8-flash" } }, canvas: { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } } });
+		assert.equal(r.ok, true);
+		assert.deepEqual(Object.keys(r.ok ? r.settings : {}), ["strong"]);
 	});
 
 	it("a present-but-empty slot object is rejected (absent slot = unset)", () => {

@@ -1,6 +1,7 @@
 /**
  * DRAWINGS IN THE MODEL CONTEXT (PR 2, Task 10): the newest active drawing
- * is an image (or a cached vision transcript for a text-only model); earlier
+ * is an image plus the reader's cached vision transcript (a text-only model
+ * gets the transcript alone); earlier
  * and closed ones collapse to text stubs; a failed transcription never fails
  * the turn.
  */
@@ -11,10 +12,14 @@ import type { DrawingStore } from "../src/core/ports.ts";
 import { drawingIdOf, type DrawingScene } from "../src/core/canvas-core.ts";
 import { ESTIMATED_IMAGE_CHARS, estimateMessageTokens } from "../src/core/compaction.ts";
 import { newThinkingMessage, newWorkSubmission, toLlmMessages, type DrawingContext, type LhMessage } from "../src/core/native-messages.ts";
-import { createDrawingTranscriber } from "../src/agent/subagents/drawing-transcriber.ts";
+import { createDrawingTranscriber, TRANSCRIBE_PROMPT } from "../src/agent/subagents/drawing-transcriber.ts";
 import { prepareDrawingContext } from "../src/server/drawing-context.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import { call, chat, result } from "./learner-helpers.ts";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { providerEventsDir } from "../src/agent/provider-events.ts";
 
 const WORK_ARGS = { type: "check", nodeId: "n", question: "Sketch y = x^2", correctAnswer: "A parabola." };
 const sceneOf = (n: number): DrawingScene =>
@@ -49,15 +54,32 @@ const textOf = (out: ReturnType<typeof toLlmMessages>) => userBlocks(out).filter
 const images = (out: ReturnType<typeof toLlmMessages>) => userBlocks(out).filter((b) => b.type === "image");
 
 describe("drawings in the model context", () => {
-	it("active drawing sent as image to multimodal model", async () => {
+	it("multimodal model gets the image AND the reader's transcript", async () => {
 		const messages = [...pose(), sub(0)];
-		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s });
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("<fake transcript>")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber });
+		const resolved = ctx.resolve(IDS[0]!);
+		assert.ok(resolved?.png);
+		assert.equal(resolved.transcript, "<fake transcript>");
 		const out = toLlmMessages(messages as never, { drawing: ctx });
-		const last = out[out.length - 1]!;
-		assert.equal(last.role, "user");
-		assert.ok((last.content as Array<{ type: string }>).some((b) => b.type === "image"));
+		assert.equal(images(out).length, 1);
 		assert.match(textOf(out), /columns A-H/);
+		assert.match(textOf(out), /Transcription:\n<fake transcript>/);
 		assert.match(textOf(out), /note 1/);
+	});
+
+	it("transcriber failure keeps the image", async () => {
+		const messages = [...pose(), sub(0)];
+		const f = createFauxCore({});
+		f.setResponses([() => { throw new Error("boom"); }]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber });
+		const resolved = ctx.resolve(IDS[0]!);
+		assert.ok(resolved?.png);
+		assert.equal(resolved.transcript, undefined);
+		assert.equal(images(toLlmMessages(messages as never, { drawing: ctx })).length, 1);
 	});
 
 	it("closed task collapses to stub", async () => {
@@ -111,6 +133,19 @@ describe("drawings in the model context", () => {
 		assert.equal(usages, 1);
 	});
 
+	it("transcription usage is reported once for a vision engine too", async () => {
+		const messages = [...pose(), sub(0)];
+		const { s } = store();
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("[C4] y")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		let usages = 0;
+		const onUsage = () => { usages++; };
+		await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: s, transcriber, onUsage });
+		await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: s, transcriber, onUsage });
+		assert.equal(usages, 1);
+	});
+
 	it("text-only without transcriber falls back to stub", async () => {
 		const messages = [...pose(), sub(0)];
 		const transcriber = createDrawingTranscriber({ engineFor: () => undefined });
@@ -131,6 +166,68 @@ describe("drawings in the model context", () => {
 		assert.match(textOf(toLlmMessages(messages as never, { drawing: ctx })), /transcription unavailable/);
 	});
 
+	it("a reader that never answers is cut off: the turn proceeds without a transcript", async () => {
+		const messages = [...pose(), sub(0)];
+		let signal: AbortSignal | undefined;
+		const transcriber = {
+			transcribe: (_png: Uint8Array, _s: string, opts?: { signal?: AbortSignal }) => {
+				signal = opts?.signal;
+				return new Promise<never>(() => {});
+			},
+		};
+		const { s, transcripts } = store();
+		const vision = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: s, transcriber, readerTimeoutMs: 20 });
+		assert.ok(vision.resolve(IDS[0]!)?.png);
+		assert.equal(vision.resolve(IDS[0]!)?.transcript, undefined);
+		assert.equal(signal?.aborted, true, "the reader's request is aborted");
+		const blind = await prepareDrawingContext(chat("c", messages), textOnly, { drawingStore: s, transcriber, readerTimeoutMs: 20 });
+		assert.match(textOf(toLlmMessages(messages as never, { drawing: blind })), /transcription unavailable/);
+		assert.equal(transcripts.size, 0, "nothing cached");
+	});
+
+	it("the reader's usage arrives stamped with the reader's model", async () => {
+		const messages = [...pose(), sub(0)];
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("[C4] y")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const models: string[] = [];
+		await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber, onUsage: (_u, model) => void models.push(model) });
+		assert.deepEqual(models, [`${f.getModel().provider}:${f.getModel().id}`]);
+	});
+
+	it("the reader's raw provider events are recorded under its own context", async () => {
+		const dir = mkdtempSync(path.join(tmpdir(), "lh-reader-events-"));
+		const previous = { dir: providerEventsDir.current, env: process.env.LH_PROVIDER_EVENTS };
+		providerEventsDir.current = dir;
+		process.env.LH_PROVIDER_EVENTS = "1";
+		try {
+			const f = createFauxCore({});
+			f.setResponses([fauxAssistantMessage("[C4] y")]);
+			let observer: ((data: unknown, model: unknown) => void) | undefined;
+			const transcriber = createDrawingTranscriber({
+				engineFor: () => ({
+					model: f.getModel(),
+					streamFn: (model, context, options) => {
+						observer = (options as { onProviderStreamEvent?: typeof observer }).onProviderStreamEvent;
+						return f.streamSimple(model, context, options);
+					},
+				}),
+			});
+			await transcriber.transcribe(new Uint8Array([1]), "", { chatId: "chat_r" });
+			assert.equal(typeof observer, "function");
+			observer!({ type: "x" }, { provider: "p", id: "m" });
+			assert.match(readFileSync(path.join(dir, "chat_r.jsonl"), "utf-8"), /"ctx":"job:transcriber"/);
+		} finally {
+			providerEventsDir.current = previous.dir;
+			if (previous.env === undefined) delete process.env.LH_PROVIDER_EVENTS;
+			else process.env.LH_PROVIDER_EVENTS = previous.env;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("the reader's prompt does not assume a blind tutor", () => {
+		assert.ok(TRANSCRIBE_PROMPT.includes("for a tutor (who may or may not also see the image)"));
+	});
 	it("without a drawing context the marker renders as before", () => {
 		const out = toLlmMessages([...pose(), sub(0)] as never);
 		assert.equal(images(out).length, 0);

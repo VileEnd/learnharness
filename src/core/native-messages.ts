@@ -45,6 +45,7 @@ import {
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
 import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
+import { isHintScopedInput, stripInternalLabels } from "./internal-labels.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -245,6 +246,20 @@ export function isInputBoundary(message: unknown): boolean {
 	if (m.role === "user") return true;
 	if (m.role === "custom") return m.customType !== "plan-block";
 	return m.role === "toolResult" && m.isError !== true && (QUESTION_TOOLS as readonly unknown[]).includes(m.toolName);
+}
+
+/** The assistant messages that answer a hint request or a submission: the
+ *  last input boundary before them is hint-scoped (isHintScopedInput). The
+ *  read seams strip mid-text rung labels from these replies only. Derived at
+ *  read time from record order; the set holds the given message objects. */
+export function hintReplyMessages(messages: readonly unknown[]): ReadonlySet<unknown> {
+	const out = new Set<unknown>();
+	let scoped = false;
+	for (const m of messages) {
+		if (isInputBoundary(m)) scoped = isHintScopedInput(m);
+		else if (scoped && (m as { role?: unknown } | null)?.role === "assistant") out.add(m);
+	}
+	return out;
 }
 
 /** Non-whitespace characters of ordinary prose that count as teaching. */
@@ -597,7 +612,7 @@ export const HINT_REQUEST_TEXT = "Hint, please — give the next rung only.";
 
 /** The model-facing text of hint request `n` for one task: the number is the rung (never skip rungs). */
 export function hintRequestText(n: number): string {
-	return `Hint request ${n} for this task — give the next rung only.`;
+	return `Hint request ${n} for this task — give the next, smallest hint only.`;
 }
 
 /** The number the next hint request for `callId` takes: earlier hint-requests for it, plus one. Derived from
@@ -643,7 +658,7 @@ export function hintsFor(messages: readonly unknown[], callId: string): { reques
 		for (let j = i + 1; j < all.length; j++) {
 			const n = all[j]!;
 			if (isInputBoundary(n)) break;
-			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant));
+			if (n.role === "assistant") parts.push(...userFacingTextOf(n.content, failed, redundant).map((t) => stripInternalLabels(t, true)).filter((t) => t.trim() !== ""));
 		}
 		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
 	}
@@ -937,7 +952,7 @@ function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPla
 	if (!resolved) return text(`${marker.content}\n[Drawing ${d.drawingId}: unavailable]`);
 	if (resolved.png) {
 		return user([
-			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${structured}` },
+			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${resolved.transcript ? `\nTranscription:\n${resolved.transcript}` : ""}${structured}` },
 			{ type: "image", data: resolved.png.data, mimeType: resolved.png.mimeType },
 		]);
 	}
@@ -948,7 +963,8 @@ function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPla
 /** What the model sees of a drawing. Supplied by the server per turn
  *  (server/drawing-context.ts); core stays free of stores. */
 export interface DrawingContext {
-	/** Called for the drawings of the ACTIVE task (image / transcript) and,
+	/** Called for the drawings of the ACTIVE task (image and/or the reader's
+	 *  transcript: the reader always runs, so a vision tutor gets both) and,
 	 *  for closed tasks, to re-resolve the structured text only. */
 	resolve(drawingId: string): {
 		png?: { data: string; mimeType: "image/png" };
@@ -1021,6 +1037,8 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 	// DRAWINGS: only the newest submission of the ACTIVE task rides as an
 	// image; earlier ones are superseded stubs, a closed task's collapse.
 	const drawingPlan = opts.drawing ? planDrawings(lhMessages, start) : null;
+	// Scoped over the WHOLE record, so a reply whose hint request sits before the cut still counts.
+	const hintReplies = hintReplyMessages(messages);
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
@@ -1048,7 +1066,21 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 		}
 		// Strip the record id: the wire carries the native shape only.
 		const { id: _id, ...native } = m as LhMessage;
-		out.push(native as Message);
+		// Assistant prose is stripped of internal rung labels on the way back
+		// to the model (the record keeps them raw), so a leaked label is not
+		// copied forward by example; the mid-text rule only in a hint or
+		// submission reply. Tool calls and other roles pass as-is.
+		if (role === "assistant") {
+			const a = native as AssistantMessage;
+			const hintReply = hintReplies.has(m);
+			// A block that was only a label strips to nothing and is dropped
+			// (providers reject empty text blocks); if that would empty the
+			// whole message, the original blocks ride unchanged.
+			const content = a.content
+				.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text, hintReply) } : b))
+				.filter((b) => b.type !== "text" || b.text.trim() !== "");
+			out.push(content.length > 0 ? { ...a, content } : a);
+		} else out.push(native as Message);
 		// Dangling-call synthesis: an assistant message whose toolCalls have
 		// no results in the remaining tail (abort mid-question) — the
 		// provider rejects unanswered calls outright.

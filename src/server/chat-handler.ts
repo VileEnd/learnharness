@@ -39,7 +39,6 @@ import {
 	extractionEnabled,
 	documentToolsEnabled,
 	enabledFormats,
-	resolveCanvasModel,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -59,7 +58,6 @@ import { asAgentMessages } from "../core/native-messages.ts";
 import {
 	ChatInputError,
 	inputAppends,
-	isCanvasInput,
 	parseChatInput,
 	type TurnInput,
 } from "../core/input-events.ts";
@@ -383,6 +381,10 @@ export async function handleChatInput(
 	const collectUsage = (usage: Usage) => {
 		steps.push(callUsageOf(usage));
 	};
+	// The drawing reader runs on the vision slot, not the session model: its
+	// calls go into their OWN entry stamped with the reader's model, so they
+	// are priced at its rates (the compaction precedent: one entry per model).
+	const reader: { id: string; model?: string; steps: CallUsage[] } = { id: crypto.randomUUID(), steps: [] };
 
 	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
 	// is the seam — a probe_done call in the record means the probe is
@@ -395,23 +397,11 @@ export async function handleChatInput(
 	// turn gate above (chat.model override → strong slot → refused) — the
 	// engine build is pure from here; thinking levels clamp natively.
 	// (Built once above the compaction gate; reused verbatim.)
-	// THE CANVAS MODEL (owner, 2026-10-27): a turn whose triggering input is
-	// canvas input (a work submission, a hint on a canvas task, drawn practice
-	// thinking) runs on the canvas slot's model; posing a task and every other
-	// turn stay with the tutor. The send_to_user gate, the usage stamp, the
-	// spend-cap price and the drawing context all read this per-turn engine.
-	// A canvas model whose engine cannot be built counts as no vetted model:
-	// canvas tools stay off rather than run on the unvetted tutor.
-	let canvasModel = resolveCanvasModel(effective.models, providerKeyPresent);
-	let canvasEngine: ReturnType<typeof piEngineForSpec> | null = null;
-	if (canvasModel) {
-		try { canvasEngine = piEngineForSpec(canvasModel); }
-		catch (err) {
-			console.error(`[chat ${chatId}] canvas model unavailable, canvas off this turn:`, err);
-			canvasModel = null;
-		}
-	}
-	const engine = canvasEngine && isCanvasInput(record.messages, input) ? canvasEngine : conversationEngine;
+	// CANVAS TURNS RUN ON THE SESSION MODEL (owner, 2026-10-28): there is no
+	// canvas model slot; the conversation engine (chat model, else the strong
+	// slot) runs every turn. The send_to_user gate, the usage stamp, the
+	// spend-cap price and the drawing context all read it.
+	const engine = conversationEngine;
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;
@@ -425,7 +415,8 @@ export async function handleChatInput(
 	// sub-agent JOB tools (research/demo/visual; adjudicated with the
 	// user: quiz/ask/fs/plan/probe_done are always-on).
 	// DRAWINGS (PR 2, Task 10): the active task's drawing as the model reads
-	// it (image, or a cached vision-slot transcript). Never fails the turn.
+	// it (the image for a vision model, plus the vision-slot reader's
+	// transcript, cached per drawing). Time-bounded; never fails the turn.
 	let drawing: Awaited<ReturnType<typeof prepareDrawingContext>> | undefined;
 	try {
 		drawing = await prepareDrawingContext(
@@ -434,7 +425,10 @@ export async function handleChatInput(
 			{
 				drawingStore: stores.drawingStore,
 				transcriber: createDrawingTranscriber({ engineFor: (role) => resolveEngine(role) }),
-				onUsage: collectUsage,
+				onUsage: (usage, model) => {
+					reader.model = model;
+					reader.steps.push(callUsageOf(usage));
+				},
 			},
 		);
 	} catch (err) {
@@ -468,8 +462,7 @@ export async function handleChatInput(
 	// request came from a canvas-capable device (a phone turn and every
 	// server-initiated turn run without them; `grade` stays armed whenever a
 	// task is open - tools.ts gradeFor).
-	// ... AND a vetted canvas model resolves (CANVAS_VETTED_MODELS).
-	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true && canvasModel !== null;
+	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true;
 	const constructed: TeachingAgent = buildAgent
 		? buildAgent({ ...agentOpts, teaching, canvas })
 		: record.kind === "practice"
@@ -496,8 +489,7 @@ export async function handleChatInput(
 						libraryBeforeAccess: () => library.ensureFresh(),
 						formats: enabledFormats(effective),
 						canvas,
-						// annotate (armed by the drawing store) needs a vetted canvas model too.
-						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
+						drawingStore: stores.drawingStore,
 						// The learner's document library (PR I), behind agent.documentTools.
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
@@ -519,8 +511,7 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
-						// annotate (armed by the drawing store) needs a vetted canvas model too.
-						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
+						drawingStore: stores.drawingStore,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -542,8 +533,7 @@ export async function handleChatInput(
 						graphNodes: () => stores.graphStore.readNodes(),
 						formats: enabledFormats(effective),
 						canvas,
-						// annotate (armed by the drawing store) needs a vetted canvas model too.
-						...(canvasModel ? { drawingStore: stores.drawingStore } : {}),
+						drawingStore: stores.drawingStore,
 						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 					},
 					agentOpts,
@@ -616,6 +606,16 @@ export async function handleChatInput(
 				// refolds this on the client after the turn settles. The
 				// provenance message is the turn's FIRST new assistant message.
 				const response = stamped.find((m) => (m as { role?: string }).role === "assistant");
+				// The reader ran first, so its entry goes first.
+				if (response && reader.model !== undefined && reader.steps.length > 0) {
+					stores.chatStore.appendTurnUsage(chatId, {
+						id: reader.id,
+						messageId: response.id,
+						at: new Date().toISOString(),
+						model: reader.model,
+						steps: reader.steps,
+					});
+				}
 				if (response && steps.length > 0) {
 					stores.chatStore.appendTurnUsage(chatId, {
 						id: turnUsageId,

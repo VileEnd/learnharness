@@ -306,6 +306,12 @@ describe("persistent practice nudges", () => {
 		assert.match(prompt, /The learner may discard a problem without concluding it/);
 	});
 
+	it("the canvas-problem rules carry the mandatory mark and the every-language hint ban", () => {
+		const prompt = normalizeWhitespace(composeInstructions("practice"));
+		assert.ok(prompt.includes("Every reply to a submission with a drawing calls `annotate` before its prose, coaching or closing."));
+		assert.ok(prompt.includes("A hint names the idea, never the equation to solve or the step to compute, and these bans hold in every language the session uses."));
+	});
+
 	it("aligns the conclude description with the canonical ack without changing outcomes or the runtime pause mechanism", async () => {
 		const tool = concludeTool(createPracticeGate(ctxOf(activeProblemRecord())));
 		const description = normalizeWhitespace(tool.description);

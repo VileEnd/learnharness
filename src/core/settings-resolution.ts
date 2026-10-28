@@ -29,9 +29,7 @@ import type { SearchEngineId } from "./search.ts";
 import { IMPLEMENTED_FORMATS, INTERACTIVE_FORMATS, type InteractiveFormat } from "./exercise-core.ts";
 import {
 	BACKGROUND_MODEL_ROLES,
-	CANVAS_DEFAULT_MODEL,
 	FACTORY_SETTINGS,
-	isCanvasVetted,
 	MODEL_SLOTS,
 	ROLE_SLOT,
 	resolveTurnSpendCap,
@@ -171,28 +169,6 @@ export function resolveModelSpec(
 	};
 }
 
-/** THE CANVAS MODEL (owner, 2026-10-27): the model that handles canvas
- *  turns, or null when no vetted model resolves (then the canvas is
- *  unavailable: the tools are not registered and the pill is disabled).
- *  First hit wins, and only a model on the allowlist whose provider key is
- *  present counts:
- *    1. the explicit canvas slot;
- *    2. the default (OpenRouter GLM 5.3 Flash) when an OpenRouter key exists;
- *    3. the strong slot.
- *  A per-chat model pin pins the TUTOR only; the canvas slot is global. Pure:
- *  key presence comes in as a predicate (the server owns the keys). */
-export function resolveCanvasModel(
-	slots: Pick<EffectiveSettings["models"], "strong" | "canvas">,
-	keyPresent: (provider: string) => boolean,
-): EffectiveSlot | null {
-	const usable = (m: EffectiveSlot | null) => (m && isCanvasVetted(m) && keyPresent(m.provider) ? m : null);
-	return (
-		usable(slots.canvas) ??
-		usable({ ...CANVAS_DEFAULT_MODEL }) ??
-		usable(slots.strong)
-	);
-}
-
 /** The quizzing mechanic: the explicit setting, else the legacy
  *  `tools.explain` switch (true = free, false = choice), else Mixed. */
 export function resolveQuizMechanic(agent?: AgentSettings): QuizMechanic {
@@ -242,9 +218,6 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			strong: resolveSlot(modelsSection.strong),
 			cheap: resolveSlot(modelsSection.cheap),
 			vision: resolveSlot(modelsSection.vision),
-			// The EXPLICIT canvas slot only; the effective canvas model (defaults,
-			// vetting, key presence) is resolveCanvasModel's.
-			canvas: resolveSlot(modelsSection.canvas),
 		},
 		appearance: {
 			mode: appearance.mode ?? factoryAppearance.mode,
