@@ -33,6 +33,7 @@
  */
 
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import { stripInternalLabels } from "./internal-labels.ts";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
 import { modelSolutionForConclude, redundantTextBlocks, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, WORK_TOOLS, workAnswerForGrade } from "./native-messages.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
@@ -226,7 +227,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			for (const block of assistant.content) {
 				if (block.type === "text") {
 					if (redundant.has(block)) continue;
-					rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: block.text, state: "done" });
+					rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: stripInternalLabels(block.text), state: "done" });
 				} else if (block.type === "thinking") {
 					reasoning.push({ type: "reasoning", id: `${m.id}-r${reasoningN++}`, text: block.thinking, state: "done" });
 				} else if (block.type === "toolCall") {
@@ -242,7 +243,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 						} else {
 							const text = sendToUserText(block);
 							if (text !== undefined) {
-								rest.push({ type: "text", id: `${m.id}-t${textN++}`, text, state: "done" });
+								rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: stripInternalLabels(text), state: "done" });
 							}
 						}
 						// No live tool card or acknowledgement: this channel is

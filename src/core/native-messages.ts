@@ -45,6 +45,7 @@ import {
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
 import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
+import { stripInternalLabels } from "./internal-labels.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -597,7 +598,7 @@ export const HINT_REQUEST_TEXT = "Hint, please — give the next rung only.";
 
 /** The model-facing text of hint request `n` for one task: the number is the rung (never skip rungs). */
 export function hintRequestText(n: number): string {
-	return `Hint request ${n} for this task — give the next rung only.`;
+	return `Hint request ${n} for this task — give the next, smallest hint only.`;
 }
 
 /** The number the next hint request for `callId` takes: earlier hint-requests for it, plus one. Derived from
@@ -1049,7 +1050,16 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 		}
 		// Strip the record id: the wire carries the native shape only.
 		const { id: _id, ...native } = m as LhMessage;
-		out.push(native as Message);
+		// Assistant prose is stripped of internal rung labels on the way back
+		// to the model (the record keeps them raw), so a leaked label is not
+		// copied forward by example. Tool calls and other roles pass as-is.
+		if (role === "assistant") {
+			const a = native as AssistantMessage;
+			out.push({
+				...a,
+				content: a.content.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text) } : b)),
+			});
+		} else out.push(native as Message);
 		// Dangling-call synthesis: an assistant message whose toolCalls have
 		// no results in the remaining tail (abort mid-question) — the
 		// provider rejects unanswered calls outright.

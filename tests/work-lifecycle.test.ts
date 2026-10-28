@@ -137,7 +137,7 @@ describe("the work fold", () => {
 		const [h] = inputAppends({ id: "c1", messages: pose() }, { type: "hint", callId: "w1" });
 		const marker = h as { customType: string; content: string; details: unknown };
 		assert.equal(marker.customType, "hint-request");
-		assert.equal(marker.content, "Hint request 1 for this task — give the next rung only.");
+		assert.equal(marker.content, "Hint request 1 for this task — give the next, smallest hint only.");
 		assert.deepEqual(marker.details, { callId: "w1", n: 1 });
 		assert.equal(newHintRequest("x").customType, "hint-request");
 		assert.throws(() => inputAppends({ id: "c1", messages: pose() }, { type: "hint", callId: "w2" }), ChatInputError);
