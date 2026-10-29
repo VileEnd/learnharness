@@ -157,8 +157,8 @@ The app does this through its own Keycloak client, `learnharness-admin-api`. Tha
 
 Each non-admin user runs under a policy: which models they may use, which model fills each slot (strong, cheap, vision), and a monthly spending cap in USD (or none).
 
-- **Defaults box.** The defaults in Settings → Users apply to every user without their own policy. Until you save them, the defaults are built in: the cheapest recommended models from the live catalog, with a $5 monthly cap.
-- **Per-user overrides.** Open a user to give them their own models and cap. Removing the override puts them back on the defaults.
+- **New user defaults.** The "New user defaults" box in Settings → Users applies to every user without their own policy. Until you save them, the defaults are built in: the cheapest recommended models from the live catalog, with a $5 monthly cap.
+- **Per-user overrides.** Open a user's "Models & limit" editor to give them their own models and cap. Tick "Use defaults" and Save to put them back on the defaults.
 - **Admins are unrestricted.** Members of `learnharness-admin` (and single-user installs) are never gated by models or caps.
 - **The cap uses the request log.** A user's month is the sum of the priced calls in their own request log; calls without a known price count as zero. Raising a cap takes effect on the user's next request.
 - **When it is checked.** Before every turn and every paid background job (extraction, document import, embeddings). A user at or over the cap is refused with "You've reached this month's spending limit", and no chat is created or saved. A running turn is also clamped to what is left of the month, so a user at $4.99 of $5 cannot start a turn that spends $20.
