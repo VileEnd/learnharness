@@ -25,10 +25,11 @@ export function resolveTenant(h: Headers): Tenant | null {
 	if (!multiUser()) return LOCAL_TENANT;
 	const id = h.get("x-auth-request-user");
 	if (!id || !TENANT_ID_RE.test(id)) return null;
-	const adminGroup = process.env.LH_ADMIN_GROUP ?? "learnharness-admin";
+	const adminGroup = process.env.LH_ADMIN_GROUP || "learnharness-admin";
 	const groups = (h.get("x-auth-request-groups") ?? "")
 		.split(",")
-		.map((g) => g.trim().replace(/^\//, ""));
+		.map((g) => g.trim().replace(/^\//, ""))
+		.filter(Boolean);
 	return {
 		id,
 		name: h.get("x-auth-request-preferred-username") || h.get("x-auth-request-email") || id,
