@@ -58,6 +58,28 @@ describe("OCR", () => {
 		assert.equal(lines[0]!.outcome, "ok");
 	});
 
+	it("no reported cost: the line has no providerCostUsd (never 0)", async () => {
+		collect();
+		await client({ ...done, id: "nocost", files: [{ name: "a.pdf", status: "done" }] }).job("nocost");
+		assert.equal(lines.length, 1);
+		assert.equal(lines[0]!.outcome, "ok");
+		assert.equal("providerCostUsd" in lines[0]!, false);
+	});
+
+	it("two done polls of one job log once; a done job with a failed file logs one error", async () => {
+		collect();
+		const c = client({ ...done, id: "twice" });
+		await c.job("twice");
+		await c.job("twice");
+		assert.equal(lines.length, 1);
+		lines.length = 0;
+		const bad = { ...done, id: "badfile", files: [{ name: "a.pdf", status: "failed", cost_usd: 0.01, error: "page 3 unreadable" }] };
+		await client(bad).job("badfile");
+		assert.equal(lines.length, 1);
+		assert.equal(lines[0]!.outcome, "error");
+		assert.match(lines[0]!.error!, /page 3 unreadable/);
+	});
+
 	it("a running job logs nothing; a non-2xx answer logs an error line", async () => {
 		collect();
 		await client({ ...done, status: "running" }).job("j");
