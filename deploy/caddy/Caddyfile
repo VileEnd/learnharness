@@ -9,6 +9,12 @@
 # The app — every request is authorized by oauth2-proxy (Keycloak login,
 # group "learnharness") before it reaches LearnHarness.
 {$LH_HOST} {
+	# Identity headers come ONLY from oauth2-proxy via forward_auth below.
+	# Strip any a client sends first, on every path (the public @pwa routes
+	# included). request_header sorts before handle, so this runs ahead of
+	# every handle block.
+	request_header -X-Auth-Request-*
+
 	# oauth2-proxy's own endpoints: sign-in, callback, sign-out.
 	handle /oauth2/* {
 		reverse_proxy oauth2-proxy:4180 {
@@ -32,7 +38,7 @@
 	handle /api/* {
 		forward_auth oauth2-proxy:4180 {
 			uri /oauth2/auth
-			copy_headers X-Auth-Request-User X-Auth-Request-Email
+			copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups
 		}
 		reverse_proxy learnharness:3000 {
 			flush_interval -1
@@ -43,7 +49,7 @@
 	handle {
 		forward_auth oauth2-proxy:4180 {
 			uri /oauth2/auth
-			copy_headers X-Auth-Request-User X-Auth-Request-Email
+			copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups
 			@unauthorized status 401
 			handle_response @unauthorized {
 				redir * /oauth2/sign_in?rd={scheme}://{host}{uri}

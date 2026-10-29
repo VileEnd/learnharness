@@ -159,7 +159,7 @@ flowchart TB
 
 ## 3. Ports, adapters, and the composition roots
 
-Storage is **per-entity semantic ports**, never one generic interface: `ChatStore`, `GraphStore`, `JobStore`, `PracticeStore`, `PushStore`, `DocumentStore`, `DrawingStore`, `OkfBundleStore` (`src/core/ports.ts` — types only). The fs adapters (`src/store/{chats,graph,jobs,practice,push,documents,drawings,okf}.ts`) implement them and contain persistence and nothing else. One more adapter (`src/store/render-settings.ts`) is a portless free function re-exported through the server barrel — a deliberate pragmatic bypass, documented here so nobody mistakes it for the pattern.
+Storage is **per-entity semantic ports**, never one generic interface: `ChatStore`, `GraphStore`, `JobStore`, `PushStore`, `DocumentStore`, `DrawingStore`, `OkfBundleStore` (`src/core/ports.ts` — types only). The fs adapters (`src/store/{chats,graph,jobs,push,documents,drawings,okf}.ts`) implement them and contain persistence and nothing else. One more adapter (`src/store/render-settings.ts`) is a portless free function re-exported through the server barrel — a deliberate pragmatic bypass, documented here so nobody mistakes it for the pattern.
 
 **Idioms.** Graph evidence lives in **append-only JSONL ledgers** (corrupt-line-tolerant reads; strict shape guards drop invalid lines, never guess). Chats, jobs, positions, sources, and the settings blobs are whole-file read-modify-write JSON. All writes are synchronous, single-process (atomicity rides the Node event loop). Merge/dedup/derivation semantics are **reader-side, in core** — the store never decides.
 
@@ -182,7 +182,7 @@ flowchart LR
         direction TB
         SESS["session brain: phases · plan-tree · question-core · pending · steer builders"]
         GBRAIN["graph brain: merger + derivation · coverage · clusters · layout"]
-        PORTSBOX["PORTS (types only): ChatStore · GraphStore · JobStore · PracticeStore"]
+        PORTSBOX["PORTS (types only): ChatStore · GraphStore · JobStore · PushStore"]
     end
 
     subgraph DRIVEN["DRIVEN ADAPTERS — outbound"]
@@ -209,6 +209,16 @@ flowchart LR
 ```
 
 ---
+
+## Tenancy (multi-user)
+
+**Scope.** Every request, job and background task acts for one `Tenant` (`{id, name, isAdmin}`, `src/core/tenant-context.ts`). The id is the Keycloak `sub`. Caddy strips client-sent `X-Auth-Request-*` headers, then `forward_auth` (oauth2-proxy) sets them; `src/server/tenant.ts` turns the headers into a tenant. Route handlers go through `withTenant` (401 without an identity; `/api/health` is the one exception), pages through `withPageTenant`. The tenant travels in an `AsyncLocalStorage` on `globalThis`, so work started inside a request (turns, jobs, extraction) inherits it; code outside a scope calls `runAsTenant` explicitly. Touching per-user state in multi-user mode without a scope throws `NoTenantError`, so a missing context cannot write to a shared place.
+
+**Layout.** `data/users/<id>/` holds exactly the single-user layout (the stores and golden fixtures are unchanged). `data/global/` holds what is shared: push keys and prompt overrides (API keys stay at `LH_AUTH_FILE`). A pre-tenancy data dir is refused (`/api/health` answers 503 `legacy_layout`) until `scripts/migrate-to-tenants.mjs` has moved it.
+
+**Keyed registries.** Process-wide singletons that hold per-user state (document index, OKF library, event bus subscribers, activity and extraction registries) are keyed by tenant id or filtered by it; registries keyed by a random chat or job id stay global.
+
+**Single-user mode.** With `LH_MULTI_USER` unset the only tenant is `LOCAL_TENANT` (admin), no headers are needed, and every path stays at its legacy location. Dev, tests and the standalone smoke checks run this way.
 
 ## 4. The six systems (runtime ownership and protocols)
 
