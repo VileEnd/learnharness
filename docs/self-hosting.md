@@ -9,7 +9,7 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
 
 - **Caddy** terminates HTTPS. With `CADDY_TLS=cloudflare` (this deployment), certificates come from Let's Encrypt via the Cloudflare DNS challenge, so every device trusts them with no setup. With `CADDY_TLS=internal`, Caddy uses its own local CA, and each device must trust that CA once.
 - **oauth2-proxy** lets a request through only if the user is logged in to Keycloak and is a member of the group `learnharness`.
-- **One shared data set.** Every allowed user sees the same chats, knowledge graph, and API keys.
+- **One data set per user.** Each Keycloak user (identified by their stable `sub`) gets their own chats, knowledge graph, documents and settings under `users/<sub>/` in the data volume. API keys, prompt overrides and push keys are shared and global. Members of the Keycloak group `learnharness-admin` (who must also be in `learnharness`) are admins. The stack runs with `LH_MULTI_USER=1`; without it the app is single-user with no identity needed (dev, tests).
 - **API keys** are entered in the browser under Settings → Providers. They're stored on the server in `volumes/learnharness/auth.json`, never in the browser.
 
 ## Hostnames
@@ -152,9 +152,22 @@ cd ~/learnharness && git pull && cd deploy && docker compose up -d --build   # m
 
 With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 503 `legacy_layout`. Move it under its owner (their Keycloak `sub`) once:
 
-```bash
-docker compose exec -u node learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
-```
+1. **Create the admin group.** The realm file only applies on first start, so on a live install create `learnharness-admin` in the Keycloak admin console (Groups), and add yourself to it. You must stay in `learnharness` too.
+2. **Find your `sub`.** In the Keycloak admin console, open Users, select yourself; the **ID** is the `sub` (a UUID).
+3. **Stop the stack**, so nothing writes while the data moves: `docker compose stop learnharness`.
+4. **Migrate.** Everything in the old data dir moves to `users/<sub>/`; the push keys and prompt overrides move to `global/`:
+
+   ```bash
+   docker compose run --rm --no-deps -u node learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
+   ```
+
+   If the container is already up, `docker compose exec -u node learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>` does the same.
+5. **Start the stack** with the new config: `docker compose up -d --build`. `/api/health` is 200 again.
+6. **Everyone logs out and back in once.** oauth2-proxy now takes the user id from the `sub` claim (`OAUTH2_PROXY_USER_ID_CLAIM`), which changes the session, so existing sessions are refused until the next login.
+
+### Running under Podman
+
+Docker is the supported runtime (the NixOS module is Docker-based). If you move to Podman later: rootless Podman cannot bind ports 80 and 443 by default (lower `net.ipv4.ip_unprivileged_port_start` or run rootful); healthchecks need `--format docker` when the image is built; bind mounts on SELinux hosts need the `:Z` suffix; and "restart: unless-stopped" is not honoured without a service manager, so restart through Quadlet/systemd units.
 
 ## Backups
 
