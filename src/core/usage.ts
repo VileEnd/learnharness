@@ -146,7 +146,9 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 		const usd = lineCost(line, price);
 		if (usd === null) {
 			// Only billable lines count as unpriced; an error with no usage is not.
-			if (line.outcome !== "error" || hasUsage(line)) {
+			// Search has no price by design: counting it would keep "N calls
+			// unpriced" up for good and hide a real partial total.
+			if (category !== "search" && (line.outcome !== "error" || hasUsage(line))) {
 				unpricedCalls++;
 				cat.unpriced++;
 			}
