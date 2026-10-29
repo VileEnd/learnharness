@@ -33,6 +33,7 @@ import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/do
 import type { OkfFile } from "./contracts/okf.ts";
 import type { AttributionRow } from "./contracts/learner.ts";
 import type { UserSettings } from "./settings.ts";
+import type { AdminPolicy } from "./contracts/admin.ts";
 import type { WgPeer, WgServerInfo, WgStatus } from "./contracts/wireguard.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -287,6 +288,14 @@ export interface WireGuardStore {
 	readPeers(): WgPeer[];
 	writePeers(peers: WgPeer[]): void;
 	readStatus(): WgStatus | null;
+}
+
+// ─── AdminPolicyStore — per-user model/cap policy (<global>/admin.json) ─────
+
+/** Absent or unreadable file reads as null (the caller applies built-in defaults). Writes are atomic, mode 0600. */
+export interface AdminPolicyStore {
+	readPolicy(): AdminPolicy | null;
+	writePolicy(p: AdminPolicy): void;
 }
 
 // ─── DocumentStore — the document library (data/documents) ──────────────────

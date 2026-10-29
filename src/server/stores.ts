@@ -6,6 +6,7 @@
  * file (and the adapter implementations in src/store/).
  */
 
+import { adminPolicyStore } from "../store/admin-policy.ts";
 import { chatStore } from "../store/chats.ts";
 import { conceptVectorStore } from "../store/concept-vectors.ts";
 import { documentStore } from "../store/documents.ts";
@@ -23,6 +24,7 @@ import { multiUser } from "../core/tenant-context.ts";
 import { setRequestSink } from "../agent/request-log.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
+	adminPolicyStore,
 	chatStore,
 	conceptVectorStore,
 	documentStore,
