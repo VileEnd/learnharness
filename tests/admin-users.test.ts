@@ -21,6 +21,8 @@ const kc = {
 	users: new Map<string, Record<string, unknown>>(),
 	admins: new Set<string>(),
 	created: [] as Record<string, unknown>[],
+	tokenCalls: 0,
+	omitLocation: false,
 };
 kc.users.set(ADMIN, { id: ADMIN, username: "root", email: "r@x.io", enabled: true, createdTimestamp: 5 });
 kc.users.set(OTHER, { id: OTHER, username: "bob", enabled: true, createdTimestamp: 9 });
@@ -33,18 +35,23 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 	const p = url.pathname;
 	const json = (b: unknown, status = 200, headers: Record<string, string> = {}) =>
 		new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json", ...headers } });
+	if (p === "/realms/learnharness/protocol/openid-connect/token") kc.tokenCalls++;
 	if (p === "/realms/learnharness/protocol/openid-connect/token") return json({ access_token: "tok", expires_in: 300 });
 	const base = "/admin/realms/learnharness";
 	if (p === `${base}/groups`) return json([{ id: GID, name: "learnharness-admin" }]);
 	if (p === `${base}/groups/${GID}/members`) return json([...kc.admins].map((id) => kc.users.get(id)));
-	if (p === `${base}/users` && method === "GET") return json([...kc.users.values()]);
+	if (p === `${base}/users` && method === "GET") {
+		const name = url.searchParams.get("username");
+		return json([...kc.users.values()].filter((u) => !name || u.username === name));
+	}
 	if (p === `${base}/users` && method === "POST") {
 		const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
 		if ([...kc.users.values()].some((u) => u.username === body.username)) return json({ errorMessage: "exists" }, 409);
 		kc.created.push(body);
-		const id = "33333333-3333-4333-8333-333333333333";
+		const id = body.username === "nolocation" ? "44444444-4444-4444-8444-444444444444" : "33333333-3333-4333-8333-333333333333";
 		kc.users.set(id, { id, username: body.username, email: body.email, enabled: true, createdTimestamp: 1 });
 		if ((body.groups as string[]).includes("/learnharness-admin")) kc.admins.add(id);
+		if (kc.omitLocation) return new Response(null, { status: 201 });
 		return new Response(null, { status: 201, headers: { Location: `http://kc.test${base}/users/${id}` } });
 	}
 	const m = p.match(new RegExp(`^${base}/users/([^/]+)/groups/${GID}$`));
@@ -132,4 +139,34 @@ test("not configured: 503 user_admin_not_configured", async () => {
 	} finally {
 		process.env.KC_ADMIN_API_SECRET = "s3cret";
 	}
+});
+
+test("create: admin true puts the user in /learnharness-admin", async () => {
+	const res = await post(true, { username: "boss", admin: true });
+	assert.equal(res.status, 201);
+	const sent = kc.created.at(-1) as { groups: string[] };
+	assert.ok(sent.groups.includes("/learnharness-admin"));
+	assert.equal(((await res.json()) as { user: { isAdmin: boolean } }).user.isAdmin, true);
+});
+
+test("create: 201 without Location still returns the right id and password", async () => {
+	kc.omitLocation = true;
+	try {
+		const res = await post(true, { username: "nolocation" });
+		assert.equal(res.status, 201);
+		const body = (await res.json()) as { user: { id: string }; temporaryPassword: string };
+		assert.equal(body.user.id, "44444444-4444-4444-8444-444444444444");
+		assert.match(body.temporaryPassword, /^[A-Za-z0-9]{20}$/);
+	} finally {
+		kc.omitLocation = false;
+	}
+});
+
+test("keycloakAdmin() is memoized: two list calls fetch one token", async () => {
+	const { keycloakAdmin } = await import("../src/server/keycloak-admin.ts");
+	(globalThis as { __lhKeycloakAdmin?: unknown }).__lhKeycloakAdmin = undefined;
+	kc.tokenCalls = 0;
+	await keycloakAdmin()!.listUsers();
+	await keycloakAdmin()!.listUsers();
+	assert.equal(kc.tokenCalls, 1);
 });

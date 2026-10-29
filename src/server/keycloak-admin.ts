@@ -52,10 +52,18 @@ export function createKeycloakAdmin(opts: { baseUrl: string; secret: string; fet
 	const doFetch = (...a: Parameters<typeof fetch>) => (opts.fetch ?? globalThis.fetch)(...a);
 	const admin = `${base}/admin/realms/${REALM}`;
 	let token: { value: string; expiresAt: number } | null = null;
+	let pending: Promise<string> | null = null;
 	let adminGroupId: string | null = null;
 
-	async function accessToken(): Promise<string> {
-		if (token && Date.now() < token.expiresAt) return token.value;
+	function accessToken(): Promise<string> {
+		if (token && Date.now() < token.expiresAt) return Promise.resolve(token.value);
+		// Concurrent callers share one in-flight token request.
+		return (pending ??= fetchToken().finally(() => {
+			pending = null;
+		}));
+	}
+
+	async function fetchToken(): Promise<string> {
 		const res = await doFetch(`${base}/realms/${REALM}/protocol/openid-connect/token`, {
 			method: "POST",
 			headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -121,8 +129,13 @@ export function createKeycloakAdmin(opts: { baseUrl: string; secret: string; fet
 					groups: ["/learnharness", ...(makeAdmin ? ["/learnharness-admin"] : [])],
 				}),
 			});
-			const id = res.headers.get("location")?.split("/").pop();
-			if (!id) throw new KeycloakError(502, "user create (no Location)");
+			let id = res.headers.get("location")?.split("/").pop();
+			if (!id) {
+				// The user exists already (password set); recover the id rather than lose it.
+				const found = (await (await call(`/users?username=${encodeURIComponent(username)}&exact=true`, "user lookup")).json()) as KcUser[];
+				id = found.find((u) => u.username === username)?.id;
+				if (!id) throw new KeycloakError(502, "user create (id not found)");
+			}
 			return { user: { id, username, email: email ?? null, isAdmin: makeAdmin, enabled: true, createdAt: Date.now() }, temporaryPassword };
 		},
 
@@ -137,5 +150,9 @@ export function keycloakAdmin(): KeycloakAdmin | null {
 	const baseUrl = process.env.KC_ADMIN_API_URL;
 	const secret = process.env.KC_ADMIN_API_SECRET;
 	if (!baseUrl || !secret) return null;
-	return createKeycloakAdmin({ baseUrl, secret });
+	// Memoized so the token and admin group id outlive a single request.
+	const g = globalThis as { __lhKeycloakAdmin?: { key: string; client: KeycloakAdmin } };
+	const key = `${baseUrl}|${secret}`;
+	if (g.__lhKeycloakAdmin?.key !== key) g.__lhKeycloakAdmin = { key, client: createKeycloakAdmin({ baseUrl, secret }) };
+	return g.__lhKeycloakAdmin.client;
 }
