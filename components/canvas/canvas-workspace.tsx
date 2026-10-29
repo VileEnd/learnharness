@@ -9,7 +9,8 @@
  * The working scene autosaves to the server draft (PUT drafts/<callId>, 2 s debounce, revisioned) and is
  * mirrored to localStorage on every change; on open the newer of the two wins (draft.ts pickDraft), so going
  * offline mid-task loses nothing. Submit exports the PNG, POSTs it to /drawings and hands the returned
- * drawingId to onSubmit; an empty scene submits text only.
+ * drawingId to onSubmit; an empty scene submits text only. Hint sends the same snapshot (and the "Your
+ * thinking" draft, kept in the field) with the request and stays open, so the tutor's marks land in view.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -67,8 +68,9 @@ export interface CanvasWorkspaceProps {
 	requireThinking?: boolean;
 	/** text + the uploaded drawing's id (absent for an empty scene). */
 	onSubmit: (text: string, drawingId?: string) => void;
-	/** The Hint button: the host sends { type: "hint", callId }. */
-	onHint?: () => void;
+	/** The Hint button: the host sends { type: "hint", callId, drawingId?, text? } - a snapshot of the canvas
+	 *  (absent for an empty scene) and the trimmed "Your thinking" draft (absent when empty). */
+	onHint?: (drawingId?: string, text?: string) => void;
 	onMinimize: () => void;
 	/** Compaction running: submit would block on the server's gate. */
 	compactionRunning?: boolean;
@@ -84,6 +86,13 @@ export function canSubmitWork(s: { text: string; objectCount: number; requireThi
 	const text = s.text.trim();
 	if (s.requireThinking && text.length === 0) return false;
 	return text.length > 0 || s.objectCount > 0;
+}
+
+/** Pure: the drawing whose marks the live canvas shows - the NEWEST one with marks (hint snapshots make many
+ *  marked drawings per task; older marks would pile up on the live work). Null when none has marks. */
+export function newestMarkedDrawing<T extends { marks: readonly unknown[] }>(drawings: readonly T[]): T | null {
+	for (let i = drawings.length - 1; i >= 0; i--) if (drawings[i]!.marks.length > 0) return drawings[i]!;
+	return null;
 }
 
 function nextZ(scene: DrawingScene): number {
@@ -106,12 +115,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [showInk, setShowInk] = useState(true);
-	// Teacher marks per submitted drawing of this task (newest last); empty until the teacher annotates.
-	const inkDrawings = useMemo(
-		() =>
-			submittedDrawingIds(messages, callId)
-				.map((id) => ({ id, marks: annotationsOf(messages, id).flatMap((a) => a.marks) }))
-				.filter((d) => d.marks.length > 0),
+	// The teacher's marks on the newest marked drawing of this task (a submission or a hint snapshot); null until
+	// the teacher annotates.
+	const inkDrawing = useMemo(
+		() => newestMarkedDrawing(submittedDrawingIds(messages, callId).map((id) => ({ id, marks: annotationsOf(messages, id).flatMap((a) => a.marks) }))),
 		[messages, callId],
 	);
 	// The replies to this task's hint requests, derived from the record (so they survive minimise and reload).
@@ -334,27 +341,29 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 		return () => document.removeEventListener("paste", onPaste);
 	}, [addImage]);
 
-	// ── submit ──
+	// ── submit and hint ──
 	const objectCount = scene.objects.length;
 	const canSubmit = loaded && !compactionRunning && canSubmitWork({ text: thinking, objectCount, requireThinking, busy });
+	// The canvas as it is now: PNG + scene POSTed to /drawings; undefined for an empty scene (nothing is sent).
+	const uploadSnapshot = async (): Promise<string | undefined> => {
+		const engine = engineRef.current;
+		const current = engine?.getScene() ?? sceneRef.current;
+		if (!engine || current.objects.length === 0) return undefined;
+		const png = await engine.exportPng();
+		const form = new FormData();
+		form.set("scene", JSON.stringify(current));
+		form.set("png", png, "drawing.png");
+		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/drawings`, { method: "POST", body: form });
+		if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `The drawing upload failed (${res.status}).`);
+		return ((await res.json()) as { drawingId: string }).drawingId;
+	};
 	const submit = async () => {
 		if (!canSubmit) return;
 		setBusy(true);
 		setError(null);
 		try {
 			const text = thinkingRef.current.trim();
-			let drawingId: string | undefined;
-			const engine = engineRef.current;
-			const current = engine?.getScene() ?? sceneRef.current;
-			if (engine && current.objects.length > 0) {
-				const png = await engine.exportPng();
-				const form = new FormData();
-				form.set("scene", JSON.stringify(current));
-				form.set("png", png, "drawing.png");
-				const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/drawings`, { method: "POST", body: form });
-				if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `The drawing upload failed (${res.status}).`);
-				drawingId = ((await res.json()) as { drawingId: string }).drawingId;
-			}
+			const drawingId = await uploadSnapshot();
 			await saveNowRef.current();
 			thinkingRef.current = "";
 			setThinking("");
@@ -362,6 +371,22 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			onMinimize();
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "The submit failed.");
+		} finally {
+			setBusy(false);
+		}
+	};
+	// The hint carries the snapshot and the draft (which stays in the field); the canvas stays open so the
+	// tutor's marks appear where he is working.
+	const hint = async () => {
+		if (!onHint) return;
+		setBusy(true);
+		setError(null);
+		try {
+			const text = thinkingRef.current.trim();
+			const drawingId = await uploadSnapshot();
+			onHint(drawingId, text.length > 0 ? text : undefined);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "The hint request failed.");
 		} finally {
 			setBusy(false);
 		}
@@ -421,7 +446,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				<button type="button" title="Reset zoom" aria-label="Reset zoom" data-testid="canvas-zoom-reset" onClick={() => engineRef.current?.setView({ zoom: 1, x: 0, y: 0 })} className="flex items-center gap-1 rounded-md px-1.5 py-1 pointer-coarse:py-2.5 text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground">
 					<ScanIcon className="size-4" /> {zoomPct}%
 				</button>
-				{inkDrawings.length > 0 && (
+				{inkDrawing && (
 					<button type="button" title="Teacher marks" aria-label="Teacher marks" aria-pressed={showInk} data-testid="canvas-ink-toggle" onClick={() => setShowInk((v) => !v)} className={cn("flex items-center gap-1 rounded-md px-1.5 py-1 pointer-coarse:py-2.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground", showInk && "bg-accent text-foreground")}>
 						{showInk ? <EyeIcon className="size-4" /> : <EyeOffIcon className="size-4" />} Teacher marks
 					</button>
@@ -437,12 +462,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			<div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
 				<div ref={rootRef} data-testid="canvas-surface" className="absolute inset-0" />
 				<CanvasObjectsLayer chatId={chatId} scene={scene} view={view} interactive={interactive} selectedId={selected} onSelect={setSelected} onCommit={commit} />
-				{showInk && inkDrawings.length > 0 && (
+				{showInk && inkDrawing && (
 					<svg data-testid="canvas-ink" className="pointer-events-none absolute inset-0 size-full overflow-hidden" aria-hidden>
 						<g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
-							{inkDrawings.map((d) => (
-								<WorkspaceInk key={d.id} chatId={chatId} drawingId={d.id} marks={d.marks} live={scene} theme={theme} />
-							))}
+							<WorkspaceInk key={inkDrawing.id} chatId={chatId} drawingId={inkDrawing.id} marks={inkDrawing.marks} live={scene} theme={theme} />
 						</g>
 					</svg>
 				)}
@@ -495,7 +518,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
 						{onHint && (
-							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={compactionRunning || busy || hintTurnBusy} onClick={onHint} className="h-9 rounded-[6px] px-3 text-sm">
+							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={!loaded || compactionRunning || busy || hintTurnBusy} onClick={() => void hint()} className="h-9 rounded-[6px] px-3 text-sm">
 								<LightbulbIcon className="size-4" /> Hint
 							</Button>
 						)}
@@ -510,7 +533,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 }
 
 /**
- * One submitted drawing's marks on the live canvas: cells are anchored to the SUBMITTED scene's grid box
+ * One sent drawing's marks (a submission or a hint snapshot) on the live canvas: cells are anchored to the SENT scene's grid box
  * (fetched, immutable), object ids resolve against the live scene first (so a moved object carries its
  * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped.
  */

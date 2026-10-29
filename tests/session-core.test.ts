@@ -1683,6 +1683,14 @@ describe("canvas task inputs", () => {
 		assert.deepEqual(JSON.parse(posts[0]!).input, { type: "hint", callId: "call_w" });
 	});
 
+	it("a canvas hint carries the snapshot and the thinking draft", async () => {
+		const posts: string[] = [];
+		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });
+		const m = model({ initialMessages: workPosed() });
+		await m.requestHint("call_w", "drw_h", "half done");
+		assert.deepEqual(JSON.parse(posts[0]!).input, { type: "hint", callId: "call_w", drawingId: "drw_h", text: "half done" });
+	});
+
 	it("every chat POST says whether the device is canvas-capable (default: not)", async () => {
 		const posts: string[] = [];
 		globalThis.fetch = dietFetch({ onPost: (b) => posts.push(b), stream: () => sseResponse({ type: "agent_start" }, "[DONE]") });

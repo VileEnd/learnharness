@@ -1787,8 +1787,9 @@ export function Chat({
 							if (canvasTarget.kind === "work") submitWork(canvasTarget.callId, text, drawingId);
 							else submitThinking(text.length > 0 ? text : "Here is my drawing.", undefined, drawingId);
 						}}
-						// The hint is read inside the canvas (hintsFor on the record): the workspace stays open.
-						onHint={() => requestHint(canvasTarget.callId)}
+						// The hint is read inside the canvas (hintsFor on the record): the workspace stays open. It
+						// carries the canvas snapshot and the thinking draft, so the tutor marks where the hint points.
+						onHint={(drawingId, text) => requestHint(canvasTarget.callId, drawingId, text)}
 						turnBusy={busy}
 						onMinimize={() => setCanvasOpen(false)}
 					/>
