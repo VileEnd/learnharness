@@ -2,8 +2,6 @@ import * as fs from "node:fs";
 import { LEDGER_FILES, POSITIONS_FILE } from "../../config.ts";
 import type { GraphGroupBy, GraphSnapshot } from "../core/contracts.ts";
 import { readRenderSettings } from "../store/render-settings.ts";
-import type { GraphCostSummary } from "../core/cost-summary.ts";
-import { graphCostSummary } from "../core/cost-summary.ts";
 import { graphSnapshot } from "../core/graph.ts";
 import { birthSessionPartition } from "../core/session-clusters.ts";
 import {
@@ -12,7 +10,6 @@ import {
 } from "../core/graph-deletion.ts";
 import { extractionStatuses } from "../agent/subagents/extraction.ts";
 import { stores } from "./stores.ts";
-import { callCost } from "./pricing.ts";
 
 /**
  * Server-side graph entry for the home view (GET /api/graph). A PURE READ:
@@ -27,28 +24,6 @@ export function graphView(groupBy?: GraphGroupBy): GraphSnapshot {
 		groupBy: groupBy ?? readRenderSettings()?.groupBy ?? "source",
 		documents: stores.documentStore,
 	});
-}
-
-/** The graph view's cost surface (GET /api/graph/costs — the 2026-09 cost
- *  pill): fold every usage channel into stage totals + recent runs. A pure
- *  read over the chat records (chat-front-door runs), the notes sources
- *  (notes-front-door runs), and the naming ledger (graph-global runs);
- *  dollars are inferred by the pure core fold (core/cost-summary.ts +
- *  prices.ts) — nothing here stores or caches money. */
-export function graphCosts(): GraphCostSummary {
-	const chats = stores.chatStore
-		.listChats()
-		.flatMap((summary) => {
-			const record = stores.chatStore.getChat(summary.id);
-			return record?.extractions?.length
-				? [{ title: record.title ?? summary.id, extractions: record.extractions }]
-				: [];
-		});
-	const sources = stores.graphStore
-		.readSources()
-		.filter((s) => s.extractions?.length)
-		.map((s) => ({ filePath: s.filePath, extractions: s.extractions! }));
-	return graphCostSummary({ chats, sources }, callCost);
 }
 
 /** The graph's version stamp (session-deletion wave 6): the max mtime
