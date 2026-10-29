@@ -45,6 +45,8 @@ jobs:
       # No network: the tests stub OpenRouter.
       - run: python -m pytest -q
         working-directory: services/ocr
+      # Host-side deploy scripts (wg-apply.py); stdlib only.
+      - run: python3 -I -B -m unittest discover -s tests/deploy -v
 
   docker:
     name: Docker image (build + boot)

@@ -33,6 +33,10 @@
     tls = "cloudflare";
   };
 
+  # Remote access from outside: WireGuard on this VM, devices from Settings →
+  # Users, endpoint vpn.moyjak.com:51820 (DDNS). docs/self-hosting.md.
+  services.learnharness.wireguard.enable = true;
+
   services.openssh = {
     enable = true;
     settings = {

@@ -62,7 +62,7 @@ in
       after = [ "docker.service" "network-online.target" ];
       # A hostname change (nixos-rebuild) re-runs the stack with the new values.
       restartTriggers = [ hostsEnv ];
-      path = with pkgs; [ git docker openssl coreutils ];
+      path = with pkgs; [ git docker openssl coreutils gnused gnugrep ];
       # Retry until the network (DHCP, GitHub, registries) is really there —
       # network-online.target can be reached before the first lease.
       startLimitIntervalSec = 0;
@@ -99,10 +99,13 @@ in
             echo "OIDC_CLIENT_SECRET=$(openssl rand -hex 32)"
             echo "OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32 | tr -- '+/' '-_')"
             echo "OCR_TOKEN=$(openssl rand -hex 32)"
+            echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)"
           } > "$secrets"
         fi
         # secrets.env of an older install has no OCR_TOKEN yet (PDF scanning service): add it once.
         grep -q '^OCR_TOKEN=' "$secrets" || (umask 077; echo "OCR_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
+        # …nor KC_ADMIN_API_SECRET (the app's Keycloak client for the admin Users section).
+        grep -q '^KC_ADMIN_API_SECRET=' "$secrets" || (umask 077; echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)" >> "$secrets")
 
         cd "$src/deploy"
         docker compose --env-file ${hostsEnv} --env-file "$secrets" up -d --build --remove-orphans
@@ -110,6 +113,11 @@ in
         # so apply them explicitly (a no-op when nothing changed).
         docker compose --env-file ${hostsEnv} --env-file "$secrets" exec -T caddy \
           caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || true
+
+        # Group, admin-API client (secret = KC_ADMIN_API_SECRET) and its roles in
+        # the realm, idempotently. It waits up to 3 minutes for Keycloak and never
+        # fails the stack: on failure (or after 5 minutes) it logs "keycloak bootstrap failed".
+        timeout 300 ${pkgs.bash}/bin/bash ${./bootstrap-keycloak.sh} "$secrets" || echo "keycloak bootstrap failed"
       '';
     };
   };

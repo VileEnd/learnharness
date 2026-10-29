@@ -7,7 +7,7 @@
     # nixos-rebuild switch --flake deploy/nixos#learnharness --target-host root@learnharness.fritz.box
     nixosConfigurations.learnharness = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
-      modules = [ ./configuration.nix ./learnharness-stack.nix ];
+      modules = [ ./configuration.nix ./learnharness-stack.nix ./wireguard.nix ];
     };
 
     # The bootstrap disk image OpenTofu uploads (deploy/proxmox). It is the

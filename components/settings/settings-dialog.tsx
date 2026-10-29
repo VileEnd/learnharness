@@ -53,6 +53,7 @@ import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
 import { UsageSection } from "./usage-section.tsx";
+import { UsersSection } from "./users-section.tsx";
 
 /** Owner (2026-09-20): hints earn their place — mechanics-explaining
  *  prose is out; only the keyboard note stays (storage location is a
@@ -65,6 +66,8 @@ const SECTIONS = [
 	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
 	{ id: "usage", label: "Usage" },
 	{ id: "general", label: "General" },
+	// Admin-only: listed once /api/me says the signed-in account is an admin.
+	{ id: "users", label: "Users" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -186,6 +189,14 @@ export function SettingsDialogBody({
 		};
 	}, []);
 	const [active, setActive] = useState<SectionId>(initialSection);
+	// Who is signed in (null in single-user mode) — gates the Users section.
+	const [account, setAccount] = useState<{ name: string; isAdmin: boolean } | null>(null);
+	useEffect(() => {
+		fetch("/api/me")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((b: { account?: { name: string; isAdmin: boolean } | null } | null) => setAccount(b?.account ?? null))
+			.catch(() => setAccount(null));
+	}, []);
 	// A deep-link fired while the dialog is ALREADY open (first exercised by
 	// the wave-6 embedding picker's "Add a provider key first…" link — the
 	// picker itself died with wave 7, the mechanism is general) changes
@@ -314,7 +325,7 @@ export function SettingsDialogBody({
 					data-testid="settings-nav"
 					className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-border p-2 sm:w-44 sm:flex-col sm:overflow-x-visible sm:border-b-0 sm:border-r"
 				>
-					{SECTIONS.map((s) => (
+					{SECTIONS.filter((s) => s.id !== "users" || account?.isAdmin).map((s) => (
 						<button
 							key={s.id}
 							type="button"
@@ -450,6 +461,11 @@ export function SettingsDialogBody({
 									testid="section-keyboard"
 								>
 									<KeyboardSection />
+								</SettingsSection>
+							)}
+							{active === "users" && account?.isAdmin && (
+								<SettingsSection title="Users" testid="section-users-wrap">
+									<UsersSection selfName={account.name} />
 								</SettingsSection>
 							)}
 							{active === "usage" && (

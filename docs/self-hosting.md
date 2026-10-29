@@ -143,6 +143,34 @@ The graph you migrated already holds the nodes the old app extracted from your n
 
 The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdown through OpenRouter. It has no published port and no Caddy route: only the app reaches it at `http://ocr:8000`, and every call carries the shared secret `OCR_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env`). The OpenRouter key is the one in the app's Settings, sent per job. Results and cache live in `volumes/ocr/`, which belongs in the backups.
 
+## Users
+
+Admins (members of `learnharness-admin`) see **Settings → Users**. There they can:
+- list the users;
+- create one (username, optional email, admin yes/no). The new user joins `learnharness` (and `learnharness-admin` when marked admin) and gets a **temporary password**, shown once. Keycloak asks for a new password at the first login;
+- make a user admin or remove admin. You can't remove your own admin rights. Admin changes take effect at the person's next login (or within an hour);
+- manage a user's WireGuard devices (see below).
+
+The app does this through its own Keycloak client, `learnharness-admin-api`. That client has only a service account with the `realm-management` roles `view-users`, `query-users`, `query-groups` and `manage-users`; the Keycloak admin password never reaches the app. On the NixOS VM, `learnharness-stack` generates the client secret `KC_ADMIN_API_SECRET` into `secrets.env` once. On every start it creates the group, the client, its secret and the roles if any are missing (`deploy/nixos/bootstrap-keycloak.sh`). If Keycloak doesn't come up within 3 minutes, the journal says `keycloak bootstrap failed` and the stack runs anyway. The section then shows "User management isn't set up on this server yet." until the next `systemctl restart learnharness-stack`. On a manual host, set `KC_ADMIN_API_SECRET` in `deploy/.env` and run `deploy/nixos/bootstrap-keycloak.sh deploy/.env` once the stack is up (it needs `KC_ADMIN_USER`, `KC_ADMIN_PASSWORD` and `KC_ADMIN_API_SECRET` in that file).
+
+## Remote access (WireGuard)
+
+Away from home, devices reach LearnHarness through a WireGuard tunnel that ends **on the VM**, not on the router. A tunnel can reach only the app: Caddy on 80/443, through which Keycloak's login still applies. It can't reach SSH, the VM's other ports, or anything else on the LAN. The client config sends only the VM's LAN address (`AllowedIPs = <VM LAN IP>/32`) through the tunnel. The usual names (`learnharness.home.moyjak.com`, `auth.home.moyjak.com`) already point there, so links, logins and certificates are the same as at home.
+
+**On the VM** (`deploy/nixos/wireguard.nix`, `services.learnharness.wireguard.enable`):
+- `wg0` is `10.66.0.1/24` on UDP 51820. The server key is generated once into `/var/lib/learnharness/wg/private` and never enters a container.
+- `vpn.moyjak.com` is an A record that a 5-minute timer (`learnharness-ddns`) keeps on the WAN IPv4, using `CLOUDFLARE_API_TOKEN` from `secrets.env` (the same token as for the certificates).
+- `learnharness-wg-apply` reads the devices the app wrote (`data/global/wireguard/peers.json`), skips invalid entries and applies the rest with `wg syncconf`. It runs on every change and once a minute. It also writes `server.json` (public key, endpoint, the VM's current LAN IP) and `status.json` (last handshake per device) for the app.
+- **LAN isolation:** the VM and its containers may not open new connections into private IPv4 ranges. The exceptions are the LAN gateway's DNS/NTP (`lanGateway`, default `192.168.178.1`) and replies to connections that LAN devices open. Limits: IPv4 only (the VM host itself can still reach LAN hosts over IPv6; the containers have no IPv6), and containers may still reach `172.16.0.0/12`, because Docker's own networks live there. Access from home is unchanged: 22, 80, 443 and 8443 from the LAN, SSH and deploys from WSL. Logs: `journalctl -u learnharness-wg-apply -u learnharness-ddns`.
+
+**FRITZ!Box (once):** Internet → Freigaben → Portfreigabe → the `learnharness` device → new share: UDP 51820 → 51820, IPv4.
+
+**Devices:** in Settings → Users, choose the user, name the device (e.g. "phone") and click **Add device**. Scan the QR code with the WireGuard app, or download the `.conf` for a laptop. The private key is shown only once and is never stored. If it's lost, revoke the device and create a new one. Each device's "last seen" shows its last handshake.
+
+**At home:** you don't need the tunnel on the home Wi-Fi. Switch it off there, or on iOS turn on *On Demand* with your home Wi-Fi excluded, so it connects only elsewhere.
+
+**Move day:** the VM's LAN IP changes, and `server.json` picks up the new address by itself within a minute. Devices created before then are marked **outdated — re-create**: revoke each one and create it again, then scan the new QR code. Also set `services.learnharness.wireguard.lanGateway` to the new gateway (see Move-day switch).
+
 ## Updating
 
 ```bash
@@ -190,6 +218,10 @@ When the UniFi gateway takes over the LAN (`/home/test/network/fritzbox-to-unifi
 1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC (`BC:24:11:B3:41:E1`).
 2. **Point the records at the new address:** run `deploy/proxmox/tofu.sh apply -var lan_ipv4=10.20.1.70`, or change the default in `variables.tf` and commit it.
 3. That's it. Keycloak, redirect URIs and devices are unaffected; the TTL is 5 minutes.
+
+With WireGuard enabled there are two more steps:
+- Set `services.learnharness.wireguard.lanGateway` in `deploy/nixos/configuration.nix` to the new gateway, then `nixos-rebuild switch`. Until you do, the VM's DNS queries to the new gateway are refused, because isolation only lets the configured gateway through.
+- Re-create the WireGuard devices marked **outdated** (see Remote access).
 
 With `CADDY_TLS=internal` and local names instead, change the hostnames (NixOS options or `deploy/.env`), update the Keycloak client's redirect URI, web origin and post-logout URI to the new app host, and restart the stack.
 
