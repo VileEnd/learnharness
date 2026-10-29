@@ -17,11 +17,11 @@ import type { CreateJobInit, JobPatch } from "../core/ports.ts";
 import type { JobRecord } from "../core/contracts.ts";
 
 /** Background jobs (data/jobs). Not in config.ts PATHS (orchestrator-owned). */
-const JOBS_DIR = path.join(PATHS.data, "jobs");
+const jobsDir = () => path.join(PATHS.data, "jobs");
 
 function jobFile(id: string): string {
 	if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`Invalid job id: ${id}`);
-	return path.join(JOBS_DIR, `${id}.json`);
+	return path.join(jobsDir(), `${id}.json`);
 }
 
 /** Writes announce on the events channel AFTER the write lands (the
@@ -41,7 +41,7 @@ function createJob(init: CreateJobInit): JobRecord {
 		createdAt: now,
 		updatedAt: now,
 	};
-	fs.mkdirSync(JOBS_DIR, { recursive: true });
+	fs.mkdirSync(jobsDir(), { recursive: true });
 	fs.writeFileSync(jobFile(record.id), JSON.stringify(record, null, "\t"), "utf-8");
 	emit("jobs-changed", { chatId: init.chatId });
 	return record;
@@ -73,9 +73,9 @@ function updateJob(id: string, patch: JobPatch): JobRecord | null {
 /** All jobs for a chat, newest activity first. */
 function listJobs(chatId: string): JobRecord[] {
 	try {
-		fs.mkdirSync(JOBS_DIR, { recursive: true });
+		fs.mkdirSync(jobsDir(), { recursive: true });
 		return fs
-			.readdirSync(JOBS_DIR)
+			.readdirSync(jobsDir())
 			.filter((f) => f.endsWith(".json"))
 			.map((f) => getJob(f.slice(0, -5)))
 			.filter((j): j is JobRecord => j !== null && j.chatId === chatId)

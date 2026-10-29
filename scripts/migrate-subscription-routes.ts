@@ -55,7 +55,7 @@ export function parseTarget(value: string | undefined): ModelRef {
 /** Rewrite every subscription route under LH_DATA_DIR (read at import time
  *  of the stores — set it before calling). Dry run unless `write`. */
 export async function migrateSubscriptionRoutes(target: ModelRef, write: boolean): Promise<MigrationResult> {
-	const { PATHS, SETTINGS_FILE } = await import("../config.ts");
+	const { PATHS, settingsFile } = await import("../config.ts");
 	const { readSettings, writeSettings } = await import("../src/store/settings.ts");
 	const { chatStore } = await import("../src/store/chats.ts");
 	const { validateChatSettings, clampChatLevel, clampModelsLevels } = await import("../src/server/model-catalog.ts");
@@ -72,24 +72,24 @@ export async function migrateSubscriptionRoutes(target: ModelRef, write: boolean
 	// ── settings.json: slots + background-role overrides ────────────────────
 	const settings = readSettings();
 	if (settings) {
-		const settingsFile = path.relative(PATHS.data, SETTINGS_FILE);
+		const settingsRel = path.relative(PATHS.data, settingsFile());
 		let touched = false;
 		const models = { ...(settings.models ?? {}) } as Record<string, Pinned>;
 		for (const [slot, pin] of Object.entries(models)) {
 			if (!isSubscription(pin)) continue;
-			changes.push({ file: settingsFile, where: `models.${slot}`, from: label(pin.model!), to: label(target) });
+			changes.push({ file: settingsRel, where: `models.${slot}`, from: label(pin.model!), to: label(target) });
 			models[slot] = { ...pin, model: target };
 			touched = true;
 		}
 		const roles = { ...(settings.agent?.models ?? {}) } as Record<string, Pinned>;
 		for (const [role, pin] of Object.entries(roles)) {
 			if (!isSubscription(pin)) continue;
-			changes.push({ file: settingsFile, where: `agent.models.${role}`, from: label(pin.model!), to: label(target) });
+			changes.push({ file: settingsRel, where: `agent.models.${role}`, from: label(pin.model!), to: label(target) });
 			roles[role] = clampChatLevel({ ...pin, model: target } as never, null) as Pinned;
 			touched = true;
 		}
 		if (touched && write) {
-			backup(SETTINGS_FILE);
+			backup(settingsFile());
 			writeSettings({
 				...settings,
 				models: clampModelsLevels(models as never),

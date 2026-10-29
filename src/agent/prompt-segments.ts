@@ -21,7 +21,7 @@
  * longer ships stops composing automatically.
  *
  * OVERRIDES: override files mirror the source layout under
- * config.PROMPTS_OVERRIDE_DIR — "system-prompt.md" at the root,
+ * config.promptsOverrideDir() — "system-prompt.md" at the root,
  * "shared/<file>", "teacher/<file>" / "prober/<file>". File presence is NOT
  * the override: the settings SWITCH is (owner decision) — the user keeps
  * their file and flips back to the source default to compare.
@@ -29,7 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { PATHS, PROMPTS_OVERRIDE_DIR } from "../../config.ts";
+import { PATHS, promptsOverrideDir } from "../../config.ts";
 import { FRAGMENT_RE, isValidSegmentPath, type PromptAgent, type PromptSegmentInfo } from "../core/prompt-segments.ts";
 
 const PROMPTS_DIR = path.join(PATHS.root, "src", "agent", "prompts");
@@ -44,7 +44,7 @@ const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-m
 
 /** Absolute path for an override file (unchecked — validate first). */
 function overrideFileFor(segmentPath: string): string {
-	return path.join(PROMPTS_OVERRIDE_DIR, ...segmentPath.split("/"));
+	return path.join(promptsOverrideDir(), ...segmentPath.split("/"));
 }
 
 /** Read one override file, or null when absent/invalid — the composition

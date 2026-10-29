@@ -14,8 +14,9 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { PushStore, PushSubscriptionRecord, VapidKeys } from "../core/ports.ts";
 
-const SUBS_FILE = path.join(PATHS.push, "subscriptions.json");
-const VAPID_FILE = path.join(PATHS.push, "vapid.json");
+const subsFile = () => path.join(PATHS.push, "subscriptions.json");
+/** The VAPID pair is instance-wide (global), subscriptions are per user. */
+const vapidFile = () => path.join(PATHS.globalPush, "vapid.json");
 
 function readJson(file: string): unknown {
 	try {
@@ -44,7 +45,7 @@ function isSub(v: unknown): v is PushSubscriptionRecord {
 }
 
 function listSubscriptions(): PushSubscriptionRecord[] {
-	const raw = readJson(SUBS_FILE);
+	const raw = readJson(subsFile());
 	return Array.isArray(raw) ? raw.filter(isSub) : [];
 }
 
@@ -52,20 +53,20 @@ export const pushStore: PushStore = {
 	listSubscriptions,
 	saveSubscription(sub) {
 		const rest = listSubscriptions().filter((s) => s.endpoint !== sub.endpoint);
-		writeJson(SUBS_FILE, [...rest, sub], 0o600);
+		writeJson(subsFile(), [...rest, sub], 0o600);
 	},
 	removeSubscription(endpoint) {
 		const all = listSubscriptions();
 		const rest = all.filter((s) => s.endpoint !== endpoint);
-		if (rest.length !== all.length) writeJson(SUBS_FILE, rest, 0o600);
+		if (rest.length !== all.length) writeJson(subsFile(), rest, 0o600);
 	},
 	readVapid() {
-		const raw = readJson(VAPID_FILE) as Partial<VapidKeys> | null;
+		const raw = readJson(vapidFile()) as Partial<VapidKeys> | null;
 		return raw && typeof raw.publicKey === "string" && typeof raw.privateKey === "string"
 			? { publicKey: raw.publicKey, privateKey: raw.privateKey }
 			: null;
 	},
 	writeVapid(keys) {
-		writeJson(VAPID_FILE, keys, 0o600);
+		writeJson(vapidFile(), keys, 0o600);
 	},
 };
