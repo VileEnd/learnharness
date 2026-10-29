@@ -168,27 +168,27 @@ export function ModelMenuList({
 				{list.map((m, j) => {
 					const i = group.length + j;
 					return (
-					<li key={`${m.provider}/${m.id}`}>
-						<button
-							type="button"
-							data-testid={`model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
-							data-idx={i}
-							onClick={() => onPick(m)}
-							className={rowClass(m, i)}
-						>
-							<span className="flex items-center justify-between gap-2">
-								<span className="truncate text-card-foreground">{m.name}</span>
-								<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
-									{priceLabel(m.cost)}
+						<li key={`${m.provider}/${m.id}`}>
+							<button
+								type="button"
+								data-testid={`model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
+								data-idx={i}
+								onClick={() => onPick(m)}
+								className={rowClass(m, i)}
+							>
+								<span className="flex items-center justify-between gap-2">
+									<span className="truncate text-card-foreground">{m.name}</span>
+									<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
+										{priceLabel(m.cost)}
+									</span>
 								</span>
-							</span>
-							<span className="flex items-center justify-between gap-2 text-muted-foreground">
-								<span className="truncate">{m.provider} · {m.id}</span>
-								<span className="shrink-0 tabular-nums">{formatTokens(m.contextWindow)}</span>
-							</span>
-						</button>
-					</li>
-				);
+								<span className="flex items-center justify-between gap-2 text-muted-foreground">
+									<span className="truncate">{m.provider} · {m.id}</span>
+									<span className="shrink-0 tabular-nums">{formatTokens(m.contextWindow)}</span>
+								</span>
+							</button>
+						</li>
+					);
 				})}
 			</ul>
 			{footer && (

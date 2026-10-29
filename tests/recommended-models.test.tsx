@@ -52,3 +52,14 @@ describe("ModelMenuList recommended group", () => {
 		assert.equal(modelMenuRows(models, "", false).group.length, 0);
 	});
 });
+
+describe("modelMenuRows index alignment", () => {
+	it("list rows are offset by group.length in the walk", () => {
+		const models = [m("openrouter", "xiaomi/mimo-v2.6-flash"), m("openrouter", "z-ai/glm-5")] as never;
+		const { group, list } = modelMenuRows(models, "", true);
+		const walk = [...group.map((g) => g.model), ...list];
+		assert.equal(group.length, 1);
+		assert.equal(walk[group.length], list[0]);
+		assert.equal(walk.length, group.length + list.length);
+	});
+});
