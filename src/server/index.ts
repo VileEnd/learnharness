@@ -69,3 +69,5 @@ export * from "./health.ts";
 // Admin Users section: the Keycloak admin client (+ the ambient tenant, for self-demotion checks).
 export { createKeycloakAdmin, keycloakAdmin, KeycloakClientRejected, KeycloakError, type AdminUser, type KeycloakAdmin } from "./keycloak-admin.ts";
 export { currentTenant } from "../core/tenant-context.ts";
+// Admin policy and per-user usage API (multi-user design §10).
+export { adminPolicyView, putDefaultsPolicy, putUserPolicy, adminUsage } from "./admin-policy.ts";
