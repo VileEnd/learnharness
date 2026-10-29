@@ -10,6 +10,7 @@
  */
 
 import { createLibrary, type Library } from "./okf.ts";
+import { multiUser } from "../core/tenant-context.ts";
 import { stores } from "./stores.ts";
 
 interface LibraryGlobal {
@@ -26,6 +27,7 @@ export const library: Library = ((globalThis as LibraryGlobal).__lhLibrary ??= (
 		learnerStore: stores.learnerStore,
 		settings: () => stores.settingsStore.readSettings(),
 	});
-	if (process.env.NODE_ENV !== "test" && process.env.NEXT_PHASE !== "phase-production-build") void lib.ensureFresh();
+	// Multi-user: no tenant at boot; per-tenant warm-up arrives with the tenant registries.
+	if (!multiUser() && process.env.NODE_ENV !== "test" && process.env.NEXT_PHASE !== "phase-production-build") void lib.ensureFresh();
 	return lib;
 })());

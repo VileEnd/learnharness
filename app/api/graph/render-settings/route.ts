@@ -2,7 +2,7 @@
  * GET/PUT /api/graph/render-settings — server persistence for the graph
  * view's rendering controls (node/edge/arrow/label sizes, the label-zoom
  * threshold, the cluster-labels toggle). The file lives at
- * data/render-settings.json (config.RENDER_SETTINGS_FILE).
+ * data/render-settings.json (config.renderSettingsFile()).
  *
  *   GET → 200 {settings} once saved, 200 null on first boot (client keeps
  *         in-memory defaults until the user changes something).

@@ -24,7 +24,7 @@ process.env.LH_DATA_DIR = TMP_DATA;
 const { chatStore } = await import("../src/store/chats.ts");
 const { graphStore } = await import("../src/store/graph.ts");
 const { readRenderSettings, writeRenderSettings } = await import("../src/store/render-settings.ts");
-const { GRAPH_FORMAT_FILE } = await import("../config.ts");
+const { graphFormatFile } = await import("../config.ts");
 
 test.after(() => {
 	fs.rmSync(TMP_DATA, { recursive: true, force: true });
@@ -71,10 +71,10 @@ test("chats: a NEWER-stamped record is refused honestly (the downgrade scenario)
 // ── the graph family: the lazy format.json sidecar ──────────────────────────
 
 test("graph: reads never write — no sidecar appears from reading alone", () => {
-	assert.ok(!fs.existsSync(GRAPH_FORMAT_FILE), "no sidecar before any write");
+	assert.ok(!fs.existsSync(graphFormatFile()), "no sidecar before any write");
 	assert.deepEqual(graphStore.readNodes(), [], "ledger reads fine without a sidecar");
 	assert.equal(readRenderSettings(), null, "render-settings reads fine without a sidecar");
-	assert.ok(!fs.existsSync(GRAPH_FORMAT_FILE), "reads did NOT create the sidecar (lazy = write-side only)");
+	assert.ok(!fs.existsSync(graphFormatFile()), "reads did NOT create the sidecar (lazy = write-side only)");
 });
 
 test("graph: the first ledger append creates the sidecar at version 1", () => {
@@ -86,25 +86,25 @@ test("graph: the first ledger append creates the sidecar at version 1", () => {
 		createdAt: new Date().toISOString(),
 		provenance: [],
 	});
-	assert.ok(fs.existsSync(GRAPH_FORMAT_FILE), "the first write stamped the family");
-	assert.equal(JSON.parse(fs.readFileSync(GRAPH_FORMAT_FILE, "utf8")).version, 1);
+	assert.ok(fs.existsSync(graphFormatFile()), "the first write stamped the family");
+	assert.equal(JSON.parse(fs.readFileSync(graphFormatFile(), "utf8")).version, 1);
 	assert.equal(graphStore.readNodes().length, 1, "the ledger reads back with the sidecar present");
 });
 
 test("graph: a NEWER-stamped sidecar is refused honestly", () => {
-	fs.mkdirSync(path.dirname(GRAPH_FORMAT_FILE), { recursive: true });
-	fs.writeFileSync(GRAPH_FORMAT_FILE, JSON.stringify({ version: 99 }), "utf-8");
+	fs.mkdirSync(path.dirname(graphFormatFile()), { recursive: true });
+	fs.writeFileSync(graphFormatFile(), JSON.stringify({ version: 99 }), "utf-8");
 	assert.throws(() => graphStore.readNodes(), /older than its data|format version 99/);
 	assert.throws(() => graphStore.readSources(), /older than its data|format version 99/);
 	assert.throws(() => readRenderSettings(), /older than its data|format version 99/);
 });
 
 test("render-settings: its write stamps the family sidecar too", () => {
-	fs.rmSync(path.dirname(GRAPH_FORMAT_FILE), { recursive: true, force: true });
-	assert.ok(!fs.existsSync(GRAPH_FORMAT_FILE));
+	fs.rmSync(path.dirname(graphFormatFile()), { recursive: true, force: true });
+	assert.ok(!fs.existsSync(graphFormatFile()));
 	const written = writeRenderSettings({ sizeUnits: "world", nodeSize: 3 });
 	assert.equal(written.nodeSize, 3);
-	assert.equal(JSON.parse(fs.readFileSync(GRAPH_FORMAT_FILE, "utf8")).version, 1, "the render-settings write stamped the family");
+	assert.equal(JSON.parse(fs.readFileSync(graphFormatFile(), "utf8")).version, 1, "the render-settings write stamped the family");
 });
 
 // ── the fixtures stay the legacy pin: golden data reads unstamped ───────────
