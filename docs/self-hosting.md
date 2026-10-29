@@ -148,6 +148,14 @@ ssh root@learnharness.fritz.box systemctl restart learnharness-stack     # NixOS
 cd ~/learnharness && git pull && cd deploy && docker compose up -d --build   # manual host
 ```
 
+### Moving an existing install to multi-user
+
+With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 503 `legacy_layout`. Move it under its owner (their Keycloak `sub`) once:
+
+```bash
+docker compose exec learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
+```
+
 ## Backups
 
 Back up the volumes (app data and keys, Caddy CA, Keycloak database) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything.

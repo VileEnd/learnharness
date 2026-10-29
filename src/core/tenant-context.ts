@@ -22,6 +22,9 @@ export interface Tenant {
 
 export const LOCAL_TENANT: Tenant = { id: "local", name: "local", isAdmin: true };
 
+/** Valid tenant ids (twin in scripts/migrate-to-tenants.mjs). */
+export const TENANT_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 export class NoTenantError extends Error {
 	constructor() {
 		super("NoTenantError: no tenant in scope (multi-user mode requires runAsTenant)");

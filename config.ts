@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { multiUser, requireTenant } from "./src/core/tenant-context.ts";
@@ -18,8 +19,26 @@ export const DATA_ROOT = process.env.LH_DATA_DIR
 	? path.resolve(process.env.LH_DATA_DIR)
 	: path.join(ROOT, "data");
 
+/** Entries a pre-multi-user install keeps directly under DATA_ROOT. */
+const LEGACY_ENTRIES = ["chats", "graph", "documents", "settings.json"];
+
+/** True in multi-user mode while the old single-user layout still sits at DATA_ROOT. */
+export function legacyLayoutPresent(): boolean {
+	return multiUser() && LEGACY_ENTRIES.some((e) => fs.existsSync(path.join(DATA_ROOT, e)));
+}
+
+export class LegacyLayoutError extends Error {
+	constructor() {
+		super(
+			"LegacyLayoutError: single-user data found at the data root; run `node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>` first",
+		);
+		this.name = "LegacyLayoutError";
+	}
+}
+
 /** Per-user data root: DATA_ROOT in single-user mode, DATA_ROOT/users/<id> in multi-user mode. */
 export function userDataRoot(): string {
+	if (legacyLayoutPresent()) throw new LegacyLayoutError();
 	return multiUser() ? path.join(DATA_ROOT, "users", requireTenant().id) : DATA_ROOT;
 }
 
