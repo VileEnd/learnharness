@@ -46,6 +46,7 @@ import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.
 import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 import { isHintScopedInput, stripInternalLabels } from "./internal-labels.ts";
+import { drawingRefOf } from "./canvas-core.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -627,15 +628,18 @@ export function nextHintNumber(messages: readonly unknown[], callId: string): nu
 }
 
 /** The learner asked for the next rung of help on the active canvas task or
- *  practice problem. `n` numbers the request for that task; omitted = the legacy unnumbered text. */
-export function newHintRequest(callId: string, n?: number): LhMarkerMessage {
+ *  practice problem. `n` numbers the request for that task; omitted = the legacy unnumbered text. A hint
+ *  from the open canvas carries his "Your thinking" draft (`text`) and a snapshot of the canvas
+ *  (`drawingId`): both ride the content like a work submission's, and `details` keeps them raw. */
+export function newHintRequest(callId: string, n?: number, sent: { drawingId?: string; text?: string } = {}): LhMarkerMessage {
+	const { drawingId, text } = sent;
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "hint-request",
-		content: n === undefined ? HINT_REQUEST_TEXT : hintRequestText(n),
+		content: `${n === undefined ? HINT_REQUEST_TEXT : hintRequestText(n)}${text ? `\nYour thinking so far:\n${text}` : ""}${drawingId ? `\n[drawing ${drawingId}]` : ""}`,
 		display: true,
-		details: n === undefined ? { callId } : { callId, n },
+		details: { callId, ...(n === undefined ? {} : { n }), ...(drawingId ? { drawingId } : {}), ...(text ? { text } : {}) },
 		timestamp: Date.now(),
 	};
 }
@@ -902,15 +906,6 @@ interface DrawingPlan {
 	newest: number;
 }
 
-/** The task id a drawing marker belongs to, and its drawing id. */
-function drawingMarkerOf(marker: LhMarkerMessage): { taskId: string; drawingId: string } | null {
-	if (marker.customType !== "work-submission" && marker.customType !== "practice-thinking") return null;
-	const d = marker.details as { workCallId?: unknown; problemCallId?: unknown; drawingId?: unknown } | null;
-	const taskId = marker.customType === "work-submission" ? d?.workCallId : d?.problemCallId;
-	if (typeof taskId !== "string" || typeof d?.drawingId !== "string") return null;
-	return { taskId, drawingId: d.drawingId };
-}
-
 function planDrawings(messages: readonly LhMessage[], start: number): DrawingPlan {
 	const activeIds = new Set<string>();
 	const work = activeWorkOf(messages);
@@ -921,7 +916,7 @@ function planDrawings(messages: readonly LhMessage[], start: number): DrawingPla
 	for (let i = messages.length - 1; i >= start; i--) {
 		const m = messages[i]!;
 		if ((m as { role?: string }).role !== "custom") continue;
-		const d = drawingMarkerOf(m as LhMarkerMessage);
+		const d = drawingRefOf(m as LhMarkerMessage);
 		if (d && activeIds.has(d.taskId)) {
 			newest = i;
 			break;
@@ -931,7 +926,7 @@ function planDrawings(messages: readonly LhMessage[], start: number): DrawingPla
 }
 
 function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPlan, ctx: DrawingContext): Message | null {
-	const d = drawingMarkerOf(marker);
+	const d = drawingRefOf(marker);
 	if (!d) return null;
 	const user = (content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>): Message =>
 		({ role: "user", content, timestamp: marker.timestamp }) as Message;
@@ -1034,8 +1029,9 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 	const out: Message[] = [];
 	if (leading) out.push(leading);
 	if (head) out.push(head);
-	// DRAWINGS: only the newest submission of the ACTIVE task rides as an
-	// image; earlier ones are superseded stubs, a closed task's collapse.
+	// DRAWINGS: only the newest drawing of the ACTIVE task (a submission or
+	// a hint snapshot) rides as an image; earlier ones are superseded stubs,
+	// a closed task's collapse.
 	const drawingPlan = opts.drawing ? planDrawings(lhMessages, start) : null;
 	// Scoped over the WHOLE record, so a reply whose hint request sits before the cut still counts.
 	const hintReplies = hintReplyMessages(messages);
