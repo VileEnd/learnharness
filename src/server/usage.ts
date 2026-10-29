@@ -21,6 +21,7 @@ import { stores } from "./stores.ts";
  *  session carries its chat's title and kind; a chat that no longer exists
  *  keeps its spend as "Deleted session". */
 export function usageMonth(month: string = monthKey(new Date())): UsageMonthView {
+	ensureBackfill();
 	const summary = summarizeMonth(month, stores.requestLog.readMonth(month), callCost);
 	return {
 		...summary,
@@ -35,6 +36,7 @@ export function usageMonth(month: string = monthKey(new Date())): UsageMonthView
 
 /** The last 12 months that have a log file, oldest first. */
 export function usageMonths(): UsageMonthTotal[] {
+	ensureBackfill();
 	return stores.requestLog
 		.months()
 		.slice(-12)
@@ -97,11 +99,16 @@ function importedLine(at: string, qualifiedModel: string, call: Partial<CallUsag
 	};
 }
 
+/** Runs recorded before extraction carried stages have none: they count
+ *  nothing (the old cost summary's guard). */
 function extractionLines(runs: readonly ExtractionRunUsage[] | undefined, chatId?: string): RequestLogLine[] {
 	return (runs ?? []).flatMap((run) =>
-		(["extractor", "auditor"] as const).flatMap((stage) =>
-			run.stages[stage].steps.map((s) => importedLine(run.at, run.stages[stage].model, s, { purpose: stage, ...(chatId && { chatId }) })),
-		),
+		(["extractor", "auditor"] as const).flatMap((stage) => {
+			const recorded = run.stages?.[stage];
+			return (recorded?.steps ?? []).map((s) =>
+				importedLine(run.at, recorded?.model ?? "unknown", s, { purpose: stage, ...(chatId && { chatId }) }),
+			);
+		}),
 	);
 }
 
@@ -142,24 +149,45 @@ interface Candidate {
 
 const asCandidate = (line: RequestLogLine): Candidate => ({ line, doneAt: line.at });
 
+/** One record's lines, or none when the record is malformed in a way no
+ *  guard foresaw: one bad record must never kill the whole backfill. */
+function linesOf(record: string, build: () => Candidate[]): Candidate[] {
+	try {
+		return build();
+	} catch (err) {
+		console.error(`[usage] backfill skipped ${record}:`, err);
+		return [];
+	}
+}
+
 /** Every line the records can account for, before any cutoff. */
 function recordLines(): Candidate[] {
 	const out: Candidate[] = [];
 	for (const id of idsIn(PATHS.chats)) {
-		const chat = stores.chatStore.getChat(id);
-		if (chat) out.push(...[...turnLines(chat), ...extractionLines(chat.extractions, chat.id)].map(asCandidate));
+		out.push(
+			...linesOf(`chat ${id}`, () => {
+				const chat = stores.chatStore.getChat(id);
+				return chat ? [...turnLines(chat), ...extractionLines(chat.extractions, chat.id)].map(asCandidate) : [];
+			}),
+		);
 	}
 	// Every job file once, whatever its chat: a job outliving its chat still spent.
 	for (const id of idsIn(path.join(PATHS.data, "jobs"))) {
-		const job = stores.jobStore.getJob(id);
-		const u = job?.usage;
-		if (!job || !u || u.steps < 1) continue;
-		const owner = { purpose: JOB_PURPOSE[job.kind] ?? job.kind, chatId: job.chatId };
-		const calls: Partial<CallUsage>[] = u.calls?.length ? u.calls : [u];
-		// Dated at the start (the daily chart), cut at completion.
-		for (const c of calls) out.push({ line: importedLine(job.createdAt, u.model, c, owner), doneAt: job.updatedAt });
+		out.push(
+			...linesOf(`job ${id}`, () => {
+				const job = stores.jobStore.getJob(id);
+				const u = job?.usage;
+				if (!job || !u || u.steps < 1) return [];
+				const owner = { purpose: JOB_PURPOSE[job.kind] ?? job.kind, chatId: job.chatId };
+				const calls: Partial<CallUsage>[] = u.calls?.length ? u.calls : [u];
+				// Dated at the start (the daily chart), cut at completion.
+				return calls.map((c) => ({ line: importedLine(job.createdAt, u.model, c, owner), doneAt: job.updatedAt }));
+			}),
+		);
 	}
-	for (const source of stores.graphStore.readSources()) out.push(...extractionLines(source.extractions).map(asCandidate));
+	for (const source of stores.graphStore.readSources()) {
+		out.push(...linesOf(`source ${source.id}`, () => extractionLines(source.extractions).map(asCandidate)));
+	}
 	// A reused scan copies its job and cost onto the new document: one OCR
 	// job is one charge, dated at its first import.
 	const scans = new Set<string>();
@@ -233,4 +261,17 @@ export function runUsageBackfill(): { imported: number } {
 	}
 	log.markBackfilled();
 	return { imported };
+}
+
+/** The read path runs the backfill itself when the boot run has not
+ *  finished yet (the first /api/usage after a start), so no month view is
+ *  ever folded from a log without the records' history. Idempotent and
+ *  synchronous; a failure costs the history, never the read. */
+function ensureBackfill(): void {
+	if (stores.requestLog.backfillDone()) return;
+	try {
+		runUsageBackfill();
+	} catch (err) {
+		console.error("[usage] the usage backfill failed:", err);
+	}
 }
