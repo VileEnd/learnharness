@@ -352,6 +352,21 @@ describe("teacher ink", () => {
 		assert.ok(Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]) >= 14);
 	});
 
+	it("a workspace note stays at least 13px on screen whatever the zoom; the marks keep scaling with the drawing", () => {
+		const marks: AnnotationMark[] = [{ kind: "circle", target: { object: "o1" }, label: "which x makes the bracket zero?" }];
+		const at = (zoom?: number) => renderToStaticMarkup(<TeacherInk marks={marks} scene={inkScene} box={box} space="world" zoom={zoom} />);
+		const fontOf = (html: string) => Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
+		const pathOf = (html: string) => html.match(/<path d="([^"]+)"/)?.[1];
+		assert.ok(fontOf(at(0.65)) >= 13 / 0.65 - 0.01, `font ${fontOf(at(0.65))}`);
+		assert.ok(fontOf(at(1)) >= 14);
+		assert.equal(pathOf(at(0.65)), pathOf(at(1)), "the circle is the same world path at any zoom");
+		// the reveal's note box is the rendered one at that zoom
+		const note = teacherInkBoxes(marks, inkScene, box, 0.65)[1]!;
+		const [, , ty] = at(0.65).match(/<tspan x="([\d.]+)" y="([\d.]+)"/)!.map(Number);
+		assert.ok(Math.abs(note.y + fontOf(at(0.65)) * 0.9 - ty!) < 0.01);
+		assert.ok(note.h >= 13 / 0.65);
+	});
+
 	it("an arrow's label sits clear of its shaft's midpoint", () => {
 		// o1 -> o2 is a vertical arrow from (200, 130) to (200, 330); the world unit u is 3 on this drawing.
 		const html = ink([{ kind: "arrow", from: { object: "o1" }, to: { object: "o2" }, label: "moves down" }], "world");
