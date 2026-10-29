@@ -71,3 +71,14 @@ test("unknown category folds via purpose; null-usd sessions sort last", () => {
 	assert.equal(m.sessions[1]?.chatId, "N");
 	assert.equal(m.sessions[1]?.usd, null);
 });
+
+test("search lines count as calls, never as unpriced; their failures still count", () => {
+	const search = (o: Partial<RequestLogLine> = {}) => line({ purpose: "search", category: "search", provider: "tavily", model: "search", ...o });
+	const m = summarizeMonth("2026-10", [line({ output: 1000 }), search(), search({ outcome: "error", error: "HTTP 401" })], price);
+	assert.equal(m.calls, 3);
+	assert.equal(m.categories.search.calls, 2);
+	assert.equal(m.unpricedCalls, 0);
+	assert.equal(m.categories.search.unpriced, 0);
+	assert.equal(m.failures, 1);
+	assert.ok(Math.abs((m.totalUsd ?? 0) - 0.01) < 1e-9);
+});
