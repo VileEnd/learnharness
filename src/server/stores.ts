@@ -15,6 +15,7 @@ import { jobStore } from "../store/jobs.ts";
 import { learnerStore } from "../store/learner.ts";
 import { okfBundleStore } from "../store/okf.ts";
 import { pushStore } from "../store/push.ts";
+import { requestLogStore } from "../store/request-log.ts";
 import { settingsStore } from "../store/settings.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
@@ -28,6 +29,7 @@ export const stores = {
 	learnerStore,
 	okfBundleStore,
 	pushStore,
+	requestLog: requestLogStore,
 	settingsStore,
 };
 
