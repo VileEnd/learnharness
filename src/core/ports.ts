@@ -26,6 +26,7 @@ import type {
 	TopicRow,
 	TurnUsage,
 	NotesSource,
+	RequestLogLine,
 } from "./contracts.ts";
 import type { DrawingScene } from "./canvas-core.ts";
 import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/documents.ts";
@@ -385,4 +386,18 @@ export interface OkfBundleStore {
 export interface LearnerStore {
 	appendAttribution(row: AttributionRow): void;
 	readAttributions(): AttributionRow[];
+}
+
+/**
+ * The request log (data/logs/requests-YYYY-MM.jsonl): append-only, one line per
+ * paid call. Reads never throw and never create anything; the directory is
+ * created by the first append. The backfill marker records that old chat
+ * usage was imported once.
+ */
+export interface RequestLogStore {
+	append(line: RequestLogLine): void;
+	readMonth(month: string): RequestLogLine[];
+	months(): string[];
+	backfillDone(): boolean;
+	markBackfilled(): void;
 }
