@@ -188,11 +188,13 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			if ((status.status === "done" || status.status === "failed") && !loggedJobs.has(id)) {
 				loggedJobs.add(id);
 				const bad = status.files.find((f) => f.status !== "done");
+				// A failed job still spent what the sidecar reports (defined values only).
+				const costs = status.files.map((f) => f.cost_usd).filter((c): c is number => typeof c === "number");
+				const cost = costs.length > 0 ? { providerCostUsd: costs.reduce((a, c) => a + c, 0) } : {};
 				if (status.status === "done" && !bad) {
-					const costs = status.files.map((f) => f.cost_usd).filter((c): c is number => typeof c === "number");
-					log(startedAt, status.strategy, "ok", costs.length > 0 ? { providerCostUsd: costs.reduce((a, c) => a + c, 0) } : {});
+					log(startedAt, status.strategy, "ok", cost);
 				} else {
-					log(startedAt, status.strategy, "error", { error: bad?.error ?? status.files.find((f) => f.error)?.error ?? "OCR job failed" });
+					log(startedAt, status.strategy, "error", { ...cost, error: bad?.error ?? status.files.find((f) => f.error)?.error ?? "OCR job failed" });
 				}
 			}
 			return status;
