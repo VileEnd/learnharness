@@ -39,6 +39,16 @@ test("resolveTenant: admin group, with or without a leading slash", () => {
 	assert.equal(g("learnharness"), false);
 });
 
+test("resolveTenant: an empty LH_ADMIN_GROUP never makes group-less users admins", () => {
+	process.env.LH_ADMIN_GROUP = "";
+	try {
+		assert.equal(resolveTenant(hdr(asUser(UUID)))?.isAdmin, false);
+		assert.equal(resolveTenant(hdr({ ...asUser(UUID), "x-auth-request-groups": "" }))?.isAdmin, false);
+	} finally {
+		delete process.env.LH_ADMIN_GROUP;
+	}
+});
+
 test("resolveTenant: single-user mode is LOCAL_TENANT", () => {
 	process.env.LH_MULTI_USER = "0";
 	try {
@@ -81,6 +91,7 @@ test("settings written as user a are invisible to user b through the real routes
 });
 
 test("every app/api route except health wraps each exported HTTP method in withTenant(", () => {
+	const apiDir = path.join(import.meta.dirname, "..", "app", "api");
 	const files: string[] = [];
 	const walk = (d: string) => {
 		for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -89,13 +100,13 @@ test("every app/api route except health wraps each exported HTTP method in withT
 			else if (e.name === "route.ts") files.push(p);
 		}
 	};
-	walk(path.join(import.meta.dirname, "..", "app", "api"));
+	walk(apiDir);
 	let checked = 0;
 	for (const f of files) {
-		if (f.endsWith(path.join("health", "route.ts"))) continue;
+		if (f === path.join(apiDir, "health", "route.ts")) continue;
 		const src = fs.readFileSync(f, "utf8");
-		assert.ok(!/export (async )?function (GET|POST|PUT|PATCH|DELETE)\b/.test(src), `${f}: unwrapped function export`);
-		const methods = [...src.matchAll(/export const (GET|POST|PUT|PATCH|DELETE)\b\s*=\s*(.*)/g)];
+		assert.ok(!/export (async )?function (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/.test(src), `${f}: unwrapped function export`);
+		const methods = [...src.matchAll(/export const (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b\s*=\s*(.*)/g)];
 		assert.ok(methods.length > 0, `${f}: no exported method`);
 		for (const m of methods) assert.ok(m[2]!.startsWith("withTenant("), `${f}: ${m[1]} not wrapped`);
 		checked++;
