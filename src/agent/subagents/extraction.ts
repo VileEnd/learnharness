@@ -33,6 +33,7 @@ import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
 import { settleGraphLayout } from "../../core/layout-settle.ts";
 import { batchRuns, coverageOf, messageViewLines } from "../../core/coverage.ts";
+import { registryKey, requireTenant } from "../../core/tenant-context.ts";
 import { failedOutputCallIds, type LhMessage } from "../../core/native-messages.ts";
 import { auditorGraphTools } from "../tools/graph.ts";
 import { runSubmitAgent, healStringifiedArrays } from "./submit-agent.ts";
@@ -814,6 +815,8 @@ export interface RunningExtraction {
 	/** True-cancellation handle (the dock's abort button): one controller per
 	 *  run, shared across phases; abort() cancels the in-flight model call. */
 	controller: AbortController;
+	/** Owning tenant id: the registry is process-wide, runs are per tenant. */
+	tenant?: string;
 }
 
 interface LhExtractionGlobal {
@@ -852,7 +855,8 @@ function runs(): NonNullable<LhExtractionGlobal["__lhExtractionRuns"]> {
 
 /** In-flight pipeline runs (oldest first) — the /api/graph/status payload. */
 export function extractionStatuses(): RunningExtraction[] {
-	return [...runs().running.values()].sort((a, b) => a.startedAt - b.startedAt);
+	const me = requireTenant().id;
+	return [...runs().running.values()].filter((r) => (r.tenant ?? "local") === me).sort((a, b) => a.startedAt - b.startedAt);
 }
 
 /** True cancellation of the in-flight run for a chat (the dock's abort
@@ -865,8 +869,9 @@ export function abortExtraction(chatId: string): boolean {
 	// entries (one per chunk/batch) — aborting the source aborts EVERY
 	// job of its fan-out.
 	let found = false;
+	const me = requireTenant().id;
 	for (const run of runs().running.values()) {
-		if (run.chatId !== chatId) continue;
+		if (run.chatId !== chatId || (run.tenant ?? "local") !== me) continue;
 		run.controller.abort();
 		found = true;
 	}
@@ -1035,8 +1040,21 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	// THE SHARED REGISTRIES (runs() above — globalThis): every pipeline
 	// instance (route entries in dev, tests) sees the same runs, the same
 	// single-flight guard. No module-level state left in this factory.
-	const runningExtractions = runs().running;
-	const inFlight = runs().inFlight;
+	// Process-wide maps, viewed through the CURRENT tenant: keys are
+	// namespaced by tenantKey and each entry records its tenant, so two
+	// tenants never collide on (or see) each other's runs.
+	const rawRunning = runs().running;
+	const rawInFlight = runs().inFlight;
+	const runningExtractions = {
+		get: (k: string) => rawRunning.get(registryKey(k)),
+		set: (k: string, v: RunningExtraction) => void rawRunning.set(registryKey(k), { ...v, tenant: requireTenant().id }),
+		delete: (k: string) => rawRunning.delete(registryKey(k)),
+	};
+	const inFlight = {
+		has: (k: string) => rawInFlight.has(registryKey(k)),
+		add: (k: string) => void rawInFlight.add(registryKey(k)),
+		delete: (k: string) => rawInFlight.delete(registryKey(k)),
+	};
 
 	function setPhase(
 		jobKey: string,

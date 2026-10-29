@@ -5,11 +5,11 @@
  * 200 {files:[{name,pages,usd}], usd, default_strategy}; 400 with no PDF;
  * 503 {error, code} when the sidecar is not configured or unreachable.
  */
-import { documents, incomingFiles, OcrError } from "@/src/server";
+import { documents, incomingFiles, OcrError, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
+export const POST = withTenant(async (request: Request) => {
 	const files = await incomingFiles(await request.formData());
 	try {
 		const estimate = await documents.estimate(files);
@@ -19,4 +19,4 @@ export async function POST(request: Request) {
 		if (err instanceof OcrError) return Response.json({ error: err.message, code: err.code }, { status: 503 });
 		throw err;
 	}
-}
+});

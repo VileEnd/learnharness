@@ -5,11 +5,11 @@
  * usageFailures().
  */
 import { monthKey } from "@/src/core";
-import { usageFailures } from "@/src/server";
+import { usageFailures, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+export const GET = withTenant(async (request: Request) => {
 	const params = new URL(request.url).searchParams;
 	const month = params.get("month");
 	const page = params.get("page");
@@ -20,4 +20,4 @@ export async function GET(request: Request) {
 		return Response.json({ error: "page must be a non-negative integer" }, { status: 400 });
 	}
 	return Response.json(usageFailures(month ?? monthKey(new Date()), page === null ? 0 : Number(page)));
-}
+});

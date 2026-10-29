@@ -12,7 +12,8 @@
 	"ssoSessionMaxLifespanRememberMe": 31536000,
 	"bruteForceProtected": true,
 	"groups": [
-		{ "name": "learnharness", "path": "/learnharness" }
+		{ "name": "learnharness", "path": "/learnharness" },
+		{ "name": "learnharness-admin", "path": "/learnharness-admin" }
 	],
 	"clients": [
 		{

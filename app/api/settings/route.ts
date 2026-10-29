@@ -1,7 +1,7 @@
 /**
  * GET /api/settings — THE user settings record (settings-storage wave,
  * 2026-09-19): the whole delta record at data/settings.json (config.
- * SETTINGS_FILE, via the SettingsStore port). Non-secret by construction —
+ * settingsFile(), via the SettingsStore port). Non-secret by construction —
  * secrets live in auth.json / .env.local and never enter this record.
  *
  *   GET → 200 {settings} (the sanitized delta record — absent keys mean
@@ -14,10 +14,10 @@
  * (core/settings-resolution.ts resolveSettings — browser-safe).
  */
 
-import { settingsStore } from "@/src/server";
+import { settingsStore, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json({ settings: settingsStore.readSettings() });
-}
+});

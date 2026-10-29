@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
-import { SETTINGS_FILE } from "../config.ts";
+import { settingsFile } from "../config.ts";
 import { readSettings, writeSettings } from "../src/store/settings.ts";
 
 // Snapshot any pre-existing record; restore in after() so the worktree's
@@ -22,23 +22,23 @@ import { readSettings, writeSettings } from "../src/store/settings.ts";
 let hadSettings = false;
 let savedSettings = "";
 try {
-	savedSettings = fs.readFileSync(SETTINGS_FILE, "utf-8");
+	savedSettings = fs.readFileSync(settingsFile(), "utf-8");
 	hadSettings = true;
 } catch {
 	/* first boot — nothing to snapshot */
 }
 after(() => {
-	if (hadSettings) fs.writeFileSync(SETTINGS_FILE, savedSettings, "utf-8");
-	else fs.rmSync(SETTINGS_FILE, { force: true });
+	if (hadSettings) fs.writeFileSync(settingsFile(), savedSettings, "utf-8");
+	else fs.rmSync(settingsFile(), { force: true });
 });
 
 afterEach(() => {
-	fs.rmSync(SETTINGS_FILE, { force: true });
+	fs.rmSync(settingsFile(), { force: true });
 });
 
 describe("the settings store", () => {
 	it("reads null on first boot (no record)", () => {
-		fs.rmSync(SETTINGS_FILE, { force: true });
+		fs.rmSync(settingsFile(), { force: true });
 		assert.equal(readSettings(), null);
 	});
 
@@ -50,11 +50,11 @@ describe("the settings store", () => {
 	});
 
 	it("a chat section on disk is IGNORED — the field died with per-session models (owner, 2026-09-28)", () => {
-		fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+		fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
 		// A fossil `chat` section (the old default-settings record) must not
 		// resurrect through the sanitizer — the key is simply gone.
 		fs.writeFileSync(
-			SETTINGS_FILE,
+			settingsFile(),
 			JSON.stringify({
 				version: 1,
 				chat: { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" }, thinkingLevel: "low" },
@@ -69,8 +69,8 @@ describe("the settings store", () => {
 	});
 
 	it("corrupt settings.json → null (first-boot semantics), never throws", () => {
-		fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-		fs.writeFileSync(SETTINGS_FILE, "{not json", "utf-8");
+		fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+		fs.writeFileSync(settingsFile(), "{not json", "utf-8");
 		assert.equal(readSettings(), null);
 	});
 });

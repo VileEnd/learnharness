@@ -3,10 +3,10 @@
  * summary, topics, filenames as aliases, pages, dates, sections) without
  * its duplicate-detection sketch, newest import first.
  */
-import { documents } from "@/src/server";
+import { documents, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json({ documents: documents.list() });
-}
+});

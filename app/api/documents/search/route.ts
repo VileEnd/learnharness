@@ -4,11 +4,11 @@
  * {mode: "hybrid" | "keyword", query, hits, note?}; keyword mode is the honest
  * fallback when no embeddings are available. Never waits on indexing.
  */
-import { docIndex } from "@/src/server";
+import { docIndex, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
+export const GET = withTenant(async (req: Request) => {
 	const params = new URL(req.url).searchParams;
 	const query = params.get("q")?.trim() ?? "";
 	if (query === "") return Response.json({ error: "q is required" }, { status: 400 });
@@ -21,4 +21,4 @@ export async function GET(req: Request) {
 		...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 	});
 	return Response.json(result);
-}
+});

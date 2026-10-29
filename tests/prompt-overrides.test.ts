@@ -35,7 +35,7 @@ import type { PiEngine } from "../src/agent/models.ts";
 const TMP_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "lh-prompt-overrides-"));
 process.env.LH_DATA_DIR = TMP_DATA;
 
-const { PROMPTS_OVERRIDE_DIR } = await import("../config.ts");
+const { promptsOverrideDir } = await import("../config.ts");
 const teacherAgent = await import("../src/agent/teacher-agent.ts");
 const { allSegmentPaths, effectivePromptSegments } = await import("../src/agent/prompt-segments.ts");
 const { isValidSegmentPath } = await import("../src/core/prompt-segments.ts");
@@ -130,7 +130,7 @@ describe("isValidSegmentPath (the mirror-layout discipline)", () => {
 
 describe("the override store", () => {
 	it("listOverrides is empty with no dir, then lists written mirrors sorted", () => {
-		fs.rmSync(PROMPTS_OVERRIDE_DIR, { recursive: true, force: true });
+		fs.rmSync(promptsOverrideDir(), { recursive: true, force: true });
 		assert.deepEqual(promptOverrides.listOverrides(), []);
 		promptOverrides.writeOverride("teacher/20-teaching.md", "custom teaching");
 		promptOverrides.writeOverride("system-prompt.md", "custom base");
@@ -145,7 +145,7 @@ describe("the override store", () => {
 		promptOverrides.deleteOverride("prober/30-probe-done.md"); // again: no throw
 		// traversal junk never reaches disk
 		promptOverrides.writeOverride("../evil.md", "nope");
-		assert.equal(fs.existsSync(path.join(PROMPTS_OVERRIDE_DIR, "..", "evil.md")), false);
+		assert.equal(fs.existsSync(path.join(promptsOverrideDir(), "..", "evil.md")), false);
 	});
 
 	it("switches are NOT the store's concern — files alone never enable", () => {
@@ -245,7 +245,7 @@ describe("the source-derived segment list", () => {
 });
 
 // ─── composeInstructions honors overrides (P2 reconciliation, 2026-09-19) ────
-// This file OWNS the (isolated) PROMPTS_OVERRIDE_DIR (parallel-test
+// This file OWNS the (isolated) promptsOverrideDir() (parallel-test
 // discipline), so every override-writing composition test lives here.
 
 describe("composeInstructions: override honoring + the byte-identical source path", () => {
@@ -372,7 +372,7 @@ describe("an orphaned ON heals to OFF on write — never a 400 (the invariant: a
 
 		// The disk-level wipe — OUTSIDE the app (the delete route now clears
 		// the switch, so this is the only way an orphan still arises).
-		fs.rmSync(path.join(PROMPTS_OVERRIDE_DIR, "teacher", "20-teaching.md"));
+		fs.rmSync(path.join(promptsOverrideDir(), "teacher", "20-teaching.md"));
 
 		// The exact trap shape: the client mirrors the record's orphaned ON
 		// while writing an unrelated tool toggle. Today (pre-fix) → 400 forever.
@@ -415,11 +415,11 @@ describe("an orphaned ON heals to OFF on write — never a 400 (the invariant: a
 describe("test isolation (the suite must never touch real user data)", () => {
 	it("every write this suite makes lands under the LH_DATA_DIR seam, not the repo data dir", () => {
 		assert.ok(
-			PROMPTS_OVERRIDE_DIR.startsWith(TMP_DATA),
-			`PROMPTS_OVERRIDE_DIR (${PROMPTS_OVERRIDE_DIR}) must live under the temp seam (${TMP_DATA})`,
+			promptsOverrideDir().startsWith(TMP_DATA),
+			`promptsOverrideDir() (${promptsOverrideDir()}) must live under the temp seam (${TMP_DATA})`,
 		);
 		assert.notEqual(
-			PROMPTS_OVERRIDE_DIR,
+			promptsOverrideDir(),
 			REPO_PROMPTS,
 			"the seam must NOT resolve to the repo's real data/prompts",
 		);

@@ -22,7 +22,7 @@
  * build is deleted once, here, at adapter load (same doctrine as the
  * events-ledger purge below).
  *
- * Plus config.SOURCES_FILE (sources.json): the imported-notes bookkeeping
+ * Plus config.sourcesFile() (sources.json): the imported-notes bookkeeping
  * (NOT a ledger) — one JSON map, src-id → NotesSource, read-modify-write
  * like a chat file. The format-agnostic front door (2026-09-13).
  *
@@ -36,7 +36,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { LEDGER_FILES, POSITIONS_FILE, SOURCES_FILE, TOPIC_ALIASES_FILE } from "../../config.ts";
+import { LEDGER_FILES, positionsFile, sourcesFile, topicAliasesFile } from "../../config.ts";
 import { assertGraphFormat, ensureGraphFormat } from "./graph-format.ts";
 import type {
 	GraphChain,
@@ -50,6 +50,7 @@ import type {
 	TopicRow,
 } from "../core/contracts.ts";
 import type { GraphStore } from "../core/ports.ts";
+import { multiUser } from "../core/tenant-context.ts";
 
 // ─── JSONL primitives ────────────────────────────────────────────────────────
 
@@ -175,11 +176,11 @@ export const graphStore: GraphStore = {
 		return readValid(LEDGER_FILES.topics, isTopicRow);
 	},
 
-	// ── the topic alias table (config.TOPIC_ALIASES_FILE — a JSON map) ──
+	// ── the topic alias table (config.topicAliasesFile() — a JSON map) ──
 	readTopicAliases(): Record<string, string> {
 		assertGraphFormat();
 		try {
-			const parsed: unknown = JSON.parse(fs.readFileSync(TOPIC_ALIASES_FILE, "utf-8"));
+			const parsed: unknown = JSON.parse(fs.readFileSync(topicAliasesFile(), "utf-8"));
 			if (!isRecord(parsed)) return {};
 			return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => isString(e[1]) && e[1].trim() !== ""));
 		} catch {
@@ -187,14 +188,14 @@ export const graphStore: GraphStore = {
 		}
 	},
 	writeTopicAliases(aliases: Record<string, string>): void {
-		fs.mkdirSync(path.dirname(TOPIC_ALIASES_FILE), { recursive: true });
+		fs.mkdirSync(path.dirname(topicAliasesFile()), { recursive: true });
 		ensureGraphFormat();
-		const tmp = `${TOPIC_ALIASES_FILE}.tmp-${crypto.randomUUID().slice(0, 8)}`;
+		const tmp = `${topicAliasesFile()}.tmp-${crypto.randomUUID().slice(0, 8)}`;
 		fs.writeFileSync(tmp, JSON.stringify(aliases, null, "	"), "utf-8");
-		fs.renameSync(tmp, TOPIC_ALIASES_FILE);
+		fs.renameSync(tmp, topicAliasesFile());
 	},
 
-	// ── imported-notes bookkeeping (config.SOURCES_FILE — a JSON map) ──
+	// ── imported-notes bookkeeping (config.sourcesFile() — a JSON map) ──
 
 	/** Upsert: keeps the existing record's usage log when re-importing. */
 	upsertSource(source: NotesSource): void {
@@ -217,7 +218,7 @@ export const graphStore: GraphStore = {
 		writeSourceMap(all);
 	},
 
-	// ── the layout ledger (config.POSITIONS_FILE — a JSON map) ──
+	// ── the layout ledger (config.positionsFile() — a JSON map) ──
 	readPositions(): Record<string, Position> {
 		return readPositionMap();
 	},
@@ -275,7 +276,7 @@ export const graphStore: GraphStore = {
 function readPositionMap(): Record<string, Position> {
 	let raw: string;
 	try {
-		raw = fs.readFileSync(POSITIONS_FILE, "utf-8");
+		raw = fs.readFileSync(positionsFile(), "utf-8");
 	} catch {
 		return {}; // no ledger yet — nothing has ever settled
 	}
@@ -293,14 +294,14 @@ function readPositionMap(): Record<string, Position> {
 }
 
 function writePositionMap(positions: Record<string, Position>): void {
-	fs.mkdirSync(path.dirname(POSITIONS_FILE), { recursive: true });
+	fs.mkdirSync(path.dirname(positionsFile()), { recursive: true });
 	// Tmp + rename — the same crash-safety rewriteLedgers uses two blocks
 	// up (a9339b3 UI flag): a torn write must never replace the ledger
 	// with a half-written file the reader parses as empty.
-	const tmp = `${POSITIONS_FILE}.tmp-${crypto.randomUUID().slice(0, 8)}`;
+	const tmp = `${positionsFile()}.tmp-${crypto.randomUUID().slice(0, 8)}`;
 	try {
 		fs.writeFileSync(tmp, JSON.stringify({ positions, updatedAt: new Date().toISOString() }, null, "\t"), "utf-8");
-		fs.renameSync(tmp, POSITIONS_FILE);
+		fs.renameSync(tmp, positionsFile());
 	} catch (err) {
 		try {
 			fs.unlinkSync(tmp);
@@ -320,7 +321,7 @@ function readSourceMap(): Record<string, NotesSource> {
 	assertGraphFormat(); // honest refusal on a newer-stamped data dir
 	let raw: string;
 	try {
-		raw = fs.readFileSync(SOURCES_FILE, "utf-8");
+		raw = fs.readFileSync(sourcesFile(), "utf-8");
 	} catch {
 		return {};
 	}
@@ -338,15 +339,16 @@ function readSourceMap(): Record<string, NotesSource> {
 }
 
 function writeSourceMap(map: Record<string, NotesSource>): void {
-	fs.mkdirSync(path.dirname(SOURCES_FILE), { recursive: true });
+	fs.mkdirSync(path.dirname(sourcesFile()), { recursive: true });
 	ensureGraphFormat(); // the lazy format stamp (graph-format.ts)
-	fs.writeFileSync(SOURCES_FILE, JSON.stringify(map, null, "\t"), "utf-8");
+	fs.writeFileSync(sourcesFile(), JSON.stringify(map, null, "\t"), "utf-8");
 }
 
 // ─── one-way purges at adapter load: dead ledgers are exactly the confusion
 // the cleanup removes (owner doctrine — nothing reads them, nothing writes
-// them, a stale file lying around is a lie). ────────────────────────────────
-{
+// them, a stale file lying around is a lie). Single-user only: multi-user
+// data dirs are per tenant (no tenant at load) and never held these files. ──
+if (!multiUser()) {
 	const graphDir = path.dirname(LEDGER_FILES.nodes);
 	for (const legacy of ["edges.jsonl", "events.jsonl"]) {
 		const file = path.join(graphDir, legacy);

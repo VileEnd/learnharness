@@ -1,7 +1,7 @@
 /**
  * The prompt-override STORE (settings-storage wave, 2026-09-19; P2
  * reconciliation same day): the override-file CRUD behind the core port —
- * list/read/write/delete under config.PROMPTS_OVERRIDE_DIR.
+ * list/read/write/delete under config.promptsOverrideDir().
  *
  * The CANONICAL segment discovery + resolution (listSourceSegments,
  * effectivePromptSegments, allSegmentPaths) lives in the agent layer
@@ -17,7 +17,7 @@
  * directory — see the agent module for the full rules.
  *
  * OVERRIDES: override files mirror the source layout under
- * config.PROMPTS_OVERRIDE_DIR — "system-prompt.md" at the root,
+ * config.promptsOverrideDir() — "system-prompt.md" at the root,
  * "shared/<file>", "teacher/<file>" / "prober/<file>" (POSIX-relative
  * paths, the same keys as the settings record's agent.prompts switches).
  * File presence is NOT the override: the switch is (owner decision) — the
@@ -30,13 +30,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { PROMPTS_OVERRIDE_DIR } from "../../config.ts";
+import { promptsOverrideDir } from "../../config.ts";
 import { isValidSegmentPath } from "../core/prompt-segments.ts";
 import type { PromptOverrideStore } from "../core/ports.ts";
 
 /** Absolute path for an override file (unchecked — validate first). */
 function overrideFileFor(segmentPath: string): string {
-	return path.join(PROMPTS_OVERRIDE_DIR, ...segmentPath.split("/"));
+	return path.join(promptsOverrideDir(), ...segmentPath.split("/"));
 }
 
 /** The store adapter (core/ports.ts). */
@@ -56,7 +56,7 @@ export const promptOverrides: PromptOverrideStore = {
 				else if (entry.isFile() && entry.name.endsWith(".md") && isValidSegmentPath(rel)) out.push(rel);
 			}
 		};
-		walk(PROMPTS_OVERRIDE_DIR, "");
+		walk(promptsOverrideDir(), "");
 		return out.sort();
 	},
 
