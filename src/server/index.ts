@@ -59,3 +59,4 @@ export { learnerSnapshotNow } from "./learner-now.ts";
 export { knowledgeViewNow } from "./knowledge-now.ts";
 // The cost counter (2026-10-29): the month view, months strip, failures, and the one-time backfill.
 export * from "./usage.ts";
+export * from "./health.ts";
