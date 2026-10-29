@@ -8,6 +8,9 @@
  * chat no longer takes its spend with it.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { PATHS } from "../../config.ts";
 import type { CallUsage, ChatRecord, ExtractionRunUsage, JobKind } from "../core/contracts.ts";
 import type { RequestLogLine, UsageMonth } from "../core/contracts/usage.ts";
 import { categoryOf, monthKey, summarizeMonth } from "../core/usage.ts";
@@ -122,36 +125,67 @@ function turnLines(chat: ChatRecord): RequestLogLine[] {
 	});
 }
 
+/** The file ids in a store directory (`<id>.json`); [] when it is absent.
+ *  Read here, not through listChats: the list's summary projection drops a
+ *  record whose messages fail it, and that record's spend is still real. */
+function idsIn(dir: string): string[] {
+	try {
+		return fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
+	} catch {
+		return [];
+	}
+}
+
+/** One imported line, and when the record it came from was complete: the
+ *  cutoff compares that, so a job that ran on past the first live line is
+ *  left to the live log. */
+interface Candidate {
+	line: RequestLogLine;
+	doneAt: string;
+}
+
+const asCandidate = (line: RequestLogLine): Candidate => ({ line, doneAt: line.at });
+
 /** Every line the records can account for, before any cutoff. */
-function recordLines(): RequestLogLine[] {
-	const lines: RequestLogLine[] = [];
-	for (const summary of stores.chatStore.listChats()) {
-		const chat = stores.chatStore.getChat(summary.id);
-		if (chat) lines.push(...turnLines(chat), ...extractionLines(chat.extractions, chat.id));
-		for (const job of stores.jobStore.listJobs(summary.id)) {
-			const u = job.usage;
-			if (!u || u.steps < 1) continue;
-			const owner = { purpose: JOB_PURPOSE[job.kind] ?? job.kind, chatId: job.chatId };
-			const calls: Partial<CallUsage>[] = u.calls?.length ? u.calls : [u];
-			lines.push(...calls.map((c) => importedLine(job.createdAt, u.model, c, owner)));
-		}
+function recordLines(): Candidate[] {
+	const out: Candidate[] = [];
+	for (const id of idsIn(PATHS.chats)) {
+		const chat = stores.chatStore.getChat(id);
+		if (chat) out.push(...[...turnLines(chat), ...extractionLines(chat.extractions, chat.id)].map(asCandidate));
 	}
-	for (const source of stores.graphStore.readSources()) lines.push(...extractionLines(source.extractions));
-	for (const doc of stores.documentStore.listMetas()) {
-		if (!doc.ocr || !Number.isFinite(doc.ocr.costUsd)) continue;
-		lines.push({
-			v: 1,
-			at: doc.importedAt,
-			purpose: "ocr",
-			category: categoryOf("ocr"),
-			provider: "ocr",
-			model: doc.ocr.strategy || "ocr",
-			providerCostUsd: doc.ocr.costUsd,
-			outcome: "ok",
-			imported: true,
-		});
+	// Every job file once, whatever its chat: a job outliving its chat still spent.
+	for (const id of idsIn(path.join(PATHS.data, "jobs"))) {
+		const job = stores.jobStore.getJob(id);
+		const u = job?.usage;
+		if (!job || !u || u.steps < 1) continue;
+		const owner = { purpose: JOB_PURPOSE[job.kind] ?? job.kind, chatId: job.chatId };
+		const calls: Partial<CallUsage>[] = u.calls?.length ? u.calls : [u];
+		// Dated at the start (the daily chart), cut at completion.
+		for (const c of calls) out.push({ line: importedLine(job.createdAt, u.model, c, owner), doneAt: job.updatedAt });
 	}
-	return lines;
+	for (const source of stores.graphStore.readSources()) out.push(...extractionLines(source.extractions).map(asCandidate));
+	// A reused scan copies its job and cost onto the new document: one OCR
+	// job is one charge, dated at its first import.
+	const scans = new Set<string>();
+	const docs = [...stores.documentStore.listMetas()].sort((a, b) => a.importedAt.localeCompare(b.importedAt));
+	for (const doc of docs) {
+		if (!doc.ocr || !Number.isFinite(doc.ocr.costUsd) || scans.has(doc.ocr.job)) continue;
+		scans.add(doc.ocr.job);
+		out.push(
+			asCandidate({
+				v: 1,
+				at: doc.importedAt,
+				purpose: "ocr",
+				category: categoryOf("ocr"),
+				provider: "ocr",
+				model: doc.ocr.strategy || "ocr",
+				providerCostUsd: doc.ocr.costUsd,
+				outcome: "ok",
+				imported: true,
+			}),
+		);
+	}
+	return out;
 }
 
 /** The oldest line the live sink wrote (imported lines do not count), or
@@ -169,8 +203,8 @@ function oldestLiveAt(): string | null {
 
 /**
  * Import the records' usage into the log ONCE (a no-op once the marker
- * exists). Only records older than the oldest live line are imported: from
- * that moment on the live sink logged them already. A run that died before
+ * exists). Only records completed before the oldest live line are imported:
+ * from that moment on the live sink logged them already. A run that died before
  * the marker leaves its lines behind; the rerun skips each line already
  * imported (counted, so two identical calls both survive).
  */
@@ -188,7 +222,8 @@ export function runUsageBackfill(): { imported: number } {
 	}
 	let imported = 0;
 	const fresh = recordLines()
-		.filter((l) => cutoff === null || l.at < cutoff)
+		.filter((c) => cutoff === null || c.doneAt < cutoff)
+		.map((c) => c.line)
 		.sort((a, b) => a.at.localeCompare(b.at));
 	for (const line of fresh) {
 		const key = JSON.stringify(line);
