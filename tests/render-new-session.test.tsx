@@ -41,6 +41,12 @@ describe("startDraftSession — the create-on-send contract", () => {
 		assert.equal(calls.length, 1, "a single create call — the birth stamp is server-side");
 	});
 
+	it("a refused create (the spending cap) throws the cap copy so the draft is kept", async () => {
+		const f = (async () =>
+			new Response(JSON.stringify({ code: "monthly_cap_reached", capUsd: 5, spentUsd: 5.1, error: "x" }), { status: 403 })) as typeof fetch;
+		await assert.rejects(startDraftSession("hello", f), /spending limit \(\$5\)\. Ask your admin to raise it\./);
+	});
+
 	it("empty or whitespace text never creates anything", async () => {
 		const { f, calls } = fakeFetch("never");
 		assert.equal(await startDraftSession("", f), null);
@@ -50,6 +56,11 @@ describe("startDraftSession — the create-on-send contract", () => {
 });
 
 describe("DraftShell — the sessionless surface", () => {
+	it("shows a send error above the composer", () => {
+		const html = renderToStaticMarkup(<DraftShell busy={false} sendError="Over the limit." text="draft" onChange={() => {}} onSend={() => {}} />);
+		assert.match(html, /data-testid="send-error"[^>]*>Over the limit\./);
+	});
+
 	it("renders the composer blob, the stats bar, and the fresh-chat empty state", () => {
 		const html = renderToStaticMarkup(
 			<DraftShell

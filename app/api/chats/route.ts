@@ -1,7 +1,7 @@
 import { chainsForSelection, formatChainLine } from "@/src/core";
 import { newGraphContextMessage, type GraphContextPick } from "@/src/core";
-import { compactionInFlight, createChat, isTurnRunning, listChats, readSettingsRecord, stores, titleFromPrompt, withTenant } from "@/src/server";
-import type { ChatListItem } from "@/src/core";
+import { assertWithinCap, compactionInFlight, createChat, isTurnRunning, listChats, readSettingsRecord, stores, titleFromPrompt, withTenant } from "@/src/server";
+import { isPolicyRefusal, type ChatListItem } from "@/src/core";
 
 /** The session picker's list: record-derived summaries (phase, pending
  *  question) + live liveness — a running turn marks the session busy
@@ -20,6 +20,14 @@ export const GET = withTenant(async () => {
 });
 
 export const POST = withTenant(async (req: Request) => {
+	// An over-cap user is refused BEFORE the record exists (no orphan chats);
+	// the same 403 envelope the turn route answers.
+	try {
+		assertWithinCap();
+	} catch (err) {
+		if (isPolicyRefusal(err)) return Response.json(err.envelope, { status: 403 });
+		throw err;
+	}
 	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; graphContext?: unknown; canvas?: unknown };
 	const title = typeof body.title === "string" ? body.title : "";
 	// Practice sessions (owner, 2026-10-04): kind "practice" marks the

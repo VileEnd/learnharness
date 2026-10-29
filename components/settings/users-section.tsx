@@ -102,6 +102,8 @@ const MESSAGES: Record<string, string> = {
 	invalid_email: "That email address isn't valid.",
 	invalid_name: "Device names use letters, digits, spaces, dot, dash or underscore (up to 40).",
 	self_demotion: "You can't remove your own admin rights.",
+	admin_policy_corrupt:
+		"The user policy file on the server is damaged — nothing was changed. Check data/global/admin.json.",
 	keycloak_unavailable: "The login server (Keycloak) can't be reached right now.",
 };
 

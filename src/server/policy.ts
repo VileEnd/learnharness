@@ -50,7 +50,7 @@ export function currentPolicy(): AdminPolicy {
 export function policyFor(userId: string): UserPolicy {
 	try {
 		const p = stored();
-		return p.users[userId] ?? p.newUserDefaults ?? builtInDefaults(catalogModels());
+		return (Object.hasOwn(p.users, userId) ? p.users[userId] : undefined) ?? p.newUserDefaults ?? builtInDefaults(catalogModels());
 	} catch (e) {
 		if (!(e instanceof AdminPolicyCorrupt)) throw e;
 		console.error("policyFor: admin.json is corrupt; denying all models and spend");

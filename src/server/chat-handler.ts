@@ -43,7 +43,7 @@ import {
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
 import { isPolicyRefusal, modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
-import { assertWithinCap, modelGate, readSettingsView, unconfiguredTierRefusal } from "./model-gate.ts";
+import { assertWithinCap, modelGate, readSettingsView, turnSpendCapFor, unconfiguredTierRefusal } from "./model-gate.ts";
 import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { notify } from "./push.ts";
@@ -500,7 +500,8 @@ export async function handleChatInput(
 		onUsage: collectUsage,
 		// The runaway-turn spend cap (turn-guard.ts): the same price
 		// computation the money channel folds with; unknown cost = null.
-		spendCapUsd: effective.agent.turnSpendCapUsd,
+		// A restricted user's turn is also clamped to their remaining month.
+		spendCapUsd: turnSpendCapFor(effective.agent.turnSpendCapUsd),
 		stepCost: (usage) => callCost(callUsageOf(usage), modelId),
 		toolToggles: effective.agent.tools,
 		quizMechanic: effective.agent.quizMechanic,

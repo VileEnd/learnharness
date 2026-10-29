@@ -34,8 +34,7 @@ import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
 	isProviderKeyRefusal,
-	modelNotAllowed,
-	monthlyCapReached,
+	policyRefusalCopy,
 	firstSourceTextParts,
 	messageAnchorId,
 	textPartMessageId,
@@ -179,12 +178,7 @@ export function parseProviderKeyRefusal(message: string | undefined): boolean {
 export function parsePolicyRefusal(message: string | undefined): string | null {
 	if (!message) return null;
 	try {
-		const body = JSON.parse(message) as { code?: unknown; capUsd?: unknown; spentUsd?: unknown; model?: unknown };
-		if (body.code === "monthly_cap_reached" && typeof body.capUsd === "number") {
-			return monthlyCapReached(body.capUsd, typeof body.spentUsd === "number" ? body.spentUsd : 0).error;
-		}
-		if (body.code === "model_not_allowed") return modelNotAllowed(typeof body.model === "string" ? body.model : "").error;
-		return null;
+		return policyRefusalCopy(JSON.parse(message));
 	} catch {
 		return null;
 	}

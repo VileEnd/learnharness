@@ -242,9 +242,42 @@ export class ModelNotAllowedError extends Error {
 	}
 }
 
-/** Either policy refusal: callers that contain refusals treat both alike. */
-export function isPolicyRefusal(err: unknown): err is MonthlyCapReachedError | ModelNotAllowedError {
-	return err instanceof MonthlyCapReachedError || err instanceof ModelNotAllowedError;
+/** The policy file is damaged, so enforcement fails closed (deny-all): the
+ *  user is refused, with copy that does not blame their own spending. */
+export const POLICY_UNAVAILABLE_CODE = "policy_unavailable" as const;
+export interface PolicyUnavailable {
+	error: string;
+	code: typeof POLICY_UNAVAILABLE_CODE;
+}
+export function policyUnavailable(): PolicyUnavailable {
+	return { error: "Your account settings can't be read right now. Ask your admin.", code: POLICY_UNAVAILABLE_CODE };
+}
+export class PolicyUnavailableError extends Error {
+	readonly envelope: PolicyUnavailable;
+	constructor() {
+		const envelope = policyUnavailable();
+		super(envelope.error);
+		this.name = "PolicyUnavailableError";
+		this.envelope = envelope;
+	}
+}
+
+/** The copy for a policy refusal's JSON body (as a route answers it), else
+ *  null. One home for the wording, so no surface drifts. */
+export function policyRefusalCopy(body: unknown): string | null {
+	if (!body || typeof body !== "object") return null;
+	const b = body as { code?: unknown; capUsd?: unknown; spentUsd?: unknown; model?: unknown };
+	if (b.code === MONTHLY_CAP_REACHED_CODE && typeof b.capUsd === "number") {
+		return monthlyCapReached(b.capUsd, typeof b.spentUsd === "number" ? b.spentUsd : 0).error;
+	}
+	if (b.code === POLICY_UNAVAILABLE_CODE) return policyUnavailable().error;
+	if (b.code === MODEL_NOT_ALLOWED_CODE) return modelNotAllowed(typeof b.model === "string" ? b.model : "").error;
+	return null;
+}
+
+/** Any policy refusal: callers that contain refusals treat them alike. */
+export function isPolicyRefusal(err: unknown): err is MonthlyCapReachedError | ModelNotAllowedError | PolicyUnavailableError {
+	return err instanceof MonthlyCapReachedError || err instanceof ModelNotAllowedError || err instanceof PolicyUnavailableError;
 }
 
 /** One slot's stored state. BYOK (owner, 2026-09-22): the WRITE side
@@ -792,4 +825,11 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 		if (!(key in out)) out[key] = value;
 	}
 	return out;
+}
+
+/** A failed POST /api/chats as the line to show the learner: the policy
+ *  refusal's own copy, else a generic one. */
+export async function chatCreateFailure(res: Response): Promise<string> {
+	const body: unknown = await res.json().catch(() => null);
+	return policyRefusalCopy(body) ?? "Couldn't start the session. Try again.";
 }

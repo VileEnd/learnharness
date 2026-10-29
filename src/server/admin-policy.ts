@@ -92,7 +92,7 @@ export function adminUsage(): Promise<Response> {
 			// Single-user mode is never gated; the requester is a known admin even when Keycloak is unknown.
 			const restricted = !multiUser() ? false : admins ? !admins.has(id) : id !== self;
 			// No cap applies to an unrestricted row.
-			const capUsd = restricted ? ((policy.users[id] ?? policy.newUserDefaults)?.monthlyCapUsd ?? null) : null;
+			const capUsd = restricted ? (((Object.hasOwn(policy.users, id) ? policy.users[id] : undefined) ?? policy.newUserDefaults)?.monthlyCapUsd ?? null) : null;
 			const tenant = id === LOCAL_TENANT.id ? LOCAL_TENANT : { id, name: id, isAdmin: false };
 			try {
 				const { usd, unpriced } = runAsTenant(tenant, () => spentThisMonth());

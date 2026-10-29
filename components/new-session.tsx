@@ -13,7 +13,7 @@ import { StatsBar } from "@/components/stats-bar";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
-import type { ChatSettings, GraphSnapshot } from "@/src/core";
+import { chatCreateFailure, type ChatSettings, type GraphSnapshot } from "@/src/core";
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
  *  bar lifts — resolved nodes as the learner SAW them at pick time. */
@@ -65,6 +65,7 @@ export async function startDraftSession(
 			...(canvas === true ? { canvas: true } : {}),
 		}),
 	});
+	if (!res.ok) throw new Error(await chatCreateFailure(res));
 	const { id } = (await res.json()) as { id: string };
 	// No settings PUT on create (per-session models, owner 2026-09-28):
 	// the SERVER stamps the newborn from the strong slot.
@@ -78,6 +79,7 @@ export async function startDraftSession(
  * send reads a REF mirror — see NewSession below. */
 export function DraftShell({
 	busy,
+	sendError = null,
 	text,
 	onChange,
 	onSend,
@@ -91,6 +93,8 @@ export function DraftShell({
 	onCanvasChange,
 }: {
 	busy: boolean;
+	/** A refused create (the spending cap): shown above the composer, draft kept. */
+	sendError?: string | null;
 	text: string;
 	onChange: (v: string) => void;
 	onSend: () => void;
@@ -194,6 +198,11 @@ export function DraftShell({
 									)}
 									setup={setupCta}
 								/>
+								{sendError && (
+									<p role="alert" data-testid="send-error" className="pointer-events-auto mb-2 text-sm text-destructive">
+										{sendError}
+									</p>
+								)}
 								<div className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
 									<Composer
 										busy={busy}
@@ -299,6 +308,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	// provider has none — the same skip-everything treatment on send.
 	const strongKeyless = useStrongKeyless();
 	const [setupOpen, setSetupOpen] = useState(false);
+	const [sendError, setSendError] = useState<string | null>(null);
 
 	const send = useCallback(() => {
 		const draft = textRef.current.trim();
@@ -317,18 +327,24 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 			return;
 		}
 		setBusy(true);
+		setSendError(null);
 		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined, canvasRef.current)
 			.then((target) => {
 				if (target) router.push(target);
 				else setBusy(false);
 			})
-			.catch(() => setBusy(false));
+			.catch((err: unknown) => {
+				// The draft stays; a refused create (the spending cap) says why.
+				setSendError(err instanceof Error ? err.message : "Couldn't start the session. Try again.");
+				setBusy(false);
+			});
 	}, [busy, router, configured, zeroKeys, strongKeyless]);
 
 	return (
 		<>
 			<DraftShell
 				busy={busy}
+				sendError={sendError}
 				text={text}
 				onChange={applyText}
 				onSend={send}

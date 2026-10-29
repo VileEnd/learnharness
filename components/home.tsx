@@ -14,7 +14,7 @@ import { enterSends } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
-import type { TurnUsage } from "@/src/core";
+import { chatCreateFailure, type TurnUsage } from "@/src/core";
 
 /**
  * Home — the knowledge graph is the main view, full-bleed edge to edge
@@ -65,6 +65,7 @@ export function Home({
 		},
 	});
 	const [busy, setBusy] = useState(false);
+	const [sendError, setSendError] = useState<string | null>(null);
 	/* Run end focuses the topic input (owner, 2026-10-01): the hands are on
 	 * the keyboard from the stop. Falling edge only; this surface's only
 	 * dictation target IS this textarea, so no case-split is needed. */
@@ -138,6 +139,7 @@ export function Home({
 			return;
 		}
 		setBusy(true);
+		setSendError(null);
 		try {
 			// The map context (owner, 2026-10-04): picks in EITHER mode ride
 			// the CREATION as graphContext — the server writes a
@@ -155,6 +157,12 @@ export function Home({
 					...(canvas ? { canvas: true } : {}),
 				}),
 			});
+			// A refused create (the spending cap) keeps the draft and says why.
+			if (!res.ok) {
+				setSendError(await chatCreateFailure(res));
+				setBusy(false);
+				return;
+			}
 			const { id } = (await res.json()) as { id: string };
 			// No settings PUT on create (per-session models, owner
 			// 2026-09-28): the SERVER stamps the newborn from the strong
@@ -236,6 +244,11 @@ export function Home({
 							)
 						)}
 					/>
+					{sendError && (
+						<p role="alert" data-testid="send-error" className="mb-2 text-sm text-destructive">
+							{sendError}
+						</p>
+					)}
 					<form
 						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg"
 					onSubmit={(e) => {

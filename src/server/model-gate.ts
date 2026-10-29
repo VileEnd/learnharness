@@ -9,13 +9,14 @@
 
 import type { ModelRole } from "../../config.ts";
 import type { EngineOptions, ResolvedModelSpec } from "../agent/models.ts";
-import { allowedSet, modelKey, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
+import { allowedSet, DENY_ALL_POLICY, modelKey, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
 import { requireTenant } from "../core/tenant-context.ts";
 import { monthKey } from "../core/usage.ts";
 import {
 	MODEL_SLOTS,
 	ModelNotAllowedError,
 	MonthlyCapReachedError,
+	PolicyUnavailableError,
 	ROLE_SLOT,
 	modelNotAllowed,
 	slotsConfigured,
@@ -56,6 +57,8 @@ export function spentThisMonth(): { usd: number; unpriced: number } {
 }
 
 function assertPolicyCap(policy: UserPolicy): void {
+	// The fail-closed policy (corrupt admin.json) is not a spending limit.
+	if (policy === DENY_ALL_POLICY) throw new PolicyUnavailableError();
 	if (policy.monthlyCapUsd === null) return;
 	const { usd } = spentThisMonth();
 	if (usd >= policy.monthlyCapUsd) throw new MonthlyCapReachedError(policy.monthlyCapUsd, usd);
@@ -65,6 +68,14 @@ function assertPolicyCap(policy: UserPolicy): void {
 export function assertWithinCap(): void {
 	const policy = restrictedPolicy();
 	if (policy) assertPolicyCap(policy);
+}
+
+/** The per-turn spend ceiling: the configured one, clamped for a capped
+ *  restricted user to what is left of their month (never below 0). */
+export function turnSpendCapFor(configuredUsd: number): number {
+	const policy = restrictedPolicy();
+	if (!policy || policy.monthlyCapUsd === null) return configuredUsd;
+	return Math.min(configuredUsd, Math.max(0, policy.monthlyCapUsd - spentThisMonth().usd));
 }
 
 // One "skipped" line per tenant, month and channel (the index ticks every minute).
