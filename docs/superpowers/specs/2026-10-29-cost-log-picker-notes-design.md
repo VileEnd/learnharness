@@ -100,15 +100,16 @@ The owner wants the TutorBench winners advertised next to Sonnet 5.5 and Opus 5.
 
 ### Decided
 - When the search box is empty, `ModelMenuList` shows a **Recommended** group at the top, then the full list as today.
-- **Members, in order:**
+- **Members, in order** (owner, 2026-10-29: "two picks + TutorBench rank"):
 
   | Model | Badge | Line |
   |---|---|---|
   | Claude Opus 5.5 | Recommended | best quality |
   | Claude Sonnet 5.5 | Recommended | strong and faster |
-  | MiMo-V2.6 Flash | Cheapest | best value in TutorBench |
-  | DeepSeek V4.1 Flash | Cheapest | fastest |
+  | MiMo-V2.6 Flash | Cheapest | TutorBench #1 · ~$0.13/session |
+  | DeepSeek V4.1 Flash | Cheapest | TutorBench #4 · ~$0.14/session · fastest |
 
+  The rank and $/session are constants from TutorBench 2026-10-28 (7 tutors × 7 scenarios, Opus judges). The live price label (`priceLabel`) still shows per row as today. Opus/Sonnet were not benchmarked (owner rule), so they carry no rank.
 - **Provider resolution:** each member is shown in the first form the learner has a key for. Claude takes `anthropic:claude-opus-5-5`, else `openrouter:anthropic/claude-opus-5.5` (same for Sonnet). MiMo and DeepSeek take their `openrouter:` ids. A member with no available form is left out. The group is hidden when it would be empty.
 - **Where it appears:** the per-session picker, the strong slot in Settings, and first-run setup. The cheap and vision slot pickers serve other roles and get no group.
 - The keyboard walk stays one linear index over group plus list. Recommended entries also stay in the full list.
