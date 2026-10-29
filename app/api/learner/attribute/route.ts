@@ -5,11 +5,11 @@
  * completion as one activity row and answers {chats, rows}; a second call
  * finds nothing to do ({chats: 0, rows: 0}). Never called by the app itself.
  */
-import { attribution, withActivityRow } from "@/src/server";
+import { attribution, withActivityRow, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+export const POST = withTenant(async () => {
 	const result = await withActivityRow("learner-attribution", "Linking answers to concepts", () => attribution.attributePending());
 	return Response.json(result);
-}
+});

@@ -42,6 +42,7 @@ import {
 	validateModelsSettings,
 	writeSettingsRecord,
 	type SettingsBodyResult,
+	withTenant,
 } from "@/src/server";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +50,7 @@ export const dynamic = "force-dynamic";
 /** One parser, result type erased to the common envelope. */
 type AnySectionParser = (body: unknown) => SettingsBodyResult<unknown>;
 
-export async function PUT(request: Request, ctx: { params: Promise<{ section: string }> }) {
+export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ section: string }> }) => {
 	const { section } = await ctx.params;
 	const parser = (SETTINGS_SECTIONS as Record<string, AnySectionParser>)[section];
 	if (!parser) {
@@ -128,4 +129,4 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 	const next = { ...record, [section]: sectionOut };
 	writeSettingsRecord(next);
 	return Response.json({ settings: next });
-}
+});
