@@ -15,6 +15,7 @@
 import {
 	activeProblemOf,
 	activeWorkOf,
+	drawingRefOf,
 	sceneBoundingBox,
 	serializeSceneStructuredText,
 	type DrawingContext,
@@ -40,7 +41,8 @@ export interface DrawingContextDeps {
 	readerTimeoutMs?: number;
 }
 
-/** The drawing ids on markers of the active work/problem, oldest first. */
+/** The drawing ids on markers of the active work/problem (submissions and
+ *  hint snapshots), oldest first. */
 function activeDrawingIds(messages: readonly LhMessage[]): string[] {
 	const active = new Set<string>();
 	const work = activeWorkOf(messages);
@@ -49,11 +51,8 @@ function activeDrawingIds(messages: readonly LhMessage[]): string[] {
 	if (problem) active.add(problem.toolCallId);
 	const ids: string[] = [];
 	for (const m of messages) {
-		if ((m as { role?: string }).role !== "custom") continue;
-		const marker = m as { customType?: string; details?: unknown };
-		const d = marker.details as { workCallId?: unknown; problemCallId?: unknown; drawingId?: unknown } | null;
-		const task = marker.customType === "work-submission" ? d?.workCallId : marker.customType === "practice-thinking" ? d?.problemCallId : undefined;
-		if (typeof task === "string" && active.has(task) && typeof d?.drawingId === "string") ids.push(d.drawingId);
+		const ref = drawingRefOf(m);
+		if (ref && active.has(ref.taskId)) ids.push(ref.drawingId);
 	}
 	return ids;
 }

@@ -11,7 +11,7 @@ import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { DrawingStore } from "../src/core/ports.ts";
 import { drawingIdOf, type DrawingScene } from "../src/core/canvas-core.ts";
 import { ESTIMATED_IMAGE_CHARS, estimateMessageTokens } from "../src/core/compaction.ts";
-import { newThinkingMessage, newWorkSubmission, toLlmMessages, type DrawingContext, type LhMessage } from "../src/core/native-messages.ts";
+import { newHintRequest, newThinkingMessage, newWorkSubmission, toLlmMessages, type DrawingContext, type LhMessage } from "../src/core/native-messages.ts";
 import { createDrawingTranscriber, TRANSCRIBE_PROMPT } from "../src/agent/subagents/drawing-transcriber.ts";
 import { prepareDrawingContext } from "../src/server/drawing-context.ts";
 import type { PiEngine } from "../src/agent/models.ts";
@@ -95,6 +95,19 @@ describe("drawings in the model context", () => {
 		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s });
 		const out = toLlmMessages(messages as never, { drawing: ctx });
 		assert.equal(images(out).length, 1);
+		assert.match(textOf(out), new RegExp(`\\[earlier drawing ${IDS[0]} — superseded\\]`));
+	});
+
+	it("a hint snapshot on the active task is the newest drawing: image and transcript; the submission collapses", async () => {
+		const messages = [...pose(), sub(0), newHintRequest("w1", 1, { drawingId: IDS[1] })];
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("<hint snapshot>")]);
+		const transcriber = createDrawingTranscriber({ engineFor: () => ({ model: f.getModel(), streamFn: f.streamSimple }) });
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s, transcriber });
+		assert.equal(ctx.resolve(IDS[1]!)?.transcript, "<hint snapshot>");
+		const out = toLlmMessages(messages as never, { drawing: ctx });
+		assert.equal(images(out).length, 1);
+		assert.match(textOf(out), /Transcription:\n<hint snapshot>/);
 		assert.match(textOf(out), new RegExp(`\\[earlier drawing ${IDS[0]} — superseded\\]`));
 	});
 

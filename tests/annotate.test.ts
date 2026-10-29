@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { annotateToolFor, annotateToolsFor } from "../src/agent/tools/annotate.ts";
+import { annotateToolFor, annotateToolsFor, drawingIdsOfRecord } from "../src/agent/tools/annotate.ts";
 import { createTeacherTools } from "../src/agent/tools.ts";
 import { annotationsOf, resolveTargetRect, sceneBoundingBox, type DrawingScene } from "../src/core/canvas-core.ts";
 
@@ -244,4 +244,9 @@ test("a bare stroke key on a mark heals into a target, and the fold reads it", (
 	const raw = { drawingId: "drw_a", marks: [{ kind: "circle", stroke: "s4" }] };
 	const prepared = strokeTool.prepareArguments!(raw) as { marks: { target: unknown }[] };
 	assert.deepEqual(prepared.marks[0]!.target, { stroke: "s4" });
+});
+
+test("a hint snapshot's drawing is markable: drawingIdsOfRecord counts it", () => {
+	const hint = { role: "custom", customType: "hint-request", details: { callId: "w1", n: 1, drawingId: "drw_h" } };
+	assert.deepEqual(drawingIdsOfRecord([hint]), ["drw_h"]);
 });

@@ -66,8 +66,10 @@ export type ChatInput =
 	 *  drawing (decision 12 - one lane while a task is open). */
 	| { type: "work-submit"; workCallId: string; text: string; drawingId?: string }
 	/** The Hint button on the active canvas task or practice problem: the
-	 *  agent answers with the next rung only. */
-	| { type: "hint"; callId: string };
+	 *  agent answers with the next rung only. From the open canvas it carries
+	 *  a snapshot of the canvas and his "Your thinking" draft, so the tutor can
+	 *  write the hint where it is about. */
+	| { type: "hint"; callId: string; drawingId?: string; text?: string };
 
 /** A wake-pipeline steer delivery — same turn composition, server-origin.
  *  Wave C (2026-09-26): the idle wake carries EVERY queued marker as its
@@ -241,7 +243,15 @@ export function parseChatInput(input: unknown): ChatInput {
 			if (typeof i.callId !== "string" || i.callId.length === 0) {
 				throw new ChatInputError("hint input requires callId");
 			}
-			return { type: "hint", callId: i.callId };
+			if (i.text !== undefined && (typeof i.text !== "string" || i.text.trim().length === 0)) {
+				throw new ChatInputError("hint text must be a non-empty string");
+			}
+			return {
+				type: "hint",
+				callId: i.callId,
+				...(i.drawingId !== undefined ? { drawingId: parseDrawingId(i.drawingId) } : {}),
+				...(i.text !== undefined ? { text: i.text as string } : {}),
+			};
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
@@ -370,7 +380,15 @@ export function inputAppends(
 			if (danglingQuestionOf(record.messages) !== null) {
 				throw new ChatInputError("hint input refused: answer the open side question first");
 			}
-			return [newHintRequest(input.callId, nextHintNumber(record.messages, input.callId))];
+			if (input.drawingId !== undefined && deps.drawingExists && !deps.drawingExists(record.id ?? "", input.drawingId)) {
+				throw new ChatInputError(`hint input names an unknown drawing: ${input.drawingId}`);
+			}
+			return [
+				newHintRequest(input.callId, nextHintNumber(record.messages, input.callId), {
+					...(input.drawingId !== undefined ? { drawingId: input.drawingId } : {}),
+					...(input.text !== undefined ? { text: input.text } : {}),
+				}),
+			];
 		}
 	}
 }
