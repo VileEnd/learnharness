@@ -8,7 +8,7 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { UsersSectionView, errorMessage, type UsersSectionViewProps } from "../components/settings/users-section.tsx";
+import { UsersSectionView, errorMessage, toPolicy, type UsersSectionViewProps } from "../components/settings/users-section.tsx";
 import type { ModelCatalogEntry, UserPolicy } from "../src/core/index.ts";
 
 const NOW = 1_800_000_000_000;
@@ -160,6 +160,41 @@ describe("UsersSectionView models and limits", () => {
 
 	it("renders a policy save error", () => {
 		assert.match(render({ saveError: "slot model not allowed" }), /Couldn&#x27;t save: slot model not allowed/);
+	});
+});
+
+describe("UsersSectionView without usage rows", () => {
+	it("keeps the editor for a non-admin and says no usage yet; admin stays unrestricted", () => {
+		const bob = render({ usage: [] });
+		assert.match(bob, /no usage yet/);
+		assert.match(bob, /data-testid="policy-editor-id-bob"/);
+		const alice = render({ usage: [], expandedId: "id-alice" });
+		assert.match(alice, /admin — unrestricted/);
+		assert.doesNotMatch(alice, /data-testid="policy-editor-id-alice"/);
+	});
+
+	it("shows a save failure next to the editor that failed", () => {
+		const html = render({ saveError: "bad cap", saveErrorFor: "id-bob" });
+		assert.match(html, /data-testid="user-id-bob-save-error"/);
+		assert.doesNotMatch(html, /data-testid="defaults-save-error"/);
+		assert.match(render({ saveError: "bad cap", saveErrorFor: "defaults" }), /data-testid="defaults-save-error"/);
+	});
+});
+
+describe("toPolicy", () => {
+	const m = { provider: "p", id: "a" };
+	it("maps an empty cap to null and dedupes allowed models", () => {
+		const pol = toPolicy({ strong: m }, ["p:a", "p:b", "p:a"], "  ");
+		assert.deepEqual(pol, { slots: { strong: m }, allowedModels: ["p:a", "p:b"], monthlyCapUsd: null });
+	});
+	it("omits unset slot keys and parses the cap", () => {
+		const pol = toPolicy({ strong: m, vision: undefined }, [], "2.5");
+		assert.ok(pol && !("vision" in pol.slots) && !("cheap" in pol.slots));
+		assert.equal(pol.monthlyCapUsd, 2.5);
+	});
+	it("returns null for an invalid cap", () => {
+		assert.equal(toPolicy({}, [], "abc"), null);
+		assert.equal(toPolicy({}, [], "-1"), null);
 	});
 });
 

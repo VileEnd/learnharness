@@ -83,6 +83,8 @@ export interface UsersSectionViewProps {
 	catalog: ModelCatalogEntry[] | undefined;
 	/** Detail of the last rejected policy save (or null). */
 	saveError: string | null;
+	/** Which editor the error belongs to: "defaults" or a user id. */
+	saveErrorFor?: string | null;
 	onSaveDefaults: (policy: UserPolicy) => void;
 	onSaveUserPolicy: (userId: string, policy: PolicySave) => void;
 }
@@ -172,6 +174,16 @@ function parseKey(key: string): PolicyModel {
 	return { provider: key.slice(0, i), id: key.slice(i + 1) };
 }
 
+/** Build a policy from editor state; null when the cap text is invalid. */
+export function toPolicy(slots: UserPolicy["slots"], allowed: Iterable<string>, capText: string): UserPolicy | null {
+	const t = capText.trim();
+	const cap = t === "" ? null : Number(t);
+	if (cap !== null && !(Number.isFinite(cap) && cap >= 0)) return null;
+	const out: UserPolicy["slots"] = {};
+	for (const slot of SLOTS) if (slots[slot]) out[slot] = slots[slot];
+	return { slots: out, allowedModels: [...new Set(allowed)], monthlyCapUsd: cap };
+}
+
 /** The shared editor: three slot pickers, "Also allowed", monthly limit. */
 function PolicyFields({
 	value,
@@ -180,7 +192,9 @@ function PolicyFields({
 	idPrefix,
 	onSave,
 	saveLabel,
+	error,
 }: {
+	error?: string | null;
 	value: UserPolicy;
 	catalog: ModelCatalogEntry[] | undefined;
 	busy: boolean;
@@ -198,8 +212,7 @@ function PolicyFields({
 			.filter((r) => r.entry.badge === "Cheapest")
 			.map((r) => modelKey(r.model)),
 	);
-	const capNum = cap.trim() === "" ? null : Number(cap);
-	const capValid = capNum === null || (Number.isFinite(capNum) && capNum >= 0);
+	const draft = toPolicy(slots, allowed, cap);
 	const q = search.trim().toLowerCase();
 	const shown = models.filter((m) => q === "" || `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q));
 	const optionLabel = (m: ModelCatalogEntry) => `${m.name} (${m.provider})${cheapest.has(modelKey(m)) ? " — Recommended" : ""}`;
@@ -270,12 +283,17 @@ function PolicyFields({
 				<button
 					type="button"
 					className={btnCls}
-					disabled={busy || !capValid}
-					onClick={() => onSave({ slots, allowedModels: [...allowed], monthlyCapUsd: capNum })}
+					disabled={busy || draft === null}
+					onClick={() => draft && onSave(draft)}
 				>
 					{saveLabel}
 				</button>
 			</div>
+			{error && (
+				<p role="alert" data-testid={`${idPrefix}-save-error`} className="text-red-500">
+					Couldn&apos;t save: {error}
+				</p>
+			)}
 		</div>
 	);
 }
@@ -286,7 +304,9 @@ function UserPolicyEditor({
 	catalog,
 	busy,
 	onSave,
+	error,
 }: {
+	error?: string | null;
 	userId: string;
 	policy: AdminPolicyData;
 	catalog: ModelCatalogEntry[] | undefined;
@@ -307,9 +327,10 @@ function UserPolicyEditor({
 					<button type="button" className={btnCls} disabled={busy} onClick={() => onSave({ useDefaults: true })}>
 						Save
 					</button>
+					{error && <p role="alert" data-testid={`user-${userId}-save-error`} className="mt-1 text-xs text-red-500">Couldn&apos;t save: {error}</p>}
 				</div>
 			) : (
-				<PolicyFields value={own ?? policy.defaults} catalog={catalog} busy={busy} idPrefix={`user-${userId}`} onSave={onSave} saveLabel="Save" />
+				<PolicyFields value={own ?? policy.defaults} catalog={catalog} busy={busy} idPrefix={`user-${userId}`} onSave={onSave} saveLabel="Save" error={error} />
 			)}
 		</div>
 	);
@@ -418,7 +439,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 			)}
 			{p.policy && (
 				<SettingsGroup label="New user defaults">
-					<PolicyFields value={p.policy.defaults} catalog={p.catalog} busy={p.busy} idPrefix="defaults" onSave={p.onSaveDefaults} saveLabel="Save defaults" />
+					<PolicyFields value={p.policy.defaults} catalog={p.catalog} busy={p.busy} idPrefix="defaults" onSave={p.onSaveDefaults} saveLabel="Save defaults" error={p.saveErrorFor === "defaults" ? p.saveError : null} />
 				</SettingsGroup>
 			)}
 			<SettingsGroup label="Add user">
@@ -442,6 +463,16 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 									{u.isAdmin && (
 										<span data-testid={`user-admin-badge-${u.id}`} className="rounded-sm border border-border px-1.5 text-xs">
 											admin
+										</span>
+									)}
+									{!row && !u.isAdmin && (
+										<span data-testid={`user-spend-${u.id}`} className="text-xs text-muted-foreground">
+											no usage yet
+										</span>
+									)}
+									{!row && u.isAdmin && (
+										<span data-testid={`user-spend-${u.id}`} className="text-xs text-muted-foreground">
+											admin — unrestricted
 										</span>
 									)}
 									{row && (
@@ -474,12 +505,13 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 											</div>
 										))}
 										<AddDeviceForm busy={p.busy} onAdd={(name) => p.onAddDevice(u.id, name)} />
-										{p.policy && row?.restricted && (
+										{p.policy && (row ? row.restricted : !u.isAdmin) && (
 											<UserPolicyEditor
 												userId={u.id}
 												policy={p.policy}
 												catalog={p.catalog}
 												busy={p.busy}
+												error={p.saveErrorFor === u.id ? p.saveError : null}
 												onSave={(pol) => p.onSaveUserPolicy(u.id, pol)}
 											/>
 										)}
@@ -529,6 +561,7 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 	const [usage, setUsage] = useState<AdminUsageRow[] | null>(null);
 	const [catalog, setCatalog] = useState<ModelCatalogEntry[] | undefined>(undefined);
 	const [saveError, setSaveError] = useState<string | null>(null);
+	const [saveErrorFor, setSaveErrorFor] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		const u = await call("/api/admin/users");
@@ -575,9 +608,10 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 	};
 
 	/** A policy save: a 400 invalid_policy shows its detail, anything else the generic code. */
-	const savePolicy = async (url: string, body: unknown) => {
+	const savePolicy = async (target: string, url: string, body: unknown) => {
 		setBusy(true);
 		setSaveError(null);
+		setSaveErrorFor(target);
 		try {
 			const r = await call(url, json("PUT", body));
 			if (!r.ok) {
@@ -631,8 +665,9 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 			usage={usage}
 			catalog={catalog}
 			saveError={saveError}
-			onSaveDefaults={(pol) => void savePolicy("/api/admin/policy/defaults", pol)}
-			onSaveUserPolicy={(id, pol) => void savePolicy(`/api/admin/users/${id}/policy`, pol)}
+			saveErrorFor={saveErrorFor}
+			onSaveDefaults={(pol) => void savePolicy("defaults", "/api/admin/policy/defaults", pol)}
+			onSaveUserPolicy={(id, pol) => void savePolicy(id, `/api/admin/users/${id}/policy`, pol)}
 		/>
 	);
 }
