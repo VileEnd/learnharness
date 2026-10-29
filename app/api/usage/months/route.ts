@@ -3,10 +3,10 @@
  * the last 12 months with a request log, oldest first, each with its priced
  * total and unpriced-call count. Thin transport over usageMonths().
  */
-import { usageMonths } from "@/src/server";
+import { usageMonths, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json(usageMonths());
-}
+});

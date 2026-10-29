@@ -9,10 +9,10 @@
  * search API key", or the pinned-engine-key-missing case).
  */
 
-import { searchStatus } from "@/src/server";
+import { searchStatus, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json(searchStatus());
-}
+});

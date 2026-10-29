@@ -9,11 +9,11 @@
  *   PUT → 200 {positions: {...}} with whatever survived sanitizing
  *         (empty object = nothing written).
  */
-import { commitPositions } from "@/src/server";
+import { commitPositions, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function PUT(request: Request) {
+export const PUT = withTenant(async (request: Request) => {
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -21,4 +21,4 @@ export async function PUT(request: Request) {
 		return Response.json({ error: "invalid JSON body" }, { status: 400 });
 	}
 	return Response.json({ positions: commitPositions(body) });
-}
+});

@@ -12,15 +12,15 @@
  * Every body is passed through sanitizeRenderSettings (src/core) before
  * touching disk: garbage clamps or falls back to defaults, never throws.
  */
-import { readRenderSettings, writeRenderSettings } from "@/src/server";
+import { readRenderSettings, writeRenderSettings, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json(readRenderSettings());
-}
+});
 
-export async function PUT(request: Request) {
+export const PUT = withTenant(async (request: Request) => {
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -28,4 +28,4 @@ export async function PUT(request: Request) {
 		return Response.json({ error: "invalid JSON body" }, { status: 400 });
 	}
 	return Response.json(writeRenderSettings(body));
-}
+});

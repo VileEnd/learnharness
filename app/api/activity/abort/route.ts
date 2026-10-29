@@ -19,9 +19,9 @@
  * Extraction abort is idempotent by design (aborting with nothing in
  * flight is success — the blob is gone either way) -> 200.
  */
-import { abortExtraction, abortJob, abortScan, abortTurn, getChat } from "@/src/server";
+import { abortExtraction, abortJob, abortScan, abortTurn, getChat, withTenant } from "@/src/server";
 
-export async function POST(req: Request) {
+export const POST = withTenant(async (req: Request) => {
 	let body: unknown;
 	try {
 		body = await req.json();
@@ -60,4 +60,4 @@ export async function POST(req: Request) {
 	// flight is success — same dock outcome)
 	abortExtraction(id);
 	return Response.json({ ok: true });
-}
+});

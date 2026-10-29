@@ -3,11 +3,11 @@
  * bundle (documents, sections, concepts, topics) plus viz.html, a graph viewer.
  * Rendered on demand; the agent gates do not apply (they govern the agents).
  */
-import { library, zipFiles } from "@/src/server";
+import { library, zipFiles, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	const zip = zipFiles(library.renderExport());
 	return new Response(new Uint8Array(zip), {
 		headers: {
@@ -17,4 +17,4 @@ export async function GET() {
 			"Cache-Control": "no-store",
 		},
 	});
-}
+});

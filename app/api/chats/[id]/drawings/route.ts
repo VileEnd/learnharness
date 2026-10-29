@@ -1,12 +1,12 @@
 import { validateDrawingScene } from "@/src/core";
-import { getChat, stores } from "@/src/server";
+import { getChat, stores, withTenant } from "@/src/server";
 
 /** Learner sketch/work submission: multipart `scene` (JSON) + `png` (file).
  *  Content-addressed - the same scene is the same drawingId. */
 const MAX_PNG_BYTES = 10 * 1024 * 1024;
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export const POST = withTenant(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
 	const { id } = await params;
 	if (!getChat(id)) return Response.json({ error: "Not found" }, { status: 404 });
 	const form = await req.formData().catch(() => null);
@@ -28,4 +28,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 	if (!PNG_MAGIC.every((b, i) => bytes[i] === b)) return Response.json({ error: "png is not a PNG" }, { status: 400 });
 	const { drawingId } = stores.drawingStore.saveSubmission(id, scene.scene, bytes);
 	return Response.json({ drawingId });
-}
+});

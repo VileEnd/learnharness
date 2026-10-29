@@ -31,6 +31,7 @@ import {
 	promptOverrides,
 	readSettingsRecord,
 	writeSettingsRecord,
+	withTenant,
 } from "@/src/server";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ function segmentPathFrom(segments: string[]): string | null {
 	return isValidSegmentPath(joined) ? joined : null;
 }
 
-export async function PUT(request: Request, ctx: { params: Promise<{ segment: string[] }> }) {
+export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ segment: string[] }> }) => {
 	const { segment } = await ctx.params;
 	const path = segmentPathFrom(segment);
 	if (!path) return Response.json({ error: "invalid segment path" }, { status: 400 });
@@ -58,9 +59,9 @@ export async function PUT(request: Request, ctx: { params: Promise<{ segment: st
 	}
 	promptOverrides.writeOverride(path, body.text);
 	return Response.json({ path, text: body.text });
-}
+});
 
-export async function DELETE(_request: Request, ctx: { params: Promise<{ segment: string[] }> }) {
+export const DELETE = withTenant(async (_request: Request, ctx: { params: Promise<{ segment: string[] }> }) => {
 	const { segment } = await ctx.params;
 	const path = segmentPathFrom(segment);
 	if (!path) return Response.json({ error: "invalid segment path" }, { status: 400 });
@@ -77,4 +78,4 @@ export async function DELETE(_request: Request, ctx: { params: Promise<{ segment
 	// switchCleared tells the caller their on-switch went off WITH the file
 	// (additive; the GET view derives the same truth from record+file).
 	return Response.json({ path, deleted: true, switchCleared: hadSwitch });
-}
+});

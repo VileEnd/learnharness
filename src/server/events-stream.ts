@@ -24,11 +24,10 @@
  * The closure shape (teardown assigned in start, called in cancel) is the
  * ui-stream subscribe() pattern.
  */
-import { setEventScope, subscribe, type ServerEvent } from "../core/events.ts";
-import { currentTenant, multiUser, requireTenant } from "../core/tenant-context.ts";
-
-// Stamp every emission with the ambient tenant (Task 5 moves this to tenant.ts).
-setEventScope(() => currentTenant()?.id);
+import { subscribe, type ServerEvent } from "../core/events.ts";
+import { multiUser, requireTenant } from "../core/tenant-context.ts";
+// Side-effect import: registers the event scope (setEventScope) in tenant.ts.
+import "./tenant.ts";
 
 /** The caller's tenant id in multi-user mode, undefined otherwise (all events pass). */
 export function currentTenantId(): string | undefined {

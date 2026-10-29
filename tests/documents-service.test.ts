@@ -283,7 +283,7 @@ describe("routes", () => {
 		const skipped = await (await importRoute.POST(req("/api/documents/import", form([new File([body], "again.md")], { decisions: '["skip"]' })))).json();
 		assert.equal(skipped.results[0].outcome, "skipped");
 
-		const list = await (await listRoute.GET()).json();
+		const list = await (await listRoute.GET(new Request("http://localhost"))).json();
 		assert.equal(list.documents.length, 1);
 		assert.ok(!("minhash" in list.documents[0]));
 		const one = await oneRoute.GET(new Request("http://localhost"), { params: Promise.resolve({ id }) });

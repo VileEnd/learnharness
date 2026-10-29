@@ -45,6 +45,10 @@ export function multiUser(): boolean {
 }
 
 export function runAsTenant<T>(tenant: Tenant, fn: () => T): T {
+	// Defense in depth: a bad id must never reach a path join.
+	if (tenant.id !== LOCAL_TENANT.id && !TENANT_ID_RE.test(tenant.id)) {
+		throw new Error(`runAsTenant: invalid tenant id ${JSON.stringify(tenant.id)}`);
+	}
 	return als().run(tenant, fn);
 }
 
