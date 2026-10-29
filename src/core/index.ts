@@ -92,3 +92,4 @@ export * from "./exercise-core.ts";
 export * from "./canvas-core.ts";
 export * from "./grade-heal.ts";
 export * from "./usage.ts";
+export * from "./recommended-models.ts";
