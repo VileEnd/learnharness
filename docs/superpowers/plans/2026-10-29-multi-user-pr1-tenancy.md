@@ -18,7 +18,7 @@
 - Single-user mode (no `LH_MULTI_USER`) changes nothing on disk. The whole existing test suite must pass without edits to its path expectations.
 - Import law: `app/` imports only the `@/src/core` and `@/src/server` barrels. `src/core/tenant-context.ts` is node-only and is NOT exported from `src/core/index.ts`.
 - `verbatimModuleSyntax` is on, so use `import type`. Relative imports carry `.ts`.
-- Version bump: `0.29.0`, in the same PR (release flow).
+- Version bump: `0.30.0`, in the same PR (release flow). Main is at 0.29.0.
 
 ## Review Focus
 
@@ -26,7 +26,8 @@
 2. **Two users importing the same PDF.** `docId` is the content hash, so it is identical for both users. The extraction, scan and doc-index registries must not coalesce or block across tenants. Owner: Task 3.
 3. **A spoofed identity header on public paths.** Caddy's `@pwa` route skips `forward_auth`, so client-sent `X-Auth-Request-*` headers must be stripped before any handler runs. Owner: Task 6 (Caddyfile) and the end-to-end check.
 4. **Background continuations losing the tenant.** Work scheduled from inside a request (setTimeout, promise chains, steer wake pumps, doc-index batch timers) must still see the request's tenant. Owner: Task 3 (a test with a `setTimeout` inside `runAsTenant`).
-5. **Legacy data on a multi-user boot.** The app must refuse to serve and point at the migration script. It must never silently treat the old `data/chats` as nobody's, or as everybody's. Owner: Task 4.
+5. **An LLM call outside a tenant scope in multi-user mode.** The request-log sink (`src/agent/request-log.ts`) goes silent after its first failure. A `NoTenantError` there would drop spend lines unseen, and PR 3's caps would undercount. Expected: every such failure is logged, never silenced. Owner: Task 3.
+6. **Legacy data on a multi-user boot.** The app must refuse to serve and point at the migration script. It must never silently treat the old `data/chats` as nobody's, or as everybody's. Owner: Task 4.
 
 ---
 
@@ -51,7 +52,7 @@
   - `DATA_ROOT` (exported)
   - `userDataRoot(): string`: `DATA_ROOT` in single-user mode, otherwise `<DATA_ROOT>/users/<requireTenant().id>`
   - `globalDataRoot(): string`: `DATA_ROOT` in single-user mode, otherwise `<DATA_ROOT>/global`
-  - `PATHS.{data,chats,graph,push,documents,drawings,okf,learner,debug}` become getters over `userDataRoot()`. `okf` honours `LH_LIBRARY_DIR` as `path.join(LH_LIBRARY_DIR, id)` in multi-user mode.
+  - `PATHS.{data,chats,graph,push,documents,drawings,okf,learner,debug,logs}` become getters over `userDataRoot()`. `okf` honours `LH_LIBRARY_DIR` as `path.join(LH_LIBRARY_DIR, id)` in multi-user mode.
   - `PATHS.globalPush` is a getter, `<globalDataRoot()>/push`.
   - `LEDGER_FILES` entries become getters.
   - `topicAliasesFile()`, `sourcesFile()`, `positionsFile()`, `renderSettingsFile()`, `graphFormatFile()` and `settingsFile()` are per user. `promptsOverrideDir()` is global. `AUTH_FILE` is unchanged.
@@ -107,6 +108,8 @@ Use the real port method names from `src/core/ports.ts`.
   - `src/server/jobs.ts` (`recoverStaleJobs` throttle per tenant)
   - `src/agent/subagents/extraction.ts` (`runs()` registry: key `running`/`inFlight` by `tenantKey`, each entry records `tenant`, and `extractionStatuses()` and `abortExtraction()` see only the current tenant's entries)
   - `src/server/documents.ts:153` (scans) and `src/server/doc-index.ts:303` (scanRows), with the same keying and filtering
+  - `src/server/stores.ts:55-73` (the boot usage backfill): skip it when `multiUser()`. `ensureBackfill()` in `src/server/usage.ts` already runs it per tenant on that tenant's first `/api/usage` read.
+  - `src/agent/request-log.ts` `recordRequest`: a `NoTenantError` from the sink is always `console.error`ed and never counts toward the once-only silence
 - Test: `tests/tenancy-registries.test.ts`
 
 **Interfaces:**
@@ -117,6 +120,7 @@ Use the real port method names from `src/core/ports.ts`.
   - `tenantSingleton` gives the same instance for the same tenant and different instances for a and b, and `make` is called once per tenant.
   - Inside `runAsTenant(A, () => setTimeout(cb, 0))`, `cb` sees `currentTenant()?.id === "a"`.
   - Start a faux extraction run under tenant a with the harness used by the existing extraction tests (`tests/extraction*.test.ts`). `extractionStatuses()` under b is `[]` and under a has length 1. Starting the same source id under b is not refused as in-flight.
+  - With `LH_MULTI_USER=1` and a sink installed through `setRequestSink((l) => requestLogStore.append(l))`: `recordRequest` under tenant a writes to `users/a/logs/`. Outside a scope, two calls each produce a `console.error` (stub it and count the calls).
   - `recoverStaleJobs()` under b does not consume a's throttle window (call it under a, then under b, and assert b's sweep ran by spying on `chatStore.listChats` through the store module).
 - [ ] **Step 2: Run them.** Expected: FAIL.
 - [ ] **Step 3: Implement** `tenantSingleton` and wire it in. Convert the registries listed above.
@@ -157,7 +161,7 @@ Use the real port method names from `src/core/ports.ts`.
 
 **Files:**
 - Create: `src/server/tenant.ts` (exported from `src/server/index.ts`)
-- Modify: all 49 `app/api/**/route.ts` handlers, plus the pages `app/page.tsx`, `app/documents/page.tsx`, `app/documents/[id]/page.tsx`, `app/chat/[id]/page.tsx` and `app/chat/new/page.tsx`
+- Modify: all 51 `app/api/**/route.ts` handlers, plus the pages `app/page.tsx`, `app/documents/page.tsx`, `app/documents/[id]/page.tsx`, `app/chat/[id]/page.tsx` and `app/chat/new/page.tsx`
 - Test: `tests/tenancy-identity.test.ts`
 
 **Interfaces:**
@@ -192,7 +196,7 @@ Use the real port method names from `src/core/ports.ts`.
 - Modify: `docs/architecture.md`: add a "Tenancy" section (scope, layout, keyed registries, single-user mode), and replace the stale PracticeStore/practice.ts line.
 - Modify: `docs/self-hosting.md`: replace "One shared data set" with the per-user model, and add the upgrade runbook (create the `learnharness-admin` group and join it; find your `sub` in Keycloak; stop the stack; run the migration; start; existing sessions log out and back in once because the user claim changed).
 - Modify: `CLAUDE.md`: add a tenancy line under Key runtime mechanisms.
-- Modify: `package.json` and `package-lock.json`: set the version to `0.29.0` with `npm version 0.29.0 --no-git-tag-version`.
+- Modify: `package.json` and `package-lock.json`: set the version to `0.30.0` with `npm version 0.30.0 --no-git-tag-version`.
 - Test: the end-to-end check in Step 2.
 
 - [ ] **Step 1: Make the edits.** Run `docker compose -f deploy/compose.yaml config -q` with a dummy `.env` copied from `.env.example`. Expected: exit 0.
@@ -205,4 +209,4 @@ Use the real port method names from `src/core/ports.ts`.
   - Place a legacy `chats/` dir in the volume → health 503. Run the migration inside the container → health 200.
   - Run Caddy locally if feasible and check that a spoofed `X-Auth-Request-User` to `/manifest.webmanifest` never reaches the app (log the header in a scratch build, or rely on the Caddy `request_header` unit and say so).
 - [ ] **Step 3: Gates:** `npm run typecheck && npm test && npm run lint && npm run build && node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs`. Expected: all clean.
-- [ ] **Step 4: Commit** with the message `feat(tenancy): deploy wiring, docs, 0.29.0`.
+- [ ] **Step 4: Commit** with the message `feat(tenancy): deploy wiring, docs, 0.30.0`.
