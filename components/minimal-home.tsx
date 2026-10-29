@@ -22,11 +22,11 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { LibraryIcon, ListTreeIcon, UploadIcon } from "lucide-react";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
-import { GraphCostControl } from "@/components/graph-view.tsx";
+import { UsageMonthControl, useUsageMonth } from "@/components/usage/month-pill.tsx";
 import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import { Hint } from "@/components/ui/hint";
 import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
-import type { ChatSummary, GraphCostSummary, GraphSnapshot } from "@/src/core";
+import type { ChatSummary, GraphSnapshot } from "@/src/core";
 
 /** The quiet centered summary — a pure body (props in, markup out) so
  * the render suite can pin it statically. Very quiet by owner ruling:
@@ -96,7 +96,7 @@ export function MinimalHome({
 	onChainSelectClose?: () => void;
 }) {
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
-	const [costs, setCosts] = useState<GraphCostSummary | null>(null);
+	const usage = useUsageMonth();
 	const [chats, setChats] = useState<ChatSummary[]>([]);
 	const [chainsOpen, setChainsOpen] = useState(false);
 	// The picker's "Suggested: shaky and due" group (fetched while it is open).
@@ -106,10 +106,6 @@ export function MinimalHome({
 		fetch("/api/graph")
 			.then((res) => res.json() as Promise<GraphSnapshot>)
 			.then(setSnapshot)
-			.catch(() => {});
-		fetch("/api/graph/costs")
-			.then((res) => res.json() as Promise<GraphCostSummary>)
-			.then(setCosts)
 			.catch(() => {});
 		fetch("/api/chats")
 			.then((res) => res.json() as Promise<{ chats: ChatSummary[] }>)
@@ -195,7 +191,7 @@ export function MinimalHome({
 						</Hint>
 					</div>
 				</div>
-				{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
+				<UsageMonthControl usage={usage} />
 			</div>
 
 			{/* The chain table — the STANDARD overlay, unchanged, behind its
