@@ -37,7 +37,8 @@ import {
 	clampModelsLevels,
 	effectiveSettings,
 	promptOverrides,
-	readSettingsRecord,
+	sectionModelRefusal,
+	settingsStore,
 	validateChatSettings,
 	validateModelsSettings,
 	writeSettingsRecord,
@@ -64,6 +65,12 @@ export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ 
 	if (!parsed.ok) {
 		return Response.json({ error: parsed.error }, { status: 400 });
 	}
+	// Per-user models (multi-user design §10): a restricted user may only
+	// pick models in their allowed set (models slots, agent role overrides,
+	// the chat section's model); models already stored in the section pass.
+	const stored = settingsStore.readSettings() as Record<string, unknown> | null;
+	const refusal = sectionModelRefusal(section, parsed.settings, stored?.[section]);
+	if (refusal) return Response.json(refusal, { status: 403 });
 	let agentHealed: AgentSettings | undefined;
 
 	// Section-specific cross-validation (against the catalog / the prompt
@@ -125,7 +132,8 @@ export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ 
 
 	// Read-modify-write ONE section of the record; everything else rides
 	// along untouched (other sections, unknown keys — sanitize preserves).
-	const record = readSettingsRecord() ?? { version: 1 };
+	// The raw record, never the policy-overlaid read view (the overlay must not reach the disk).
+	const record = settingsStore.readSettings() ?? { version: 1 };
 	const next = { ...record, [section]: sectionOut };
 	writeSettingsRecord(next);
 	return Response.json({ settings: next });

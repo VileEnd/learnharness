@@ -22,6 +22,8 @@ import { wireGuardStore } from "../store/wireguard.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
 import { multiUser } from "../core/tenant-context.ts";
 import { setRequestSink } from "../agent/request-log.ts";
+import { setModelGate } from "../agent/models.ts";
+import { modelGate, readSettingsView } from "./model-gate.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
 	adminPolicyStore,
@@ -49,6 +51,11 @@ export type Stores = typeof stores;
 // suites set their own sink, and a suite on the real data/ must not write the
 // owner's cost log.
 if (process.env.NODE_ENV !== "test") setRequestSink((line) => stores.requestLog.append(line));
+
+// The per-user model and cap gate (multi-user design §10): every engine
+// passes it. Wired in every process, tests included: it is a no-op for
+// admins and in single-user mode, and the gate suites exercise it as wired.
+setModelGate(modelGate);
 
 // The one-time usage backfill (cost counter): old records enter the log once
 // per data dir, off the request path, after boot. Only in the Next server
@@ -85,7 +92,8 @@ if (
  * slots resolve to null and per-need refusal gates fire downstream. Read
  * fresh on every call — the record is a small file and turns are rare, so
  * no caching layer (stale toggles after a settings PUT would be worse).
+ * A restricted user reads through the policy overlay (readSettingsView).
  */
 export function effectiveSettings(): EffectiveSettings {
-	return resolveSettings(settingsStore.readSettings());
+	return resolveSettings(readSettingsView());
 }

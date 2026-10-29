@@ -25,7 +25,7 @@ import { coverageOf } from "../core/coverage.ts";
 import type { ChatStore, GraphStore } from "../core/ports.ts";
 import type { ExtractionPipeline } from "../agent/subagents/extraction.ts";
 import type { AttributionService } from "./attribution.ts";
-import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
+import { isPolicyRefusal, ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 
 /** Distinguish a failed canonical save from later bookkeeping failures. */
 export class TurnPersistenceError extends Error {
@@ -130,6 +130,12 @@ export function triggerExtraction(
 			}
 			if (err instanceof ProviderKeyMissingError) {
 				console.info(`[chat ${chatId}] extraction skipped — ${err.envelope.error} (provider: ${err.envelope.provider})`);
+				return;
+			}
+			// Per-user policy (multi-user design §10): over the cap, or no
+			// allowed model for the tier, skips the same way; the next trigger retries.
+			if (isPolicyRefusal(err)) {
+				console.info(`[chat ${chatId}] extraction skipped — ${err.envelope.error} (${err.envelope.code})`);
 				return;
 			}
 			console.error(`[chat ${chatId}] extraction pipeline failed:`, err);

@@ -13,6 +13,7 @@ import { createLibrary, type Library } from "./okf.ts";
 import { multiUser } from "../core/tenant-context.ts";
 import { tenantSingleton } from "./tenant-singleton.ts";
 import { stores } from "./stores.ts";
+import { readSettingsView } from "./model-gate.ts";
 
 // One library per tenant (tenantSingleton keeps the map on globalThis: dev HMR
 // re-imports modules, the single-flight must survive).
@@ -23,7 +24,7 @@ export const library: Library = tenantSingleton("__lhLibraryByTenant", () => {
 		documentStore: stores.documentStore,
 		chatStore: stores.chatStore,
 		learnerStore: stores.learnerStore,
-		settings: () => stores.settingsStore.readSettings(),
+		settings: () => readSettingsView(),
 	});
 	// Warm-up on first use: single-user that is at import (first property
 	// access), multi-user it is the tenant's first touch of the library.

@@ -1,6 +1,7 @@
 import {
 	chatSettingsClears,
 	clampChatLevel,
+	sectionModelRefusal,
 	effectiveSettings,
 	getChat,
 	parseSettingsBody,
@@ -33,6 +34,10 @@ export const PUT = withTenant(async (req: Request, { params }: { params: Promise
 	const body = await req.json().catch(() => null);
 	const parsed = parseSettingsBody(body);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
+	// Per-user models (multi-user design §10): only a NEW pick is checked, so
+	// a stored pin never blocks an unrelated write (canvas).
+	const refusal = sectionModelRefusal("chat", parsed.settings, getChat(id)?.settings);
+	if (refusal) return Response.json(refusal, { status: 403 });
 
 	const existing = getChat(id)?.settings ?? {};
 	const merged: ChatSettings = { ...existing, ...parsed.settings };

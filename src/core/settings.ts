@@ -186,6 +186,67 @@ export class ProviderKeyMissingError extends Error {
 	}
 }
 
+/** The monthly spending cap refusal (multi-user design §10): a restricted
+ *  user at or over their cap. HTTP callers get 403 + this JSON; background
+ *  work catches the typed error below as a contained failure. Same envelope
+ *  family as modelsNotConfigured: the human `error` is the chat's copy. */
+export const MONTHLY_CAP_REACHED_CODE = "monthly_cap_reached" as const;
+export interface MonthlyCapReached {
+	error: string;
+	code: typeof MONTHLY_CAP_REACHED_CODE;
+	capUsd: number;
+	/** The priced spend this month (unpriced calls count 0). */
+	spentUsd: number;
+}
+/** "$5" for whole dollars, else "$2.50". */
+function capLabel(usd: number): string {
+	return Number.isInteger(usd) ? `$${usd}` : `$${usd.toFixed(2)}`;
+}
+export function monthlyCapReached(capUsd: number, spentUsd: number): MonthlyCapReached {
+	return {
+		error: `You've reached this month's spending limit (${capLabel(capUsd)}). Ask your admin to raise it.`,
+		code: MONTHLY_CAP_REACHED_CODE,
+		capUsd,
+		spentUsd,
+	};
+}
+export class MonthlyCapReachedError extends Error {
+	readonly envelope: MonthlyCapReached;
+	constructor(capUsd: number, spentUsd: number) {
+		const envelope = monthlyCapReached(capUsd, spentUsd);
+		super(envelope.error);
+		this.name = "MonthlyCapReachedError";
+		this.envelope = envelope;
+	}
+}
+
+/** The per-user model refusal (multi-user design §10): the model is outside
+ *  the user's allowed set and its tier has no policy slot to substitute.
+ *  HTTP callers get 403 + this JSON. `model` is the "provider:id" key. */
+export const MODEL_NOT_ALLOWED_CODE = "model_not_allowed" as const;
+export interface ModelNotAllowed {
+	error: string;
+	code: typeof MODEL_NOT_ALLOWED_CODE;
+	model: string;
+}
+export function modelNotAllowed(model: string): ModelNotAllowed {
+	return { error: "That model isn't available for your account.", code: MODEL_NOT_ALLOWED_CODE, model };
+}
+export class ModelNotAllowedError extends Error {
+	readonly envelope: ModelNotAllowed;
+	constructor(model: string) {
+		const envelope = modelNotAllowed(model);
+		super(envelope.error);
+		this.name = "ModelNotAllowedError";
+		this.envelope = envelope;
+	}
+}
+
+/** Either policy refusal: callers that contain refusals treat both alike. */
+export function isPolicyRefusal(err: unknown): err is MonthlyCapReachedError | ModelNotAllowedError {
+	return err instanceof MonthlyCapReachedError || err instanceof ModelNotAllowedError;
+}
+
 /** One slot's stored state. BYOK (owner, 2026-09-22): the WRITE side
  *  requires model (a level alone can never run — no factory floor); the
  *  sanitizer keeps whatever is on disk, but RESOLUTION treats a slot

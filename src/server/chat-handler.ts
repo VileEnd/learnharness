@@ -42,7 +42,8 @@ import {
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
-import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
+import { isPolicyRefusal, modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
+import { assertWithinCap, modelGate, readSettingsView } from "./model-gate.ts";
 import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { notify } from "./push.ts";
@@ -184,8 +185,16 @@ setTurnRunner(async (chatId, input) => {
  *  the request log's purpose unless the caller names its own (topicist,
  *  attribution ride the describer's role). */
 export function resolveEngine(role: ModelRole, opts?: EngineOptions): PiEngine | undefined {
-	const spec = resolveRoleSpec(role, stores.settingsStore.readSettings());
-	return spec ? piEngineForSpec(spec, { purpose: role, ...opts }) : undefined;
+	const spec = resolveRoleSpec(role, readSettingsView());
+	return spec ? piEngineForSpec(spec, { purpose: role, ...opts, role }) : undefined;
+}
+
+/** A per-user policy refusal (multi-user design §10) as its 403 envelope,
+ *  else null: the cap and the model refusals answer alike. */
+function policyRefusalResponse(chatId: string, err: unknown): Response | null {
+	if (!isPolicyRefusal(err)) return null;
+	console.info(`[chat ${chatId}] turn refused — ${JSON.stringify(err.envelope)}`);
+	return Response.json(err.envelope, { status: 403 });
 }
 
 setJobRespawn((jobId) => void jobRunner.runJob(jobId));
@@ -233,6 +242,17 @@ export async function handleChatInput(
 		return Response.json({ error: "Unknown chat" }, { status: 404 });
 	}
 
+	// THE SPENDING CAP (multi-user design §10): a restricted user at or over
+	// this month's cap is refused FIRST, before any gate, beginTurn or the
+	// write-ahead persist, so the refused input is never saved.
+	try {
+		assertWithinCap();
+	} catch (err) {
+		const refused = policyRefusalResponse(chatId, err);
+		if (refused) return refused;
+		throw err;
+	}
+
 	// THE UNIVERSAL TURN GATE (BYOK, owner, 2026-09-22): a turn needs the
 	// CONVERSATION chain — the chat's own model override over the strong
 	// slot — and there is no factory floor; when both are empty the turn
@@ -242,11 +262,23 @@ export async function handleChatInput(
 	// write-ahead persist (nothing durable changes), and every downstream
 	// resolution (jobs/extraction gate per-need on their own tiers).
 	const effective = effectiveSettings();
-	const conversation = resolveConversationSpec(record.settings, effective.models.strong);
-	if (!conversation) {
+	const requested = resolveConversationSpec(record.settings, effective.models.strong);
+	if (!requested) {
 		const envelope = modelsNotConfigured(["strong"]);
 		console.info(`[chat ${chatId}] turn refused — ${JSON.stringify(envelope)}`);
 		return Response.json(envelope, { status: 503 });
+	}
+	// Per-user models (multi-user design §10): the conversation runs on the
+	// spec the gate allows (a disallowed chat model falls back to the policy's
+	// strong slot), resolved here so the key gate below checks the provider
+	// that will actually run; no slot to fall back to is a 403.
+	let conversation: typeof requested;
+	try {
+		conversation = modelGate(requested, { purpose: "teacher" });
+	} catch (err) {
+		const refused = policyRefusalResponse(chatId, err);
+		if (refused) return refused;
+		throw err;
 	}
 
 	// THE KEY-PRESENCE GATE (provider-key interlude, owner, 2026-09-25): a
@@ -279,7 +311,7 @@ export async function handleChatInput(
 	// its own engine off the same spec below (teacher / prober / practice).
 	let compactionEngine: PiEngine;
 	try { compactionEngine = piEngineForSpec(conversation, { purpose: "compaction", chatId, chatKind }); }
-	catch { return Response.json({ error: "The selected model is unavailable." }, { status: 503 }); }
+	catch (err) { return policyRefusalResponse(chatId, err) ?? Response.json({ error: "The selected model is unavailable." }, { status: 503 }); }
 	const modelIdForCompaction = `${compactionEngine.model.provider}:${compactionEngine.model.id}`;
 	await ensureCompacted(
 		{
@@ -298,6 +330,15 @@ export async function handleChatInput(
 	const compactedRecord = stores.chatStore.getChat(chatId);
 	if (!compactedRecord) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	record = compactedRecord;
+	// A synchronous compaction just spent: re-check the cap while nothing of
+	// this input is persisted yet (cached unless the log moved).
+	try {
+		assertWithinCap();
+	} catch (err) {
+		const refused = policyRefusalResponse(chatId, err);
+		if (refused) return refused;
+		throw err;
+	}
 
 	// The input's native appends (pure; the honest 400 for an answer with no
 	// pending question call). Computed BEFORE beginTurn so a refused input
@@ -408,12 +449,23 @@ export async function handleChatInput(
 	// canvas model slot; the conversation engine (chat model, else the strong
 	// slot) runs every turn. The send_to_user gate, the usage stamp, the
 	// spend-cap price and the drawing context all read it. Same spec as the
-	// compaction gate's engine (so it cannot throw here), its own purpose.
-	const engine = piEngineForSpec(conversation, {
-		purpose: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
-		chatId,
-		chatKind,
-	});
+	// compaction gate's engine, its own purpose. Only a policy refusal can
+	// throw here (concurrent background spend crossed the cap since the check
+	// above): the claimed turn is released, never leaked; the input is
+	// already saved, and the next allowed turn answers it.
+	let engine: PiEngine;
+	try {
+		engine = piEngineForSpec(conversation, {
+			purpose: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
+			chatId,
+			chatKind,
+		});
+	} catch (err) {
+		endTurn(chatId);
+		const refused = policyRefusalResponse(chatId, err);
+		if (refused) return refused;
+		throw err;
+	}
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;

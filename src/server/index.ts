@@ -17,11 +17,14 @@ export { readRenderSettings, writeRenderSettings } from "../store/render-setting
 // The settings record + prompt overrides (settings-storage wave, 2026-09-19).
 // The *Record aliases keep the app/api/settings routes explicit about which
 // seam they touch (the raw record, not the chat-section convenience view).
+// readSettingsRecord is the READ view (a restricted user's policy overlays
+// the model slots, multi-user design §10); read-modify-write paths read the
+// raw record through settingsStore so the overlay never reaches the disk.
 export {
-	readSettings as readSettingsRecord,
 	writeSettings as writeSettingsRecord,
 	settingsStore,
 } from "../store/settings.ts";
+export { readSettingsView as readSettingsRecord, assertWithinCap, spentThisMonth } from "./model-gate.ts";
 export { promptOverrides } from "../store/prompt-overrides.ts";
 export { isValidSegmentPath } from "../core/prompt-segments.ts";
 // The canonical segment discovery/resolution lives in the agent layer

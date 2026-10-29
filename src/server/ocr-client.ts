@@ -18,6 +18,7 @@
 import { recordRequest } from "../agent/request-log.ts";
 import { categoryOf, truncateError } from "../core/usage.ts";
 import { keyValue } from "./keys.ts";
+import { assertWithinCap } from "./model-gate.ts";
 
 export type OcrStrategy = "vision" | "ocr+vision";
 
@@ -169,6 +170,10 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 		assertCanScan() {
 			base();
 			if (!key()) throw new OcrError("openrouter_key_missing", "PDF scanning needs an OpenRouter key. Add one under Settings, Keys.");
+			// A scan is paid work: a restricted user over their monthly cap
+			// (multi-user design §10) is refused with MonthlyCapReachedError,
+			// which the import contains as a failed file with the cap copy.
+			assertWithinCap();
 		},
 		async estimate(files) {
 			const startedAt = Date.now();

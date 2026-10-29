@@ -109,6 +109,23 @@ export interface EngineOptions {
 	/** The chat the calls belong to, when one does (a session's spend). */
 	chatId?: string;
 	chatKind?: "teach" | "practice";
+	/** The role the spec was resolved for, when the purpose names something
+	 *  else (topicist and attribution ride the describer's role): the model
+	 *  gate maps it to its slot tier. */
+	role?: ModelRole;
+}
+
+/** The per-user model and cap gate (multi-user design §10): returns the spec
+ *  to build (the input, or its tier's policy slot) or throws a typed policy
+ *  refusal. The agent layer cannot read the policy, so the server composition
+ *  injects it (src/server/stores.ts), the setRequestSink precedent. */
+export type ModelGate = (spec: ResolvedModelSpec, opts: EngineOptions) => ResolvedModelSpec;
+
+let modelGate: ModelGate | null = null;
+
+/** Install (or clear, with null) the process-wide gate. */
+export function setModelGate(next: ModelGate | null): void {
+	modelGate = next;
 }
 
 /** The production engine for a RESOLVED spec (model slots wave,
@@ -116,7 +133,9 @@ export interface EngineOptions {
  *  key is resolved by pi-ai itself from the environment per request (the
  *  keys seam reflects file-saved keys into env), so the engine never
  *  hardcodes OpenRouter's. */
-export function piEngineForSpec(spec: ResolvedModelSpec, opts: EngineOptions = {}): PiEngine {
+export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOptions = {}): PiEngine {
+	// Every engine passes the gate first: the one enforcement point.
+	const spec = modelGate ? modelGate(requested, opts) : requested;
 	const models: Models = piModels();
 	const model = models.getModel(spec.provider, spec.id);
 	if (!model) {

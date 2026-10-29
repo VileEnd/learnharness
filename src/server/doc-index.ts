@@ -68,6 +68,7 @@ import { graphToolsEnabled } from "../core/settings-resolution.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 import { requireTenant, registryKey } from "../core/tenant-context.ts";
 import { tenantSingleton } from "./tenant-singleton.ts";
+import { capAllows } from "./model-gate.ts";
 
 // ─── the embedding seam ──────────────────────────────────────────────────────
 
@@ -1159,12 +1160,14 @@ export type DocIndex = ReturnType<typeof createDocIndex>;
 /** The embedder the current key + settings describe, or null without a key. */
 function liveEmbedder(): Embedder | null {
 	const key = keyValue("OPENROUTER_API_KEY");
-	return key ? openRouterEmbedder(key, effectiveSettings().documents.embeddingModel) : null;
+	// Over the monthly cap (multi-user design §10): no embedder, so indexing
+	// waits and search runs keyword-only, the keyless path.
+	return key && capAllows("embedding") ? openRouterEmbedder(key, effectiveSettings().documents.embeddingModel) : null;
 }
 
 function liveBatcher(): BatchClient | null {
 	const key = keyValue("OPENROUTER_API_KEY");
-	return key ? openRouterBatchClient(key, effectiveSettings().documents.embeddingModel) : null;
+	return key && capAllows("batch embedding") ? openRouterBatchClient(key, effectiveSettings().documents.embeddingModel) : null;
 }
 
 // Anchored on globalThis like the other registries: Next may load this module

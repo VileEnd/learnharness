@@ -34,6 +34,8 @@ import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
 	isProviderKeyRefusal,
+	modelNotAllowed,
+	monthlyCapReached,
 	firstSourceTextParts,
 	messageAnchorId,
 	textPartMessageId,
@@ -167,6 +169,36 @@ export function parseProviderKeyRefusal(message: string | undefined): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/** The per-user policy refusals (multi-user design §10): the 403 body rides
+ *  the transport's error text verbatim, as the BYOK envelopes do. Returns
+ *  the copy to show (built by the envelope's home module, so it cannot
+ *  drift), else null. These never open the setup flow: picking models
+ *  cannot lift an admin's cap or allow a model. Exported pure for tests. */
+export function parsePolicyRefusal(message: string | undefined): string | null {
+	if (!message) return null;
+	try {
+		const body = JSON.parse(message) as { code?: unknown; capUsd?: unknown; spentUsd?: unknown; model?: unknown };
+		if (body.code === "monthly_cap_reached" && typeof body.capUsd === "number") {
+			return monthlyCapReached(body.capUsd, typeof body.spentUsd === "number" ? body.spentUsd : 0).error;
+		}
+		if (body.code === "model_not_allowed") return modelNotAllowed(typeof body.model === "string" ? body.model : "").error;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/** The turn's error banner: a policy refusal in its own words, anything
+ *  else as the honest generic failure. */
+export function TurnErrorBanner({ message }: { message: string }) {
+	const refusal = parsePolicyRefusal(message);
+	return (
+		<div data-testid="turn-error" className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
+			{refusal ?? `Something went wrong: ${message}`}
+		</div>
+	);
 }
 
 /** useLayoutEffect that is silent during SSR (client components still render on the server in Next). */
@@ -1641,11 +1673,7 @@ export function Chat({
 									</Shimmer>
 								</span>
 							)}
-							{error && (
-								<div className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
-									Something went wrong: {error.message}
-								</div>
-							)}
+							{error && <TurnErrorBanner message={error.message} />}
 						</div>
 
 						{/* The dock's reserved tail (DockOverlay reports its height):

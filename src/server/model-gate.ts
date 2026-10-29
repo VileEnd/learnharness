@@ -1,0 +1,159 @@
+/**
+ * Per-user models and monthly caps, enforced (multi-user design §10). One
+ * gate on every engine (installed into src/agent/models.ts piEngineForSpec by
+ * the composition root, src/server/stores.ts), the up-front cap check the
+ * turn and the paid side channels call, the settings overlay every settings
+ * read goes through, and the write-side model check. Admins and single-user
+ * mode are never gated (restrictedPolicy() is null for them).
+ */
+
+import type { ModelRole } from "../../config.ts";
+import type { EngineOptions, ResolvedModelSpec } from "../agent/models.ts";
+import { allowedSet, modelKey, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
+import { requireTenant } from "../core/tenant-context.ts";
+import { monthKey } from "../core/usage.ts";
+import {
+	MODEL_SLOTS,
+	ModelNotAllowedError,
+	MonthlyCapReachedError,
+	ROLE_SLOT,
+	modelNotAllowed,
+	type ModelNotAllowed,
+	type ModelSlotName,
+	type ModelsSettings,
+	type UserSettings,
+} from "../core/settings.ts";
+import { restrictedPolicy } from "./policy.ts";
+import { stores } from "./stores.ts";
+import { monthSpend } from "./usage.ts";
+
+interface SpendCacheEntry {
+	month: string;
+	stamp: string | null;
+	usd: number;
+	unpriced: number;
+}
+
+// Per tenant id, keyed on the month file's size and mtime: the cap check runs
+// on every LLM call, so an unchanged log is never folded twice. On globalThis
+// like the other registries (Next may load this module once per bundle).
+const g = globalThis as { __lhSpendCache?: Map<string, SpendCacheEntry> };
+const spendCache = (g.__lhSpendCache ??= new Map<string, SpendCacheEntry>());
+
+/** This month's spend for the ambient tenant: the priced total (unpriced
+ *  calls count 0 toward the cap) and how many calls had no price. */
+export function spentThisMonth(): { usd: number; unpriced: number } {
+	const tenant = requireTenant().id;
+	const month = monthKey(new Date());
+	// Stamp BEFORE the fold: a line appended meanwhile makes the next call miss.
+	const stamp = stores.requestLog.monthStamp(month);
+	const hit = spendCache.get(tenant);
+	if (hit && hit.month === month && hit.stamp === stamp) return { usd: hit.usd, unpriced: hit.unpriced };
+	const { usd, unpriced } = monthSpend(month);
+	spendCache.set(tenant, { month, stamp, usd, unpriced });
+	return { usd, unpriced };
+}
+
+function assertPolicyCap(policy: UserPolicy): void {
+	if (policy.monthlyCapUsd === null) return;
+	const { usd } = spentThisMonth();
+	if (usd >= policy.monthlyCapUsd) throw new MonthlyCapReachedError(policy.monthlyCapUsd, usd);
+}
+
+/** Throws MonthlyCapReachedError when a restricted user is at or over their cap. */
+export function assertWithinCap(): void {
+	const policy = restrictedPolicy();
+	if (policy) assertPolicyCap(policy);
+}
+
+/** For the paid side channels (embeddings, OCR): false, with one log line,
+ *  when the ambient user is over the cap; their work is then skipped. */
+export function capAllows(what: string): boolean {
+	try {
+		assertWithinCap();
+		return true;
+	} catch (err) {
+		if (!(err instanceof MonthlyCapReachedError)) throw err;
+		console.info(`[policy] ${what} skipped - monthly cap reached ($${err.envelope.spentUsd.toFixed(2)} of $${err.envelope.capUsd})`);
+		return false;
+	}
+}
+
+const isRole = (purpose: string | undefined): purpose is ModelRole => purpose !== undefined && Object.hasOwn(ROLE_SLOT, purpose);
+
+/** The slot tier an engine draws from: its role's tier; a conversation turn,
+ *  compaction or any other non-role purpose runs on strong. */
+export function tierOf(opts: Pick<EngineOptions, "role" | "purpose">): ModelSlotName {
+	const role = opts.role ?? (isRole(opts.purpose) ? opts.purpose : undefined);
+	return role ? ROLE_SLOT[role] : "strong";
+}
+
+/** The spec a restricted user may run: the request when allowed, else its
+ *  tier's policy slot (keeping the requested thinking level, which the engine
+ *  clamps), else ModelNotAllowedError. */
+function allowedSpec(policy: UserPolicy, spec: ResolvedModelSpec, tier: ModelSlotName): ResolvedModelSpec {
+	if (allowedSet(policy).has(modelKey(spec))) return spec;
+	const slot = policy.slots[tier];
+	if (!slot) throw new ModelNotAllowedError(modelKey(spec));
+	return { provider: slot.provider, id: slot.id, ...(spec.thinkingLevel !== undefined && { thinkingLevel: spec.thinkingLevel }) };
+}
+
+/** THE gate (installed by stores.ts): the cap first, then the model. */
+export function modelGate(spec: ResolvedModelSpec, opts: EngineOptions): ResolvedModelSpec {
+	const policy = restrictedPolicy();
+	if (!policy) return spec;
+	assertPolicyCap(policy);
+	return allowedSpec(policy, spec, tierOf(opts));
+}
+
+/** Pure: a settings record as a restricted user reads it. Each slot that is
+ *  missing or names a disallowed model shows the policy slot instead (unset
+ *  when the policy has none). Never written to disk. */
+export function overlaySettings(record: UserSettings | null, policy: UserPolicy | null): UserSettings | null {
+	if (!policy) return record;
+	const allowed = allowedSet(policy);
+	const models: ModelsSettings = { ...record?.models };
+	let changed = false;
+	for (const name of MODEL_SLOTS) {
+		const mine = models[name];
+		if (mine?.model && allowed.has(modelKey(mine.model))) continue;
+		const slot: PolicyModel | undefined = policy.slots[name];
+		if (slot) {
+			models[name] = {
+				model: { provider: slot.provider, id: slot.id },
+				...(mine?.thinkingLevel !== undefined && { thinkingLevel: mine.thinkingLevel }),
+			};
+			changed = true;
+		} else if (mine) {
+			delete models[name];
+			changed = true;
+		}
+	}
+	// Nothing to lay over: the record as stored (null stays null, first boot).
+	if (!changed) return record;
+	return { ...(record ?? { version: 1 }), models };
+}
+
+/** THE settings read: the stored record with the ambient user's policy laid
+ *  over its model slots. Every resolution path reads through this. */
+export function readSettingsView(): UserSettings | null {
+	return overlaySettings(stores.settingsStore.readSettings(), restrictedPolicy());
+}
+
+/** The write-side check: the first model a restricted user may not pick, as
+ *  the 403 envelope, else null. */
+export function disallowedModel(models: readonly (PolicyModel | undefined)[]): ModelNotAllowed | null {
+	const policy = restrictedPolicy();
+	if (!policy) return null;
+	const allowed = allowedSet(policy);
+	const bad = models.find((m): m is PolicyModel => m !== undefined && !allowed.has(modelKey(m)));
+	return bad ? modelNotAllowed(modelKey(bad)) : null;
+}
+
+/** The catalog filter: a restricted user sees only their allowed models. */
+export function allowedModelsOnly<T extends PolicyModel>(models: readonly T[]): T[] {
+	const policy = restrictedPolicy();
+	if (!policy) return [...models];
+	const allowed = allowedSet(policy);
+	return models.filter((m) => allowed.has(modelKey(m)));
+}

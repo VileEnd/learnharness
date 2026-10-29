@@ -422,6 +422,9 @@ export interface LearnerStore {
 export interface RequestLogStore {
 	append(line: RequestLogLine): void;
 	readMonth(month: string): RequestLogLine[];
+	/** A cheap change stamp of one month's file (size and mtime), or null
+	 *  when it does not exist: the cap check's cache key. */
+	monthStamp(month: string): string | null;
 	months(): string[];
 	backfillDone(): boolean;
 	markBackfilled(): void;

@@ -9,6 +9,7 @@ import {
 	FACTORY_SETTINGS,
 	ModelsNotConfiguredError,
 	ProviderKeyMissingError,
+	isPolicyRefusal,
 	ROLE_SLOT,
 	type ModelSlotName,
 	type ProviderKeyMissing,
@@ -1100,7 +1101,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 
 	/** Failures worth a notification: not the learner's abort, not a config refusal. */
 	const isReportable = (err: unknown): boolean =>
-		!(err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) &&
+		!(err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError || isPolicyRefusal(err)) &&
 		!(err instanceof Error && err.name === "AbortError");
 
 	/** Accumulate one billed step into the run's registry entry (live). */
@@ -1696,7 +1697,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		} catch (err) {
 			console.error(`[extraction ${id}] notes pipeline failed (${Math.round(performance.now() - t0)}ms):`, err);
 			if (isReportable(err)) reportRun(input.reportAs, "error");
-			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
+			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError || isPolicyRefusal(err)) throw err;
 			throw new NotesImportError(err instanceof Error && err.name === "AbortError" ? "aborted" : "failed", mergedStats,
 				err instanceof Error ? err.message : String(err), { cause: err });
 		} finally {
@@ -1729,7 +1730,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				...(input.topics ? { topics: input.topics } : {}),
 			});
 		} catch (err) {
-			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
+			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError || isPolicyRefusal(err)) throw err;
 			throw new NotesImportError("failed", { nodes: 0, chains: 0 }, err instanceof Error ? err.message : String(err), { cause: err });
 		} finally {
 			inFlight.delete(id);

@@ -28,6 +28,8 @@ import type {
 import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
+import type { ModelNotAllowed } from "../core/settings.ts";
+import { disallowedModel } from "./model-gate.ts";
 
 /** Parsed-or-rejected — `ok: false` carries the 400's error message. */
 export type SettingsBodyResult<T> =
@@ -465,3 +467,23 @@ export const SETTINGS_SECTIONS = {
 } as const;
 
 export type SettingsSectionName = keyof typeof SETTINGS_SECTIONS;
+
+/** The models a parsed section picks (models slots, agent role overrides,
+ *  the chat model). */
+function sectionModels(section: string, settings: unknown): ({ provider: string; id: string } | undefined)[] {
+	if (!settings || typeof settings !== "object") return [];
+	if (section === "models") return MODEL_SLOTS.map((name) => (settings as ModelsSettings)[name]?.model);
+	if (section === "agent") return Object.values((settings as AgentSettings).models ?? {}).map((o) => o?.model);
+	if (section === "chat") return [(settings as ChatSettings).model];
+	return [];
+}
+
+/** Per-user models (multi-user design §10): the 403 envelope when a parsed
+ *  section picks a model the ambient restricted user may not, else null.
+ *  Only NEW picks are checked: a model already stored in that section (an
+ *  override from before the policy) rides along when an unrelated knob of
+ *  the same section is written. Admins and single-user mode always pass. */
+export function sectionModelRefusal(section: string, settings: unknown, stored?: unknown): ModelNotAllowed | null {
+	const kept = new Set(sectionModels(section, stored).flatMap((m) => (m ? [`${m.provider}:${m.id}`] : [])));
+	return disallowedModel(sectionModels(section, settings).filter((m) => !m || !kept.has(`${m.provider}:${m.id}`)));
+}

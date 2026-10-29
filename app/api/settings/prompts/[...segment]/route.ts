@@ -29,7 +29,7 @@ import {
 	allSegmentPaths,
 	isValidSegmentPath,
 	promptOverrides,
-	readSettingsRecord,
+	settingsStore,
 	writeSettingsRecord,
 	requireAdmin,
 	withTenant,
@@ -72,7 +72,8 @@ export const DELETE = withTenant(async (_request: Request, ctx: { params: Promis
 	if (!path) return Response.json({ error: "invalid segment path" }, { status: 400 });
 	// Clear the record's switch FIRST (crash between the two leaves "off +
 	// file" — valid — never an orphaned ON), then unlink the file.
-	const record = readSettingsRecord();
+	// The raw record (not the policy-overlaid view): this read is written back.
+	const record = settingsStore.readSettings();
 	const hadSwitch = record?.agent?.prompts?.[path] === true;
 	if (record && record.agent?.prompts?.[path] !== undefined) {
 		const prompts = { ...record.agent.prompts };

@@ -7,7 +7,7 @@
 import { AdminPolicyCorrupt, DEFAULT_MONTHLY_CAP_USD, DENY_ALL_POLICY, modelKey, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
 import { recommendedFor } from "../core/recommended-models.ts";
 import { multiUser, requireTenant } from "../core/tenant-context.ts";
-import { modelCatalog } from "./model-catalog.ts";
+import { catalogModels } from "./model-catalog.ts";
 import { stores } from "./stores.ts";
 
 export interface CatalogModelLike {
@@ -19,8 +19,8 @@ export interface CatalogModelLike {
 const pick = (m: CatalogModelLike): PolicyModel => ({ provider: m.provider, id: m.id });
 
 /** Pure: built-in defaults from the catalog's available "Cheapest" entries. */
-export function builtInDefaults(catalogModels: readonly CatalogModelLike[]): UserPolicy {
-	const cheapest = recommendedFor(catalogModels)
+export function builtInDefaults(models: readonly CatalogModelLike[]): UserPolicy {
+	const cheapest = recommendedFor(models)
 		.filter((r) => r.entry.badge === "Cheapest")
 		.map((r) => r.model);
 	const first = cheapest[0];
@@ -43,14 +43,14 @@ function stored(): AdminPolicy {
 /** The admin's view: newUserDefaults is filled from the live catalog when not persisted. May throw AdminPolicyCorrupt. */
 export function currentPolicy(): AdminPolicy {
 	const p = stored();
-	return { ...p, newUserDefaults: p.newUserDefaults ?? builtInDefaults(modelCatalog().models) };
+	return { ...p, newUserDefaults: p.newUserDefaults ?? builtInDefaults(catalogModels()) };
 }
 
 /** Enforcement read: FAILS CLOSED (deny-all) when the policy file is corrupt. */
 export function policyFor(userId: string): UserPolicy {
 	try {
 		const p = stored();
-		return p.users[userId] ?? p.newUserDefaults ?? builtInDefaults(modelCatalog().models);
+		return p.users[userId] ?? p.newUserDefaults ?? builtInDefaults(catalogModels());
 	} catch (e) {
 		if (!(e instanceof AdminPolicyCorrupt)) throw e;
 		console.error("policyFor: admin.json is corrupt; denying all models and spend");
@@ -84,10 +84,10 @@ export type PolicyValidation = { ok: true; policy: UserPolicy } | { ok: false; e
 const isModel = (v: unknown): v is PolicyModel =>
 	!!v && typeof v === "object" && typeof (v as PolicyModel).provider === "string" && typeof (v as PolicyModel).id === "string";
 
-export function validatePolicy(raw: unknown, catalogModels: readonly CatalogModelLike[] = modelCatalog().models): PolicyValidation {
+export function validatePolicy(raw: unknown, models: readonly CatalogModelLike[] = catalogModels()): PolicyValidation {
 	if (!raw || typeof raw !== "object") return { ok: false, error: "policy must be an object" };
 	const r = raw as Partial<UserPolicy>;
-	const known = new Set(catalogModels.map((m) => modelKey(m)));
+	const known = new Set(models.map((m) => modelKey(m)));
 	const slots: UserPolicy["slots"] = {};
 	const rs = (r.slots ?? {}) as Record<string, unknown>;
 	for (const name of ["strong", "cheap", "vision"] as const) {

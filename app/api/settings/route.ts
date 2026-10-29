@@ -14,10 +14,11 @@
  * (core/settings-resolution.ts resolveSettings — browser-safe).
  */
 
-import { settingsStore, withTenant } from "@/src/server";
+import { readSettingsRecord, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withTenant(async () => {
-	return Response.json({ settings: settingsStore.readSettings() });
+	// The read view: a restricted user's policy overlays the model slots.
+	return Response.json({ settings: readSettingsRecord() });
 });
