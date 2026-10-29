@@ -26,11 +26,11 @@ import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
-import { annotationsOf, hintsFor, isInputBoundary, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
+import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
-import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
+import { fitImageSize, PALETTE_NAMES, revealView, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
-import { TeacherInk } from "./teacher-ink";
+import { TeacherInk, teacherInkBoxes } from "./teacher-ink";
 import { useDrawingScene } from "./use-drawing-scene";
 import { HintStrip, HintsButton } from "./hints";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
@@ -88,11 +88,10 @@ export function canSubmitWork(s: { text: string; objectCount: number; requireThi
 	return text.length > 0 || s.objectCount > 0;
 }
 
-/** Pure: the drawing whose marks the live canvas shows - the NEWEST one with marks (hint snapshots make many
- *  marked drawings per task; older marks would pile up on the live work). Null when none has marks. */
-export function newestMarkedDrawing<T extends { marks: readonly unknown[] }>(drawings: readonly T[]): T | null {
-	for (let i = drawings.length - 1; i >= 0; i--) if (drawings[i]!.marks.length > 0) return drawings[i]!;
-	return null;
+/** Pure: may the canvas Hint fire? The draft is loaded (else the snapshot would miss his work), nothing is
+ *  uploading, and no turn runs (a hint sent then would be dropped). */
+export function canRequestHint(s: { loaded: boolean; compactionRunning: boolean; busy: boolean; turnBusy: boolean }): boolean {
+	return s.loaded && !s.compactionRunning && !s.busy && !s.turnBusy;
 }
 
 function nextZ(scene: DrawingScene): number {
@@ -115,12 +114,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [showInk, setShowInk] = useState(true);
-	// The teacher's marks on the newest marked drawing of this task (a submission or a hint snapshot); null until
+	// The marks of the newest marking turn on this task's drawings (a submission or a hint snapshot); null until
 	// the teacher annotates.
-	const inkDrawing = useMemo(
-		() => newestMarkedDrawing(submittedDrawingIds(messages, callId).map((id) => ({ id, marks: annotationsOf(messages, id).flatMap((a) => a.marks) }))),
-		[messages, callId],
-	);
+	const inkDrawing = useMemo(() => latestTaskMarks(messages, callId), [messages, callId]);
+	const inkKey = useMemo(() => (inkDrawing ? `${inkDrawing.drawingId}:${JSON.stringify(inkDrawing.marks)}` : ""), [inkDrawing]);
 	// The replies to this task's hint requests, derived from the record (so they survive minimise and reload).
 	const hints = useMemo(() => hintsFor(messages, callId), [messages, callId]);
 	// Pending only while that request is still the newest input (isInputBoundary, the same rule hintsFor ends a
@@ -375,6 +372,20 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			setBusy(false);
 		}
 	};
+	// New marks out of view (a note below the visible part of his drawing): move the view once per set of marks
+	// while the canvas is open, so panning away afterwards is his to do. A reopened canvas starts from the default
+	// view, so it shows them again.
+	const revealedRef = useRef<string | null>(null);
+	const revealMarks = useCallback((key: string, boxes: Box[]) => {
+		const engine = engineRef.current;
+		const root = rootRef.current;
+		if (!engine || !root || revealedRef.current === key) return;
+		revealedRef.current = key;
+		const r = root.getBoundingClientRect();
+		const next = revealView({ w: r.width, h: r.height }, engine.getView(), boxes);
+		if (next) engine.setView(next);
+	}, []);
+
 	// The hint carries the snapshot and the draft (which stays in the field); the canvas stays open so the
 	// tutor's marks appear where he is working.
 	const hint = async () => {
@@ -465,7 +476,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				{showInk && inkDrawing && (
 					<svg data-testid="canvas-ink" className="pointer-events-none absolute inset-0 size-full overflow-hidden" aria-hidden>
 						<g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
-							<WorkspaceInk key={inkDrawing.id} chatId={chatId} drawingId={inkDrawing.id} marks={inkDrawing.marks} live={scene} theme={theme} />
+							<WorkspaceInk key={inkDrawing.drawingId} chatId={chatId} drawingId={inkDrawing.drawingId} marks={inkDrawing.marks} marksKey={inkKey} live={scene} theme={theme} onReveal={revealMarks} />
 						</g>
 					</svg>
 				)}
@@ -518,7 +529,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
 						{onHint && (
-							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={!loaded || compactionRunning || busy || hintTurnBusy} onClick={() => void hint()} className="h-9 rounded-[6px] px-3 text-sm">
+							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={!canRequestHint({ loaded, compactionRunning, busy, turnBusy })} onClick={() => void hint()} className="h-9 rounded-[6px] px-3 text-sm">
 								<LightbulbIcon className="size-4" /> Hint
 							</Button>
 						)}
@@ -535,16 +546,20 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 /**
  * One sent drawing's marks (a submission or a hint snapshot) on the live canvas: cells are anchored to the SENT scene's grid box
  * (fetched, immutable), object ids resolve against the live scene first (so a moved object carries its
- * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped.
+ * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped. Once the
+ * scenes are in, it reports the marks' boxes (teacherInkBoxes) so the workspace can bring them into view.
  */
-function WorkspaceInk({ chatId, drawingId, marks, live, theme }: { chatId: string; drawingId: string; marks: AnnotationMark[]; live: DrawingScene; theme: "light" | "dark" }) {
+function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, onReveal }: { chatId: string; drawingId: string; marks: AnnotationMark[]; marksKey: string; live: DrawingScene; theme: "light" | "dark"; onReveal: (key: string, boxes: Box[]) => void }) {
 	const submitted = useDrawingScene(chatId, drawingId);
-	const box = submitted ? sceneBoundingBox(submitted) : null;
+	const box = useMemo(() => (submitted ? sceneBoundingBox(submitted) : null), [submitted]);
 	const merged = useMemo<DrawingScene | null>(() => {
 		if (!submitted) return null;
 		const ids = new Set(live.objects.map((o) => o.id));
 		return { ...live, objects: [...live.objects, ...submitted.objects.filter((o) => !ids.has(o.id))] };
 	}, [live, submitted]);
+	useEffect(() => {
+		if (merged && box) onReveal(marksKey, teacherInkBoxes(marks, merged, box));
+	}, [marksKey, merged, box, marks, onReveal]);
 	if (!merged || !box) return null;
 	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} />;
 }
