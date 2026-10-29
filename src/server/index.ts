@@ -46,6 +46,8 @@ export * from "./observability.ts";
 export * from "./model-catalog.ts";
 export { sessionCost } from "./pricing.ts";
 export * from "./push.ts";
+export * from "./wireguard.ts";
+export { TENANT_ID_RE } from "../core/tenant-context.ts";
 // The document library (PR G): the service, its scan registry for the dock, and the request-side types.
 export { documents, topicBackfill } from "./library.ts";
 export { docIndex } from "./doc-index.ts";

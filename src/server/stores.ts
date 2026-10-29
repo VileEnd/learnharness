@@ -17,6 +17,7 @@ import { okfBundleStore } from "../store/okf.ts";
 import { pushStore } from "../store/push.ts";
 import { requestLogStore } from "../store/request-log.ts";
 import { settingsStore } from "../store/settings.ts";
+import { wireGuardStore } from "../store/wireguard.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
 import { multiUser } from "../core/tenant-context.ts";
 import { setRequestSink } from "../agent/request-log.ts";
@@ -33,6 +34,7 @@ export const stores = {
 	pushStore,
 	requestLog: requestLogStore,
 	settingsStore,
+	wireGuardStore,
 };
 
 export type Stores = typeof stores;

@@ -33,6 +33,7 @@ import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/do
 import type { OkfFile } from "./contracts/okf.ts";
 import type { AttributionRow } from "./contracts/learner.ts";
 import type { UserSettings } from "./settings.ts";
+import type { WgPeer, WgServerInfo, WgStatus } from "./contracts/wireguard.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
 
@@ -271,6 +272,20 @@ export interface PushStore {
 	/** The key pair, or null until first use generates it. */
 	readVapid(): VapidKeys | null;
 	writeVapid(keys: VapidKeys): void;
+}
+
+// ─── WireGuardStore — admin-managed VPN devices (<global>/wireguard) ────────
+
+/**
+ * peers.json is app-written (atomic, 0600); server.json and status.json are
+ * written by the host and only read. Reads never throw: absent or corrupt
+ * files read as null / empty.
+ */
+export interface WireGuardStore {
+	readServer(): WgServerInfo | null;
+	readPeers(): WgPeer[];
+	writePeers(peers: WgPeer[]): void;
+	readStatus(): WgStatus | null;
 }
 
 // ─── DocumentStore — the document library (data/documents) ──────────────────
