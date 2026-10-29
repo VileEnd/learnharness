@@ -159,6 +159,8 @@ describe("the work fold", () => {
 		assert.equal(marker.customType, "hint-request");
 		assert.deepEqual(marker.details, { callId: "w1", n: 1, drawingId: "drw_h", text: "half done" });
 		assert.equal(marker.content, "Hint request 1 for this task — give the next, smallest hint only.\nYour thinking so far:\nhalf done\n[drawing drw_h]");
+		const textOnly = newHintRequest("w1", 2, { text: "stuck" }).content;
+		assert.ok(textOnly.includes("Your thinking so far:\nstuck") && !textOnly.includes("[drawing"));
 	});
 
 	it("markers: wire text, view parts", () => {

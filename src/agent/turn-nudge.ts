@@ -38,7 +38,7 @@ export const markSteer = (drawingId: string, spoke = false) =>
 /** The mark steer for a hint turn that carries his drawing: the hint goes
  *  where it points. `spoke` as for markSteer (the hint is already in prose). */
 export const hintMarkSteer = (drawingId: string, spoke = false) =>
-	`Mark his drawing ${drawingId} where your hint points (a circle or arrow at that spot, its note a short question)${
+	`Mark his drawing ${drawingId} where your hint points (a circle or arrow at that spot, its label a short question)${
 		spoke ? ". You have already replied in text, so just mark the drawing; you need not repeat what you said." : ", then give the hint in plain text."
 	}`;
 export const PLAN_INIT_STEER = "Call plan_init with that plan.";
@@ -94,8 +94,8 @@ export function silentAfterSubmission(messages: readonly LhMessage[]): boolean {
 /** A drawn submission (canvas task or practice thinking), or a hint request
  *  sent with a snapshot of the canvas, whose turn has no successful annotate
  *  ON THAT DRAWING yet: returns the drawing id to mark. A refused annotate, or
- *  one on another drawing, does not count. Drawing-less submissions and hint
- *  requests are exempt. */
+ *  one on another drawing, does not count. Drawing-less submissions and
+ *  drawing-less hint requests are exempt. */
 export function unmarkedSubmission(messages: readonly LhMessage[]): string | undefined {
 	const { boundary, since } = sinceInput(messages);
 	if (boundary?.role !== "custom") return undefined;
