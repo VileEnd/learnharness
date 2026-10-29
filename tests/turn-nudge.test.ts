@@ -69,7 +69,7 @@ describe("nextNudge", () => {
 	it("a hint turn with his drawing and no annotate gets the hint mark steer", () => {
 		const hint = newHintRequest("w1", 1, { drawingId: "drw_h" });
 		const first = nextNudge([hint], { used: false });
-		assert.equal(first, "Mark his drawing drw_h where your hint points (a circle or arrow at that spot, its note a short question), then give the hint in plain text.");
+		assert.equal(first, "Mark his drawing drw_h where your hint points (a circle or arrow at that spot, its label a short question), then give the hint in plain text.");
 		assert.equal(first, hintMarkSteer("drw_h"));
 	});
 	it("a hint turn that already gave the hint in prose is asked only for the mark", () => {
