@@ -68,12 +68,22 @@ export const SERVER_EVENT_TYPES = [
 /** One notification: the type discriminates the payload. */
 export type ServerEvent<K extends ServerEventType = ServerEventType> = {
 	type: K;
+	/** Stamped by emit() from the registered scope (multi-user only);
+	 *  the SSE seam filters on it and never serialises it. */
+	tenant?: string;
 } & ServerEvents[K];
 
 export type ServerEventListener = (event: ServerEvent) => void;
 
 interface LhEventsGlobal {
 	__lhEventBus?: Set<ServerEventListener>;
+	__lhEventScope?: () => string | undefined;
+}
+
+/** Register the tenant-id source for stamping (injected by the server layer
+ *  so this module stays browser-safe). Last registration wins. */
+export function setEventScope(scope: () => string | undefined): void {
+	(globalThis as typeof globalThis & LhEventsGlobal).__lhEventScope = scope;
 }
 
 /** The shared listener set — globalThis-backed so every Next module entry
@@ -99,9 +109,10 @@ export function subscribe(listener: ServerEventListener): () => void {
 export function emit<K extends ServerEventType>(type: K, payload: ServerEvents[K]): void {
 	// Snapshot: a listener that unsubscribes (or subscribes) mid-emit must
 	// not mutate the set under iteration.
+	const tenant = (globalThis as typeof globalThis & LhEventsGlobal).__lhEventScope?.();
 	for (const listener of [...listeners()]) {
 		try {
-			listener({ type, ...payload } as ServerEvent);
+			listener({ type, ...payload, ...(tenant === undefined ? {} : { tenant }) } as ServerEvent);
 		} catch (err) {
 			console.error(`[events] listener failed on ${type}:`, err);
 		}

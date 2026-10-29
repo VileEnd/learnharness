@@ -24,10 +24,20 @@
  * The closure shape (teardown assigned in start, called in cancel) is the
  * ui-stream subscribe() pattern.
  */
-import { subscribe, type ServerEvent } from "../core/events.ts";
+import { setEventScope, subscribe, type ServerEvent } from "../core/events.ts";
+import { currentTenant, multiUser, requireTenant } from "../core/tenant-context.ts";
 
-/** One window's subscription as an SSE Response. */
-export function eventsResponse(): Response {
+// Stamp every emission with the ambient tenant (Task 5 moves this to tenant.ts).
+setEventScope(() => currentTenant()?.id);
+
+/** The caller's tenant id in multi-user mode, undefined otherwise (all events pass). */
+export function currentTenantId(): string | undefined {
+	return multiUser() ? requireTenant().id : undefined;
+}
+
+/** One window's subscription as an SSE Response. When tenantId is defined,
+ *  only that tenant's events are delivered. */
+export function eventsResponse(tenantId?: string): Response {
 	const encoder = new TextEncoder();
 	let teardown: (() => void) | undefined;
 	const stream = new ReadableStream<Uint8Array>({
@@ -58,7 +68,8 @@ export function eventsResponse(): Response {
 			// construction and subscription (single-threaded — the same
 			// attach-then-replay law as ui-stream's subscribe()).
 			unsubscribe = subscribe((event: ServerEvent) => {
-				const { type, ...payload } = event;
+				const { type, tenant, ...payload } = event;
+				if (tenantId !== undefined && tenant !== tenantId) return;
 				frame(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
 			});
 			heartbeat = setInterval(() => frame(": ping\n\n"), 25_000);
