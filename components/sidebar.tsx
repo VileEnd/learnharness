@@ -8,6 +8,7 @@ import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
 import { BrainIcon, DumbbellIcon, LibraryIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
+import { AccountLine } from "@/components/account-line";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
 import { BrailleSpinner } from "@/components/braille-spinner";
@@ -856,6 +857,7 @@ function SessionsSidebar() {
 								Settings
 							</button>
 						</Hint>
+						<AccountLine />
 					</div>
 				</div>
 

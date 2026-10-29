@@ -96,6 +96,8 @@ The CA stays the same when hostnames change, so you only do this once per device
 
 Someone who can log in but is not in the group gets a 403 from oauth2-proxy.
 
+To switch users, use **Sign out** at the bottom of the sidebar (under "Signed in as …"). It ends both the app session and the Keycloak session (you confirm once on Keycloak's page), so the next visit asks for a login. The plain `/oauth2/sign_out` URL only ends the app session, and Keycloak signs you straight back in.
+
 ## 5. Use it
 
 - Open `https://learnharness.home.moyjak.com` and log in.
