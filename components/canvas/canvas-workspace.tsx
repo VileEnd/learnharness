@@ -374,16 +374,21 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	};
 	// New marks out of view (a note below the visible part of his drawing): move the view once per set of marks
 	// while the canvas is open, so panning away afterwards is his to do. A reopened canvas starts from the default
-	// view, so it shows them again.
+	// view, so it shows them again. Notes grow as the view zooms out (their screen-size floor), so a reveal that
+	// zooms out re-measures the boxes at the new zoom ONCE and adjusts from there; it never loops.
 	const revealedRef = useRef<string | null>(null);
-	const revealMarks = useCallback((key: string, boxes: Box[]) => {
+	const revealMarks = useCallback((key: string, boxesAt: (zoom: number) => Box[]) => {
 		const engine = engineRef.current;
 		const root = rootRef.current;
 		if (!engine || !root || revealedRef.current === key) return;
 		revealedRef.current = key;
 		const r = root.getBoundingClientRect();
-		const next = revealView({ w: r.width, h: r.height }, engine.getView(), boxes);
-		if (next) engine.setView(next);
+		const viewport = { w: r.width, h: r.height };
+		const view = engine.getView();
+		const first = revealView(viewport, view, boxesAt(view.zoom));
+		if (!first) return;
+		const next = first.zoom !== view.zoom ? (revealView(viewport, first, boxesAt(first.zoom)) ?? first) : first;
+		engine.setView(next);
 	}, []);
 
 	// The hint carries the snapshot and the draft (which stays in the field); the canvas stays open so the
@@ -476,7 +481,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				{showInk && inkDrawing && (
 					<svg data-testid="canvas-ink" className="pointer-events-none absolute inset-0 size-full overflow-hidden" aria-hidden>
 						<g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
-							<WorkspaceInk key={inkDrawing.drawingId} chatId={chatId} drawingId={inkDrawing.drawingId} marks={inkDrawing.marks} marksKey={inkKey} live={scene} theme={theme} onReveal={revealMarks} />
+							<WorkspaceInk key={inkDrawing.drawingId} chatId={chatId} drawingId={inkDrawing.drawingId} marks={inkDrawing.marks} marksKey={inkKey} live={scene} theme={theme} zoom={view.zoom} onReveal={revealMarks} />
 						</g>
 					</svg>
 				)}
@@ -547,9 +552,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
  * One sent drawing's marks (a submission or a hint snapshot) on the live canvas: cells are anchored to the SENT scene's grid box
  * (fetched, immutable), object ids resolve against the live scene first (so a moved object carries its
  * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped. Once the
- * scenes are in, it reports the marks' boxes (teacherInkBoxes) so the workspace can bring them into view.
+ * scenes are in, it reports the marks' boxes (teacherInkBoxes, per zoom) so the workspace can bring them into
+ * view. Notes are drawn at the current zoom, so their text keeps its screen-size floor.
  */
-function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, onReveal }: { chatId: string; drawingId: string; marks: AnnotationMark[]; marksKey: string; live: DrawingScene; theme: "light" | "dark"; onReveal: (key: string, boxes: Box[]) => void }) {
+function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, zoom, onReveal }: { chatId: string; drawingId: string; marks: AnnotationMark[]; marksKey: string; live: DrawingScene; theme: "light" | "dark"; zoom: number; onReveal: (key: string, boxesAt: (zoom: number) => Box[]) => void }) {
 	const submitted = useDrawingScene(chatId, drawingId);
 	const box = useMemo(() => (submitted ? sceneBoundingBox(submitted) : null), [submitted]);
 	const merged = useMemo<DrawingScene | null>(() => {
@@ -558,10 +564,10 @@ function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, onRevea
 		return { ...live, objects: [...live.objects, ...submitted.objects.filter((o) => !ids.has(o.id))] };
 	}, [live, submitted]);
 	useEffect(() => {
-		if (merged && box) onReveal(marksKey, teacherInkBoxes(marks, merged, box));
+		if (merged && box) onReveal(marksKey, (z) => teacherInkBoxes(marks, merged, box, z));
 	}, [marksKey, merged, box, marks, onReveal]);
 	if (!merged || !box) return null;
-	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} />;
+	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} zoom={zoom} />;
 }
 
 /** Re-encodes an image whose long side exceeds IMAGE_MAX_SIDE (PNG stays PNG, others JPEG); small or undecodable images pass through unchanged. */

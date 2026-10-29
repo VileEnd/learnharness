@@ -24,6 +24,8 @@ export interface TeacherInkProps {
 	box: Box;
 	space: "world" | "percent";
 	theme?: "light" | "dark";
+	/** World space only: the workspace's current zoom, so a note's text keeps NOTE_SCREEN_MIN_PX on screen. */
+	zoom?: number;
 }
 
 interface Ctx {
@@ -97,17 +99,22 @@ const NOTE_MAX_LINES = 2;
 /** Shantell Sans runs about 0.6em per character. */
 const NOTE_CHAR_EM = 0.6;
 
+/** The smallest a workspace note's text is drawn on screen, in px, whatever the zoom ("clearly readable"). */
+export const NOTE_SCREEN_MIN_PX = 13;
+
 /**
  * The note size: today's badge size x 1.15 (u*2.6*1.15). The chat thumbnail is drawn at most 160px tall
  * (DrawingThumb, max-h-40), where that comes out near 6px, so in percent space a note is at least 7% of the
  * box height (about 11px there; owner: "clearly readable", 2026-10-28). In world space (the workspace, zoom 1
- * by default) a note is at least 14 world px, i.e. 14px unzoomed; it is not counter-scaled with the zoom,
- * which is the learner's choice. Never so large that a full line overflows the drawing's width.
+ * by default) a note is at least 14 world px, i.e. 14px unzoomed. Never so large that a full line overflows
+ * the drawing's width, except that a workspace note never drops below NOTE_SCREEN_MIN_PX on screen at the
+ * current `zoom` (13 / zoom world px): when the two conflict the floor wins and the note wraps as usual (the
+ * marks themselves keep scaling with the drawing).
  */
-function noteSize(u: number, percent: boolean, w: number, h: number): number {
+function noteSize(u: number, percent: boolean, w: number, h: number, zoom = 1): number {
 	const base = u * 2.6 * 1.15;
-	const size = Math.max(base, percent ? h * 0.07 : 14);
-	return Math.min(size, w / (NOTE_LINE_CHARS * NOTE_CHAR_EM));
+	const size = Math.min(Math.max(base, percent ? h * 0.07 : 14), w / (NOTE_LINE_CHARS * NOTE_CHAR_EM));
+	return percent ? size : Math.max(size, NOTE_SCREEN_MIN_PX / Math.max(zoom, 1e-6));
 }
 
 /** Word-wrap at NOTE_LINE_CHARS into NOTE_MAX_LINES lines at most (an overlong word is split), cut with an ellipsis beyond. */
@@ -317,7 +324,7 @@ function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: numbe
 	}
 }
 
-function inkContext(box: Box, space: "world" | "percent", theme: "light" | "dark"): Ctx {
+function inkContext(box: Box, space: "world" | "percent", theme: "light" | "dark", zoom?: number): Ctx {
 	const percent = space === "percent";
 	const k = percent ? 100 / Math.max(box.w, 1) : 1;
 	// Base unit: 3 world px, but never thinner than 1/120 of the box width (so a thumbnail still shows it).
@@ -335,14 +342,15 @@ function inkContext(box: Box, space: "world" | "percent", theme: "light" | "dark
 		maxX: (box.x + box.w - ox) * k,
 		minY: (box.y - oy) * k,
 		maxY: (box.y + box.h - oy) * k,
-		fs: noteSize(worldUnit * k, percent, box.w * k, box.h * k),
+		fs: noteSize(worldUnit * k, percent, box.w * k, box.h * k, zoom),
 	};
 }
 
-/** Pure: the world-space boxes the marks cover as drawn in the workspace, each mark's extent and each note's
- *  box (the same geometry TeacherInk draws), in mark order; a mark that no longer resolves gives none. */
-export function teacherInkBoxes(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box): Box[] {
-	const c = inkContext(box, "world", "dark");
+/** Pure: the world-space boxes the marks cover as drawn in the workspace at `zoom`, each mark's extent and
+ *  each note's box (the same geometry TeacherInk draws), in mark order; a mark that no longer resolves gives
+ *  none. */
+export function teacherInkBoxes(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box, zoom?: number): Box[] {
+	const c = inkContext(box, "world", "dark", zoom);
 	const out: Box[] = [];
 	for (const m of marks) {
 		const geo = markGeometry(m, scene, box, c);
@@ -356,8 +364,8 @@ export function teacherInkBoxes(marks: readonly AnnotationMark[], scene: Drawing
 	return out;
 }
 
-export function TeacherInk({ marks, scene, box, space, theme = "dark" }: TeacherInkProps) {
-	const c = inkContext(box, space, theme);
+export function TeacherInk({ marks, scene, box, space, theme = "dark", zoom }: TeacherInkProps) {
+	const c = inkContext(box, space, theme, space === "world" ? zoom : undefined);
 	const body = (
 		<g data-testid="teacher-ink">
 			{marks.map((m, i) => (
