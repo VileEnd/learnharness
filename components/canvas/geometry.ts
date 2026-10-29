@@ -29,6 +29,33 @@ export function worldToScreen(view: Viewport, p: Pt): Pt {
 	return { x: p.x * view.zoom + view.x, y: p.y * view.zoom + view.y };
 }
 
+/** Margin (screen px) kept round the boxes when the view moves to show them. */
+export const REVEAL_PAD = 24;
+
+/**
+ * The view that brings every world box (new teacher marks and their notes) into a `viewport` of screen size
+ * w x h, or null when they are all visible already (or there are none). It pans as little as it can at the
+ * current zoom, and zooms out (centring the boxes) only when they cannot fit; it never zooms in. Pure.
+ */
+export function revealView(viewport: { w: number; h: number }, view: Viewport, boxes: readonly Box[], pad = REVEAL_PAD): Viewport | null {
+	if (boxes.length === 0) return null;
+	const x0 = Math.min(...boxes.map((b) => b.x)), y0 = Math.min(...boxes.map((b) => b.y));
+	const x1 = Math.max(...boxes.map((b) => b.x + b.w)), y1 = Math.max(...boxes.map((b) => b.y + b.h));
+	const seen = (v: Viewport) => x0 * v.zoom + v.x >= 0 && x1 * v.zoom + v.x <= viewport.w && y0 * v.zoom + v.y >= 0 && y1 * v.zoom + v.y <= viewport.h;
+	if (seen(view)) return null;
+	const fit = Math.min((viewport.w - 2 * pad) / Math.max(x1 - x0, 1e-6), (viewport.h - 2 * pad) / Math.max(y1 - y0, 1e-6));
+	const zoom = Math.max(CANVAS_ZOOM_MIN, Math.min(view.zoom, fit));
+	if (zoom < view.zoom) {
+		return { zoom, x: viewport.w / 2 - ((x0 + x1) / 2) * zoom, y: viewport.h / 2 - ((y0 + y1) / 2) * zoom };
+	}
+	// The smallest pan on each axis that puts the span inside the padded viewport.
+	const shift = (lo: number, hi: number, at: number, size: number) => {
+		const a = lo * zoom + at, b = hi * zoom + at;
+		return a < pad ? at + (pad - a) : b > size - pad ? at - (b - (size - pad)) : at;
+	};
+	return { zoom, x: shift(x0, x1, view.x, viewport.w), y: shift(y0, y1, view.y, viewport.h) };
+}
+
 // ---- palette ----
 
 /** The teacher's ink colour: a palette name, so it follows the theme through screenColor. */

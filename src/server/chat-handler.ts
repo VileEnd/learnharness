@@ -7,7 +7,7 @@ import {
 	type AgentBuildOptions,
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
-import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
+import { piEngineForSpec, type EngineOptions, type PiEngine } from "../agent/models.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
 import { createTopicist } from "../agent/subagents/topics.ts";
@@ -179,9 +179,9 @@ setTurnRunner(async (chatId, input) => {
  *  the chain (role override → slot → NOTHING) may end empty, and undefined
  *  flows through to the per-need refusal gates (runner/extraction), read
  *  FRESH so a settings PUT between dispatch and spawn lands. */
-export function resolveEngine(role: ModelRole): PiEngine | undefined {
+export function resolveEngine(role: ModelRole, opts?: EngineOptions): PiEngine | undefined {
 	const spec = resolveRoleSpec(role, stores.settingsStore.readSettings());
-	return spec ? piEngineForSpec(spec) : undefined;
+	return spec ? piEngineForSpec(spec, opts) : undefined;
 }
 
 setJobRespawn((jobId) => void jobRunner.runJob(jobId));
@@ -424,7 +424,7 @@ export async function handleChatInput(
 			engine,
 			{
 				drawingStore: stores.drawingStore,
-				transcriber: createDrawingTranscriber({ engineFor: (role) => resolveEngine(role) }),
+				transcriber: createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, opts) }),
 				onUsage: (usage, model) => {
 					reader.model = model;
 					reader.steps.push(callUsageOf(usage));

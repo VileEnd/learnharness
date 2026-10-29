@@ -9,7 +9,8 @@
  * The working scene autosaves to the server draft (PUT drafts/<callId>, 2 s debounce, revisioned) and is
  * mirrored to localStorage on every change; on open the newer of the two wins (draft.ts pickDraft), so going
  * offline mid-task loses nothing. Submit exports the PNG, POSTs it to /drawings and hands the returned
- * drawingId to onSubmit; an empty scene submits text only.
+ * drawingId to onSubmit; an empty scene submits text only. Hint sends the same snapshot (and the "Your
+ * thinking" draft, kept in the field) with the request and stays open, so the tutor's marks land in view.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -25,11 +26,11 @@ import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
-import { annotationsOf, hintsFor, isInputBoundary, nextObjectId, sceneBoundingBox, submittedDrawingIds, type AnnotationMark, type BlockObject, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
+import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
-import { fitImageSize, PALETTE_NAMES, screenColor } from "./geometry";
+import { fitImageSize, PALETTE_NAMES, revealView, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
-import { TeacherInk } from "./teacher-ink";
+import { TeacherInk, teacherInkBoxes } from "./teacher-ink";
 import { useDrawingScene } from "./use-drawing-scene";
 import { HintStrip, HintsButton } from "./hints";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
@@ -67,8 +68,9 @@ export interface CanvasWorkspaceProps {
 	requireThinking?: boolean;
 	/** text + the uploaded drawing's id (absent for an empty scene). */
 	onSubmit: (text: string, drawingId?: string) => void;
-	/** The Hint button: the host sends { type: "hint", callId }. */
-	onHint?: () => void;
+	/** The Hint button: the host sends { type: "hint", callId, drawingId?, text? } - a snapshot of the canvas
+	 *  (absent for an empty scene) and the trimmed "Your thinking" draft (absent when empty). */
+	onHint?: (drawingId?: string, text?: string) => void;
 	onMinimize: () => void;
 	/** Compaction running: submit would block on the server's gate. */
 	compactionRunning?: boolean;
@@ -84,6 +86,12 @@ export function canSubmitWork(s: { text: string; objectCount: number; requireThi
 	const text = s.text.trim();
 	if (s.requireThinking && text.length === 0) return false;
 	return text.length > 0 || s.objectCount > 0;
+}
+
+/** Pure: may the canvas Hint fire? The draft is loaded (else the snapshot would miss his work), nothing is
+ *  uploading, and no turn runs (a hint sent then would be dropped). */
+export function canRequestHint(s: { loaded: boolean; compactionRunning: boolean; busy: boolean; turnBusy: boolean }): boolean {
+	return s.loaded && !s.compactionRunning && !s.busy && !s.turnBusy;
 }
 
 function nextZ(scene: DrawingScene): number {
@@ -106,14 +114,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [showInk, setShowInk] = useState(true);
-	// Teacher marks per submitted drawing of this task (newest last); empty until the teacher annotates.
-	const inkDrawings = useMemo(
-		() =>
-			submittedDrawingIds(messages, callId)
-				.map((id) => ({ id, marks: annotationsOf(messages, id).flatMap((a) => a.marks) }))
-				.filter((d) => d.marks.length > 0),
-		[messages, callId],
-	);
+	// The marks of the newest marking turn on this task's drawings (a submission or a hint snapshot); null until
+	// the teacher annotates.
+	const inkDrawing = useMemo(() => latestTaskMarks(messages, callId), [messages, callId]);
+	const inkKey = useMemo(() => (inkDrawing ? `${inkDrawing.drawingId}:${JSON.stringify(inkDrawing.marks)}` : ""), [inkDrawing]);
 	// The replies to this task's hint requests, derived from the record (so they survive minimise and reload).
 	const hints = useMemo(() => hintsFor(messages, callId), [messages, callId]);
 	// Pending only while that request is still the newest input (isInputBoundary, the same rule hintsFor ends a
@@ -334,27 +338,29 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 		return () => document.removeEventListener("paste", onPaste);
 	}, [addImage]);
 
-	// ── submit ──
+	// ── submit and hint ──
 	const objectCount = scene.objects.length;
 	const canSubmit = loaded && !compactionRunning && canSubmitWork({ text: thinking, objectCount, requireThinking, busy });
+	// The canvas as it is now: PNG + scene POSTed to /drawings; undefined for an empty scene (nothing is sent).
+	const uploadSnapshot = async (): Promise<string | undefined> => {
+		const engine = engineRef.current;
+		const current = engine?.getScene() ?? sceneRef.current;
+		if (!engine || current.objects.length === 0) return undefined;
+		const png = await engine.exportPng();
+		const form = new FormData();
+		form.set("scene", JSON.stringify(current));
+		form.set("png", png, "drawing.png");
+		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/drawings`, { method: "POST", body: form });
+		if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `The drawing upload failed (${res.status}).`);
+		return ((await res.json()) as { drawingId: string }).drawingId;
+	};
 	const submit = async () => {
 		if (!canSubmit) return;
 		setBusy(true);
 		setError(null);
 		try {
 			const text = thinkingRef.current.trim();
-			let drawingId: string | undefined;
-			const engine = engineRef.current;
-			const current = engine?.getScene() ?? sceneRef.current;
-			if (engine && current.objects.length > 0) {
-				const png = await engine.exportPng();
-				const form = new FormData();
-				form.set("scene", JSON.stringify(current));
-				form.set("png", png, "drawing.png");
-				const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/drawings`, { method: "POST", body: form });
-				if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `The drawing upload failed (${res.status}).`);
-				drawingId = ((await res.json()) as { drawingId: string }).drawingId;
-			}
+			const drawingId = await uploadSnapshot();
 			await saveNowRef.current();
 			thinkingRef.current = "";
 			setThinking("");
@@ -362,6 +368,41 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			onMinimize();
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "The submit failed.");
+		} finally {
+			setBusy(false);
+		}
+	};
+	// New marks out of view (a note below the visible part of his drawing): move the view once per set of marks
+	// while the canvas is open, so panning away afterwards is his to do. A reopened canvas starts from the default
+	// view, so it shows them again. Notes grow as the view zooms out (their screen-size floor), so a reveal that
+	// zooms out re-measures the boxes at the new zoom ONCE and adjusts from there; it never loops.
+	const revealedRef = useRef<string | null>(null);
+	const revealMarks = useCallback((key: string, boxesAt: (zoom: number) => Box[]) => {
+		const engine = engineRef.current;
+		const root = rootRef.current;
+		if (!engine || !root || revealedRef.current === key) return;
+		revealedRef.current = key;
+		const r = root.getBoundingClientRect();
+		const viewport = { w: r.width, h: r.height };
+		const view = engine.getView();
+		const first = revealView(viewport, view, boxesAt(view.zoom));
+		if (!first) return;
+		const next = first.zoom !== view.zoom ? (revealView(viewport, first, boxesAt(first.zoom)) ?? first) : first;
+		engine.setView(next);
+	}, []);
+
+	// The hint carries the snapshot and the draft (which stays in the field); the canvas stays open so the
+	// tutor's marks appear where he is working.
+	const hint = async () => {
+		if (!onHint) return;
+		setBusy(true);
+		setError(null);
+		try {
+			const text = thinkingRef.current.trim();
+			const drawingId = await uploadSnapshot();
+			onHint(drawingId, text.length > 0 ? text : undefined);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "The hint request failed.");
 		} finally {
 			setBusy(false);
 		}
@@ -421,7 +462,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				<button type="button" title="Reset zoom" aria-label="Reset zoom" data-testid="canvas-zoom-reset" onClick={() => engineRef.current?.setView({ zoom: 1, x: 0, y: 0 })} className="flex items-center gap-1 rounded-md px-1.5 py-1 pointer-coarse:py-2.5 text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground">
 					<ScanIcon className="size-4" /> {zoomPct}%
 				</button>
-				{inkDrawings.length > 0 && (
+				{inkDrawing && (
 					<button type="button" title="Teacher marks" aria-label="Teacher marks" aria-pressed={showInk} data-testid="canvas-ink-toggle" onClick={() => setShowInk((v) => !v)} className={cn("flex items-center gap-1 rounded-md px-1.5 py-1 pointer-coarse:py-2.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground", showInk && "bg-accent text-foreground")}>
 						{showInk ? <EyeIcon className="size-4" /> : <EyeOffIcon className="size-4" />} Teacher marks
 					</button>
@@ -437,12 +478,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			<div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
 				<div ref={rootRef} data-testid="canvas-surface" className="absolute inset-0" />
 				<CanvasObjectsLayer chatId={chatId} scene={scene} view={view} interactive={interactive} selectedId={selected} onSelect={setSelected} onCommit={commit} />
-				{showInk && inkDrawings.length > 0 && (
+				{showInk && inkDrawing && (
 					<svg data-testid="canvas-ink" className="pointer-events-none absolute inset-0 size-full overflow-hidden" aria-hidden>
 						<g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
-							{inkDrawings.map((d) => (
-								<WorkspaceInk key={d.id} chatId={chatId} drawingId={d.id} marks={d.marks} live={scene} theme={theme} />
-							))}
+							<WorkspaceInk key={inkDrawing.drawingId} chatId={chatId} drawingId={inkDrawing.drawingId} marks={inkDrawing.marks} marksKey={inkKey} live={scene} theme={theme} zoom={view.zoom} onReveal={revealMarks} />
 						</g>
 					</svg>
 				)}
@@ -495,7 +534,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
 						{onHint && (
-							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={compactionRunning || busy || hintTurnBusy} onClick={onHint} className="h-9 rounded-[6px] px-3 text-sm">
+							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={!canRequestHint({ loaded, compactionRunning, busy, turnBusy })} onClick={() => void hint()} className="h-9 rounded-[6px] px-3 text-sm">
 								<LightbulbIcon className="size-4" /> Hint
 							</Button>
 						)}
@@ -510,20 +549,25 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 }
 
 /**
- * One submitted drawing's marks on the live canvas: cells are anchored to the SUBMITTED scene's grid box
+ * One sent drawing's marks (a submission or a hint snapshot) on the live canvas: cells are anchored to the SENT scene's grid box
  * (fetched, immutable), object ids resolve against the live scene first (so a moved object carries its
- * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped.
+ * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped. Once the
+ * scenes are in, it reports the marks' boxes (teacherInkBoxes, per zoom) so the workspace can bring them into
+ * view. Notes are drawn at the current zoom, so their text keeps its screen-size floor.
  */
-function WorkspaceInk({ chatId, drawingId, marks, live, theme }: { chatId: string; drawingId: string; marks: AnnotationMark[]; live: DrawingScene; theme: "light" | "dark" }) {
+function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, zoom, onReveal }: { chatId: string; drawingId: string; marks: AnnotationMark[]; marksKey: string; live: DrawingScene; theme: "light" | "dark"; zoom: number; onReveal: (key: string, boxesAt: (zoom: number) => Box[]) => void }) {
 	const submitted = useDrawingScene(chatId, drawingId);
-	const box = submitted ? sceneBoundingBox(submitted) : null;
+	const box = useMemo(() => (submitted ? sceneBoundingBox(submitted) : null), [submitted]);
 	const merged = useMemo<DrawingScene | null>(() => {
 		if (!submitted) return null;
 		const ids = new Set(live.objects.map((o) => o.id));
 		return { ...live, objects: [...live.objects, ...submitted.objects.filter((o) => !ids.has(o.id))] };
 	}, [live, submitted]);
+	useEffect(() => {
+		if (merged && box) onReveal(marksKey, (z) => teacherInkBoxes(marks, merged, box, z));
+	}, [marksKey, merged, box, marks, onReveal]);
 	if (!merged || !box) return null;
-	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} />;
+	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} zoom={zoom} />;
 }
 
 /** Re-encodes an image whose long side exceeds IMAGE_MAX_SIDE (PNG stays PNG, others JPEG); small or undecodable images pass through unchanged. */

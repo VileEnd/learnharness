@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DrawingScene, StrokeObject } from "../src/core/index.ts";
-import { fitImageSize, eraseAt, exportColor, hitTest, quantizePoint, screenColor, screenToWorld, strokeOutline, touchRole, visibleObjects, worldToScreen } from "../components/canvas/geometry.ts";
+import { fitImageSize, eraseAt, exportColor, hitTest, quantizePoint, revealView, screenColor, screenToWorld, strokeOutline, touchRole, visibleObjects, worldToScreen } from "../components/canvas/geometry.ts";
 
 const stroke = (id: string, pts: [number, number][], extra: Partial<StrokeObject> = {}): StrokeObject => ({ id, z: 0, type: "stroke", brush: "pen", color: "ink", size: 4, points: pts.map(([x, y]) => [x, y, 0.5]), ...extra });
 const scene = (...objects: DrawingScene["objects"]): DrawingScene => ({ version: 1, objects });
@@ -82,5 +82,31 @@ describe("fitImageSize", () => {
 		assert.deepEqual(fitImageSize(1000, 4000), { w: 400, h: 1600 });
 		assert.deepEqual(fitImageSize(800, 600), { w: 800, h: 600 });
 		assert.deepEqual(fitImageSize(1600, 1600), { w: 1600, h: 1600 });
+	});
+});
+
+describe("revealView (new teacher marks are brought into view)", () => {
+	const vp = { w: 800, h: 300 };
+	const inside = (v: { zoom: number; x: number; y: number }, b: { x: number; y: number; w: number; h: number }) =>
+		b.x * v.zoom + v.x >= 0 && (b.x + b.w) * v.zoom + v.x <= vp.w && b.y * v.zoom + v.y >= 0 && (b.y + b.h) * v.zoom + v.y <= vp.h;
+	it("does not move when every box is visible", () => {
+		assert.equal(revealView(vp, { zoom: 1, x: 0, y: 0 }, [{ x: 100, y: 50, w: 200, h: 100 }]), null);
+		assert.equal(revealView(vp, { zoom: 1, x: 0, y: 0 }, []), null);
+	});
+	it("pans a note below the bottom edge into view, keeping the zoom and the other axis", () => {
+		const boxes = [{ x: 100, y: 200, w: 200, h: 60 }, { x: 100, y: 280, w: 180, h: 40 }];
+		const v = revealView(vp, { zoom: 1, x: 0, y: 0 }, boxes)!;
+		assert.equal(v.zoom, 1);
+		assert.equal(v.x, 0);
+		assert.ok(v.y < 0);
+		for (const b of boxes) assert.ok(inside(v, b));
+	});
+	it("zooms out only when the boxes cannot fit, and never zooms in", () => {
+		const big = [{ x: 0, y: 0, w: 400, h: 600 }];
+		const v = revealView(vp, { zoom: 1, x: 0, y: 0 }, big)!;
+		assert.ok(v.zoom < 1);
+		assert.ok(inside(v, big[0]!));
+		const small = revealView(vp, { zoom: 0.5, x: 0, y: 0 }, [{ x: 0, y: 700, w: 50, h: 50 }])!;
+		assert.equal(small.zoom, 0.5);
 	});
 });

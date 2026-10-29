@@ -9,7 +9,7 @@
 
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { PiEngine } from "../models.ts";
+import type { EngineOptions, PiEngine } from "../models.ts";
 import { runSubagent } from "./pi-run.ts";
 
 export const TRANSCRIBE_PROMPT = `You are transcribing a learner's hand-drawn canvas (an image) into text for a tutor (who may or may not also see the image).
@@ -23,7 +23,10 @@ Transcribe EVERYTHING drawn, faithfully, in the drawing's own language:
 Do not invent content, do not correct the learner's mistakes, and mark unreadable parts as [unreadable]. Output only the transcription.`;
 
 export interface DrawingTranscriberDeps {
-	engineFor(role: "transcriber"): PiEngine | undefined;
+	/** The reader's engine. It is asked for at the LOWEST thinking level its
+	 *  model supports: a transcription needs no reasoning, and a reasoning
+	 *  reader ran into the 45 s turn bound on every hint (2026-10-29). */
+	engineFor(role: "transcriber", opts: EngineOptions): PiEngine | undefined;
 }
 
 export interface TranscribeOptions {
@@ -44,7 +47,7 @@ export interface DrawingTranscriber {
 export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingTranscriber {
 	return {
 		async transcribe(png, structured, opts = {}) {
-			const engine = deps.engineFor("transcriber");
+			const engine = deps.engineFor("transcriber", { thinking: "lowest" });
 			if (!engine) throw new Error("no transcriber model configured");
 			const model = `${engine.model.provider}:${engine.model.id}`;
 			const { onUsage } = opts;

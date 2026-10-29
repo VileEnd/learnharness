@@ -303,6 +303,11 @@ describe("pi thinking truth (pinned against pi-ai upgrades)", () => {
 		assert.throws(() => piEngineForSpec({ provider: "openrouter", id: "nope/nope", thinkingLevel: "low" }), /catalog has no model/);
 	});
 
+	it("a lowest-thinking engine (the drawing reader) runs off when the model allows it, else its minimum", () => {
+		assert.equal(piEngineForSpec({ provider: "openrouter", id: "qwen/qwen3.8-flash", thinkingLevel: "low" }, { thinking: "lowest" }).level, "off");
+		assert.equal(piEngineForSpec({ provider: "openrouter", id: "z-ai/glm-5.3-flash", thinkingLevel: "high" }, { thinking: "lowest" }).level, "low");
+	});
+
 	it("UNSET levels resolve from the baked DEFAULT_THINKING_ORDER (owner, 2026-09-22)", () => {
 		assert.deepEqual([...DEFAULT_THINKING_ORDER], ["medium", "low", "high", "minimal", "xhigh", "max"]);
 		// glm supports low|high|max → first supported in the order is "low"

@@ -2,9 +2,10 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { annotateToolFor, annotateToolsFor } from "../src/agent/tools/annotate.ts";
+import { annotateToolFor, annotateToolsFor, drawingIdsOfRecord } from "../src/agent/tools/annotate.ts";
 import { createTeacherTools } from "../src/agent/tools.ts";
 import { annotationsOf, resolveTargetRect, sceneBoundingBox, type DrawingScene } from "../src/core/canvas-core.ts";
+import { latestTaskMarks } from "../src/core/native-messages.ts";
 
 const scene: DrawingScene = {
 	version: 1,
@@ -244,4 +245,29 @@ test("a bare stroke key on a mark heals into a target, and the fold reads it", (
 	const raw = { drawingId: "drw_a", marks: [{ kind: "circle", stroke: "s4" }] };
 	const prepared = strokeTool.prepareArguments!(raw) as { marks: { target: unknown }[] };
 	assert.deepEqual(prepared.marks[0]!.target, { stroke: "s4" });
+});
+
+test("a hint snapshot's drawing is markable: drawingIdsOfRecord counts it", () => {
+	const hint = { role: "custom", customType: "hint-request", details: { callId: "w1", n: 1, drawingId: "drw_h" } };
+	assert.deepEqual(drawingIdsOfRecord([hint]), ["drw_h"]);
+});
+
+test("latestTaskMarks: the overlay shows the newest marking turn, not every mark on a reused drawing id", () => {
+	const hint = (n: number, drawingId?: string) => ({ role: "custom", customType: "hint-request", details: { callId: "w1", n, ...(drawingId ? { drawingId } : {}) } });
+	const sub = (drawingId: string) => ({ role: "custom", customType: "work-submission", details: { workCallId: "w1", text: "", drawingId } });
+	const mark = (label: string) => ({ kind: "circle", target: { cell: "A1" }, label });
+	const ann = (id: string, drawingId: string, label: string, ok = true) => [
+		{ role: "assistant", content: [{ type: "toolCall", id, name: "annotate", arguments: { drawingId, marks: [mark(label)] } }] },
+		{ role: "toolResult", toolCallId: id, toolName: "annotate", isError: !ok, content: [] },
+	];
+	// three hints on one unchanged canvas: only the last turn's marks
+	const three = [hint(1, "drw_a"), ...ann("a1", "drw_a", "one"), hint(2, "drw_a"), ...ann("a2", "drw_a", "two"), hint(3, "drw_a"), ...ann("a3", "drw_a", "three")];
+	assert.deepEqual(latestTaskMarks(three, "w1"), { drawingId: "drw_a", marks: [mark("three")] });
+	// two annotate calls in one turn both count; a refused one and another task's drawing do not
+	const two = [hint(1, "drw_a"), ...ann("a1", "drw_a", "first"), ...ann("a2", "drw_a", "second"), ...ann("a3", "drw_a", "refused", false), ...ann("a4", "drw_x", "elsewhere")];
+	assert.deepEqual(latestTaskMarks(two, "w1"), { drawingId: "drw_a", marks: [mark("first"), mark("second")] });
+	// A, B, then back to exactly A (the same content id): the newest turn's drawing is A
+	const aba = [sub("drw_a"), ...ann("a1", "drw_a", "on A"), sub("drw_b"), ...ann("a2", "drw_b", "on B"), hint(1, "drw_a"), ...ann("a3", "drw_a", "back on A")];
+	assert.deepEqual(latestTaskMarks(aba, "w1"), { drawingId: "drw_a", marks: [mark("back on A")] });
+	assert.equal(latestTaskMarks([sub("drw_a")], "w1"), null);
 });
