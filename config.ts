@@ -24,8 +24,12 @@ const LEGACY_ENTRIES = ["chats", "graph", "documents", "settings.json"];
 
 /** True in multi-user mode while the old single-user layout still sits at DATA_ROOT. */
 export function legacyLayoutPresent(): boolean {
-	return multiUser() && LEGACY_ENTRIES.some((e) => fs.existsSync(path.join(DATA_ROOT, e)));
+	if (!multiUser() || legacyGone) return false;
+	if (LEGACY_ENTRIES.some((e) => fs.existsSync(path.join(DATA_ROOT, e)))) return true;
+	legacyGone = true; // absent stays absent; a positive is never cached (the migration flips it at runtime)
+	return false;
 }
+let legacyGone = false;
 
 export class LegacyLayoutError extends Error {
 	constructor() {
@@ -44,6 +48,7 @@ export function userDataRoot(): string {
 
 /** Instance-wide data root: DATA_ROOT in single-user mode, DATA_ROOT/global in multi-user mode. */
 export function globalDataRoot(): string {
+	if (legacyLayoutPresent()) throw new LegacyLayoutError();
 	return multiUser() ? path.join(DATA_ROOT, "global") : DATA_ROOT;
 }
 

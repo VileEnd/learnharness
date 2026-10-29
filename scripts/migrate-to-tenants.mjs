@@ -52,9 +52,14 @@ function mkdirOwned(dir) {
 mkdirOwned(dest);
 mkdirOwned(shared);
 
+// The four entries that make config.ts see the legacy layout move LAST, so the
+// guard flips only once everything else already sits in users/<owner>/.
+const GUARD = ["chats", "graph", "documents", "settings.json"];
+const names = fs.readdirSync(root).filter((n) => n !== "users" && n !== "global");
+names.sort((a, b) => Number(GUARD.includes(a)) - Number(GUARD.includes(b)));
+
 let moved = 0;
-for (const name of fs.readdirSync(root)) {
-	if (name === "users" || name === "global") continue;
+for (const name of names) {
 	fs.renameSync(path.join(root, name), path.join(dest, name));
 	moved++;
 }
