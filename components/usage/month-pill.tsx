@@ -12,14 +12,15 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/components/usage/charts.tsx";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
-import { useServerEvent } from "@/components/server-events";
+import { useServerEvent, useServerResync } from "@/components/server-events";
 import { useSettingsDialog } from "@/components/settings/settings-dialog.tsx";
-import { useSettledBump } from "@/components/use-settled-bump";
+import { debounced } from "@/components/usage/debounced.ts";
 import { Hint } from "@/components/ui/hint";
 import { costLabel, formatUsd } from "@/components/usage-format";
 import type { UsageMonthView } from "@/src/core";
 
 const TOP_SESSIONS = 5;
+const REFETCH_DEBOUNCE_MS = 400;
 
 /** Headline dollars at 2 decimals; sub-cent spend keeps its precision so a
  *  real few tenths of a cent never reads as a flat $0.00. */
@@ -35,18 +36,27 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  */
 export function useUsageMonth(): UsageMonthView | null {
 	const [usage, setUsage] = useState<UsageMonthView | null>(null);
-	const [jobsBump, setJobsBump] = useState(0);
-	const settled = useSettledBump();
-	useServerEvent("jobs-changed", () => setJobsBump((n) => n + 1));
 	const refresh = useCallback(() => {
 		fetch("/api/usage")
 			.then((res) => res.json() as Promise<UsageMonthView>)
 			.then(setUsage)
 			.catch(() => {});
 	}, []);
+	// Every trigger funnels through one trailing debounce: job writes and
+	// activity announcements come in bursts, and each fetch is a full-month fold.
+	const scheduler = useRef<ReturnType<typeof debounced> | null>(null);
+	if (!scheduler.current) scheduler.current = debounced(refresh, REFETCH_DEBOUNCE_MS);
+	const schedule = scheduler.current.trigger;
 	useEffect(() => {
 		refresh();
-	}, [refresh, settled, jobsBump]);
+		const sched = scheduler.current;
+		return () => sched?.cancel();
+	}, [refresh]);
+	useServerEvent("turn-settled", schedule);
+	useServerEvent("jobs-changed", schedule);
+	// Extraction finishes after the turn settles and announces here.
+	useServerEvent("activity-changed", schedule);
+	useServerResync(schedule);
 	return usage;
 }
 
@@ -131,9 +141,13 @@ export function UsageMonthPanel({ usage, onNavigate }: { usage: UsageMonthView; 
 				</div>
 			)}
 			<div className="mt-2 flex items-baseline justify-between border-t pt-2 text-[11px] text-muted-foreground">
-				<button type="button" onClick={openUsage} className={linkClass}>
-					{plural(usage.failures, "failed request", "failed requests")}
-				</button>
+				{usage.failures > 0 ? (
+					<button type="button" onClick={openUsage} className={linkClass}>
+						{plural(usage.failures, "failed request", "failed requests")}
+					</button>
+				) : (
+					<span>{plural(0, "failed request", "failed requests")}</span>
+				)}
 				<button type="button" onClick={openUsage} className={linkClass}>
 					Details
 				</button>
