@@ -33,7 +33,7 @@ test("legacy layout: health is 503 and tenant paths refuse", async () => {
 	assert.equal(res.status, 503);
 	const body = (await res.json()) as { error: string; fix: string };
 	assert.equal(body.error, "legacy_layout");
-	assert.match(body.fix, /node scripts\/migrate-to-tenants\.mjs --owner <keycloak-sub>/);
+	assert.match(body.fix, /docker compose exec -u node learnharness node scripts\/migrate-to-tenants\.mjs --owner <keycloak-sub>/);
 	assert.throws(() => runAsTenant(A, () => PATHS.chats), LegacyLayoutError);
 });
 
@@ -41,6 +41,18 @@ test("malformed owner exits 1 without changes", () => {
 	const r = spawnSync(process.execPath, [SCRIPT, "--owner", "Foo@x"], { env: { ...process.env, LH_DATA_DIR: dir } });
 	assert.equal(r.status, 1);
 	assert.deepEqual(list(dir), before);
+});
+
+test("existing global/prompts aborts with exit 1 and changes nothing", () => {
+	const g = fs.mkdtempSync(path.join(os.tmpdir(), "lh-migrate-conflict-"));
+	fs.cpSync(FIXTURE, g, { recursive: true });
+	fs.mkdirSync(path.join(g, "global", "prompts"), { recursive: true });
+	fs.writeFileSync(path.join(g, "global", "prompts", "y.md"), "y");
+	const snapshot = list(g);
+	const r = spawnSync(process.execPath, [SCRIPT, "--owner", "a"], { env: { ...process.env, LH_DATA_DIR: g } });
+	assert.equal(r.status, 1);
+	assert.deepEqual(list(g), snapshot);
+	assert.equal(fs.existsSync(path.join(g, "users")), false);
 });
 
 test("migration moves everything under users/a, shares vapid and prompts", async () => {
@@ -53,8 +65,8 @@ test("migration moves everything under users/a, shares vapid and prompts", async
 	run();
 	const moved = list(path.join(dir, "users", "a"));
 	assert.deepEqual(
-		[...moved, ...list(path.join(dir, "global")).map((p) => p)].sort(),
-		expected.map((p) => (p === "push/vapid.json" ? "push/vapid.json" : p)).sort(),
+		[...moved, ...list(path.join(dir, "global"))].sort(),
+		expected,
 	);
 	assert.ok(fs.existsSync(path.join(dir, "global", "push", "vapid.json")));
 	assert.ok(fs.existsSync(path.join(dir, "global", "prompts", "x.md")));

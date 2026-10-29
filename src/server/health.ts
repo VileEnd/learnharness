@@ -5,7 +5,7 @@
  */
 import { legacyLayoutPresent } from "../../config.ts";
 
-export const LEGACY_FIX = "node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>";
+export const LEGACY_FIX = "docker compose exec -u node learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>";
 
 export function healthStatus(): { status: number; body: { ok: true } | { error: "legacy_layout"; fix: string } } {
 	if (legacyLayoutPresent()) return { status: 503, body: { error: "legacy_layout", fix: LEGACY_FIX } };
