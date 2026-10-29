@@ -23,6 +23,7 @@ const kc = {
 	created: [] as Record<string, unknown>[],
 	tokenCalls: 0,
 	omitLocation: false,
+	tokenStatus: 200,
 };
 kc.users.set(ADMIN, { id: ADMIN, username: "root", email: "r@x.io", enabled: true, createdTimestamp: 5 });
 kc.users.set(OTHER, { id: OTHER, username: "bob", enabled: true, createdTimestamp: 9 });
@@ -36,6 +37,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 	const json = (b: unknown, status = 200, headers: Record<string, string> = {}) =>
 		new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json", ...headers } });
 	if (p === "/realms/learnharness/protocol/openid-connect/token") kc.tokenCalls++;
+	if (p === "/realms/learnharness/protocol/openid-connect/token" && kc.tokenStatus !== 200) return json({ error: "invalid_client" }, kc.tokenStatus);
 	if (p === "/realms/learnharness/protocol/openid-connect/token") return json({ access_token: "tok", expires_in: 300 });
 	const base = "/admin/realms/learnharness";
 	if (p === `${base}/groups`) return json([{ id: GID, name: "learnharness-admin" }]);
@@ -46,7 +48,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 	}
 	if (p === `${base}/users` && method === "POST") {
 		const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-		if ([...kc.users.values()].some((u) => u.username === body.username)) return json({ errorMessage: "exists" }, 409);
+		if ([...kc.users.values()].some((u) => u.username === body.username)) return json({ errorMessage: "User exists with same username" }, 409);
+		if (body.email && [...kc.users.values()].some((u) => u.email === body.email)) return json({ errorMessage: "User exists with same email" }, 409);
 		kc.created.push(body);
 		const id = body.username === "nolocation" ? "44444444-4444-4444-8444-444444444444" : "33333333-3333-4333-8333-333333333333";
 		kc.users.set(id, { id, username: body.username, email: body.email, enabled: true, createdTimestamp: 1 });
@@ -169,4 +172,28 @@ test("keycloakAdmin() is memoized: two list calls fetch one token", async () => 
 	await keycloakAdmin()!.listUsers();
 	await keycloakAdmin()!.listUsers();
 	assert.equal(kc.tokenCalls, 1);
+});
+
+test("duplicate email: 409 email_taken (distinct from username_taken)", async () => {
+	const res = await post(true, { username: "someone-new", email: "r@x.io" });
+	assert.equal(res.status, 409);
+	assert.deepEqual(await res.json(), { error: "email_taken" });
+});
+
+test("bad client credentials (token endpoint 401): 503 user_admin_not_configured", async () => {
+	process.env.KC_ADMIN_API_SECRET = "wrong-secret"; // new key = new client, no cached token
+	kc.tokenStatus = 401;
+	try {
+		const res = await users.GET(req(ADMIN, true));
+		assert.equal(res.status, 503);
+		assert.deepEqual(await res.json(), { error: "user_admin_not_configured" });
+		const t = await toggle.PUT(
+			new Request("http://x", { method: "PUT", headers: { "x-auth-request-user": ADMIN, "x-auth-request-groups": "/learnharness,/learnharness-admin", "content-type": "application/json" }, body: JSON.stringify({ admin: true }) }),
+			{ params: Promise.resolve({ id: OTHER }) },
+		);
+		assert.equal(t.status, 503);
+	} finally {
+		kc.tokenStatus = 200;
+		process.env.KC_ADMIN_API_SECRET = "s3cret";
+	}
 });

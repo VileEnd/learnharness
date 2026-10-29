@@ -5,8 +5,11 @@
 # reach the host only as peers.json in the shared data volume; wg-apply.py
 # validates and applies them. A peer can reach Caddy (80/443) and nothing else:
 # not SSH, not the LAN. Independently, the VM and its containers may not open
-# connections into the LAN (replies to LAN clients and the gateway's DNS/NTP
-# excepted), so access from home (22/80/443/8443) is unchanged.
+# IPv4 connections into private ranges (replies to LAN clients and the
+# gateway's DNS/NTP excepted). Limits: IPv4 only (the VM host itself can still
+# reach LAN hosts over IPv6; the containers have no IPv6), and containers may
+# still reach 172.16.0.0/12 because Docker networks live there. LAN-to-VM
+# access (22/80/443/8443) is unchanged.
 let
   cfg = config.services.learnharness.wireguard;
   stateDir = "/var/lib/learnharness";

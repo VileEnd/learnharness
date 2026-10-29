@@ -1,8 +1,8 @@
 /**
  * The WireGuardStore adapter: <globalDataRoot()>/wireguard/. peers.json is
  * app-written (tmp + rename, mode 0600); server.json and status.json belong
- * to the host and are only read. Reads never throw. Implements
- * core/ports.ts WireGuardStore.
+ * to the host and are only read (absent or invalid: null). readPeers throws
+ * PeersFileCorrupt on a corrupt peers.json. Implements core/ports.ts WireGuardStore.
  */
 
 import fs from "node:fs";
@@ -55,6 +55,6 @@ export const wireGuardStore: WireGuardStore = {
 	},
 	readStatus() {
 		const s = readJson(path.join(dir(), "status.json")) as Partial<WgStatus> | null;
-		return s && s.peers && typeof s.peers === "object" ? { updatedAt: str(s.updatedAt) ? s.updatedAt : "", peers: s.peers } : null;
+		return s && s.peers && typeof s.peers === "object" ? { updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : null, peers: s.peers } : null;
 	},
 };

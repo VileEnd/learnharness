@@ -27,9 +27,17 @@ export interface KeycloakAdmin {
 
 /** A Keycloak call failed; `status` is Keycloak's HTTP status. */
 export class KeycloakError extends Error {
-	constructor(readonly status: number, what: string) {
+	constructor(readonly status: number, what: string, readonly detail = "") {
 		super(`keycloak ${what} failed (${status})`);
 		this.name = "KeycloakError";
+	}
+}
+
+/** The token endpoint rejected the client (400/401: invalid_client / unauthorized_client): the client or its secret is not set up. */
+export class KeycloakClientRejected extends KeycloakError {
+	constructor(status: number) {
+		super(status, "token request");
+		this.name = "KeycloakClientRejected";
 	}
 }
 
@@ -69,6 +77,7 @@ export function createKeycloakAdmin(opts: { baseUrl: string; secret: string; fet
 			headers: { "content-type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({ grant_type: "client_credentials", client_id: "learnharness-admin-api", client_secret: opts.secret }),
 		});
+		if (res.status === 400 || res.status === 401) throw new KeycloakClientRejected(res.status);
 		if (!res.ok) throw new KeycloakError(res.status, "token request");
 		const body = (await res.json()) as { access_token: string; expires_in: number };
 		token = { value: body.access_token, expiresAt: Date.now() + (body.expires_in - 30) * 1000 };
@@ -80,7 +89,10 @@ export function createKeycloakAdmin(opts: { baseUrl: string; secret: string; fet
 			...init,
 			headers: { ...(init.body ? { "content-type": "application/json" } : {}), authorization: `Bearer ${await accessToken()}` },
 		});
-		if (!res.ok) throw new KeycloakError(res.status, what);
+		if (!res.ok) {
+			const detail = await res.text().then((t) => t.slice(0, 500), () => "");
+			throw new KeycloakError(res.status, what, detail);
+		}
 		return res;
 	}
 

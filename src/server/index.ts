@@ -64,5 +64,5 @@ export { knowledgeViewNow } from "./knowledge-now.ts";
 export * from "./usage.ts";
 export * from "./health.ts";
 // Admin Users section: the Keycloak admin client (+ the ambient tenant, for self-demotion checks).
-export { createKeycloakAdmin, keycloakAdmin, KeycloakError, type AdminUser, type KeycloakAdmin } from "./keycloak-admin.ts";
+export { createKeycloakAdmin, keycloakAdmin, KeycloakClientRejected, KeycloakError, type AdminUser, type KeycloakAdmin } from "./keycloak-admin.ts";
 export { currentTenant } from "../core/tenant-context.ts";

@@ -278,8 +278,9 @@ export interface PushStore {
 
 /**
  * peers.json is app-written (atomic, 0600); server.json and status.json are
- * written by the host and only read. Reads never throw: absent or corrupt
- * files read as null / empty.
+ * written by the host and only read (absent or invalid: null). `readPeers`
+ * throws `PeersFileCorrupt` when peers.json exists but is corrupt, so no writer
+ * can overwrite it.
  */
 export interface WireGuardStore {
 	readServer(): WgServerInfo | null;

@@ -32,8 +32,9 @@ export interface WgServerInfo {
 
 /** Written by the host. */
 export interface WgStatus {
-	updatedAt: string;
-	peers: Record<string, { latestHandshake: number | null; endpoint: string | null }>;
+	/** Unix seconds, as wg-apply.py writes it. */
+	updatedAt: number | null;
+	peers: Record<string, { latestHandshake: number | null }>;
 }
 
 /** Lowest unused 10.66.0.x (x in 2..254), counting revoked peers as used; null when full. */

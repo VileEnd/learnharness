@@ -4,14 +4,14 @@
  *   POST {username, email?, admin?} → 201 {user, temporaryPassword} (password shown once, never stored)
  * Admin only; 503 user_admin_not_configured without KC_ADMIN_API_URL/SECRET.
  */
-import { KeycloakError, keycloakAdmin, requireAdmin, withTenant } from "@/src/server";
+import { KeycloakClientRejected, KeycloakError, keycloakAdmin, requireAdmin, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/;
 
 const notConfigured = () => Response.json({ error: "user_admin_not_configured" }, { status: 503 });
-const upstream = () => Response.json({ error: "keycloak_unavailable" }, { status: 502 });
+const upstream = (e: unknown) => (e instanceof KeycloakClientRejected ? notConfigured() : Response.json({ error: "keycloak_unavailable" }, { status: 502 }));
 
 export const GET = withTenant(async () => {
 	const denied = requireAdmin();
@@ -20,8 +20,8 @@ export const GET = withTenant(async () => {
 	if (!kc) return notConfigured();
 	try {
 		return Response.json({ users: await kc.listUsers() });
-	} catch {
-		return upstream();
+	} catch (e) {
+		return upstream(e);
 	}
 });
 
@@ -41,7 +41,10 @@ export const POST = withTenant(async (req) => {
 		const created = await kc.createUser({ username, email, admin: body?.admin === true });
 		return Response.json(created, { status: 201 });
 	} catch (e) {
-		if (e instanceof KeycloakError && e.status === 409) return Response.json({ error: "username_taken" }, { status: 409 });
-		return upstream();
+		if (e instanceof KeycloakError && e.status === 409) {
+			// Keycloak answers 409 for a duplicate username and for a duplicate email ("User exists with same email").
+			return Response.json({ error: /email/i.test(e.detail) ? "email_taken" : "username_taken" }, { status: 409 });
+		}
+		return upstream(e);
 	}
 });

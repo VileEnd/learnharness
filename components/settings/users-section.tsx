@@ -23,8 +23,8 @@ export interface AdminDevice {
 	userId: string;
 	name: string;
 	ip: string;
-	createdAt: number;
-	revokedAt?: number;
+	createdAt: string;
+	revokedAt?: string;
 	latestHandshake: number | null;
 	stale: boolean;
 }
@@ -66,6 +66,7 @@ const MESSAGES: Record<string, string> = {
 		"The WireGuard device list on the server is damaged — nothing was changed. Check data/global/wireguard/peers.json.",
 	wireguard_full: "No free WireGuard addresses left.",
 	username_taken: "That username is already taken.",
+	email_taken: "That email is already used by another account.",
 	invalid_username:
 		"Use 2–32 lowercase letters, digits, dot, dash or underscore, starting with a letter or digit.",
 	invalid_email: "That email address isn't valid.",
@@ -275,6 +276,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 											>
 												{u.isAdmin ? "Remove admin" : "Make admin"}
 											</button>
+											<p className="mt-1 text-xs text-muted-foreground">Admin changes take effect at the person&apos;s next login (or within an hour).</p>
 										</div>
 									</div>
 								)}
@@ -310,14 +312,14 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 	const refresh = useCallback(async () => {
 		const u = await call("/api/admin/users");
 		if (!u.ok) {
-			setError(String(u.body.error ?? u.status));
+			setError((cur) => cur ?? String(u.body.error ?? u.status));
 			setUsers([]);
 			return;
 		}
 		setUsers((u.body.users as AdminUser[]) ?? []);
 		const d = await call("/api/admin/devices");
 		if (d.ok) setDevices((d.body.devices as AdminDevice[]) ?? []);
-		else setError(String(d.body.error ?? d.status));
+		else setError((cur) => cur ?? String(d.body.error ?? d.status));
 	}, []);
 
 	useEffect(() => {
@@ -335,8 +337,13 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 		} catch {
 			setError("network");
 		}
-		await refresh();
-		setBusy(false);
+		try {
+			await refresh();
+		} catch {
+			setError((cur) => cur ?? "network"); // keep the mutation's own error
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	const username = (id: string) => users?.find((u) => u.id === id)?.username ?? id;

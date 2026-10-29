@@ -60,6 +60,39 @@ class DryRun(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(d)), ["peers.json", "private"])  # dry run writes nothing
 
 
+class OpenDir(unittest.TestCase):
+    def test_creates_global_and_wireguard_under_an_existing_data_dir(self):
+        mod = load()
+        with tempfile.TemporaryDirectory() as d:
+            data = Path(d, "data")
+            data.mkdir()
+            target = data / "global" / "wireguard"
+            fd = mod.open_dir(str(target), create=2)
+            self.assertIsNotNone(fd)
+            os.close(fd)
+            for p in (data / "global", target):
+                st = p.stat()
+                self.assertTrue(p.is_dir() and not p.is_symlink())
+                self.assertEqual(st.st_mode & 0o777, 0o755)
+                self.assertEqual(st.st_uid, data.stat().st_uid)  # owner of data/ (chown skipped when not root)
+
+    def test_nothing_is_created_without_a_data_dir(self):
+        mod = load()
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(mod.open_dir(str(Path(d, "data", "global", "wireguard")), create=2))
+            self.assertFalse(Path(d, "data").exists())
+
+    def test_a_symlinked_global_is_refused(self):
+        mod = load()
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "data").mkdir()
+            (Path(d) / "elsewhere").mkdir()
+            os.symlink(Path(d) / "elsewhere", Path(d) / "data" / "global")
+            with self.assertRaises((mod.Refused, OSError)):
+                mod.open_dir(str(Path(d, "data", "global", "wireguard")), create=2)
+            self.assertEqual(os.listdir(Path(d) / "elsewhere"), [])
+
+
 class Parsers(unittest.TestCase):
     def test_status_from_wg_dump(self):
         dump = (
@@ -68,8 +101,8 @@ class Parsers(unittest.TestCase):
             f"{KEY_B}\t{PSK}\t203.0.113.7:4500\t10.66.0.3/32\t1761700000\t10\t20\toff\n"
         )
         self.assertEqual(load().parse_dump(dump), {
-            KEY_A: {"latestHandshake": None, "endpoint": None},
-            KEY_B: {"latestHandshake": 1761700000, "endpoint": "203.0.113.7:4500"},
+            KEY_A: {"latestHandshake": None},
+            KEY_B: {"latestHandshake": 1761700000},
         })
 
     def test_allowed_ips_from_the_default_route(self):

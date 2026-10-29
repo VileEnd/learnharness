@@ -116,8 +116,8 @@ in
 
         # Group, admin-API client (secret = KC_ADMIN_API_SECRET) and its roles in
         # the realm, idempotently. It waits up to 3 minutes for Keycloak and never
-        # fails the stack: on failure it logs "keycloak bootstrap failed".
-        ${pkgs.bash}/bin/bash ${./bootstrap-keycloak.sh} "$secrets" || echo "keycloak bootstrap failed"
+        # fails the stack: on failure (or after 5 minutes) it logs "keycloak bootstrap failed".
+        timeout 300 ${pkgs.bash}/bin/bash ${./bootstrap-keycloak.sh} "$secrets" || echo "keycloak bootstrap failed"
       '';
     };
   };

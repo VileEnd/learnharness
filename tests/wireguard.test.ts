@@ -110,7 +110,7 @@ test("validation: bad name and bad userId are 400", async () => {
 test("revoke keeps the entry; list joins handshake and flags stale; psk stripped", async () => {
 	const peers = JSON.parse(fs.readFileSync(path.join(wgDir, "peers.json"), "utf8")) as { peers: { id: string; publicKey: string }[] };
 	const first = peers.peers[0]!;
-	fs.writeFileSync(path.join(wgDir, "status.json"), JSON.stringify({ updatedAt: "t", peers: { [first.publicKey]: { latestHandshake: 1234, endpoint: null } } }));
+	fs.writeFileSync(path.join(wgDir, "status.json"), JSON.stringify({ updatedAt: 1761700000, peers: { [first.publicKey]: { latestHandshake: 1234 } } }));
 	let res = await device.DELETE(req(true, { method: "DELETE" }), { params: Promise.resolve({ id: first.id }) });
 	assert.equal(res.status, 204);
 	res = await device.DELETE(req(true, { method: "DELETE" }), { params: Promise.resolve({ id: "nope" }) });

@@ -1,5 +1,5 @@
 /** PUT {admin: boolean} → 204. Grants/revokes the admin group; an admin cannot demote themselves (409 self_demotion). */
-import { KeycloakError, currentTenant, keycloakAdmin, requireAdmin, withTenant } from "@/src/server";
+import { KeycloakClientRejected, KeycloakError, currentTenant, keycloakAdmin, requireAdmin, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,7 @@ export const PUT = withTenant(async (req: Request, { params }: { params: Promise
 		return new Response(null, { status: 204 });
 	} catch (e) {
 		if (e instanceof KeycloakError && e.status === 404) return Response.json({ error: "not_found" }, { status: 404 });
+		if (e instanceof KeycloakClientRejected) return Response.json({ error: "user_admin_not_configured" }, { status: 503 });
 		return Response.json({ error: "keycloak_unavailable" }, { status: 502 });
 	}
 });

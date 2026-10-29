@@ -9,7 +9,7 @@ name) and skipped. Each run:
 
   1. writes server.json  {publicKey, endpoint, allowedIps}       (0644)
   2. applies peers.json  with `wg syncconf` (skipped with --status-only)
-  3. writes status.json  {updatedAt, peers: {pubkey: {latestHandshake, endpoint}}}
+  3. writes status.json  {updatedAt, peers: {pubkey: {latestHandshake}}}
 
 --dry-run prints the syncconf file (it holds secrets) and touches nothing.
 Standard library only.
@@ -103,7 +103,9 @@ def render_conf(private_key, listen_port, peers):
 
 
 def parse_dump(text):
-    """`wg show <if> dump` -> {pubkey: {latestHandshake: unix seconds | None, endpoint: str | None}}."""
+    """`wg show <if> dump` -> {pubkey: {latestHandshake: unix seconds | None}}.
+
+    The peers' endpoints (their public IPs) are deliberately not recorded."""
     peers = {}
     for line in text.splitlines()[1:]:  # the first line is the interface itself
         f = line.split("\t")
@@ -113,7 +115,7 @@ def parse_dump(text):
             hs = int(f[4])
         except ValueError:
             hs = 0
-        peers[f[0]] = {"latestHandshake": hs or None, "endpoint": None if f[2] == "(none)" else f[2]}
+        peers[f[0]] = {"latestHandshake": hs or None}
     return peers
 
 
@@ -165,13 +167,16 @@ def read_private_key(path):
 # steer root's reads and writes elsewhere.
 
 def open_dir(path, create):
+    """An fd for `path`, never following symlinks. `create` = how many missing levels
+    may be made (0 = none, 2 = the dir and its parent); the topmost existing ancestor
+    (the app's data dir) must already exist. Returns None when it does not."""
     path = os.path.abspath(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except FileNotFoundError:
         if not create:
             return None
-        parent = open_dir(os.path.dirname(path), create=False)
+        parent = open_dir(os.path.dirname(path), create=int(create) - 1 if create else 0)
         if parent is None:
             return None  # the app has not created its data dir yet
         try:
@@ -181,10 +186,11 @@ def open_dir(path, create):
             st = None
         finally:
             os.close(parent)
-        fd = open_dir(path, create=False)
+        fd = open_dir(path, create=0)
         if st is not None and fd is not None:
             # Through the verified fd, never by name: the parent is the app's.
-            os.fchown(fd, st.st_uid, st.st_gid)  # the app (uid 1000) writes peers.json here
+            if os.geteuid() == 0:  # only root can hand it to the app (uid 1000), which writes peers.json here
+                os.fchown(fd, st.st_uid, st.st_gid)
             os.fchmod(fd, 0o755)
         return fd
     if os.readlink(f"/proc/self/fd/{fd}") != path:
@@ -293,7 +299,7 @@ def main(argv=None):
         return 0
 
     try:
-        dfd = open_dir(a.dir, create=True)
+        dfd = open_dir(a.dir, create=2)  # wireguard/, and global/ on a fresh install
     except (OSError, Refused) as e:
         log(f"data dir unusable: {e}")
         return 1

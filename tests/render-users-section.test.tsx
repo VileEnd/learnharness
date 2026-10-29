@@ -17,8 +17,8 @@ const users = [
 	{ id: "id-bob", username: "bob", email: null, isAdmin: false, enabled: true, createdAt: null },
 ];
 const devices = [
-	{ id: "d1", userId: "id-bob", name: "phone", ip: "10.0.0.2", createdAt: 1, latestHandshake: null, stale: true },
-	{ id: "d2", userId: "id-bob", name: "laptop", ip: "10.0.0.3", createdAt: 1, latestHandshake: NOW / 1000 - 7200, stale: false },
+	{ id: "d1", userId: "id-bob", name: "phone", ip: "10.0.0.2", createdAt: "2026-10-29T00:00:00.000Z", latestHandshake: null, stale: true },
+	{ id: "d2", userId: "id-bob", name: "laptop", ip: "10.0.0.3", createdAt: "2026-10-29T00:00:00.000Z", latestHandshake: NOW / 1000 - 7200, stale: false },
 ];
 
 function render(over: Partial<UsersSectionViewProps> = {}): string {
@@ -89,6 +89,7 @@ describe("errorMessage", () => {
 		assert.match(errorMessage("wireguard_peers_corrupt"), /nothing was changed/);
 		assert.equal(errorMessage("wireguard_full"), "No free WireGuard addresses left.");
 		assert.equal(errorMessage("username_taken"), "That username is already taken.");
+		assert.equal(errorMessage("email_taken"), "That email is already used by another account.");
 		assert.equal(errorMessage("weird"), "Something went wrong (weird)");
 	});
 });
