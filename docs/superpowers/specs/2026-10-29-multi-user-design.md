@@ -9,7 +9,7 @@ Decisions the user made in this session:
 - **Tenancy:** each user's data is separate (chats, graph, documents, learner model, OKF library, preferences). **API keys are shared**: they are the admin's keys, and only the admin manages them.
 - **Admin:** sets each user's default models (strong/cheap/vision) and an **allowed list**. Users can switch models only within that list.
 - **Spending:** the admin sees per-user usage and sets a **per-user monthly cap**. Over the cap, the user is blocked with a clear message until the next month or until the cap is raised.
-- **Storage Box:** for **backups only**. Live data stays on the VM's local disk, with a nightly restic backup to `<storage-box-host>` over SFTP. No S3 or remote primary storage.
+- **Storage Box:** for **backups only**. Live data stays on the VM's local disk, with a nightly restic backup to the existing Hetzner Storage Box over SFTP. No S3 or remote primary storage.
 - **Existing shared data:** becomes the admin's. Every other user starts empty.
 - **Outside access:** WireGuard terminated on VM 104 only, so it gives no access to the LAN. The admin generates peer configs from inside the app.
 
