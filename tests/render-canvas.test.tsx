@@ -19,7 +19,7 @@ import { DrawingThumb, WorkSubmissionCard, drawingPngUrl } from "../components/w
 import { GradeChip } from "../components/artifacts/grade-chip.tsx";
 import { AnnotateCard } from "../components/artifacts/annotate-card.tsx";
 import { artifactRenderers } from "../components/artifacts/index.ts";
-import { TeacherInk, teacherInkBoxes, wobblePath } from "../components/canvas/teacher-ink.tsx";
+import { TeacherInk, teacherInkBoxes, teacherNoteSides, wobblePath } from "../components/canvas/teacher-ink.tsx";
 import { canRequestHint, canSubmitWork, CanvasWorkspace } from "../components/canvas/canvas-workspace.tsx";
 import { pickDraft } from "../components/canvas/draft.ts";
 import { tableAddCol, tableAddRow, tableNextCell, tableRemoveCol, tableRemoveRow } from "../components/canvas/object-edit.ts";
@@ -257,11 +257,11 @@ describe("teacher ink", () => {
 		const [circle, note] = boxes as [{ x: number; y: number; w: number; h: number }, { x: number; y: number; w: number; h: number }];
 		// the circle loops round o1 (100..300 x 100..160), so its extent covers it
 		assert.ok(circle.x < 100 && circle.x + circle.w > 300 && circle.y < 100 && circle.y + circle.h > 160);
-		// the note is drawn at its box: first tspan at (x, y + 0.9 fs), and the box sits below the circle
+		// the note is drawn in its box (which holds the 0.2 fs halo): first tspan at (x + 0.2 fs, y + 1.1 fs), and the box sits below the circle
 		const html = ink(marks, "world");
 		const fs = Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
 		const [, tx, ty] = html.match(/<tspan x="([\d.]+)" y="([\d.]+)"/)!.map(Number);
-		assert.ok(Math.abs(note.x - tx!) < 0.01 && Math.abs(note.y + fs * 0.9 - ty!) < 0.01);
+		assert.ok(Math.abs(note.x + fs * 0.2 - tx!) < 0.01 && Math.abs(note.y + fs * 1.1 - ty!) < 0.01);
 		assert.ok(note.y >= circle.y + circle.h - 0.01, "below the circle");
 		assert.equal(teacherInkBoxes([{ kind: "circle", target: { object: "gone" } }], inkScene, box).length, 0);
 	});
@@ -288,7 +288,7 @@ describe("teacher ink", () => {
 		for (const k of ["underline", "check", "cross", "note", "arrow"]) assert.match(html, new RegExp(`data-mark="${k}"`));
 		assert.ok(!html.includes('data-mark="circle"'));
 		assert.match(html, /sign slip/);
-		assert.match(html, /viewBox="0 0 100 /);
+		assert.match(html, /<svg viewBox="/);
 	});
 
 	it("colours come from the palette helper, not literals in the component", () => {
@@ -331,18 +331,56 @@ describe("teacher ink", () => {
 		}
 	});
 
-	it("a long label wraps to two lines at most; the tooltip keeps the full text", () => {
-		const long = "The sign of the second term flips when you move it across!!!";
-		assert.equal(long.length, 60);
+	it("a long label is never shortened: every word is written, on as many lines as it needs; the tooltip keeps the full text", () => {
+		const long = "Check the sign of the second term: it flips when you move it across the equals sign, redo.";
+		assert.equal(long.length, 90);
 		const html = light([{ kind: "circle", target: { object: "o1" }, label: long }]);
-		assert.equal(html.match(/<tspan/g)?.length, 2);
-		assert.match(html, /\u2026<\/tspan>/);
+		const lines = [...html.matchAll(/<tspan[^>]*>([^<]*)<\/tspan>/g)].map((m) => m[1]);
+		assert.ok(lines.length > 2, `${lines.length} lines`);
+		assert.equal(lines.join(" "), long);
+		assert.ok(!html.includes("\u2026"));
 		assert.ok(html.includes(`<title>${long}</title>`));
+	});
+
+	it("a note moved away from its mark is joined to it by a thin leader in the mark's colour", () => {
+		assert.ok(!light([{ kind: "check", target: { object: "o1" }, label: "right" }]).includes("<line"), "an adjacent note has none");
+		// nine notes on one mark: the eight spots round it are taken, so at least one note is pushed outward
+		const html = light(Array.from({ length: 9 }, (_, i): AnnotationMark => ({ kind: "check", target: { object: "o1" }, label: `step ${i + 1} is right` })));
+		assert.match(html, /<line [^>]*stroke="#15803d"/);
+	});
+
+	it("the thumbnail's view box grows to hold every note; the drawing stays where it was inside it", () => {
+		const html = light([
+			{ kind: "underline", target: { object: "o2" }, label: "this line needs its units written out" },
+			{ kind: "circle", target: { object: "o1" }, label: "which x makes the bracket zero?" },
+			{ kind: "note", target: { object: "o2" }, label: "sign slip" },
+		]);
+		const [vx, vy, vw, vh] = html.match(/<svg viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"/)!.slice(1).map(Number) as [number, number, number, number];
+		const H = (100 * box.h) / box.w;
+		assert.ok(vx <= 0 && vy <= 0 && vx + vw >= 100 && vy + vh >= H, "holds the drawing");
+		assert.ok(vw > 100 || vh > H, "and grew past it");
+		const texts = [...html.matchAll(/<text[^>]*font-size="([\d.]+)"[^>]*>(.*?)<\/text>/g)];
+		assert.equal(texts.length, 3);
+		for (const [, size, body] of texts) {
+			const fs = Number(size);
+			const spans = [...body!.matchAll(/<tspan x="([-\d.]+)" y="([-\d.]+)">([^<]*)</g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), n: m[3]!.length }));
+			const left = spans[0]!.x, top = spans[0]!.y - fs * 0.9;
+			const right = left + Math.max(...spans.map((s) => s.n)) * fs * 0.6, bottom = top + spans.length * fs * 1.2;
+			assert.ok(left >= vx - 0.01 && top >= vy - 0.01 && right <= vx + vw + 0.01 && bottom <= vy + vh + 0.01, `note ${left},${top}..${right},${bottom} in ${vx} ${vy} ${vw} ${vh}`);
+		}
+	});
+
+	it("a workspace note keeps the side it was given (the stable spot) at any zoom", () => {
+		const marks: AnnotationMark[] = [{ kind: "circle", target: { object: "o1" }, label: "which x?" }];
+		const sides = teacherNoteSides(marks, inkScene, box, 1);
+		assert.deepEqual(sides, ["below"]);
+		const [circle, note] = teacherInkBoxes(marks, inkScene, box, 0.3, ["above"]);
+		assert.ok(note!.y + note!.h <= circle!.y, "above the circle");
 	});
 
 	it("a thumbnail note is 7% of the drawing's height (about 11px on the 160px chat thumbnail), unless a 24-char line would overflow the width", () => {
 		const html = light([{ kind: "note", target: { object: "o2" }, label: "sign slip" }]);
-		const vbH = Number(html.match(/viewBox="0 0 100 ([\d.]+)"/)?.[1]);
+		const vbH = (100 * box.h) / box.w;
 		const fs = Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
 		assert.ok(Math.abs(fs - Math.min(vbH * 0.07, 100 / (24 * 0.6))) < 0.01, `${fs} vs ${vbH}`);
 	});
@@ -363,7 +401,7 @@ describe("teacher ink", () => {
 		// the reveal's note box is the rendered one at that zoom
 		const note = teacherInkBoxes(marks, inkScene, box, 0.65)[1]!;
 		const [, , ty] = at(0.65).match(/<tspan x="([\d.]+)" y="([\d.]+)"/)!.map(Number);
-		assert.ok(Math.abs(note.y + fontOf(at(0.65)) * 0.9 - ty!) < 0.01);
+		assert.ok(Math.abs(note.y + fontOf(at(0.65)) * 1.1 - ty!) < 0.01);
 		assert.ok(note.h >= 13 / 0.65);
 	});
 

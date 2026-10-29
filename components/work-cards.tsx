@@ -3,7 +3,7 @@
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { createContext, useContext, useMemo } from "react";
-import { TeacherInk } from "@/components/canvas/teacher-ink";
+import { TeacherInk, teacherInkView } from "@/components/canvas/teacher-ink";
 import { useDrawingScene } from "@/components/canvas/use-drawing-scene";
 import { annotationsOf, sceneBoundingBox, type ArtifactPartProps } from "@/src/core";
 
@@ -45,27 +45,49 @@ export interface WorkSubmissionData {
 /** The session's record messages, for the derived teacher marks (annotationsOf). chat.tsx provides it. */
 export const SessionMessagesContext = createContext<readonly unknown[]>([]);
 
-/** The teacher's ink over a thumbnail: percent space over the PNG; nothing until the scene is known. */
-function ThumbInk({ chatId, drawingId }: { chatId: string; drawingId: string }) {
-	const messages = useContext(SessionMessagesContext);
-	const marks = useMemo(() => annotationsOf(messages, drawingId).flatMap((a) => a.marks), [messages, drawingId]);
-	const scene = useDrawingScene(chatId, marks.length > 0 ? drawingId : undefined);
-	const box = scene ? sceneBoundingBox(scene) : null;
-	if (!scene || !box) return null;
-	return <TeacherInk marks={marks} scene={scene} box={box} space="percent" theme="light" />;
-}
+/** The thumbnail's height cap in px (max-h-40). */
+const THUMB_MAX_H = 160;
 
-/** A drawing thumbnail (the exported PNG), linking to the full image, with the teacher's marks over it. Renders nothing for an absent id. */
+/**
+ * A drawing thumbnail (the exported PNG), linking to the full image, with the teacher's marks over it
+ * (percent space). Renders nothing for an absent id. Once the scene is known, the thumbnail is a sheet of
+ * paper the size of teacherInkView's view: the drawing keeps its place and aspect inside it, and blank paper
+ * is added wherever a note or mark reaches past the drawing, so nothing is clipped. The whole sheet stays
+ * within the old cap (160px tall, the column's width), scaled down when it grew.
+ */
 export function DrawingThumb({ chatId, drawingId }: { chatId: string; drawingId?: string }) {
+	const messages = useContext(SessionMessagesContext);
+	const marks = useMemo(() => (drawingId ? annotationsOf(messages, drawingId).flatMap((a) => a.marks) : []), [messages, drawingId]);
+	const scene = useDrawingScene(chatId, marks.length > 0 ? drawingId : undefined);
+	const box = useMemo(() => (scene ? sceneBoundingBox(scene) : null), [scene]);
+	const paper = useMemo(() => (scene && box ? teacherInkView(marks, scene, box) : null), [marks, scene, box]);
 	if (!drawingId) return null;
 	const src = drawingPngUrl(chatId, drawingId);
+	if (!scene || !box || !paper) {
+		return (
+			<div className="relative mb-1 w-fit max-w-full" data-testid="drawing-thumb-wrap">
+				<a href={src} target="_blank" rel="noreferrer" data-testid="drawing-thumb" className="block w-fit">
+					{/* eslint-disable-next-line @next/next/no-img-element */}
+					<img src={src} alt="Your drawing" loading="lazy" className="max-h-40 max-w-full rounded-md border bg-white" />
+				</a>
+			</div>
+		);
+	}
+	const { drawing: d, view: v } = paper;
+	const pct = (n: number) => `${(n * 100).toFixed(3)}%`;
 	return (
-		<div className="relative mb-1 w-fit max-w-full" data-testid="drawing-thumb-wrap">
-			<a href={src} target="_blank" rel="noreferrer" data-testid="drawing-thumb" className="block w-fit">
+		<div className="relative mb-1 max-w-full" style={{ width: `min(100%, ${((THUMB_MAX_H * v.w) / v.h).toFixed(1)}px)`, aspectRatio: `${v.w} / ${v.h}` }} data-testid="drawing-thumb-wrap">
+			<a href={src} target="_blank" rel="noreferrer" data-testid="drawing-thumb" className="absolute inset-0 block overflow-hidden rounded-md border bg-white">
 				{/* eslint-disable-next-line @next/next/no-img-element */}
-				<img src={src} alt="Your drawing" loading="lazy" className="max-h-40 max-w-full rounded-md border bg-white" />
+				<img
+					src={src}
+					alt="Your drawing"
+					loading="lazy"
+					className="absolute max-w-none"
+					style={{ left: pct((d.x - v.x) / v.w), top: pct((d.y - v.y) / v.h), width: pct(d.w / v.w), height: pct(d.h / v.h) }}
+				/>
 			</a>
-			<ThumbInk chatId={chatId} drawingId={drawingId} />
+			<TeacherInk marks={marks} scene={scene} box={box} space="percent" theme="light" />
 		</div>
 	);
 }
