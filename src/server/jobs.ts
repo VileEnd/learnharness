@@ -68,6 +68,7 @@ import {
 import type { TurnInput } from "../core/input-events.ts";
 import { danglingQuestionOf, endsInDismissal, type LhMessage } from "../core/native-messages.ts";
 import { fireJobAbort, isJobLive } from "../agent/subagents/aborts.ts";
+import { requireTenant } from "../core/tenant-context.ts";
 import { notify } from "./push.ts";
 import { stores } from "./stores.ts";
 import { isTurnRunning } from "./turn-liveness.ts";
@@ -120,8 +121,8 @@ interface WakeState {
 	liveAgents: Map<string, Agent>;
 	/** Chats whose pump loop is currently active (serialization per chat). */
 	pumping: Set<string>;
-	/** Throttle bookkeeping for the stale-job sweep. */
-	lastSweepAt: number;
+	/** Throttle bookkeeping for the stale-job sweep, per tenant id. */
+	lastSweepAt: Map<string, number>;
 }
 
 interface LhWakeGlobal {
@@ -130,7 +131,7 @@ interface LhWakeGlobal {
 
 function state(): WakeState {
 	const g = globalThis as typeof globalThis & LhWakeGlobal;
-	return (g.__lhWakePipeline ??= { queues: new Map(), liveAgents: new Map(), userSteers: new Map(), pumping: new Set(), lastSweepAt: 0 });
+	return (g.__lhWakePipeline ??= { queues: new Map(), liveAgents: new Map(), userSteers: new Map(), pumping: new Set(), lastSweepAt: new Map() });
 }
 
 /** chat-handler wires this at module init: its adapter around handleChatRequest. */
@@ -691,8 +692,9 @@ const SWEEP_THROTTLE_MS = 30_000;
 export function recoverStaleJobs(): void {
 	const s = state();
 	const now = Date.now();
-	if (now - s.lastSweepAt < SWEEP_THROTTLE_MS) return;
-	s.lastSweepAt = now;
+	const me = requireTenant().id;
+	if (now - (s.lastSweepAt.get(me) ?? 0) < SWEEP_THROTTLE_MS) return;
+	s.lastSweepAt.set(me, now);
 	try {
 		for (const chat of stores.chatStore.listChats()) {
 			for (const job of stores.jobStore.listJobs(chat.id)) {

@@ -18,6 +18,7 @@ import { pushStore } from "../store/push.ts";
 import { requestLogStore } from "../store/request-log.ts";
 import { settingsStore } from "../store/settings.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
+import { multiUser } from "../core/tenant-context.ts";
 import { setRequestSink } from "../agent/request-log.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
@@ -57,6 +58,9 @@ if (
 	process.env.NEXT_RUNTIME === "nodejs" &&
 	process.env.NODE_ENV !== "test" &&
 	process.env.NEXT_PHASE !== "phase-production-build" &&
+	// Multi-user: no tenant at boot; usage.ts ensureBackfill() runs it per
+	// tenant on that tenant's first /api/usage read.
+	!multiUser() &&
 	!bootFlags.__lhUsageBackfill
 ) {
 	bootFlags.__lhUsageBackfill = true;

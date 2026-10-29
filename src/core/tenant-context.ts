@@ -62,3 +62,12 @@ export function requireTenant(): Tenant {
 export function tenantKey(id: string): string {
 	return `${requireTenant().id}:${id}`;
 }
+
+/**
+ * The key for a process-wide registry entry: tenant-namespaced in multi-user
+ * mode, the bare id in single-user mode (one tenant, so no collisions, and
+ * the legacy key shape stays what single-user tooling and tests expect).
+ */
+export function registryKey(id: string): string {
+	return multiUser() ? tenantKey(id) : id;
+}
