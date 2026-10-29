@@ -96,6 +96,9 @@ export interface OcrClientOptions {
 	fetch?: typeof fetch;
 }
 
+/** Job ids already logged (one line per job, however often it is polled). */
+const loggedJobs = new Set<string>();
+
 export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 	const baseUrl = opts.baseUrl ?? (() => process.env.OCR_URL);
 	const token = opts.token ?? (() => process.env.OCR_TOKEN);
@@ -144,11 +147,11 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 		}
 	}
 
-	async function json<T>(res: Response): Promise<T> {
+	async function json<T>(res: Response, startedAt: number): Promise<T> {
 		if (!res.ok) {
 			const detail = await res.text().catch(() => "");
 			const failed = new OcrError("ocr_failed", `The OCR service answered HTTP ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}.`);
-			log(Date.now(), "ocr", "error", { error: failed.message });
+			log(startedAt, "ocr", "error", { error: failed.message });
 			throw failed;
 		}
 		return (await res.json()) as T;
@@ -168,34 +171,46 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			if (!key()) throw new OcrError("openrouter_key_missing", "PDF scanning needs an OpenRouter key. Add one under Settings, Keys.");
 		},
 		async estimate(files) {
-			return json<OcrEstimate>(await call("/api/estimate", { method: "POST", body: form(files) }));
+			const startedAt = Date.now();
+			return json<OcrEstimate>(await call("/api/estimate", { method: "POST", body: form(files) }), startedAt);
 		},
 		async start(files, strategy) {
 			this.assertCanScan();
-			const { job } = await json<{ job: string }>(await call("/api/run", { method: "POST", body: form(files, strategy) }, true));
+			const startedAt = Date.now();
+			const { job } = await json<{ job: string }>(await call("/api/run", { method: "POST", body: form(files, strategy) }, true), startedAt);
 			return job;
 		},
 		async job(id) {
 			const startedAt = Date.now();
-			const status = await json<OcrJob>(await call(`/api/jobs/${encodeURIComponent(id)}`));
-			// Callers stop polling at a terminal status, so this logs once per job.
-			if (status.status === "done") {
-				const cost = status.files.reduce((sum, f) => sum + (f.cost_usd ?? 0), 0);
-				log(startedAt, status.strategy, "ok", { providerCostUsd: cost });
-			} else if (status.status === "failed") {
-				log(startedAt, status.strategy, "error", { error: status.files.find((f) => f.error)?.error ?? "OCR job failed" });
+			const status = await json<OcrJob>(await call(`/api/jobs/${encodeURIComponent(id)}`), startedAt);
+			// documents.ts may poll a job-level "done" again (a file still lacks
+			// markdown), so log exactly once per job id.
+			if ((status.status === "done" || status.status === "failed") && !loggedJobs.has(id)) {
+				loggedJobs.add(id);
+				const bad = status.files.find((f) => f.status !== "done");
+				if (status.status === "done" && !bad) {
+					const costs = status.files.map((f) => f.cost_usd).filter((c): c is number => typeof c === "number");
+					log(startedAt, status.strategy, "ok", costs.length > 0 ? { providerCostUsd: costs.reduce((a, c) => a + c, 0) } : {});
+				} else {
+					log(startedAt, status.strategy, "error", { error: bad?.error ?? status.files.find((f) => f.error)?.error ?? "OCR job failed" });
+				}
 			}
 			return status;
 		},
 		async markdown(job, name) {
+			const startedAt = Date.now();
 			const res = await call(`/api/jobs/${encodeURIComponent(job)}/files/${encodeURIComponent(name)}`);
-			if (!res.ok) throw new OcrError("ocr_failed", `The OCR service has no markdown ${name} (HTTP ${res.status}).`);
+			if (!res.ok) {
+				const failed = new OcrError("ocr_failed", `The OCR service has no markdown ${name} (HTTP ${res.status}).`);
+				log(startedAt, "ocr", "error", { error: failed.message });
+				throw failed;
+			}
 			return res.text();
 		},
 		async bySha(sha256) {
 			const res = await call(`/api/by-sha/${encodeURIComponent(sha256)}`);
 			if (res.status === 404) return null;
-			return json<OcrKnown>(res);
+			return json<OcrKnown>(res, Date.now());
 		},
 	};
 }
