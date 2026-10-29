@@ -19,6 +19,10 @@ const CATEGORIES: readonly UsageCategory[] = [
 	"search",
 ];
 
+export function isUsageCategory(v: unknown): v is UsageCategory {
+	return typeof v === "string" && (CATEGORIES as readonly string[]).includes(v);
+}
+
 const fmt = new Intl.DateTimeFormat("en-CA", {
 	timeZone: USAGE_TZ,
 	year: "numeric",
@@ -104,7 +108,8 @@ function hasUsage(l: RequestLogLine): boolean {
 		l.input !== undefined ||
 		l.output !== undefined ||
 		l.cacheRead !== undefined ||
-		l.cacheWrite !== undefined
+		l.cacheWrite !== undefined ||
+		l.cacheWrite1h !== undefined
 	);
 }
 
@@ -123,7 +128,11 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 	for (const line of lines) {
 		if (monthKey(line.at) !== month) continue;
 		calls++;
-		const cat = categories[line.category];
+		// A foreign or future category must not kill the month view.
+		const category = isUsageCategory(line.category)
+			? line.category
+			: categoryOf(line.purpose, line.chatKind, line.chatId);
+		const cat = categories[category];
 		cat.calls++;
 		cat.tokens += (line.input ?? 0) + (line.output ?? 0) + (line.cacheRead ?? 0) + (line.cacheWrite ?? 0);
 		if (line.outcome === "error") failures++;
@@ -148,7 +157,7 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 		if (session) session.usd = add(session.usd, usd);
 		const day = dayKey(line.at);
 		const d = days.get(day) ?? {};
-		d[line.category] = (d[line.category] ?? 0) + usd;
+		d[category] = (d[category] ?? 0) + usd;
 		days.set(day, d);
 	}
 
