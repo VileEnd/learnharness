@@ -1305,11 +1305,16 @@ export function GraphView({
 					</div>
 				</div>
 			) : (
-				<div ref={containerRef} className="relative h-full w-full">
+				<div ref={containerRef} className="@container relative h-full w-full">
 					{/* The knowledge key: under the sidebar toggle (top-left), clear of
-					    the top-right controls and the bottom composer dock. */}
+					    the top-right controls and the bottom composer dock. Below a
+					    36rem-wide graph (a phone, or a narrow window beside the
+					    sidebar) the key and the monthly cost pill no longer fit side
+					    by side, so the key drops below the pill's row instead of
+					    sliding under it (a container query: the graph's own width
+					    decides, not the viewport's). */}
 					{settings.showKnowledge && learner && (
-						<LearnerLegend className="absolute left-2 top-12 z-10 max-w-[calc(100%-1rem)]" />
+						<LearnerLegend className="absolute left-2 top-12 z-10 max-w-[calc(100%-1rem)] @max-xl:top-[5.25rem]" />
 					)}
 					{/* THE single canvas: every layer (hulls, edges, nodes, both
 					    label systems, hover) draws into it, once per frame. */}
