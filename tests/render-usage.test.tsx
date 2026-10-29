@@ -70,6 +70,11 @@ describe("UsageMonthPanel", () => {
 		assert.match(renderToStaticMarkup(<UsageMonthPanel usage={view({ failures: 1 })} />), /1 failed request(?!s)/);
 		assert.match(renderToStaticMarkup(<UsageMonthPanel usage={view({ failures: 3 })} />), /3 failed requests/);
 	});
+	it("shows zero failures as plain text, not a link", () => {
+		const html = renderToStaticMarkup(<UsageMonthPanel usage={view({ failures: 0 })} />);
+		assert.match(html, /<span>0 failed requests<\/span>/);
+		assert.doesNotMatch(html, /<button[^>]*>0 failed/);
+	});
 	it("has a Details link", () => {
 		assert.match(renderToStaticMarkup(<UsageMonthPanel usage={view()} />), />Details</);
 	});
