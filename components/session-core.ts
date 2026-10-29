@@ -719,7 +719,13 @@ export class SessionModel {
 			// The canvas submission card lands the moment Submit fires.
 			optimistic.push({ ...newWorkSubmission(input.workCallId, input.text, input.drawingId), id: localId() });
 		} else if (input.type === "hint") {
-			optimistic.push({ ...newHintRequest(input.callId, nextHintNumber([...this.base, ...this.tail], input.callId)), id: localId() });
+			optimistic.push({
+				...newHintRequest(input.callId, nextHintNumber([...this.base, ...this.tail], input.callId), {
+					...(input.drawingId ? { drawingId: input.drawingId } : {}),
+					...(input.text ? { text: input.text } : {}),
+				}),
+				id: localId(),
+			});
 		} else if (input.type === "next") {
 			// The move-on signal (owner round 16): the NEXT PROBLEM line
 			// renders the instant the chip/Enter fires.
@@ -886,9 +892,10 @@ export class SessionModel {
 		return this.send({ type: "work-submit", workCallId, text, ...(drawingId ? { drawingId } : {}) });
 	}
 
-	/** The Hint button on the active canvas task or practice problem. */
-	requestHint(callId: string): Promise<void> {
-		return this.send({ type: "hint", callId });
+	/** The Hint button on the active canvas task or practice problem. From
+	 *  the open canvas it carries the canvas snapshot and the thinking draft. */
+	requestHint(callId: string, drawingId?: string, text?: string): Promise<void> {
+		return this.send({ type: "hint", callId, ...(drawingId ? { drawingId } : {}), ...(text ? { text } : {}) });
 	}
 
 	/** The canvas-task discard: the ask-style dismissal (marker lands

@@ -142,7 +142,10 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		(workCallId: string, text: string, drawingId?: string) => void model.submitWork(workCallId, text, drawingId),
 		[model],
 	);
-	const requestHint = useCallback((callId: string) => void model.requestHint(callId), [model]);
+	const requestHint = useCallback(
+		(callId: string, drawingId?: string, text?: string) => void model.requestHint(callId, drawingId, text),
+		[model],
+	);
 	const dismissWork = useCallback((workCallId: string) => void model.dismissWork(workCallId), [model]);
 	const questionDraft = useCallback((toolCallId: string) => model.questionDraft(toolCallId), [model]);
 	const saveQuestionDraft = useCallback((toolCallId: string, draft: Parameters<SessionModel["saveQuestionDraft"]>[1]) => model.saveQuestionDraft(toolCallId, draft), [model]);

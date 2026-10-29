@@ -20,7 +20,7 @@ import { GradeChip } from "../components/artifacts/grade-chip.tsx";
 import { AnnotateCard } from "../components/artifacts/annotate-card.tsx";
 import { artifactRenderers } from "../components/artifacts/index.ts";
 import { TeacherInk, wobblePath } from "../components/canvas/teacher-ink.tsx";
-import { canSubmitWork, CanvasWorkspace } from "../components/canvas/canvas-workspace.tsx";
+import { canSubmitWork, CanvasWorkspace, newestMarkedDrawing } from "../components/canvas/canvas-workspace.tsx";
 import { pickDraft } from "../components/canvas/draft.ts";
 import { tableAddCol, tableAddRow, tableNextCell, tableRemoveCol, tableRemoveRow } from "../components/canvas/object-edit.ts";
 import { isCanvasCapable } from "../components/use-canvas-capable.ts";
@@ -359,6 +359,18 @@ describe("teacher ink", () => {
 			"w1",
 		);
 		assert.deepEqual(ids, ["drw_a", "drw_c"]);
+	});
+
+	it("submittedDrawingIds includes a hint snapshot of the task", () => {
+		const m = (customType: string, details: object) => ({ role: "custom", customType, details });
+		const ids = submittedDrawingIds([m("work-submission", { workCallId: "w1", drawingId: "drw_a" }), m("hint-request", { callId: "w1", n: 1, drawingId: "drw_h" }), m("hint-request", { callId: "w2", n: 1, drawingId: "drw_x" }), m("hint-request", { callId: "w1", n: 2 })], "w1");
+		assert.deepEqual(ids, ["drw_a", "drw_h"]);
+	});
+
+	it("the live canvas overlays only the newest drawing that has marks", () => {
+		const mark: AnnotationMark = { kind: "check", target: { cell: "A1" } };
+		assert.deepEqual(newestMarkedDrawing([{ id: "drw_a", marks: [mark] }, { id: "drw_h", marks: [mark] }, { id: "drw_n", marks: [] }]), { id: "drw_h", marks: [mark] });
+		assert.equal(newestMarkedDrawing([{ id: "drw_a", marks: [] }]), null);
 	});
 });
 
