@@ -17,6 +17,9 @@ const price = (c: { outputTokens?: number }) => (c.outputTokens === undefined ? 
 test("month and day keys use Europe/Berlin", () => {
 	assert.equal(monthKey("2026-10-31T23:30:00Z"), "2026-11");
 	assert.equal(dayKey("2026-10-31T23:30:00Z"), "2026-11-01");
+	assert.equal(dayKey("2026-03-28T23:00:00Z"), "2026-03-29");
+	assert.equal(dayKey("2026-10-25T23:00:00Z"), "2026-10-26");
+	assert.equal(monthKey("2026-03-31T22:00:00Z"), "2026-04");
 });
 
 test("categoryOf", () => {
@@ -58,4 +61,13 @@ test("providerCostUsd wins and all-unpriced gives null", () => {
 
 test("truncateError caps at 1000", () => {
 	assert.equal(truncateError("x".repeat(5000)).length, 1000);
+});
+
+test("unknown category folds via purpose; null-usd sessions sort last", () => {
+	const odd = line({ chatId: "B", purpose: "extractor", category: "future" as never, output: 100 });
+	const m = summarizeMonth("2026-10", [line({ chatId: "N", input: 1 }), odd], price);
+	assert.equal(m.categories.graph.calls, 1);
+	assert.equal(m.sessions[0]?.chatId, "B");
+	assert.equal(m.sessions[1]?.chatId, "N");
+	assert.equal(m.sessions[1]?.usd, null);
 });

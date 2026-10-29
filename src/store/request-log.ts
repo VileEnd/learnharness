@@ -10,7 +10,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { RequestLogLine } from "../core/contracts/usage.ts";
 import type { RequestLogStore } from "../core/ports.ts";
-import { monthKey } from "../core/usage.ts";
+import { isUsageCategory, monthKey } from "../core/usage.ts";
 
 const file = (month: string) => path.join(PATHS.logs, `requests-${month}.jsonl`);
 const marker = () => path.join(PATHS.logs, "backfill.done");
@@ -22,7 +22,7 @@ function isLine(v: unknown): v is RequestLogLine {
 		l.v === 1 &&
 		typeof l.at === "string" &&
 		typeof l.purpose === "string" &&
-		typeof l.category === "string" &&
+		isUsageCategory(l.category) &&
 		typeof l.provider === "string" &&
 		typeof l.model === "string" &&
 		typeof l.outcome === "string"
