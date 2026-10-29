@@ -21,6 +21,9 @@ services:
       OCR_TOKEN: ${OCR_TOKEN}
       # Per-user data under users/<keycloak sub>/ (docs/self-hosting.md).
       LH_MULTI_USER: "1"
+      # Sidebar "Sign out" ends the Keycloak session too, so switching users works.
+      LH_HOST: ${LH_HOST}
+      LH_LOGOUT_URL: ${AUTH_URL}/realms/learnharness/protocol/openid-connect/logout
     networks: [internal]
 
   ocr:
@@ -81,7 +84,8 @@ services:
       OAUTH2_PROXY_ALLOWED_GROUPS: learnharness
       OAUTH2_PROXY_EMAIL_DOMAINS: "*"
       OAUTH2_PROXY_REDIRECT_URL: https://${LH_HOST}/oauth2/callback
-      OAUTH2_PROXY_WHITELIST_DOMAINS: ${LH_HOST}
+      # AUTH_SITE: sign-out may redirect (rd=) to Keycloak's end-session endpoint.
+      OAUTH2_PROXY_WHITELIST_DOMAINS: ${LH_HOST},${AUTH_SITE}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET:?set OAUTH2_COOKIE_SECRET in .env}
       OAUTH2_PROXY_COOKIE_SECURE: "true"
       # Rolling login: the session is refreshed (via Keycloak) every hour while
