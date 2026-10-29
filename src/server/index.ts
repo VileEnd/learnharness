@@ -61,3 +61,6 @@ export { knowledgeViewNow } from "./knowledge-now.ts";
 // The cost counter (2026-10-29): the month view, months strip, failures, and the one-time backfill.
 export * from "./usage.ts";
 export * from "./health.ts";
+// Admin Users section: the Keycloak admin client (+ the ambient tenant, for self-demotion checks).
+export { createKeycloakAdmin, keycloakAdmin, KeycloakError, type AdminUser, type KeycloakAdmin } from "./keycloak-admin.ts";
+export { currentTenant } from "../core/tenant-context.ts";

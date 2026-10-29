@@ -24,6 +24,9 @@ services:
       # Sidebar "Sign out" ends the Keycloak session too, so switching users works.
       LH_HOST: ${LH_HOST}
       LH_LOGOUT_URL: ${AUTH_URL}/realms/learnharness/protocol/openid-connect/logout
+      # Admin Users section: Keycloak service-account client (learnharness-admin-api); empty secret disables it.
+      KC_ADMIN_API_URL: http://keycloak:8080
+      KC_ADMIN_API_SECRET: ${KC_ADMIN_API_SECRET:-}
     networks: [internal]
 
   ocr:
