@@ -57,3 +57,5 @@ export { zipFiles } from "./zip.ts";
 export { buildLearnerSnapshot, type LearnerSnapshotDeps } from "./learner-snapshot.ts";
 export { learnerSnapshotNow } from "./learner-now.ts";
 export { knowledgeViewNow } from "./knowledge-now.ts";
+// The cost counter (2026-10-29): the month view, months strip, failures, and the one-time backfill.
+export * from "./usage.ts";

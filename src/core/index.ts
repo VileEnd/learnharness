@@ -52,7 +52,6 @@ export * from "./tool-parts.ts";
 export * from "./answer-presentation.ts";
 export * from "./prices.ts";
 export * from "./context-usage.ts";
-export * from "./cost-summary.ts";
 export * from "./fuzzy.ts";
 // settings.ts + settings-resolution.ts (settings-storage wave, 2026-09-19):
 // the user-settings record's shape/sanitizer (pure) and its fully-resolved
@@ -92,3 +91,5 @@ export * from "./exercise-core.ts";
 // canvas-core.ts (canvas workspace, PR 2): drawing scene contract, region grid, content ids - pure, browser-safe (pure-JS sha256).
 export * from "./canvas-core.ts";
 export * from "./grade-heal.ts";
+export * from "./usage.ts";
+export * from "./recommended-models.ts";

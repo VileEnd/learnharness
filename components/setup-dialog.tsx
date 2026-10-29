@@ -508,6 +508,7 @@ export function SetupDialog({
 													menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
 												>
 													<ModelMenuList
+														recommended={slot === "strong"}
 														models={catalog}
 														effectiveId={entry?.id}
 														effectiveProvider={entry?.provider}

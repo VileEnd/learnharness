@@ -12,10 +12,19 @@
  * by the mark's content and index, so a re-render never re-wobbles), red but for the green check, and notes
  * and labels are written in Shantell Sans (next/font, `--font-teacher-hand`) over a paper-coloured halo so
  * they stay readable on top of the learner's strokes. A label takes its mark's colour.
+ *
+ * Notes (0.29.0, owner: "without destroying the notes"): a note is never shortened, it wraps into as many
+ * lines as it needs. Its spot comes from layoutNotes (note-layout.ts), clear of every mark's drawn extent, of
+ * the learner's typed objects and of the notes before it (freehand strokes are not obstacles; the halo keeps
+ * the text readable over them). Notes may sit beyond the drawing: the workspace is infinite and its reveal
+ * brings them into view, and the thumbnail's paper grows to hold them (teacherInkView). The tutor's grid box
+ * never grows, so anchors keep resolving to the same cells. A note pushed away from its mark gets a thin
+ * leader in the mark's colour.
  */
 
-import { resolveTargetRect, type AnnotationMark, type AnnotationTarget, type Box, type DrawingScene } from "@/src/core";
+import { isTypedObject, resolveTargetRect, type AnnotationMark, type AnnotationTarget, type Box, type DrawingScene } from "@/src/core";
 import { screenColor, TEACHER_INK_COLOR } from "./geometry";
+import { layoutNotes, type Side } from "./note-layout.ts";
 
 export interface TeacherInkProps {
 	marks: readonly AnnotationMark[];
@@ -26,6 +35,9 @@ export interface TeacherInkProps {
 	theme?: "light" | "dark";
 	/** World space only: the workspace's current zoom, so a note's text keeps NOTE_SCREEN_MIN_PX on screen. */
 	zoom?: number;
+	/** World space only: each mark's note side, solved once per marking turn (teacherNoteSides), so a note keeps
+	 *  its spot while the learner zooms. Absent: solved freely. */
+	sides?: readonly (Side | undefined)[];
 }
 
 interface Ctx {
@@ -38,11 +50,6 @@ interface Ctx {
 	green: string;
 	/** The note halo: the opposite-theme ink, so text stays legible on any ground. */
 	paper: string;
-	/** Extent of the drawing in space coordinates; notes are kept inside it. */
-	minX: number;
-	maxX: number;
-	minY: number;
-	maxY: number;
 	/** Note font size in space coordinates (noteSize). */
 	fs: number;
 }
@@ -50,10 +57,13 @@ interface Ctx {
 type R = { x: number; y: number; w: number; h: number };
 const f = (n: number) => Math.round(n * 100) / 100;
 
+/** A world rectangle in space coordinates. */
+const toSpace = (r: Box, c: Ctx): R => ({ x: (r.x - c.ox) * c.k, y: (r.y - c.oy) * c.k, w: r.w * c.k, h: r.h * c.k });
+
 function rectOf(target: AnnotationTarget | undefined, scene: DrawingScene, box: Box, c: Ctx): R | null {
 	if (!target) return null;
 	const r = resolveTargetRect(target, scene, box);
-	return r ? { x: (r.x - c.ox) * c.k, y: (r.y - c.oy) * c.k, w: r.w * c.k, h: r.h * c.k } : null;
+	return r ? toSpace(r, c) : null;
 }
 
 /** mulberry32: a tiny seeded PRNG in [0, 1). */
@@ -95,9 +105,13 @@ export function wobblePath(points: Array<[number, number]>, seed: number, amp: n
 }
 
 const NOTE_LINE_CHARS = 24;
-const NOTE_MAX_LINES = 2;
 /** Shantell Sans runs about 0.6em per character. */
 const NOTE_CHAR_EM = 0.6;
+/** A note's halo reaches 0.2em beyond its glyphs; a note's box holds it, so two boxes apart are two readable notes. */
+const NOTE_HALO_EM = 0.2;
+/** How far a note sits clear of its mark, and each outward step when it is crowded out (layoutNotes): half a
+ *  line, so the six steps reach about three lines out (a third of a line left a crowded thumbnail overlapping). */
+const NOTE_GAP_EM = 0.6;
 
 /** The smallest a workspace note's text is drawn on screen, in px, whatever the zoom ("clearly readable"). */
 export const NOTE_SCREEN_MIN_PX = 13;
@@ -117,7 +131,7 @@ function noteSize(u: number, percent: boolean, w: number, h: number, zoom = 1): 
 	return percent ? size : Math.max(size, NOTE_SCREEN_MIN_PX / Math.max(zoom, 1e-6));
 }
 
-/** Word-wrap at NOTE_LINE_CHARS into NOTE_MAX_LINES lines at most (an overlong word is split), cut with an ellipsis beyond. */
+/** Word-wrap at NOTE_LINE_CHARS, into as many lines as the text needs (an overlong word is split). Never cut. */
 function noteLines(text: string): string[] {
 	const lines: string[] = [];
 	let line = "";
@@ -138,62 +152,68 @@ function noteLines(text: string): string[] {
 		}
 	}
 	if (line) lines.push(line);
-	if (lines.length <= NOTE_MAX_LINES) return lines;
-	const kept = lines.slice(0, NOTE_MAX_LINES);
-	const lastLine = kept[NOTE_MAX_LINES - 1]!;
-	kept[NOTE_MAX_LINES - 1] = `${lastLine.length >= NOTE_LINE_CHARS ? lastLine.slice(0, NOTE_LINE_CHARS - 1) : lastLine}…`;
-	return kept;
+	return lines;
 }
 
-/** Where a note goes: it hangs below `bottom` or stands on `top` (the mark's extent), at `x`. */
-interface NoteSpot {
-	x: number;
-	top: number;
-	bottom: number;
-	prefer: "above" | "below";
+/** What a note hangs on: its mark's box (the spots go round it), the side it prefers, its text. */
+interface NoteAnchor {
+	markBox: R;
+	prefer?: Side;
 	text: string;
 }
 
-/**
- * A note's lines and box, kept inside the drawing: below `bottom` or on `top`, on the preferred side when
- * the drawing has room there, else on the other, else clamped in. Pure: HandNote draws exactly this box, and
- * teacherInkBoxes reports it (the workspace brings it into view).
- */
-function notePlace({ x: x0, top, bottom, prefer, text }: NoteSpot, c: Ctx): R & { lines: string[]; lh: number } {
-	const fs = c.fs;
-	const lh = fs * 1.2;
-	const lines = noteLines(text);
-	const w = Math.max(...lines.map((l) => l.length), 2) * fs * NOTE_CHAR_EM;
-	const h = lines.length * lh;
-	const x = Math.max(c.minX, Math.min(x0, c.maxX - w));
-	const fitsBelow = bottom + h <= c.maxY, fitsAbove = top - h >= c.minY;
-	const below = prefer === "below" ? fitsBelow || !fitsAbove : fitsBelow && !fitsAbove;
-	const y = Math.max(c.minY, Math.min(below ? bottom : top - h, c.maxY - h));
-	return { x, y, w, h, lines, lh };
+/** A placed note: its box (halo included), its lines, and the leader to its mark when it was pushed away. */
+interface PlacedNoteInk {
+	box: R;
+	side: Side;
+	lines: string[];
+	text: string;
+	leader: [number, number, number, number] | null;
+}
+
+/** The leader: from the note's edge midpoint nearest the mark to the mark box's nearest point. */
+function leaderLine(note: R, mark: R): [number, number, number, number] {
+	const mids: Array<[number, number]> = [
+		[note.x + note.w / 2, note.y],
+		[note.x + note.w / 2, note.y + note.h],
+		[note.x, note.y + note.h / 2],
+		[note.x + note.w, note.y + note.h / 2],
+	];
+	let best: [number, number, number, number] = [0, 0, 0, 0];
+	let bestD = Infinity;
+	for (const [px, py] of mids) {
+		const qx = Math.max(mark.x, Math.min(px, mark.x + mark.w)), qy = Math.max(mark.y, Math.min(py, mark.y + mark.h));
+		const d = (px - qx) ** 2 + (py - qy) ** 2;
+		if (d < bestD) [bestD, best] = [d, [px, py, qx, qy]];
+	}
+	return best;
 }
 
 /**
- * A note in the teacher's hand: Shantell Sans over a paper halo (`paint-order="stroke"`), at most two lines,
- * placed by notePlace. The full text stays in the tooltip (and the AnnotateCard).
+ * A note in the teacher's hand: Shantell Sans over a paper halo (`paint-order="stroke"`), every line of it,
+ * in the box layoutInk placed, behind a leader when it was pushed away. The full text stays in the tooltip
+ * (and the AnnotateCard).
  */
-function HandNote({ spot, color, c }: { spot: NoteSpot; color: string; c: Ctx }) {
+function HandNote({ note, color, c }: { note: PlacedNoteInk; color: string; c: Ctx }) {
 	const fs = c.fs; // the halo below is fs*0.4: u*1.2 at the base size, growing with a floored note
-	const { x, y, lines, lh } = notePlace(spot, c);
+	const lh = fs * 1.2, m = fs * NOTE_HALO_EM;
+	const { box, lines, leader } = note;
 	return (
 		<g>
-			<title>{spot.text}</title>
+			{leader ? <line x1={f(leader[0])} y1={f(leader[1])} x2={f(leader[2])} y2={f(leader[3])} stroke={color} strokeWidth={f(c.u * 0.5)} strokeLinecap="round" data-leader="" /> : null}
+			<title>{note.text}</title>
 			<text
 				fontSize={f(fs)}
 				fill={color}
 				stroke={c.paper}
-				strokeWidth={f(fs * 0.4)}
+				strokeWidth={f(fs * 2 * NOTE_HALO_EM)}
 				strokeLinejoin="round"
 				paintOrder="stroke"
 				fontFamily="var(--font-teacher-hand), 'Shantell Sans', cursive"
 				fontWeight={500}
 			>
 				{lines.map((l, i) => (
-					<tspan key={i} x={f(x)} y={f(y + fs * 0.9 + i * lh)}>
+					<tspan key={i} x={f(box.x + m)} y={f(box.y + m + fs * 0.9 + i * lh)}>
 						{l}
 					</tspan>
 				))}
@@ -205,13 +225,17 @@ function HandNote({ spot, color, c }: { spot: NoteSpot; color: string; c: Ctx })
 /** One mark's geometry in space coordinates: what Mark draws, the extent it covers, and where its note goes.
  *  Null when an anchor no longer resolves. */
 type MarkGeometry =
-	| { kind: "arrow"; x1: number; y1: number; x2: number; y2: number; mx: number; my: number; hl: number; extent: R; note: NoteSpot | null }
-	| { kind: "circle"; pts: Array<[number, number]>; extent: R; note: NoteSpot | null }
-	| { kind: "underline"; pts: Array<[number, number]>; extent: R; note: NoteSpot | null }
-	| { kind: "check" | "cross"; r: R; g: number; extent: R; note: NoteSpot | null }
-	| { kind: "note"; extent: null; note: NoteSpot };
+	| { kind: "arrow"; x1: number; y1: number; x2: number; y2: number; mx: number; my: number; hl: number; extent: R; note: NoteAnchor | null }
+	| { kind: "circle"; pts: Array<[number, number]>; extent: R; note: NoteAnchor | null }
+	| { kind: "underline"; pts: Array<[number, number]>; extent: R; note: NoteAnchor | null }
+	| { kind: "check" | "cross"; r: R; g: number; extent: R; note: NoteAnchor | null }
+	| { kind: "note"; extent: null; note: NoteAnchor };
 
 const grow = (r: R, d: number): R => ({ x: r.x - d, y: r.y - d, w: r.w + 2 * d, h: r.h + 2 * d });
+function union(a: R, b: R): R {
+	const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+	return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
 
 function markGeometry(mark: AnnotationMark, scene: DrawingScene, box: Box, c: Ctx): MarkGeometry | null {
 	if (mark.kind === "arrow") {
@@ -225,18 +249,17 @@ function markGeometry(mark: AnnotationMark, scene: DrawingScene, box: Box, c: Ct
 		const hl = c.u * 4;
 		const lx = Math.min(x1, x2, mx), ly = Math.min(y1, y2, my);
 		const extent = grow({ x: lx, y: ly, w: Math.max(x1, x2, mx) - lx, h: Math.max(y1, y2, my) - ly }, hl);
-		// The label sits clear of the shaft: right of the bowed middle, and below (or above) it by a unit.
-		const note: NoteSpot | null = mark.label
-			? { x: Math.max((x1 + x2) / 2, mx) + c.u, top: Math.min((y1 + y2) / 2, my) - c.u, bottom: Math.max((y1 + y2) / 2, my) + c.u, prefer: "below", text: mark.label }
-			: null;
+		// The label sits clear of the shaft: beside a mostly vertical arrow (level with its middle), under a mostly
+		// horizontal one.
+		const note: NoteAnchor | null = mark.label ? { markBox: extent, prefer: Math.abs(y2 - y1) > Math.abs(x2 - x1) ? "right" : "below", text: mark.label } : null;
 		return { kind: "arrow", x1, y1, x2, y2, mx, my, hl, extent, note };
 	}
 	const r = rectOf(mark.target, scene, box, c);
 	if (!r) return null;
 	const g = c.u * 4; // glyph size
-	// A label sits clear of its mark (never on the underline or the circle's rim, which its halo would erase),
-	// below it, or above when the drawing has no room below.
-	const label = (top: number, bottom: number): NoteSpot | null => (mark.label ? { x: r.x, top, bottom, prefer: "below", text: mark.label } : null);
+	// A label sits clear of its mark (never on the underline or the circle's rim, which its halo would erase), and
+	// of what it marks: below both, else wherever layoutNotes finds room.
+	const label = (extent: R): NoteAnchor | null => (mark.label ? { markBox: union(r, extent), text: mark.label } : null);
 	switch (mark.kind) {
 		case "circle": {
 			// About 14 points round the ellipse, overshooting the start by ~25 degrees, like a pen loop.
@@ -246,29 +269,69 @@ function markGeometry(mark: AnnotationMark, scene: DrawingScene, box: Box, c: Ct
 				const t = from + (sweep * i) / (n - 1);
 				return [cx + rx * Math.cos(t), cy + ry * Math.sin(t)];
 			});
-			return { kind: "circle", pts, extent: grow({ x: cx - rx, y: cy - ry, w: 2 * rx, h: 2 * ry }, c.u), note: label(cy - ry - c.u, cy + ry + c.u) };
+			const extent = grow({ x: cx - rx, y: cy - ry, w: 2 * rx, h: 2 * ry }, c.u);
+			return { kind: "circle", pts, extent, note: label(extent) };
 		}
 		case "underline": {
 			const y = r.y + r.h + c.u;
 			const pts = [0, 1 / 3, 2 / 3, 1].map((t): [number, number] => [r.x + r.w * t, y]);
-			return { kind: "underline", pts, extent: grow({ x: r.x, y: y, w: r.w, h: 0 }, c.u), note: label(r.y - c.u, y + c.u) };
+			const extent = grow({ x: r.x, y: y, w: r.w, h: 0 }, c.u);
+			return { kind: "underline", pts, extent, note: label(extent) };
 		}
-		case "check":
-			return { kind: "check", r, g, extent: grow({ x: r.x + r.w - g, y: r.y - g * 0.7, w: g * 1.3, h: g * 1.1 }, c.u), note: label(r.y - g * 0.7 - c.u, r.y + r.h + c.u) };
-		case "cross":
-			return { kind: "cross", r, g, extent: grow({ x: r.x + r.w - g * 0.5, y: r.y - g * 0.5, w: g, h: g }, c.u), note: label(r.y - g * 0.7 - c.u, r.y + r.h + c.u) };
+		case "check": {
+			const extent = grow({ x: r.x + r.w - g, y: r.y - g * 0.7, w: g * 1.3, h: g * 1.1 }, c.u);
+			return { kind: "check", r, g, extent, note: label(extent) };
+		}
+		case "cross": {
+			const extent = grow({ x: r.x + r.w - g * 0.5, y: r.y - g * 0.5, w: g, h: g }, c.u);
+			return { kind: "cross", r, g, extent, note: label(extent) };
+		}
 		case "note":
-			return { kind: "note", extent: null, note: { x: r.x + r.w, top: r.y, bottom: r.y + r.h, prefer: "above", text: mark.label ?? "note" } };
+			// A free note stands off the target's top-right corner.
+			return { kind: "note", extent: null, note: { markBox: r, prefer: "above-right", text: mark.label ?? "note" } };
 	}
 }
 
-function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: number; scene: DrawingScene; box: Box; c: Ctx }) {
-	const geo = markGeometry(mark, scene, box, c);
-	if (!geo) return null;
-	const color = mark.kind === "check" ? c.green : c.red;
+/** One mark laid out: its geometry, its colour and its placed note. */
+interface LaidMark {
+	geo: MarkGeometry;
+	color: string;
+	note: PlacedNoteInk | null;
+}
+
+/**
+ * Every mark's geometry and every note's spot, in mark order (null for a mark that no longer resolves). The
+ * obstacles are each mark's drawn extent and the learner's typed objects (text, markdown, LaTeX, table and
+ * image boxes); freehand strokes and shapes are not. `sides` fixes each mark's note side (stable spots).
+ */
+function layoutInk(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box, c: Ctx, sides?: readonly (Side | undefined)[]): Array<LaidMark | null> {
+	const geos = marks.map((m) => markGeometry(m, scene, box, c));
+	const obstacles = [...geos.flatMap((g) => (g?.extent ? [g.extent] : [])), ...scene.objects.filter(isTypedObject).map((o) => toSpace(o, c))];
+	const lh = c.fs * 1.2, m = c.fs * NOTE_HALO_EM;
+	const asked = geos.flatMap((g, i) => {
+		if (!g?.note) return [];
+		const lines = noteLines(g.note.text);
+		return [{ i, anchor: g.note, lines, w: Math.max(...lines.map((l) => l.length), 2) * c.fs * NOTE_CHAR_EM + 2 * m, h: lines.length * lh + 2 * m }];
+	});
+	const placed = layoutNotes(
+		asked.map((a) => ({ markBox: a.anchor.markBox, w: a.w, h: a.h, prefer: a.anchor.prefer })),
+		obstacles,
+		c.fs * NOTE_GAP_EM,
+		asked.map((a) => sides?.[a.i]),
+	);
+	const notes = new Map(
+		asked.map((a, j) => {
+			const p = placed[j]!;
+			return [a.i, { box: p.box, side: p.side, lines: a.lines, text: a.anchor.text, leader: p.leader ? leaderLine(p.box, a.anchor.markBox) : null }] as const;
+		}),
+	);
+	return geos.map((geo, i) => (geo ? { geo, color: marks[i]!.kind === "check" ? c.green : c.red, note: notes.get(i) ?? null } : null));
+}
+
+function Mark({ laid: { geo, color, note: placed }, seed, c }: { laid: LaidMark; seed: number; c: Ctx }) {
 	const sw = f(c.u);
 	const common = { fill: "none", stroke: color, strokeWidth: sw, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-	const note = geo.note ? <HandNote spot={geo.note} color={color} c={c} /> : null;
+	const note = placed ? <HandNote note={placed} color={color} c={c} /> : null;
 	switch (geo.kind) {
 		case "arrow": {
 			const { x1, y1, x2, y2, mx, my, hl } = geo;
@@ -338,44 +401,64 @@ function inkContext(box: Box, space: "world" | "percent", theme: "light" | "dark
 		red: screenColor(TEACHER_INK_COLOR, theme),
 		green: screenColor("green", theme),
 		paper: screenColor("ink", theme === "dark" ? "light" : "dark"),
-		minX: (box.x - ox) * k,
-		maxX: (box.x + box.w - ox) * k,
-		minY: (box.y - oy) * k,
-		maxY: (box.y + box.h - oy) * k,
 		fs: noteSize(worldUnit * k, percent, box.w * k, box.h * k, zoom),
 	};
 }
 
-/** Pure: the world-space boxes the marks cover as drawn in the workspace at `zoom`, each mark's extent and
- *  each note's box (the same geometry TeacherInk draws), in mark order; a mark that no longer resolves gives
- *  none. */
-export function teacherInkBoxes(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box, zoom?: number): Box[] {
+/** Pure: the world-space boxes the marks cover as drawn in the workspace at `zoom` (with the note `sides`
+ *  TeacherInk is given), each mark's extent and its placed note's box (the same layout TeacherInk draws), in
+ *  mark order; a mark that no longer resolves gives none. */
+export function teacherInkBoxes(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box, zoom?: number, sides?: readonly (Side | undefined)[]): Box[] {
 	const c = inkContext(box, "world", "dark", zoom);
-	const out: Box[] = [];
-	for (const m of marks) {
-		const geo = markGeometry(m, scene, box, c);
-		if (!geo) continue;
-		if (geo.extent) out.push(geo.extent);
-		if (geo.note) {
-			const { x, y, w, h } = notePlace(geo.note, c);
-			out.push({ x, y, w, h });
-		}
-	}
-	return out;
+	return layoutInk(marks, scene, box, c, sides).flatMap((l) => (l ? [...(l.geo.extent ? [l.geo.extent] : []), ...(l.note ? [l.note.box] : [])] : []));
 }
 
-export function TeacherInk({ marks, scene, box, space, theme = "dark", zoom }: TeacherInkProps) {
-	const c = inkContext(box, space, theme, space === "world" ? zoom : undefined);
+/** Pure: the side each mark's note takes when laid out freely in the workspace at `zoom` (undefined for a mark
+ *  without a note or that no longer resolves). The workspace solves this once per marking turn, at the zoom
+ *  after the reveal, and passes it back as TeacherInk's `sides`, so notes never jump while he zooms. */
+export function teacherNoteSides(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box, zoom?: number): Array<Side | undefined> {
+	return layoutInk(marks, scene, box, inkContext(box, "world", "dark", zoom)).map((l) => l?.note?.side);
+}
+
+/** The drawing and the thumbnail's paper in percent space: the drawing is `0 0 100 h`, and the paper (the
+ *  svg's view box) grows round it to hold every mark and note. Only the paper grows, never the grid box. */
+export function teacherInkView(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box): { drawing: Box; view: Box } {
+	const c = inkContext(box, "percent", "light");
+	return paperOf(layoutInk(marks, scene, box, c), box, c);
+}
+
+/** The paper: the drawing grown to every mark and note, plus a small margin on each side it grew, so a note's
+ *  first letter never sits on the thumbnail's border. */
+function paperOf(laid: ReadonlyArray<LaidMark | null>, box: Box, c: Ctx): { drawing: Box; view: Box } {
+	const drawing = { x: 0, y: 0, w: 100, h: (100 * Math.max(box.h, 1)) / Math.max(box.w, 1) };
+	const u = laid.reduce<R>((v, l) => [l?.geo.extent, l?.note?.box].reduce<R>((a, b) => (b ? union(a, b) : a), v), drawing);
+	const pad = c.fs * NOTE_HALO_EM;
+	const x0 = u.x < 0 ? u.x - pad : 0, y0 = u.y < 0 ? u.y - pad : 0;
+	const x1 = u.x + u.w > drawing.w ? u.x + u.w + pad : drawing.w, y1 = u.y + u.h > drawing.h ? u.y + u.h + pad : drawing.h;
+	return { drawing, view: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+}
+
+/** A view box rounded outward to 2 decimals, so nothing at its edge is clipped. */
+function viewBoxOf(v: Box): string {
+	const x = Math.floor(v.x * 100) / 100, y = Math.floor(v.y * 100) / 100;
+	return `${x} ${y} ${f(Math.ceil((v.x + v.w) * 100) / 100 - x)} ${f(Math.ceil((v.y + v.h) * 100) / 100 - y)}`;
+}
+
+export function TeacherInk({ marks, scene, box, space, theme = "dark", zoom, sides }: TeacherInkProps) {
+	const percent = space === "percent";
+	const c = inkContext(box, space, theme, percent ? undefined : zoom);
+	const laid = layoutInk(marks, scene, box, c, percent ? undefined : sides);
 	const body = (
 		<g data-testid="teacher-ink">
-			{marks.map((m, i) => (
-				<Mark key={i} mark={m} seed={hashString(JSON.stringify(m)) + i} scene={scene} box={box} c={c} />
-			))}
+			{marks.map((m, i) => {
+				const l = laid[i];
+				return l ? <Mark key={i} laid={l} seed={hashString(JSON.stringify(m)) + i} c={c} /> : null;
+			})}
 		</g>
 	);
-	if (space !== "percent") return body;
+	if (!percent) return body;
 	return (
-		<svg viewBox={`0 0 100 ${f((100 * Math.max(box.h, 1)) / Math.max(box.w, 1))}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
+		<svg viewBox={viewBoxOf(paperOf(laid, box, c).view)} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
 			{body}
 		</svg>
 	);

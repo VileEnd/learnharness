@@ -719,6 +719,7 @@ export function AgentSection({
 										menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
 									>
 										<ModelMenuList
+											recommended={slot === "strong"}
 											models={slotCatalog ?? undefined}
 											effectiveId={modelId}
 											effectiveProvider={provider}

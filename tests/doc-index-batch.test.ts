@@ -208,6 +208,45 @@ describe("batch indexing", () => {
 		assert.deepEqual(Object.keys(pendingFile()[0]!.docs), [mutex.id], "only the failed document is resubmitted");
 	});
 
+	it("logs ONE embed-batch line at completion (never per poll), an error line for a failed batch", async () => {
+		const { setRequestSink } = await import("../src/agent/request-log.ts");
+		const lines: { purpose: string; outcome: string; providerCostUsd?: number; model: string }[] = [];
+		setRequestSink((l) => lines.push(l));
+		try {
+			put("Sema", SEMA);
+			const { or, clock, make } = setup();
+			const index = make();
+			await index.tick();
+			clock.t += 2 * MINUTE;
+			await index.tick();
+			clock.t += MINUTE;
+			await index.tick(); // polls the still-validating batch
+			assert.equal(lines.length, 0, "status polls log nothing");
+			or.complete("batch_1");
+			clock.t += MINUTE;
+			await index.tick();
+			assert.deepEqual(lines.map((l) => [l.purpose, l.outcome, l.providerCostUsd, l.model]), [["embed-batch", "ok", 0.0001, MODEL]]);
+
+			lines.length = 0;
+			scanRows().clear();
+			fs.rmSync(path.join(TMP_DATA, "documents"), { recursive: true, force: true });
+			put("Mutex", MUTEX);
+			const second = setup();
+			const index2 = second.make();
+			await index2.tick();
+			second.clock.t += 2 * MINUTE;
+			await index2.tick();
+			const b = second.or.batches.get("batch_1")!;
+			b.status = "failed";
+			b.error = { message: "provider down" };
+			second.clock.t += MINUTE;
+			await index2.tick();
+			assert.deepEqual(lines.map((l) => [l.purpose, l.outcome]), [["embed-batch", "error"]]);
+		} finally {
+			setRequestSink(null);
+		}
+	});
+
 	it("a failed batch backs off ten minutes, then resubmits", async () => {
 		const sema = put("Sema", SEMA);
 		const { or, clock, make } = setup();

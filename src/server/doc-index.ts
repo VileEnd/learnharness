@@ -61,6 +61,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { LEDGER_FILES } from "../../config.ts";
 import { keyValue } from "./keys.ts";
+import { loggedFetch } from "./logged-fetch.ts";
+import { recordRequest } from "../agent/request-log.ts";
+import { categoryOf, truncateError } from "../core/usage.ts";
 import { graphToolsEnabled } from "../core/settings-resolution.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 
@@ -96,7 +99,10 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 		}, { once: true });
 	});
 
-export function openRouterEmbedder(apiKey: string, model: string, fetchFn: FetchLike = fetch, maxRetries = 6): Embedder {
+export function openRouterEmbedder(apiKey: string, model: string, rawFetch: FetchLike = fetch, maxRetries = 6): Embedder {
+	// Every attempt is one "embed" request-log line (a retried 500 logs an
+	// error line, then an ok one); queries and concepts share this embedder.
+	const fetchFn = loggedFetch(rawFetch, { purpose: "embed", provider: "openrouter", model }, (body) => (body as { usage?: { cost?: number } }).usage?.cost);
 	return {
 		model,
 		async embed(texts, opts = {}) {
@@ -788,6 +794,22 @@ export function createDocIndex(deps: DocIndexDeps) {
 		return todo;
 	}
 
+	/** ONE request-log line per batch, at its terminal poll (not per status poll). */
+	function logBatch(model: string, p: PendingBatch, state: BatchState, outcome: "ok" | "error"): void {
+		recordRequest({
+			v: 1,
+			at: new Date(p.submittedAt).toISOString(),
+			purpose: "embed-batch",
+			category: categoryOf("embed-batch"),
+			provider: "openrouter",
+			model,
+			durationMs: Math.max(0, now() - p.submittedAt),
+			outcome,
+			...(outcome === "ok" && state.usage?.cost !== undefined && { providerCostUsd: state.usage.cost }),
+			...(outcome === "error" && { error: truncateError(state.error?.message ?? `batch ${state.status}`) }),
+		});
+	}
+
 	async function pollOne(batcher: BatchClient, p: PendingBatch): Promise<void> {
 		let state: BatchState;
 		try {
@@ -807,12 +829,14 @@ export function createDocIndex(deps: DocIndexDeps) {
 		}
 		if (state.status === "completed") {
 			if (!state.results) return; // terminal but results not attached yet: next poll
+			logBatch(batcher.model, p, state, "ok");
 			const written = applyResults(p, batcher.model, state.results);
 			console.info(
 				`[doc-index] batch ${p.batchId} completed: ${written}/${Object.keys(p.docs).length} entries embedded` +
 					(state.usage?.cost !== undefined ? `, cost $${state.usage.cost}` : ""),
 			);
 		} else if (state.status === "failed" || state.status === "expired" || state.status === "cancelled") {
+			logBatch(batcher.model, p, state, "error");
 			console.warn(`[doc-index] batch ${p.batchId} ${state.status}: ${state.error?.message ?? "no reason given"}; retrying in a while`);
 			backoffUntil = now() + (deps.backoffMs ?? 10 * 60_000);
 		} else {

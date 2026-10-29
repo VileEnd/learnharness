@@ -30,7 +30,8 @@ import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBounding
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
 import { fitImageSize, PALETTE_NAMES, revealView, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
-import { TeacherInk, teacherInkBoxes } from "./teacher-ink";
+import { TeacherInk, teacherInkBoxes, teacherNoteSides } from "./teacher-ink";
+import type { Side } from "./note-layout.ts";
 import { useDrawingScene } from "./use-drawing-scene";
 import { HintStrip, HintsButton } from "./hints";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
@@ -375,20 +376,22 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	// New marks out of view (a note below the visible part of his drawing): move the view once per set of marks
 	// while the canvas is open, so panning away afterwards is his to do. A reopened canvas starts from the default
 	// view, so it shows them again. Notes grow as the view zooms out (their screen-size floor), so a reveal that
-	// zooms out re-measures the boxes at the new zoom ONCE and adjusts from there; it never loops.
+	// zooms out re-measures the boxes at the new zoom ONCE and adjusts from there; it never loops. Returns the zoom
+	// in effect afterwards, where WorkspaceInk solves the notes' stable spots.
 	const revealedRef = useRef<string | null>(null);
-	const revealMarks = useCallback((key: string, boxesAt: (zoom: number) => Box[]) => {
+	const revealMarks = useCallback((key: string, boxesAt: (zoom: number) => Box[]): number => {
 		const engine = engineRef.current;
 		const root = rootRef.current;
-		if (!engine || !root || revealedRef.current === key) return;
+		const view = engine?.getView() ?? { zoom: 1, x: 0, y: 0 };
+		if (!engine || !root || revealedRef.current === key) return view.zoom;
 		revealedRef.current = key;
 		const r = root.getBoundingClientRect();
 		const viewport = { w: r.width, h: r.height };
-		const view = engine.getView();
 		const first = revealView(viewport, view, boxesAt(view.zoom));
-		if (!first) return;
+		if (!first) return view.zoom;
 		const next = first.zoom !== view.zoom ? (revealView(viewport, first, boxesAt(first.zoom)) ?? first) : first;
 		engine.setView(next);
+		return next.zoom;
 	}, []);
 
 	// The hint carries the snapshot and the draft (which stays in the field); the canvas stays open so the
@@ -553,9 +556,11 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
  * (fetched, immutable), object ids resolve against the live scene first (so a moved object carries its
  * mark) and fall back to the submitted one; a mark whose object is gone from both is skipped. Once the
  * scenes are in, it reports the marks' boxes (teacherInkBoxes, per zoom) so the workspace can bring them into
- * view. Notes are drawn at the current zoom, so their text keeps its screen-size floor.
+ * view. Notes are drawn at the current zoom, so their text keeps its screen-size floor. Their spots are stable:
+ * each note's side is solved once per set of marks, at the zoom after the reveal (teacherNoteSides), and kept
+ * while he zooms, so only the text size follows the floor and a note never jumps to another side.
  */
-function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, zoom, onReveal }: { chatId: string; drawingId: string; marks: AnnotationMark[]; marksKey: string; live: DrawingScene; theme: "light" | "dark"; zoom: number; onReveal: (key: string, boxesAt: (zoom: number) => Box[]) => void }) {
+function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, zoom, onReveal }: { chatId: string; drawingId: string; marks: AnnotationMark[]; marksKey: string; live: DrawingScene; theme: "light" | "dark"; zoom: number; onReveal: (key: string, boxesAt: (zoom: number) => Box[]) => number }) {
 	const submitted = useDrawingScene(chatId, drawingId);
 	const box = useMemo(() => (submitted ? sceneBoundingBox(submitted) : null), [submitted]);
 	const merged = useMemo<DrawingScene | null>(() => {
@@ -563,11 +568,14 @@ function WorkspaceInk({ chatId, drawingId, marks, marksKey, live, theme, zoom, o
 		const ids = new Set(live.objects.map((o) => o.id));
 		return { ...live, objects: [...live.objects, ...submitted.objects.filter((o) => !ids.has(o.id))] };
 	}, [live, submitted]);
+	const [fixed, setFixed] = useState<{ key: string; sides: Array<Side | undefined> } | null>(null);
 	useEffect(() => {
-		if (merged && box) onReveal(marksKey, (z) => teacherInkBoxes(marks, merged, box, z));
+		if (!merged || !box) return;
+		const zoomAfter = onReveal(marksKey, (z) => teacherInkBoxes(marks, merged, box, z));
+		setFixed((prev) => (prev?.key === marksKey ? prev : { key: marksKey, sides: teacherNoteSides(marks, merged, box, zoomAfter) }));
 	}, [marksKey, merged, box, marks, onReveal]);
 	if (!merged || !box) return null;
-	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} zoom={zoom} />;
+	return <TeacherInk marks={marks} scene={merged} box={box} space="world" theme={theme} zoom={zoom} sides={fixed?.key === marksKey ? fixed.sides : undefined} />;
 }
 
 /** Re-encodes an image whose long side exceeds IMAGE_MAX_SIDE (PNG stays PNG, others JPEG); small or undecodable images pass through unchanged. */

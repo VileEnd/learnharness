@@ -11,6 +11,7 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type ModelRole } from "../../config.ts";
 import { DEFAULT_THINKING_ORDER } from "../core/settings.ts";
+import { observeStream } from "./request-log.ts";
 import packageMetadata from "../../package.json" with { type: "json" };
 
 /** App identity is immutable and shared by Models and every native Agent.
@@ -102,6 +103,12 @@ export function lowestThinkingLevel(model: Model<Api>): ThinkingLevel {
  *  (the drawing reader, live check 2026-10-29). */
 export interface EngineOptions {
 	thinking?: "lowest";
+	/** Who makes the calls (request log, cost counter 2026-10-29): a
+	 *  ModelRole or a turn/compaction purpose. Absent = "unlabelled". */
+	purpose?: string;
+	/** The chat the calls belong to, when one does (a session's spend). */
+	chatId?: string;
+	chatKind?: "teach" | "practice";
 }
 
 /** The production engine for a RESOLVED spec (model slots wave,
@@ -130,11 +137,23 @@ export function piEngineForSpec(spec: ResolvedModelSpec, opts: EngineOptions = {
 		// bound streamSimple: the agent loop forwards state.thinkingLevel as
 		// `reasoning` (undefined = off on pi-ai's scale); the clamp above keeps
 		// the pin honest even when config or settings drift off the map.
+		// Every call is observed for the request log (one line per call,
+		// beneath any retry wrapper, so a retried attempt logs too).
 		streamFn: (requestModel, context, options) =>
-			models.streamSimple(requestModel, context, {
-				...options,
-				reasoning: level === "off" ? undefined : level,
-			}),
+			observeStream(
+				models.streamSimple(requestModel, context, {
+					...options,
+					reasoning: level === "off" ? undefined : level,
+				}),
+				{
+					purpose: opts.purpose ?? "unlabelled",
+					chatId: opts.chatId,
+					chatKind: opts.chatKind,
+					provider: requestModel.provider,
+					model: requestModel.id,
+					startedAt: Date.now(),
+				},
+			),
 	};
 }
 
