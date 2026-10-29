@@ -36,10 +36,13 @@ export const stores = {
 
 export type Stores = typeof stores;
 
-// The request log's LLM sink (cost counter): every engine call lands one line
-// in data/logs. Wired here because every engine is built behind this module.
-// Skipped under tests (the extraction precedent): suites set their own sink,
-// and a suite on the real data/ must not write the owner's cost log.
+// The request log's sink (cost counter): every paid call (engine, embeddings,
+// search, OCR) lands one line in data/logs. Wired here because every caller is
+// built behind this module. Intentionally wired in EVERY non-test process,
+// CLI scripts included: their calls are real spend. Only the backfill below is
+// limited to the Next server. Skipped under tests (the extraction precedent):
+// suites set their own sink, and a suite on the real data/ must not write the
+// owner's cost log.
 if (process.env.NODE_ENV !== "test") setRequestSink((line) => stores.requestLog.append(line));
 
 // The one-time usage backfill (cost counter): old records enter the log once
