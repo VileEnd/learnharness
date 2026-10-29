@@ -59,6 +59,31 @@ export async function withPageTenant<T>(fn: () => T | Promise<T>): Promise<T> {
 	return runAsTenant(tenant, fn);
 }
 
+export interface AccountInfo {
+	name: string;
+	isAdmin: boolean;
+	/** oauth2-proxy sign-out; with LH_LOGOUT_URL it chains into Keycloak's
+	 *  end-session endpoint, so the next visit asks for a login (switch user). */
+	signOutUrl: string;
+}
+
+/** The signed-in account for the UI, or null in single-user mode (no login exists). */
+export function accountInfo(): AccountInfo | null {
+	if (!multiUser()) return null;
+	const tenant = currentTenant();
+	if (!tenant) return null;
+	const logout = process.env.LH_LOGOUT_URL;
+	const host = process.env.LH_HOST;
+	let signOutUrl = "/oauth2/sign_out";
+	if (logout && host) {
+		const keycloak = new URL(logout);
+		keycloak.searchParams.set("client_id", "learnharness");
+		keycloak.searchParams.set("post_logout_redirect_uri", `https://${host}/`);
+		signOutUrl += `?rd=${encodeURIComponent(keycloak.toString())}`;
+	}
+	return { name: tenant.name, isAdmin: tenant.isAdmin, signOutUrl };
+}
+
 /** Instance-wide writes (keys, prompt overrides): 403 for non-admins in multi-user mode (LOCAL_TENANT is an admin). Call first in the handler. */
 export function requireAdmin(): Response | null {
 	return currentTenant()?.isAdmin ? null : Response.json({ error: "admin_only" }, { status: 403 });
