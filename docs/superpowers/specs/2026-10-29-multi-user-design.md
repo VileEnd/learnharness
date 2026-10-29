@@ -9,7 +9,7 @@ Decisions the user made in this session:
 - **Tenancy:** each user's data is separate (chats, graph, documents, learner model, OKF library, preferences). **API keys are shared**: they are the admin's keys, and only the admin manages them.
 - **Admin:** sets each user's default models (strong/cheap/vision) and an **allowed list**. Users can switch models only within that list.
 - **Spending:** the admin sees per-user usage and sets a **per-user monthly cap**. Over the cap, the user is blocked with a clear message until the next month or until the cap is raised.
-- **Storage Box:** for **backups only**. Live data stays on the VM's local disk, with a nightly restic backup to `u643745.your-storagebox.de` over SFTP. No S3 or remote primary storage.
+- **Storage Box:** for **backups only**. Live data stays on the VM's local disk, with a nightly restic backup to the existing Hetzner Storage Box over SFTP. No S3 or remote primary storage.
 - **Existing shared data:** becomes the admin's. Every other user starts empty.
 - **Outside access:** WireGuard terminated on VM 104 only, so it gives no access to the LAN. The admin generates peer configs from inside the app.
 
@@ -106,7 +106,7 @@ My calls (flagged so you can veto them):
 - The image entrypoint does not auto-migrate. Instead, at boot the app **refuses to start** if a legacy layout is present, with a message naming the script, so the data cannot silently move to an unknown owner.
 
 ### 7. Backups to the Storage Box (NixOS, `deploy/nixos/`)
-- `services.restic.backups.learnharness` on VM 104, repo `sftp:<sub-account>@u643745.your-storagebox.de:/learnharness`.
+- `services.restic.backups.learnharness` on VM 104, repo `sftp:<sub-account>@<storage-box-host>:/learnharness`.
   - It uses a **Storage Box sub-account** confined to its own directory, kept separate from the Pelican backups.
   - The SSH key and restic password live on the VM under `/var/lib/learnharness/` and are generated or placed once, the same way `secrets.env` is today.
 - **Contents:**

@@ -12,7 +12,7 @@ const { runAsTenant } = await import("../src/core/tenant-context.ts");
 const { accountInfo } = await import("../src/server/tenant.ts");
 const me = await import("../app/api/me/route.ts");
 
-const JAN = { id: "d63e2530-6178-4d5c-b645-2dce5abd25e2", name: "jan", isAdmin: true };
+const JAN = { id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", name: "jan", isAdmin: true };
 
 test("single-user mode: no account (nothing to sign out of)", () => {
 	assert.equal(accountInfo(), null);
