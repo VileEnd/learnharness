@@ -15,6 +15,8 @@
  * GET /api/by-sha/{sha256} (200 | 404); POST /api/estimate.
  */
 
+import { recordRequest } from "../agent/request-log.ts";
+import { categoryOf, truncateError } from "../core/usage.ts";
 import { keyValue } from "./keys.ts";
 
 export type OcrStrategy = "vision" | "ocr+vision";
@@ -100,6 +102,23 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 	const key = opts.key ?? (() => keyValue("OPENROUTER_API_KEY"));
 	const doFetch = opts.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
 
+	/** One request-log line per finished OCR job (or failed call): purpose
+	 *  "ocr", the sidecar's own cost_usd, never any page text. */
+	function log(startedAt: number, model: string, outcome: "ok" | "error", extra: { providerCostUsd?: number; error?: string } = {}): void {
+		recordRequest({
+			v: 1,
+			at: new Date(startedAt).toISOString(),
+			purpose: "ocr",
+			category: categoryOf("ocr"),
+			provider: "ocr",
+			model: model || "ocr",
+			durationMs: Date.now() - startedAt,
+			outcome,
+			...(extra.providerCostUsd !== undefined && { providerCostUsd: extra.providerCostUsd }),
+			...(extra.error !== undefined && { error: truncateError(extra.error) }),
+		});
+	}
+
 	function base(): string {
 		const url = baseUrl()?.trim();
 		if (!url) throw new OcrError("ocr_not_configured", "PDF import needs the OCR service, and OCR_URL is not set on this server.");
@@ -114,18 +133,23 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			const k = key();
 			if (k) headers.set("X-OpenRouter-Key", k);
 		}
+		const startedAt = Date.now();
 		try {
 			return await doFetch(`${base()}${path}`, { ...init, headers });
 		} catch (err) {
 			if (err instanceof OcrError) throw err;
-			throw new OcrError("ocr_unreachable", `The OCR service is unreachable (${err instanceof Error ? err.message : String(err)}).`);
+			const unreachable = new OcrError("ocr_unreachable", `The OCR service is unreachable (${err instanceof Error ? err.message : String(err)}).`);
+			log(startedAt, "ocr", "error", { error: unreachable.message });
+			throw unreachable;
 		}
 	}
 
 	async function json<T>(res: Response): Promise<T> {
 		if (!res.ok) {
 			const detail = await res.text().catch(() => "");
-			throw new OcrError("ocr_failed", `The OCR service answered HTTP ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}.`);
+			const failed = new OcrError("ocr_failed", `The OCR service answered HTTP ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}.`);
+			log(Date.now(), "ocr", "error", { error: failed.message });
+			throw failed;
 		}
 		return (await res.json()) as T;
 	}
@@ -152,7 +176,16 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			return job;
 		},
 		async job(id) {
-			return json<OcrJob>(await call(`/api/jobs/${encodeURIComponent(id)}`));
+			const startedAt = Date.now();
+			const status = await json<OcrJob>(await call(`/api/jobs/${encodeURIComponent(id)}`));
+			// Callers stop polling at a terminal status, so this logs once per job.
+			if (status.status === "done") {
+				const cost = status.files.reduce((sum, f) => sum + (f.cost_usd ?? 0), 0);
+				log(startedAt, status.strategy, "ok", { providerCostUsd: cost });
+			} else if (status.status === "failed") {
+				log(startedAt, status.strategy, "error", { error: status.files.find((f) => f.error)?.error ?? "OCR job failed" });
+			}
+			return status;
 		},
 		async markdown(job, name) {
 			const res = await call(`/api/jobs/${encodeURIComponent(job)}/files/${encodeURIComponent(name)}`);

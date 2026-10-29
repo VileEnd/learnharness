@@ -21,6 +21,7 @@
 
 import type { SearchEngineId, SearchHit, SearchProvider, SearchStatus } from "../core/search.ts";
 import { keyValue } from "./keys.ts";
+import { loggedFetch } from "./logged-fetch.ts";
 import { effectiveSettings } from "./stores.ts";
 
 /** The wire-callable shape the adapters close over (tests inject a stub). */
@@ -32,7 +33,8 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
  *  JSON body. VERIFIED against docs.tavily.com's OpenAPI, 2026-09-20:
  *  response {results: [{title, url, content, score, …}]}, errors
  *  {detail: {error}}. */
-export function tavilyProvider(apiKey: string, fetchFn: FetchLike = fetch): SearchProvider {
+export function tavilyProvider(apiKey: string, rawFetch: FetchLike = fetch): SearchProvider {
+	const fetchFn = loggedFetch(rawFetch, { purpose: "search", provider: "tavily", model: "search" });
 	return {
 		id: "tavily",
 		async search(query: string, count: number): Promise<SearchHit[]> {
@@ -76,7 +78,8 @@ export function tavilyProvider(apiKey: string, fetchFn: FetchLike = fetch): Sear
  *  key in the X-Subscription-Token header. VERIFIED against Brave's
  *  dashboard docs, 2026-09-20: count max 20; response
  *  {web: {results: [{title, url, description, …}]}}. */
-export function braveProvider(apiKey: string, fetchFn: FetchLike = fetch): SearchProvider {
+export function braveProvider(apiKey: string, rawFetch: FetchLike = fetch): SearchProvider {
+	const fetchFn = loggedFetch(rawFetch, { purpose: "search", provider: "brave", model: "search" });
 	return {
 		id: "brave",
 		async search(query: string, count: number): Promise<SearchHit[]> {
