@@ -6,6 +6,7 @@ import { setRequestSink } from "../src/agent/request-log.ts";
 import { openRouterEmbedder } from "../src/server/doc-index.ts";
 import { createOcrClient } from "../src/server/ocr-client.ts";
 import { tavilyProvider } from "../src/server/search.ts";
+import { createWebTools } from "../src/agent/tools/web.ts";
 
 let lines: RequestLogLine[] = [];
 const collect = () => {
@@ -117,4 +118,20 @@ describe("search", () => {
 		assert.equal(lines[0]!.outcome, "error");
 	});
 
+	it("search and reader lines carry the chat that asked", async () => {
+		collect();
+		await tavilyProvider("k", async () => json({ results: [] }), "chat1").search("q", 3);
+		const realFetch = globalThis.fetch;
+		// A page Readability cannot read falls back to the Jina reader, which fails.
+		globalThis.fetch = (async (url: string) =>
+			String(url).startsWith("https://r.jina.ai/")
+				? new Response("down", { status: 503 })
+				: new Response("<html><body></body></html>", { headers: { "content-type": "text/html" } })) as typeof fetch;
+		try {
+			await createWebTools(() => null, "chat1").web_fetch!.execute!("t1", { url: "https://example.com/" });
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+		assert.deepEqual(lines.map((l) => [l.provider, l.chatId]), [["tavily", "chat1"], ["jina", "chat1"]]);
+	});
 });

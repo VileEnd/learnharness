@@ -34,6 +34,16 @@ describe("web_search on the injected port (web.ts)", () => {
 		assert.notEqual(out.isError, true, "missing keys remain ordinary recoverable text, not a native error");
 	});
 
+	it("the search seam is asked on behalf of the chat", async () => {
+		const asked: Array<string | undefined> = [];
+		const { web_search } = createWebTools((chatId) => {
+			asked.push(chatId);
+			return stubProvider();
+		}, "chat1");
+		await web_search!.execute!("c1", { query: "q" });
+		assert.deepEqual(asked, ["chat1"]);
+	});
+
 	it("a live provider returns its hits (count defaults to 5)", async () => {
 		const seen: Array<{ query: string; count: number }> = [];
 		const provider: SearchProvider = {

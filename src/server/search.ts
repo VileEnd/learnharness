@@ -33,8 +33,8 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
  *  JSON body. VERIFIED against docs.tavily.com's OpenAPI, 2026-09-20:
  *  response {results: [{title, url, content, score, …}]}, errors
  *  {detail: {error}}. */
-export function tavilyProvider(apiKey: string, rawFetch: FetchLike = fetch): SearchProvider {
-	const fetchFn = loggedFetch(rawFetch, { purpose: "search", provider: "tavily", model: "search" });
+export function tavilyProvider(apiKey: string, rawFetch: FetchLike = fetch, chatId?: string): SearchProvider {
+	const fetchFn = loggedFetch(rawFetch, { purpose: "search", provider: "tavily", model: "search", ...(chatId !== undefined && { chatId }) });
 	return {
 		id: "tavily",
 		async search(query: string, count: number): Promise<SearchHit[]> {
@@ -78,8 +78,8 @@ export function tavilyProvider(apiKey: string, rawFetch: FetchLike = fetch): Sea
  *  key in the X-Subscription-Token header. VERIFIED against Brave's
  *  dashboard docs, 2026-09-20: count max 20; response
  *  {web: {results: [{title, url, description, …}]}}. */
-export function braveProvider(apiKey: string, rawFetch: FetchLike = fetch): SearchProvider {
-	const fetchFn = loggedFetch(rawFetch, { purpose: "search", provider: "brave", model: "search" });
+export function braveProvider(apiKey: string, rawFetch: FetchLike = fetch, chatId?: string): SearchProvider {
+	const fetchFn = loggedFetch(rawFetch, { purpose: "search", provider: "brave", model: "search", ...(chatId !== undefined && { chatId }) });
 	return {
 		id: "brave",
 		async search(query: string, count: number): Promise<SearchHit[]> {
@@ -181,12 +181,13 @@ export function searchAvailable(): boolean {
 
 /** The LIVE adapter, or null when unavailable. Composed fresh each call —
  *  the tool layer (Teacher stream) calls this once per search, so key
- *  rotations take effect immediately. */
-export function searchProvider(): SearchProvider | null {
+ *  rotations take effect immediately. `chatId` (the chat a research job
+ *  runs for) tags the adapter's request-log lines. */
+export function searchProvider(chatId?: string): SearchProvider | null {
 	const resolved = resolveSearchEngineFor(effectiveSettings().agent.search?.engine, {
 		tavily: engineKey("tavily") ?? undefined,
 		brave: engineKey("brave") ?? undefined,
 	});
 	if (!resolved.available || !resolved.key) return null;
-	return resolved.engine === "tavily" ? tavilyProvider(resolved.key) : braveProvider(resolved.key);
+	return resolved.engine === "tavily" ? tavilyProvider(resolved.key, fetch, chatId) : braveProvider(resolved.key, fetch, chatId);
 }

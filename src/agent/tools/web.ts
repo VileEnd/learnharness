@@ -53,8 +53,9 @@ function truncate(text: string): string {
 	return `${text.slice(0, MAX_CONTENT_CHARS)}\n\n[Truncated at ${MAX_CONTENT_CHARS} characters]`;
 }
 
-/** Jina Reader fallback for JS-rendered pages (no deps — plain fetch). */
-async function fetchViaJina(url: string): Promise<string | null> {
+/** Jina Reader fallback for JS-rendered pages (no deps — plain fetch).
+ *  Its request-log line carries the chat the research runs for. */
+async function fetchViaJina(url: string, chatId?: string): Promise<string | null> {
 	const startedAt = Date.now();
 	const log = (outcome: "ok" | "error", error?: string) =>
 		recordRequest({
@@ -62,6 +63,7 @@ async function fetchViaJina(url: string): Promise<string | null> {
 			at: new Date(startedAt).toISOString(),
 			purpose: "search",
 			category: categoryOf("search"),
+			...(chatId !== undefined && { chatId }),
 			provider: "jina",
 			model: "search",
 			durationMs: Date.now() - startedAt,
@@ -100,7 +102,7 @@ function htmlToMarkdown(html: string): { title: string; content: string } | null
 	return { title: article.title ?? "", content: markdown };
 }
 
-async function fetchAndExtract(url: string): Promise<string> {
+async function fetchAndExtract(url: string, chatId?: string): Promise<string> {
 	const resp = await fetch(url, {
 		headers: {
 			"User-Agent": USER_AGENT,
@@ -137,7 +139,7 @@ async function fetchAndExtract(url: string): Promise<string> {
 		return header + truncate(extracted.content);
 	}
 	// Readability failed — likely JS-rendered. Try Jina Reader.
-	const jina = await fetchViaJina(url);
+	const jina = await fetchViaJina(url, chatId);
 	if (jina) return truncate(jina);
 	throw new Error("Could not extract readable content (the page may be JavaScript-rendered)");
 }
@@ -155,7 +157,12 @@ const webFetchInput = Type.Object({
 	url: Type.String({ description: "The URL to fetch" }),
 });
 
-export function createWebTools(search: () => SearchProvider | null): Record<string, AgentTool<any>> {
+/** `chatId` is the chat the tools run for: the search seam is asked on its
+ *  behalf, so every search line in the request log names that chat. */
+export function createWebTools(
+	search: (chatId?: string) => SearchProvider | null,
+	chatId?: string,
+): Record<string, AgentTool<any>> {
 	return {
 		web_search: {
 			name: "web_search",
@@ -164,7 +171,7 @@ export function createWebTools(search: () => SearchProvider | null): Record<stri
 				"Returns an array of results with title, url, and snippet.",
 			parameters: webSearchInput,
 			execute: serverExecute("web_search", webSearchInput, async ({ query, count }): Promise<WebSearchResult[] | string> => {
-				const provider = search();
+				const provider = search(chatId);
 				if (!provider) {
 					return (
 						"web_search is not available: no search engine is configured. " +
@@ -199,7 +206,7 @@ export function createWebTools(search: () => SearchProvider | null): Record<stri
 					return `web_fetch failed: invalid URL "${url}"`;
 				}
 				try {
-					return await fetchAndExtract(url);
+					return await fetchAndExtract(url, chatId);
 				} catch (err) {
 					return `web_fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}`;
 				}
