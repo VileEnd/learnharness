@@ -11,7 +11,7 @@
  * markers are invisible by the engine's law).
  */
 import { sessionMarkdown } from "@/src/core";
-import { getChat } from "@/src/server";
+import { getChat, withTenant } from "@/src/server";
 
 /** Filename-safe title (own module scope on purpose: tiny + pure). */
 function slugify(title: string): string {
@@ -23,7 +23,7 @@ function slugify(title: string): string {
 	return slug.length > 0 ? slug : "session";
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+export const GET = withTenant(async (_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> => {
 	const { id } = await ctx.params;
 	const record = getChat(id);
 	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
@@ -34,4 +34,4 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 			"content-disposition": `attachment; filename="${slugify(record.title)}.md"`,
 		},
 	});
-}
+});

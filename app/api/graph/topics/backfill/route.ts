@@ -6,12 +6,12 @@
  * many nodes it is working on, or 200 {pending: 0} when there is nothing left
  * (a second call tags 0). Never called by the app itself.
  */
-import { topicBackfill } from "@/src/server";
+import { topicBackfill, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+export const POST = withTenant(async () => {
 	const started = topicBackfill.start();
 	if (started.pending === 0) return Response.json({ started: false, pending: 0 });
 	return Response.json({ started: !started.running, running: started.running, pending: started.pending }, { status: 202 });
-}
+});

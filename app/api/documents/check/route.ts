@@ -5,12 +5,12 @@
  * similar, of?, score?}, scanned?, error?}. Content decides, never the
  * filename. Needs no model key - it only fingerprints and compares.
  */
-import { documents, incomingFiles } from "@/src/server";
+import { documents, incomingFiles, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
+export const POST = withTenant(async (request: Request) => {
 	const files = await incomingFiles(await request.formData());
 	if (files.length === 0) return Response.json({ results: [], error: "no files" }, { status: 400 });
 	return Response.json({ results: await documents.check(files) });
-}
+});

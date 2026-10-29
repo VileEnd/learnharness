@@ -37,8 +37,8 @@ async function until(predicate: () => boolean): Promise<void> {
 	while (!predicate()) { assert(Date.now() < end, "fixture condition timed out"); await delay(10); }
 }
 function sweep(): void {
-	const global = globalThis as { __lhWakePipeline?: { lastSweepAt: number } };
-	if (global.__lhWakePipeline) global.__lhWakePipeline.lastSweepAt = 0;
+	const global = globalThis as { __lhWakePipeline?: { lastSweepAt: Map<string, number> } };
+	if (global.__lhWakePipeline) global.__lhWakePipeline.lastSweepAt.clear();
 	recoverStaleJobs();
 }
 function chat(blocked = false) {

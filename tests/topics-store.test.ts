@@ -14,7 +14,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "lh-topics-store-"));
 process.env.LH_DATA_DIR = TMP;
 
 const { graphStore } = await import("../src/store/graph.ts");
-const { LEDGER_FILES, TOPIC_ALIASES_FILE } = await import("../config.ts");
+const { LEDGER_FILES, topicAliasesFile } = await import("../config.ts");
 
 after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
@@ -40,7 +40,7 @@ describe("topics ledger adapter", () => {
 		assert.deepEqual(graphStore.readTopicAliases(), {});
 		graphStore.writeTopicAliases({ semaphor: "Semaphoren" });
 		assert.deepEqual(graphStore.readTopicAliases(), { semaphor: "Semaphoren" });
-		fs.writeFileSync(TOPIC_ALIASES_FILE, "not json");
+		fs.writeFileSync(topicAliasesFile(), "not json");
 		assert.deepEqual(graphStore.readTopicAliases(), {});
 	});
 });

@@ -1,4 +1,4 @@
-import { learnerSnapshotNow } from "@/src/server";
+import { learnerSnapshotNow, withTenant } from "@/src/server";
 
 /**
  * The learner model (GET /api/learner) - thin transport: the shared server
@@ -8,6 +8,6 @@ import { learnerSnapshotNow } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json(learnerSnapshotNow());
-}
+});

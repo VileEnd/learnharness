@@ -9,7 +9,7 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
 
 - **Caddy** terminates HTTPS. With `CADDY_TLS=cloudflare` (this deployment), certificates come from Let's Encrypt via the Cloudflare DNS challenge, so every device trusts them with no setup. With `CADDY_TLS=internal`, Caddy uses its own local CA, and each device must trust that CA once.
 - **oauth2-proxy** lets a request through only if the user is logged in to Keycloak and is a member of the group `learnharness`.
-- **One shared data set.** Every allowed user sees the same chats, knowledge graph, and API keys.
+- **One data set per user.** Each Keycloak user (identified by their stable `sub`) gets their own chats, knowledge graph, documents and settings under `users/<sub>/` in the data volume. API keys, prompt overrides and push keys are shared and global. Members of the Keycloak group `learnharness-admin` (who must also be in `learnharness`) are admins. The stack runs with `LH_MULTI_USER=1`; without it the app is single-user with no identity needed (dev, tests).
 - **API keys** are entered in the browser under Settings → Providers. They're stored on the server in `volumes/learnharness/auth.json`, never in the browser.
 
 ## Hostnames
@@ -147,6 +147,35 @@ The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdo
 ssh root@learnharness.fritz.box systemctl restart learnharness-stack     # NixOS VM: pulls main, rebuilds
 cd ~/learnharness && git pull && cd deploy && docker compose up -d --build   # manual host
 ```
+
+### Moving an existing install to multi-user
+
+With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 503 `legacy_layout`. Move it under its owner (their Keycloak `sub`) once:
+
+1. **Create the admin group.** The realm file only applies on first start, so on a live install create `learnharness-admin` in the Keycloak admin console (Groups), and add yourself to it. You must stay in `learnharness` too.
+2. **Find your `sub`.** In the Keycloak admin console, open Users, select yourself; the **ID** is the `sub` (a UUID).
+3. **Take a VM snapshot first.** A Proxmox snapshot or vzdump backup of VM 104; the migration moves data in place and has no undo.
+4. **Update and rebuild:** `git pull && cd deploy && docker compose up -d --build` (on the NixOS VM, `systemctl restart learnharness-stack` does all of this: it pulls main and rebuilds). The app now answers `/api/health` with 503 `legacy_layout`, which is expected until the data is moved.
+5. **Migrate inside the running new container.** Everything in the old data dir moves to `users/<sub>/`; the push keys and prompt overrides move to `global/`:
+
+   ```bash
+   docker exec -u node learnharness-learnharness-1 node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
+   ```
+
+   The container name is `<compose project>-learnharness-1`; the project name is `learnharness`, so `learnharness-learnharness-1`. Check with `docker ps --format '{{.Names}}' | grep learnharness`. Plain `docker exec` is used on purpose: `docker compose exec` aborts on the VM, where the required variables of `compose.yaml` come only from the `--env-file` flags of `learnharness-stack`.
+
+6. **Check health** from inside the network; it should print `{"ok":true}`, not a `legacy_layout` error:
+
+   ```bash
+   docker exec learnharness-learnharness-1 node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>r.text()).then(console.log)"
+   ```
+
+   No restart is needed: the legacy check runs on every request.
+7. **Everyone logs out and back in once.** oauth2-proxy now takes the user id from the `sub` claim (`OAUTH2_PROXY_USER_ID_CLAIM`), which changes the session, so existing sessions are refused until the next login. Anyone who lands on an error page should open `/oauth2/sign_out` once and sign in again.
+
+### Running under Podman
+
+Docker is the supported runtime (the NixOS module is Docker-based). If you move to Podman later: rootless Podman cannot bind ports 80 and 443 by default (lower `net.ipv4.ip_unprivileged_port_start` or run rootful); healthchecks need `--format docker` when the image is built with Podman's default OCI format; bind mounts on SELinux hosts need the `:Z` suffix; and "restart: unless-stopped" is not honoured without a service manager, so restart through Quadlet/systemd units.
 
 ## Backups
 

@@ -1,5 +1,7 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { multiUser, requireTenant } from "./src/core/tenant-context.ts";
 
 /** Repository root (this file is at <root>/config.ts). */
 export const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -13,35 +15,96 @@ export const ROOT = path.dirname(fileURLToPath(import.meta.url));
  * byte-for-byte as before. Read-only assets (prompts) stay ROOT-anchored
  * on purpose: they ship inside the image by design.
  */
-const DATA_ROOT = process.env.LH_DATA_DIR
+export const DATA_ROOT = process.env.LH_DATA_DIR
 	? path.resolve(process.env.LH_DATA_DIR)
 	: path.join(ROOT, "data");
+
+/** Entries a pre-multi-user install keeps directly under DATA_ROOT. */
+const LEGACY_ENTRIES = ["chats", "graph", "documents", "settings.json"];
+
+/** True in multi-user mode while the old single-user layout still sits at DATA_ROOT. */
+export function legacyLayoutPresent(): boolean {
+	if (!multiUser() || legacyGone) return false;
+	if (LEGACY_ENTRIES.some((e) => fs.existsSync(path.join(DATA_ROOT, e)))) return true;
+	legacyGone = true; // absent stays absent; a positive is never cached (the migration flips it at runtime)
+	return false;
+}
+let legacyGone = false;
+
+export class LegacyLayoutError extends Error {
+	constructor() {
+		super(
+			"LegacyLayoutError: single-user data found at the data root; run `node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>` first",
+		);
+		this.name = "LegacyLayoutError";
+	}
+}
+
+/** Per-user data root: DATA_ROOT in single-user mode, DATA_ROOT/users/<id> in multi-user mode. */
+export function userDataRoot(): string {
+	if (legacyLayoutPresent()) throw new LegacyLayoutError();
+	return multiUser() ? path.join(DATA_ROOT, "users", requireTenant().id) : DATA_ROOT;
+}
+
+/** Instance-wide data root: DATA_ROOT in single-user mode, DATA_ROOT/global in multi-user mode. */
+export function globalDataRoot(): string {
+	if (legacyLayoutPresent()) throw new LegacyLayoutError();
+	return multiUser() ? path.join(DATA_ROOT, "global") : DATA_ROOT;
+}
 
 export const PATHS = {
 	root: ROOT,
 	/** Teacher system prompt — the agent's instructions (src/agent/). */
 	teacherPrompt: path.join(ROOT, "src", "agent", "system-prompt.md"),
-	data: DATA_ROOT,
+	/** The (per-user) data root. */
+	get data() {
+		return userDataRoot();
+	},
 	/** Chat sessions (AI SDK UIMessage transcripts, one JSON file per chat). */
-	chats: path.join(DATA_ROOT, "chats"),
-	graph: path.join(DATA_ROOT, "graph"),
-	/** Web Push: subscriptions.json + vapid.json (src/store/push.ts). */
-	push: path.join(DATA_ROOT, "push"),
+	get chats() {
+		return path.join(userDataRoot(), "chats");
+	},
+	get graph() {
+		return path.join(userDataRoot(), "graph");
+	},
+	/** Web Push subscriptions (src/store/push.ts); the VAPID pair is global (globalPush). */
+	get push() {
+		return path.join(userDataRoot(), "push");
+	},
+	/** Instance-wide push state: vapid.json. */
+	get globalPush() {
+		return path.join(globalDataRoot(), "push");
+	},
 	/** The document library: data/documents/<docId>/{document.md,meta.json} (src/store/documents.ts). */
-	documents: path.join(DATA_ROOT, "documents"),
+	get documents() {
+		return path.join(userDataRoot(), "documents");
+	},
 	/** Canvas drawings per chat: data/drawings/<chatId>/{<drw>.json,<drw>.png,assets/,drafts/} (src/store/drawings.ts). */
-	drawings: path.join(DATA_ROOT, "drawings"),
+	get drawings() {
+		return path.join(userDataRoot(), "drawings");
+	},
 	/** The OKF library bundle the agents' read/ls/find/grep tools are rooted at.
-	 *  Never created by the tools; absent = "the library is being built". */
-	okf: process.env.LH_LIBRARY_DIR ?? path.join(DATA_ROOT, "okf"),
+	 *  Never created by the tools; absent = "the library is being built".
+	 *  Multi-user: LH_LIBRARY_DIR is a parent holding one bundle per user id. */
+	get okf() {
+		const dir = process.env.LH_LIBRARY_DIR;
+		if (!dir) return path.join(userDataRoot(), "okf");
+		return multiUser() ? path.join(dir, requireTenant().id) : dir;
+	},
 	/** The learner model's ledgers: data/learner/attributions.jsonl (src/store/learner.ts). */
-	learner: path.join(DATA_ROOT, "learner"),
+	get learner() {
+		return path.join(userDataRoot(), "learner");
+	},
 	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */
-	debug: path.join(DATA_ROOT, "debug"),
+	get debug() {
+		return path.join(userDataRoot(), "debug");
+	},
 	/** The request log: data/logs/requests-YYYY-MM.jsonl + backfill.done (src/store/request-log.ts). */
-	logs: path.join(DATA_ROOT, "logs"),
-} as const;
+	get logs() {
+		return path.join(userDataRoot(), "logs");
+	},
+};
 
 // ─── Models ────────────────────────────────────────────────────────────────
 // BYOK ALL THE WAY DOWN (owner, 2026-09-22): there are NO factory default
@@ -73,44 +136,64 @@ export type ModelRole =
  * TRUTH (owner, 2026-09-30): edges are a derived view, never stored.
  */
 export const LEDGER_FILES = {
-	nodes: path.join(PATHS.graph, "nodes.jsonl"),
-	chains: path.join(PATHS.graph, "chains.jsonl"),
-	sessions: path.join(PATHS.graph, "sessions.jsonl"),
+	get nodes() {
+		return path.join(PATHS.graph, "nodes.jsonl");
+	},
+	get chains() {
+		return path.join(PATHS.graph, "chains.jsonl");
+	},
+	get sessions() {
+		return path.join(PATHS.graph, "sessions.jsonl");
+	},
 	/** Per-message extraction coverage (contracts/graph.ts CoverageEntry;
 	 *  the checkpoint's replacement for chat extractions — notes keep
 	 *  sessions.jsonl, whole-file as they are). */
-	coverage: path.join(PATHS.graph, "coverage.jsonl"),
+	get coverage() {
+		return path.join(PATHS.graph, "coverage.jsonl");
+	},
 	/** Topic membership (contracts/graph.ts TopicRow, PR H): append-only, written only by the merger. */
-	topics: path.join(PATHS.graph, "topics.jsonl"),
-} as const;
+	get topics() {
+		return path.join(PATHS.graph, "topics.jsonl");
+	},
+};
 
 /** Topic canonicalisation (PR H): variant topic key -> canonical label,
  *  written by the document service BEFORE extraction, read by the merger. */
-export const TOPIC_ALIASES_FILE = path.join(PATHS.graph, "topic-aliases.json");
+export function topicAliasesFile(): string {
+	return path.join(PATHS.graph, "topic-aliases.json");
+}
 
 /**
  * Notes-import bookkeeping (NOT a ledger): one JSON map, src-id → NotesSource
  * record (contracts/graph.ts) — the file path + import time + the run's usage
  * log. Read-modify-write like a chat file, not append-only like the ledgers.
  */
-export const SOURCES_FILE = path.join(PATHS.graph, "sources.json");
+export function sourcesFile(): string {
+	return path.join(PATHS.graph, "sources.json");
+}
 /** The layout ledger (read-modify-write like sources.json): nodeId →
  *  {x,y} resting positions from the incremental settle (core/layout.ts).
  *  Carries an updatedAt stamp for future live-physics conflict handling. */
-export const POSITIONS_FILE = path.join(PATHS.graph, "positions.json");
+export function positionsFile(): string {
+	return path.join(PATHS.graph, "positions.json");
+}
 
 /**
  * Graph render settings (the settings-panel controls): one small JSON blob,
  * read-modify-write. Shared shape/sanitizer: src/core/render-settings.ts.
  */
-export const RENDER_SETTINGS_FILE = path.join(PATHS.graph, "render-settings.json");
+export function renderSettingsFile(): string {
+	return path.join(PATHS.graph, "render-settings.json");
+}
 
 /** The graph-family FORMAT STAMP sidecar (schema-versioning wave,
  *  2026-10-10): one version for the whole family — the four JSONL ledgers,
  *  sources.json, render-settings.json. LAZY v1: absent = v1; the first
  *  graph-family write creates it. positions.json is REBUILDABLE and rides
  *  along unversioned by design (owner ruling). */
-export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
+export function graphFormatFile(): string {
+	return path.join(PATHS.graph, "format.json");
+}
 
 /**
  * THE USER SETTINGS RECORD (settings-storage wave, 2026-09-19): one
@@ -128,7 +211,9 @@ export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
  * with per-session models, owner 2026-09-28 — sessions own their model
  * from birth, stamped from the strong slot.)
  */
-export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
+export function settingsFile(): string {
+	return path.join(userDataRoot(), "settings.json");
+}
 
 /**
  * User prompt-override files (settings-storage wave, 2026-09-19): the
@@ -143,7 +228,9 @@ export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
  * remove, or reorder fragments adapt automatically; an override keyed to
  * a vanished segment stops composing but stays on disk.
  */
-export const PROMPTS_OVERRIDE_DIR = path.join(DATA_ROOT, "prompts");
+export function promptsOverrideDir(): string {
+	return path.join(globalDataRoot(), "prompts");
+}
 
 /**
  * THE AUTH/KEY STORE (auth-keys wave, 2026-09-19): BYOK provider keys in a

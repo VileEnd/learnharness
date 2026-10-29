@@ -1586,8 +1586,8 @@ describe("abort (src/server/jobs.ts abortJob)", () => {
 describe("stale-job recovery sweep (liveness-gated)", () => {
 	/** Reset the sweep's 30s throttle — tests fire it directly, repeatedly. */
 	function resetSweepThrottle(): void {
-		const g = globalThis as { __lhWakePipeline?: { lastSweepAt: number } };
-		if (g.__lhWakePipeline) g.__lhWakePipeline.lastSweepAt = 0;
+		const g = globalThis as { __lhWakePipeline?: { lastSweepAt: Map<string, number> } };
+		if (g.__lhWakePipeline) g.__lhWakePipeline.lastSweepAt.clear();
 	}
 
 	/** A FRESH "running" record (no loop registration): the orphan shape.

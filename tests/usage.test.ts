@@ -3,7 +3,7 @@ import test from "node:test";
 import * as fs from "node:fs";
 import { chatStore } from "../src/store/chats.ts";
 import { graphStore } from "../src/store/graph.ts";
-import { PATHS, SOURCES_FILE } from "../config.ts";
+import { PATHS, sourcesFile } from "../config.ts";
 import { callCost, jobCost, sessionCost, turnCost } from "../src/server/pricing.ts";
 import { sumSteps } from "../src/core/prices.ts";
 import type { CallUsage, ExtractionRunUsage, JobRecord, TurnUsage } from "../src/core/contracts.ts";
@@ -96,7 +96,7 @@ test("appendExtractionUsage: idempotent; failed runs persist; list omits log", (
 
 test("appendSourceUsage: idempotent; reimport keeps history; absent source is a no-op", () => {
 	fs.mkdirSync(PATHS.graph, { recursive: true });
-	const backup = fs.existsSync(SOURCES_FILE) ? fs.readFileSync(SOURCES_FILE) : undefined;
+	const backup = fs.existsSync(sourcesFile()) ? fs.readFileSync(sourcesFile()) : undefined;
 	try {
 		const id = "src_usagetest01";
 		graphStore.upsertSource({ id, filePath: "/fixture/notes.md", importedAt: "2026-09-13T00:00:00Z" });
@@ -108,7 +108,7 @@ test("appendSourceUsage: idempotent; reimport keeps history; absent source is a 
 		assert.equal(graphStore.readSources().find((s) => s.id === id)?.extractions?.length, 2);
 		graphStore.appendSourceUsage("src_missing", runEntry(1));
 	} finally {
-		if (backup) fs.writeFileSync(SOURCES_FILE, backup);
-		else fs.rmSync(SOURCES_FILE, { force: true });
+		if (backup) fs.writeFileSync(sourcesFile(), backup);
+		else fs.rmSync(sourcesFile(), { force: true });
 	}
 });

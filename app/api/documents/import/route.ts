@@ -12,13 +12,13 @@
  * skipped | failed, docId?, title?, error?, code?}.
  */
 import type { DocumentDecision } from "@/src/core";
-import { documents, incomingFiles } from "@/src/server";
+import { documents, incomingFiles, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 const DECISIONS = new Set<string>(["skip", "replace", "new", "attach"]);
 
-export async function POST(request: Request) {
+export const POST = withTenant(async (request: Request) => {
 	const form = await request.formData();
 	const files = await incomingFiles(form);
 	if (files.length === 0) return Response.json({ results: [], error: "no files" }, { status: 400 });
@@ -36,4 +36,4 @@ export async function POST(request: Request) {
 	const tickets = await documents.importFiles(files, decisions);
 	// `completion` is the in-process tail; it never goes on the wire.
 	return Response.json({ results: tickets.map(({ completion: _tail, ...ticket }) => ticket) }, { status: 202 });
-}
+});

@@ -1,4 +1,4 @@
-import { isTurnRunning, listJobs } from "@/src/server";
+import { getChat, isTurnRunning, listJobs, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * and the re-sync when a job settles. `turnInFlight` rides along for the
  * settle logic's idle check.
  */
-export async function GET(req: Request) {
+export const GET = withTenant(async (req: Request) => {
 	const chatId = new URL(req.url).searchParams.get("chatId");
 	if (!chatId) {
 		return Response.json({ error: "chatId query parameter is required" }, { status: 400 });
@@ -19,5 +19,5 @@ export async function GET(req: Request) {
 	if (!/^[A-Za-z0-9_-]+$/.test(chatId)) {
 		return Response.json({ error: "Invalid chatId" }, { status: 400 });
 	}
-	return Response.json({ jobs: listJobs(chatId), turnInFlight: isTurnRunning(chatId) });
-}
+	return Response.json({ jobs: listJobs(chatId), turnInFlight: !!getChat(chatId) && isTurnRunning(chatId) });
+});

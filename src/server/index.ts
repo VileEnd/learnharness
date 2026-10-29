@@ -6,6 +6,7 @@
 
 export * from "./chat-handler.ts";
 export * from "./events-stream.ts";
+export * from "./tenant.ts";
 export * from "./chats.ts";
 export * from "./graph.ts";
 export { NotesImportError } from "../agent/subagents/extraction.ts";
@@ -59,3 +60,4 @@ export { learnerSnapshotNow } from "./learner-now.ts";
 export { knowledgeViewNow } from "./knowledge-now.ts";
 // The cost counter (2026-10-29): the month view, months strip, failures, and the one-time backfill.
 export * from "./usage.ts";
+export * from "./health.ts";

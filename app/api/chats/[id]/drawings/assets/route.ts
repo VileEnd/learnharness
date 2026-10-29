@@ -1,9 +1,9 @@
-import { getChat, stores } from "@/src/server";
+import { getChat, stores, withTenant } from "@/src/server";
 
 /** Image upload for the canvas: multipart `file`, PNG or JPEG (by magic bytes), max 5 MB. */
 const MAX_BYTES = 5 * 1024 * 1024;
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export const POST = withTenant(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
 	const { id } = await params;
 	if (!getChat(id)) return Response.json({ error: "Not found" }, { status: 404 });
 	const form = await req.formData().catch(() => null);
@@ -16,4 +16,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 	if (!isPng && !isJpeg) return Response.json({ error: "only PNG or JPEG images" }, { status: 400 });
 	const { assetId } = stores.drawingStore.saveAsset(id, bytes, isPng ? "image/png" : "image/jpeg");
 	return Response.json({ assetId });
-}
+});

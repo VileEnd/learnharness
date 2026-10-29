@@ -19,9 +19,9 @@
  * Extraction abort is idempotent by design (aborting with nothing in
  * flight is success — the blob is gone either way) -> 200.
  */
-import { abortExtraction, abortJob, abortScan, abortTurn } from "@/src/server";
+import { abortExtraction, abortJob, abortScan, abortTurn, getChat, withTenant } from "@/src/server";
 
-export async function POST(req: Request) {
+export const POST = withTenant(async (req: Request) => {
 	let body: unknown;
 	try {
 		body = await req.json();
@@ -50,6 +50,8 @@ export async function POST(req: Request) {
 		return Response.json({ ok: true });
 	}
 	if (kind === "turn") {
+		// The turn registry is process-wide: only a chat in THIS tenant's store may touch it.
+		if (!getChat(id)) return Response.json({ ok: false, reason: "not_running" }, { status: 409 });
 		const outcome = abortTurn(id);
 		if (!outcome.ok) return Response.json({ ok: false, reason: outcome.reason }, { status: 409 });
 		return Response.json({ ok: true });
@@ -58,4 +60,4 @@ export async function POST(req: Request) {
 	// flight is success — same dock outcome)
 	abortExtraction(id);
 	return Response.json({ ok: true });
-}
+});

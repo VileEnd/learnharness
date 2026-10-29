@@ -1,4 +1,4 @@
-import { knowledgeViewNow } from "@/src/server";
+import { knowledgeViewNow, withTenant } from "@/src/server";
 
 /**
  * The "My knowledge" view (GET /api/knowledge) - thin transport: the learner
@@ -8,6 +8,6 @@ import { knowledgeViewNow } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withTenant(async () => {
 	return Response.json(knowledgeViewNow());
-}
+});

@@ -1,7 +1,7 @@
 /**
  * THE USER SETTINGS RECORD's shape + sanitizer (settings-storage wave,
  * 2026-09-19): one versioned, DELTA-shaped record at the data-dir seam
- * (config.SETTINGS_FILE) holding every non-secret product preference.
+ * (config.settingsFile()) holding every non-secret product preference.
  *
  * DELTA SEMANTICS (owner decision, 2026-09-19): the record stores EXPLICIT
  * user choices only — ABSENT keys resolve to the factory defaults compiled

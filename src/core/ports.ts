@@ -112,7 +112,7 @@ export interface GraphStore {
 	/** Append one cluster-naming run's usage (graph-global money channel) —
 	 *  idempotent per startedAt. */
 
-	/** Upsert one imported-notes source record (config.SOURCES_FILE — a
+	/** Upsert one imported-notes source record (config.sourcesFile() — a
 	 *  JSON map, not a ledger; an upsert keeps the existing usage log). */
 	upsertSource(source: NotesSource): void;
 	/** Every notes source record, by id order-insensitive. */
@@ -121,7 +121,7 @@ export interface GraphStore {
 	 *  startedAt, mirroring ChatRecord.extractions. */
 	appendSourceUsage(id: string, entry: ExtractionRunUsage): void;
 
-	/** The layout ledger (config.POSITIONS_FILE): nodeId → resting {x,y}.
+	/** The layout ledger (config.positionsFile()): nodeId → resting {x,y}.
 	 *  WRITTEN ONLY by the incremental settle after a merge (core/layout.ts
 	 *  settleGraphLayout) — read-only for everything else. */
 	readPositions(): Record<string, Position>;
@@ -200,7 +200,7 @@ export interface SettingsStore {
 /**
  * User text overriding ONE source prompt segment (the shared base or one
  * numeric fragment), stored at the data-dir seam mirroring the source
- * layout (config.PROMPTS_OVERRIDE_DIR). File presence is NOT the override:
+ * layout (config.promptsOverrideDir()). File presence is NOT the override:
  * the settings record's agent.prompts switch is the explicit on/off, so a
  * user can keep a customized file on disk while running the source default.
  * The segment LIST is always derived from source at runtime — see the
