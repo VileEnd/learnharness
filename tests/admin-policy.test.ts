@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, test } from "node:test";
+import { after, mock, test } from "node:test";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-admin-policy-"));
 process.env.LH_DATA_DIR = dir;
@@ -13,7 +13,7 @@ process.env.OPENROUTER_API_KEY ??= "test-key-admin-policy";
 delete process.env.LH_ADMIN_GROUP;
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-const { runAsTenant } = await import("../src/core/tenant-context.ts");
+const { currentTenant, runAsTenant } = await import("../src/core/tenant-context.ts");
 const { stores } = await import("../src/server/stores.ts");
 const policyRoute = await import("../app/api/admin/policy/route.ts");
 const defaultsRoute = await import("../app/api/admin/policy/defaults/route.ts");
@@ -110,6 +110,7 @@ test("usage folds two tenants' logs separately", async () => {
 	assert.equal(by[U1]!.capUsd, 7);
 	assert.equal(by[U1]!.restricted, true);
 	assert.equal(by[U2]!.restricted, false); // Keycloak admin
+	assert.equal(by[U2]!.capUsd, null); // no cap applies to an unrestricted row
 });
 
 test("usage still answers when Keycloak fails: everyone restricted", async () => {
@@ -117,8 +118,52 @@ test("usage still answers when Keycloak fails: everyone restricted", async () =>
 	const res = await usageRoute.GET(req(true));
 	kcFails = false;
 	assert.equal(res.status, 200);
-	const b = (await res.json()) as { users: { restricted: boolean }[] };
-	assert.ok(b.users.length >= 2 && b.users.every((u) => u.restricted));
+	const b = (await res.json()) as { users: { userId: string; restricted: boolean }[] };
+	const by = Object.fromEntries(b.users.map((u) => [u.userId, u]));
+	assert.ok(b.users.length >= 2);
+	assert.equal(by[ADMIN]?.restricted ?? false, false); // the requester, if listed, is a known admin
+	assert.equal(by[U1]!.restricted, true);
+});
+
+test("usage: the requester's own row is unrestricted when Keycloak is unknown", async () => {
+	runAsTenant({ id: ADMIN, name: "a", isAdmin: true }, () => stores.requestLog.append({ v: 1, at: new Date().toISOString(), purpose: "teacher", category: "teaching", provider: "openrouter", model: STRONG.id, outcome: "ok", providerCostUsd: 1 }));
+	kcFails = true;
+	const res = await usageRoute.GET(req(true));
+	kcFails = false;
+	const b = (await res.json()) as { users: { userId: string; restricted: boolean; capUsd: number | null }[] };
+	const self = b.users.find((u) => u.userId === ADMIN)!;
+	assert.equal(self.restricted, false);
+	assert.equal(self.capUsd, null);
+});
+
+test("PUT user policy rejects traversal and leading-dot ids", async () => {
+	for (const id of ["../x", "..%2Fx", ".hidden", "a/b"]) {
+		const res = await userPolicyRoute.PUT(req(true, POLICY), params(id));
+		assert.equal(res.status, 400, id);
+		assert.deepEqual(await res.json(), { error: "invalid_user" });
+	}
+});
+
+test("one tenant's unreadable log leaves the others intact", async () => {
+	const BAD = "user-bad";
+	runAsTenant({ id: BAD, name: "bad", isAdmin: false }, () => stores.requestLog.append({ v: 1, at: new Date().toISOString(), purpose: "teacher", category: "teaching", provider: "openrouter", model: STRONG.id, outcome: "ok", providerCostUsd: 1 }));
+	// The store swallows file errors, so make the fold itself throw for this tenant.
+	const orig = stores.requestLog.readMonth.bind(stores.requestLog);
+	const spy = mock.method(stores.requestLog, "readMonth", (month: string) => {
+		if (currentTenant()?.id === BAD) throw new Error("boom");
+		return orig(month);
+	});
+	const res = await usageRoute.GET(req(true));
+	assert.equal(res.status, 200);
+	const b = (await res.json()) as { users: { userId: string; spentUsd: number | null; unpricedCalls: number | null; error?: string }[] };
+	const by = Object.fromEntries(b.users.map((u) => [u.userId, u]));
+	assert.equal(by[BAD]!.error, "usage_unreadable");
+	assert.equal(by[BAD]!.spentUsd, null);
+	assert.equal(by[BAD]!.unpricedCalls, null);
+	assert.equal(by[U1]!.spentUsd, 1.75);
+	assert.equal(by[U1]!.error, undefined);
+	spy.mock.restore();
+	fs.rmSync(path.join(dir, "users", BAD), { recursive: true, force: true });
 });
 
 test("a corrupt admin.json maps to 500 admin_policy_corrupt", async () => {

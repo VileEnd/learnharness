@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DATA_ROOT } from "../../config.ts";
 import { AdminPolicyCorrupt } from "../core/contracts/admin.ts";
-import { LOCAL_TENANT, TENANT_ID_RE, multiUser, runAsTenant } from "../core/tenant-context.ts";
+import { LOCAL_TENANT, TENANT_ID_RE, currentTenant, multiUser, runAsTenant } from "../core/tenant-context.ts";
 import { monthKey } from "../core/usage.ts";
 import { keycloakAdmin } from "./keycloak-admin.ts";
 import { spentThisMonth } from "./model-gate.ts";
@@ -87,11 +87,20 @@ export function adminUsage(): Promise<Response> {
 	return guarded(async () => {
 		const policy = currentPolicy();
 		const admins = await adminIds();
+		const self = currentTenant()?.id;
 		const users = tenantIds().map((id) => {
+			// Single-user mode is never gated; the requester is a known admin even when Keycloak is unknown.
+			const restricted = !multiUser() ? false : admins ? !admins.has(id) : id !== self;
+			// No cap applies to an unrestricted row.
+			const capUsd = restricted ? ((policy.users[id] ?? policy.newUserDefaults)?.monthlyCapUsd ?? null) : null;
 			const tenant = id === LOCAL_TENANT.id ? LOCAL_TENANT : { id, name: id, isAdmin: false };
-			const { usd, unpriced } = runAsTenant(tenant, () => spentThisMonth());
-			const cap = (policy.users[id] ?? policy.newUserDefaults)?.monthlyCapUsd ?? null;
-			return { userId: id, spentUsd: usd, unpricedCalls: unpriced, capUsd: cap, restricted: admins ? !admins.has(id) : true };
+			try {
+				const { usd, unpriced } = runAsTenant(tenant, () => spentThisMonth());
+				return { userId: id, spentUsd: usd as number | null, unpricedCalls: unpriced as number | null, capUsd, restricted };
+			} catch (e) {
+				console.error(`[admin-usage] cannot read usage for ${id}:`, e);
+				return { userId: id, spentUsd: null, unpricedCalls: null, capUsd, restricted, error: "usage_unreadable" as const };
+			}
 		});
 		return Response.json({ month: monthKey(new Date()), users });
 	});
