@@ -15,7 +15,7 @@
  * MODEL-PROVIDER env vars (provider-keys interlude); anything else is 404
  * — unknown file vars are preserved, not editable.
  */
-import { isWritableAuthKey, withTenant } from "@/src/server";
+import { isWritableAuthKey, requireAdmin, withTenant } from "@/src/server";
 import { deleteKey, saveKey } from "@/src/server";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +23,8 @@ export const dynamic = "force-dynamic";
 type Params = { params: Promise<{ id: string }> };
 
 export const PUT = withTenant(async (req: Request, { params }: Params) => {
+	const denied = requireAdmin();
+	if (denied) return denied;
 	const { id } = await params;
 	if (!isWritableAuthKey(id)) {
 		return Response.json({ error: `unknown key "${id}"` }, { status: 404 });
@@ -42,6 +44,8 @@ export const PUT = withTenant(async (req: Request, { params }: Params) => {
 });
 
 export const DELETE = withTenant(async (_req: Request, { params }: Params) => {
+	const denied = requireAdmin();
+	if (denied) return denied;
 	const { id } = await params;
 	if (!isWritableAuthKey(id)) {
 		return Response.json({ error: `unknown key "${id}"` }, { status: 404 });

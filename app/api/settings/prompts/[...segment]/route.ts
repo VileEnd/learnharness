@@ -31,6 +31,7 @@ import {
 	promptOverrides,
 	readSettingsRecord,
 	writeSettingsRecord,
+	requireAdmin,
 	withTenant,
 } from "@/src/server";
 
@@ -44,6 +45,8 @@ function segmentPathFrom(segments: string[]): string | null {
 }
 
 export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ segment: string[] }> }) => {
+	const denied = requireAdmin();
+	if (denied) return denied;
 	const { segment } = await ctx.params;
 	const path = segmentPathFrom(segment);
 	if (!path) return Response.json({ error: "invalid segment path" }, { status: 400 });
@@ -62,6 +65,8 @@ export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ 
 });
 
 export const DELETE = withTenant(async (_request: Request, ctx: { params: Promise<{ segment: string[] }> }) => {
+	const denied = requireAdmin();
+	if (denied) return denied;
 	const { segment } = await ctx.params;
 	const path = segmentPathFrom(segment);
 	if (!path) return Response.json({ error: "invalid segment path" }, { status: 400 });

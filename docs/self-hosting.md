@@ -154,21 +154,24 @@ With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 5
 
 1. **Create the admin group.** The realm file only applies on first start, so on a live install create `learnharness-admin` in the Keycloak admin console (Groups), and add yourself to it. You must stay in `learnharness` too.
 2. **Find your `sub`.** In the Keycloak admin console, open Users, select yourself; the **ID** is the `sub` (a UUID).
-3. **Update and rebuild:** `git pull && cd deploy && docker compose up -d --build` (on the NixOS VM, `systemctl restart learnharness-stack` does all of this: it pulls main and rebuilds). The app now answers `/api/health` with 503 `legacy_layout`, which is expected until the data is moved.
-4. **Migrate inside the running new container.** Everything in the old data dir moves to `users/<sub>/`; the push keys and prompt overrides move to `global/`:
+3. **Take a VM snapshot first.** A Proxmox snapshot or vzdump backup of VM 104; the migration moves data in place and has no undo.
+4. **Update and rebuild:** `git pull && cd deploy && docker compose up -d --build` (on the NixOS VM, `systemctl restart learnharness-stack` does all of this: it pulls main and rebuilds). The app now answers `/api/health` with 503 `legacy_layout`, which is expected until the data is moved.
+5. **Migrate inside the running new container.** Everything in the old data dir moves to `users/<sub>/`; the push keys and prompt overrides move to `global/`:
 
    ```bash
-   docker compose exec -u node learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
+   docker exec -u node learnharness-learnharness-1 node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
    ```
 
-5. **Check health** from inside the network; it should print `{"ok":true}`, not a `legacy_layout` error:
+   The container name is `<compose project>-learnharness-1`; the project name is `learnharness`, so `learnharness-learnharness-1`. Check with `docker ps --format '{{.Names}}' | grep learnharness`. Plain `docker exec` is used on purpose: `docker compose exec` aborts on the VM, where the required variables of `compose.yaml` come only from the `--env-file` flags of `learnharness-stack`.
+
+6. **Check health** from inside the network; it should print `{"ok":true}`, not a `legacy_layout` error:
 
    ```bash
-   docker compose exec learnharness node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>r.text()).then(console.log)"
+   docker exec learnharness-learnharness-1 node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>r.text()).then(console.log)"
    ```
 
    No restart is needed: the legacy check runs on every request.
-6. **Everyone logs out and back in once.** oauth2-proxy now takes the user id from the `sub` claim (`OAUTH2_PROXY_USER_ID_CLAIM`), which changes the session, so existing sessions are refused until the next login.
+7. **Everyone logs out and back in once.** oauth2-proxy now takes the user id from the `sub` claim (`OAUTH2_PROXY_USER_ID_CLAIM`), which changes the session, so existing sessions are refused until the next login. Anyone who lands on an error page should open `/oauth2/sign_out` once and sign in again.
 
 ### Running under Podman
 

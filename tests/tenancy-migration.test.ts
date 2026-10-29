@@ -33,7 +33,7 @@ test("legacy layout: health is 503 and tenant paths refuse", async () => {
 	assert.equal(res.status, 503);
 	const body = (await res.json()) as { error: string; fix: string };
 	assert.equal(body.error, "legacy_layout");
-	assert.match(body.fix, /docker compose exec -u node learnharness node scripts\/migrate-to-tenants\.mjs --owner <keycloak-sub>/);
+	assert.match(body.fix, /docker exec -u node learnharness-learnharness-1 node scripts\/migrate-to-tenants\.mjs --owner <keycloak-sub>/);
 	assert.throws(() => runAsTenant(A, () => PATHS.chats), LegacyLayoutError);
 });
 

@@ -7,6 +7,7 @@
  * Single-user mode (LH_MULTI_USER unset): LOCAL_TENANT, no headers needed.
  */
 import { headers } from "next/headers";
+import { LEGACY_FIX, legacyLayoutResponse } from "./health.ts";
 import { setEventScope } from "../core/events.ts";
 import {
 	LOCAL_TENANT,
@@ -42,6 +43,8 @@ export function withTenant<A extends unknown[]>(
 	handler: (req: Request, ...rest: A) => Response | Promise<Response>,
 ): (req: Request, ...rest: A) => Promise<Response> {
 	return async (req, ...rest) => {
+		const legacy = legacyLayoutResponse();
+		if (legacy) return legacy;
 		const tenant = resolveTenant(req?.headers ?? new Headers());
 		if (!tenant) return Response.json({ error: "unauthenticated" }, { status: 401 });
 		return runAsTenant(tenant, () => handler(req, ...rest));
@@ -50,7 +53,13 @@ export function withTenant<A extends unknown[]>(
 
 /** Page wrapper: pages sit behind forward_auth, so no tenant means a misconfigured proxy: throw. */
 export async function withPageTenant<T>(fn: () => T | Promise<T>): Promise<T> {
+	if (legacyLayoutResponse()) throw new Error(`legacy_layout: single-user data not migrated yet; run \`${LEGACY_FIX}\``);
 	const tenant = resolveTenant(await headers());
 	if (!tenant) throw new Error("withPageTenant: no tenant resolved (is the auth proxy forwarding x-auth-request-user?)");
 	return runAsTenant(tenant, fn);
+}
+
+/** Instance-wide writes (keys, prompt overrides): 403 for non-admins in multi-user mode (LOCAL_TENANT is an admin). Call first in the handler. */
+export function requireAdmin(): Response | null {
+	return currentTenant()?.isAdmin ? null : Response.json({ error: "admin_only" }, { status: 403 });
 }
