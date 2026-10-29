@@ -111,7 +111,7 @@ export interface Topicist {
 
 export function createTopicist(deps: DescriberDeps): Topicist {
 	function engine() {
-		const e = deps.engineFor("describer");
+		const e = deps.engineFor("describer", { purpose: "topicist" });
 		if (!e) throw new ModelsNotConfiguredError([ROLE_SLOT.describer]);
 		const refusal = deps.providerKeyMissing?.(e.model.provider, ROLE_SLOT.describer);
 		if (refusal) throw new ProviderKeyMissingError(refusal.provider, refusal.slots);

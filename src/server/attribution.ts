@@ -108,7 +108,7 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 					candidates,
 				});
 			}
-			const links = await deps.attributor.runAttribution(withCandidates);
+			const links = await deps.attributor.runAttribution(withCandidates, undefined, chatId);
 			const byItem = new Map(links.map((l) => [l.toolCallId, l.conceptIds]));
 			const finalEmpty = new Set(
 				deps.extractionEnabled && !deps.extractionEnabled()

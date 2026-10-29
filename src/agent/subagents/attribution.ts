@@ -62,23 +62,24 @@ const ATTRIBUTION_INSTRUCTIONS = `You link a learner's graded questions to the c
 
 export interface Attributor {
 	/** item -> concept ids (from each item's own candidates), batched. Every item gets an entry (possibly empty);
-	 *  a model failure rejects and nothing is returned. */
+	 *  a model failure rejects and nothing is returned. `chatId` is the session's (request log). */
 	runAttribution(
 		items: readonly AttributionItem[],
 		signal?: AbortSignal,
+		chatId?: string,
 	): Promise<AttributionLink[]>;
 }
 
 export function createAttributor(deps: DescriberDeps): Attributor {
-	function engine() {
-		const e = deps.engineFor("describer");
+	function engine(chatId: string | undefined) {
+		const e = deps.engineFor("describer", { purpose: "attribution", ...(chatId && { chatId }) });
 		if (!e) throw new ModelsNotConfiguredError([ROLE_SLOT.describer]);
 		const refusal = deps.providerKeyMissing?.(e.model.provider, ROLE_SLOT.describer);
 		if (refusal) throw new ProviderKeyMissingError(refusal.provider, refusal.slots);
 		return e;
 	}
 	return {
-		async runAttribution(items, signal) {
+		async runAttribution(items, signal, chatId) {
 			// Items with no candidates are off the map: no model call needed for them.
 			const asked = items.filter((i) => i.candidates.length > 0);
 			const out: AttributionLink[] = items.filter((i) => i.candidates.length === 0).map((i) => ({ toolCallId: i.toolCallId, conceptIds: [] }));
@@ -124,7 +125,7 @@ export function createAttributor(deps: DescriberDeps): Attributor {
 									`${b.toolCallId} | ${b.question.replace(/\s+/g, " ")} | ${(b.correct ?? "").replace(/\s+/g, " ")} | ${b.answer.replace(/\s+/g, " ")} | ${b.outcome} | ${b.candidates.map((c) => c.id).join(", ")}`,
 							)
 							.join("\n"),
-					engine: engine(),
+					engine: engine(chatId),
 					signal,
 					onStep: () => {},
 					neverSubmitted: "The attribution agent ended without submitting links.",
