@@ -13,7 +13,7 @@ import {
 	type ModelSlotName,
 	type ProviderKeyMissing,
 } from "../../core/settings.ts";
-import type { PiEngine } from "../models.ts";
+import type { EngineOptions, PiEngine } from "../models.ts";
 import { runSubagent } from "./pi-run.ts";
 import { withBgLlmSlot } from "./bg-llm-semaphore.ts";
 import type {
@@ -883,8 +883,9 @@ export interface ExtractionModels {
 	 *  job runner got, read FRESH per stage call (a settings PUT between
 	 *  stages lands). BYOK (owner, 2026-09-22): the chain (role override →
 	 *  slot → NOTHING) may end EMPTY → undefined; the front doors refuse
-	 *  with ModelsNotConfiguredError before any stage runs. */
-	engineFor?: (role: ModelRole) => PiEngine | undefined;
+	 *  with ModelsNotConfiguredError before any stage runs. A chat run's
+	 *  stages pass the chat id (request log: a session's spend). */
+	engineFor?: (role: ModelRole, opts?: EngineOptions) => PiEngine | undefined;
 	/** Key-presence gate (provider-key interlude, 2026-09-25): given a
 	 *  stage engine's provider + the role's slot tier, the injected check
 	 *  returns the refusal envelope when the provider's key is missing
@@ -1003,8 +1004,8 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	// stage call server-side) — the job runner's exact treatment. undefined
 	// = the BYOK chain came up empty; the front-door guards turn that into
 	// an honest refusal.
-	const stageEngine = (role: ModelRole, override?: PiEngine): PiEngine | undefined =>
-		override ?? deps.engineFor?.(role);
+	const stageEngine = (role: ModelRole, override?: PiEngine, chatId?: string): PiEngine | undefined =>
+		override ?? deps.engineFor?.(role, chatId ? { chatId } : undefined);
 	/** The per-need refusal guard: which slot tiers the pipeline's stages
 	 *  found unset (test values count as configured — they ARE engines),
 	 *  and whether a configured stage's provider key is gone (provider-key
@@ -1156,7 +1157,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		const t0 = performance.now();
 
 		const findings = await runExtractor(
-			stageEngine("extractor", deps.extractor),
+			stageEngine("extractor", deps.extractor, sourceId),
 			sourceId,
 			prompt,
 			new Set(graph.nodes.map((n) => n.id)),
@@ -1187,7 +1188,8 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		};
 	}
 
-	async function audit(jobKey: string, sourceId: string, findings: SessionFindings): Promise<AuditVerdicts> {
+	/** `chatId`: set on a chat run (request log); notes runs leave it out. */
+	async function audit(jobKey: string, sourceId: string, findings: SessionFindings, chatId?: string): Promise<AuditVerdicts> {
 		const signal = runningExtractions.get(jobKey)?.controller.signal;
 		signal?.throwIfAborted(); // an abort during the extract→audit gap ends here
 		const graph = getGraph(graphStore);
@@ -1204,7 +1206,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		// IDENTITY-only and never sees the passages, so anchors are useless
 		// to it — they add cognitive load, not signal.
 		const auditResult = await runAuditor(
-			stageEngine("auditor", deps.auditor),
+			stageEngine("auditor", deps.auditor, chatId),
 			sourceId,
 			`Proposed findings from the extractor (the source itself is not available to you — the extractor is fully trusted; the propositions only — the reasoning chains are the merger's business, owner 2026-09-30):\n\n` +
 				`${JSON.stringify(
@@ -1411,7 +1413,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 							// stands AFTER every earlier job's merge.
 							return withAuditLock(jobKey, "chat", undefined, async () => {
 								setPhase(jobKey, "auditing", "chat", undefined, part);
-								const auditResult = await audit(jobKey, chatId, findings);
+								const auditResult = await audit(jobKey, chatId, findings, chatId);
 								setPhase(jobKey, "merging", "chat", undefined, part);
 								// SESSION-DELETION GUARD (wave 6): a chat deleted mid-run must never
 								// merge. The deletion route aborts this run first and runs its purge

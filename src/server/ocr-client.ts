@@ -15,6 +15,8 @@
  * GET /api/by-sha/{sha256} (200 | 404); POST /api/estimate.
  */
 
+import { recordRequest } from "../agent/request-log.ts";
+import { categoryOf, truncateError } from "../core/usage.ts";
 import { keyValue } from "./keys.ts";
 
 export type OcrStrategy = "vision" | "ocr+vision";
@@ -94,11 +96,31 @@ export interface OcrClientOptions {
 	fetch?: typeof fetch;
 }
 
+/** Job ids already logged (one line per job, however often it is polled). */
+const loggedJobs = new Set<string>();
+
 export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 	const baseUrl = opts.baseUrl ?? (() => process.env.OCR_URL);
 	const token = opts.token ?? (() => process.env.OCR_TOKEN);
 	const key = opts.key ?? (() => keyValue("OPENROUTER_API_KEY"));
 	const doFetch = opts.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+
+	/** One request-log line per finished OCR job (or failed call): purpose
+	 *  "ocr", the sidecar's own cost_usd, never any page text. */
+	function log(startedAt: number, model: string, outcome: "ok" | "error", extra: { providerCostUsd?: number; error?: string } = {}): void {
+		recordRequest({
+			v: 1,
+			at: new Date(startedAt).toISOString(),
+			purpose: "ocr",
+			category: categoryOf("ocr"),
+			provider: "ocr",
+			model: model || "ocr",
+			durationMs: Date.now() - startedAt,
+			outcome,
+			...(extra.providerCostUsd !== undefined && { providerCostUsd: extra.providerCostUsd }),
+			...(extra.error !== undefined && { error: truncateError(extra.error) }),
+		});
+	}
 
 	function base(): string {
 		const url = baseUrl()?.trim();
@@ -114,18 +136,23 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			const k = key();
 			if (k) headers.set("X-OpenRouter-Key", k);
 		}
+		const startedAt = Date.now();
 		try {
 			return await doFetch(`${base()}${path}`, { ...init, headers });
 		} catch (err) {
 			if (err instanceof OcrError) throw err;
-			throw new OcrError("ocr_unreachable", `The OCR service is unreachable (${err instanceof Error ? err.message : String(err)}).`);
+			const unreachable = new OcrError("ocr_unreachable", `The OCR service is unreachable (${err instanceof Error ? err.message : String(err)}).`);
+			log(startedAt, "ocr", "error", { error: unreachable.message });
+			throw unreachable;
 		}
 	}
 
-	async function json<T>(res: Response): Promise<T> {
+	async function json<T>(res: Response, startedAt: number): Promise<T> {
 		if (!res.ok) {
 			const detail = await res.text().catch(() => "");
-			throw new OcrError("ocr_failed", `The OCR service answered HTTP ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}.`);
+			const failed = new OcrError("ocr_failed", `The OCR service answered HTTP ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}.`);
+			log(startedAt, "ocr", "error", { error: failed.message });
+			throw failed;
 		}
 		return (await res.json()) as T;
 	}
@@ -144,25 +171,48 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			if (!key()) throw new OcrError("openrouter_key_missing", "PDF scanning needs an OpenRouter key. Add one under Settings, Keys.");
 		},
 		async estimate(files) {
-			return json<OcrEstimate>(await call("/api/estimate", { method: "POST", body: form(files) }));
+			const startedAt = Date.now();
+			return json<OcrEstimate>(await call("/api/estimate", { method: "POST", body: form(files) }), startedAt);
 		},
 		async start(files, strategy) {
 			this.assertCanScan();
-			const { job } = await json<{ job: string }>(await call("/api/run", { method: "POST", body: form(files, strategy) }, true));
+			const startedAt = Date.now();
+			const { job } = await json<{ job: string }>(await call("/api/run", { method: "POST", body: form(files, strategy) }, true), startedAt);
 			return job;
 		},
 		async job(id) {
-			return json<OcrJob>(await call(`/api/jobs/${encodeURIComponent(id)}`));
+			const startedAt = Date.now();
+			const status = await json<OcrJob>(await call(`/api/jobs/${encodeURIComponent(id)}`), startedAt);
+			// documents.ts may poll a job-level "done" again (a file still lacks
+			// markdown), so log exactly once per job id.
+			if ((status.status === "done" || status.status === "failed") && !loggedJobs.has(id)) {
+				loggedJobs.add(id);
+				const bad = status.files.find((f) => f.status !== "done");
+				// A failed job still spent what the sidecar reports (defined values only).
+				const costs = status.files.map((f) => f.cost_usd).filter((c): c is number => typeof c === "number");
+				const cost = costs.length > 0 ? { providerCostUsd: costs.reduce((a, c) => a + c, 0) } : {};
+				if (status.status === "done" && !bad) {
+					log(startedAt, status.strategy, "ok", cost);
+				} else {
+					log(startedAt, status.strategy, "error", { ...cost, error: bad?.error ?? status.files.find((f) => f.error)?.error ?? "OCR job failed" });
+				}
+			}
+			return status;
 		},
 		async markdown(job, name) {
+			const startedAt = Date.now();
 			const res = await call(`/api/jobs/${encodeURIComponent(job)}/files/${encodeURIComponent(name)}`);
-			if (!res.ok) throw new OcrError("ocr_failed", `The OCR service has no markdown ${name} (HTTP ${res.status}).`);
+			if (!res.ok) {
+				const failed = new OcrError("ocr_failed", `The OCR service has no markdown ${name} (HTTP ${res.status}).`);
+				log(startedAt, "ocr", "error", { error: failed.message });
+				throw failed;
+			}
 			return res.text();
 		},
 		async bySha(sha256) {
 			const res = await call(`/api/by-sha/${encodeURIComponent(sha256)}`);
 			if (res.status === 404) return null;
-			return json<OcrKnown>(res);
+			return json<OcrKnown>(res, Date.now());
 		},
 	};
 }
