@@ -80,6 +80,21 @@ describe("OCR", () => {
 		assert.match(lines[0]!.error!, /page 3 unreadable/);
 	});
 
+	it("a failed job keeps the cost the sidecar reported", async () => {
+		collect();
+		const files = [
+			{ name: "a.pdf", status: "done", cost_usd: 0.03, error: null },
+			{ name: "b.pdf", status: "failed", cost_usd: 0.01, error: "page 3 unreadable" },
+			{ name: "c.pdf", status: "failed", error: "never started" },
+		];
+		await client({ ...done, id: "partial", status: "failed", files }).job("partial");
+		assert.equal(lines[0]!.outcome, "error");
+		assert.ok(Math.abs(lines[0]!.providerCostUsd! - 0.04) < 1e-12);
+		lines.length = 0;
+		await client({ ...done, id: "nothing", status: "failed", files: [{ name: "a.pdf", status: "failed", error: "x" }] }).job("nothing");
+		assert.equal("providerCostUsd" in lines[0]!, false);
+	});
+
 	it("a running job logs nothing; a non-2xx answer logs an error line", async () => {
 		collect();
 		await client({ ...done, status: "running" }).job("j");
@@ -101,4 +116,5 @@ describe("search", () => {
 		assert.equal(lines[0]!.provider, "tavily");
 		assert.equal(lines[0]!.outcome, "error");
 	});
+
 });
