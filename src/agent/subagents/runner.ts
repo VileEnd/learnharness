@@ -82,7 +82,7 @@ export interface JobRunnerDeps {
 	 *  the wiring; null = honestly unavailable (the researcher's web_search
 	 *  reports it as recoverable text). Absent seam (tests) reads the same;
 	 *  research dispatch and web_fetch do not require search credentials. */
-	searchProvider?: () => SearchProvider | null;
+	searchProvider?: (chatId?: string) => SearchProvider | null;
 	/** Key-presence gate (provider-key interlude, 2026-09-25): given the
 	 *  resolved engine's provider + the kind's slot tier, return the
 	 *  refusal envelope when the provider's key is missing (null = run).
