@@ -19,7 +19,7 @@ services:
       # PDF scanning sidecar (services/ocr): internal only, shared secret on every call.
       OCR_URL: http://ocr:8000
       OCR_TOKEN: ${OCR_TOKEN}
-      # Per-user data under tenants/<keycloak sub>/ (docs/self-hosting.md).
+      # Per-user data under users/<keycloak sub>/ (docs/self-hosting.md).
       LH_MULTI_USER: "1"
     networks: [internal]
 
