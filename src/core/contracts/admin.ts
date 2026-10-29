@@ -19,7 +19,8 @@ export interface UserPolicy {
 
 export interface AdminPolicy {
 	version: 1;
-	newUserDefaults: UserPolicy;
+	/** Persisted only by an explicit setDefaults; absent = built-in live-catalog defaults at read time. */
+	newUserDefaults?: UserPolicy;
 	users: Record<string, UserPolicy>;
 }
 
@@ -35,3 +36,14 @@ export function allowedSet(policy: UserPolicy): Set<string> {
 	for (const m of Object.values(policy.slots)) if (m) out.add(modelKey(m));
 	return out;
 }
+
+/** admin.json exists but is unreadable or malformed. Writers must not overwrite it. */
+export class AdminPolicyCorrupt extends Error {
+	constructor() {
+		super("admin_policy_corrupt");
+		this.name = "AdminPolicyCorrupt";
+	}
+}
+
+/** Deny-all: what enforcement uses when the policy file is corrupt. */
+export const DENY_ALL_POLICY: UserPolicy = Object.freeze({ slots: {}, allowedModels: [], monthlyCapUsd: 0 }) as UserPolicy;

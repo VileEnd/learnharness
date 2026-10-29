@@ -292,7 +292,7 @@ export interface WireGuardStore {
 
 // ─── AdminPolicyStore — per-user model/cap policy (<global>/admin.json) ─────
 
-/** Absent or unreadable file reads as null (the caller applies built-in defaults). Writes are atomic, mode 0600. */
+/** Absent file (ENOENT) reads as null (the caller applies built-in defaults). A present but invalid file throws `AdminPolicyCorrupt`, so no writer can overwrite it. Writes are atomic, mode 0600. */
 export interface AdminPolicyStore {
 	readPolicy(): AdminPolicy | null;
 	writePolicy(p: AdminPolicy): void;

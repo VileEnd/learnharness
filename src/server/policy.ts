@@ -4,9 +4,9 @@
  * from the live catalog's "Cheapest" recommended models.
  */
 
-import { DEFAULT_MONTHLY_CAP_USD, modelKey, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
+import { AdminPolicyCorrupt, DEFAULT_MONTHLY_CAP_USD, DENY_ALL_POLICY, modelKey, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
 import { recommendedFor } from "../core/recommended-models.ts";
-import { currentTenant, multiUser } from "../core/tenant-context.ts";
+import { multiUser, requireTenant } from "../core/tenant-context.ts";
 import { modelCatalog } from "./model-catalog.ts";
 import { stores } from "./stores.ts";
 
@@ -35,31 +35,40 @@ export function builtInDefaults(catalogModels: readonly CatalogModelLike[]): Use
 	};
 }
 
+/** The stored file, or an empty one. Throws AdminPolicyCorrupt on a corrupt file. */
+function stored(): AdminPolicy {
+	return stores.adminPolicyStore.readPolicy() ?? { version: 1, users: {} };
+}
+
+/** The admin's view: newUserDefaults is filled from the live catalog when not persisted. May throw AdminPolicyCorrupt. */
 export function currentPolicy(): AdminPolicy {
-	return (
-		stores.adminPolicyStore.readPolicy() ?? {
-			version: 1,
-			newUserDefaults: builtInDefaults(modelCatalog().models),
-			users: {},
-		}
-	);
+	const p = stored();
+	return { ...p, newUserDefaults: p.newUserDefaults ?? builtInDefaults(modelCatalog().models) };
 }
 
+/** Enforcement read: FAILS CLOSED (deny-all) when the policy file is corrupt. */
 export function policyFor(userId: string): UserPolicy {
-	const p = currentPolicy();
-	return p.users[userId] ?? p.newUserDefaults;
+	try {
+		const p = stored();
+		return p.users[userId] ?? p.newUserDefaults ?? builtInDefaults(modelCatalog().models);
+	} catch (e) {
+		if (!(e instanceof AdminPolicyCorrupt)) throw e;
+		console.error("policyFor: admin.json is corrupt; denying all models and spend");
+		return DENY_ALL_POLICY;
+	}
 }
 
-/** The ambient tenant's policy when restricted (multi-user AND non-admin), else null. */
+/** The ambient tenant's policy when restricted (multi-user AND non-admin), else null. Throws NoTenantError in multi-user mode with no tenant. */
 export function restrictedPolicy(): UserPolicy | null {
 	if (!multiUser()) return null;
-	const t = currentTenant();
-	if (!t || t.isAdmin) return null;
+	const t = requireTenant();
+	if (t.isAdmin) return null;
 	return policyFor(t.id);
 }
 
+/** Refuses (throws AdminPolicyCorrupt) on a corrupt file; never persists newUserDefaults. */
 export function setUserPolicy(userId: string, p: UserPolicy | null): void {
-	const cur = currentPolicy();
+	const cur = stored();
 	const users = { ...cur.users };
 	if (p) users[userId] = p;
 	else delete users[userId];
@@ -67,7 +76,7 @@ export function setUserPolicy(userId: string, p: UserPolicy | null): void {
 }
 
 export function setDefaults(p: UserPolicy): void {
-	stores.adminPolicyStore.writePolicy({ ...currentPolicy(), newUserDefaults: p });
+	stores.adminPolicyStore.writePolicy({ ...stored(), newUserDefaults: p });
 }
 
 export type PolicyValidation = { ok: true; policy: UserPolicy } | { ok: false; error: string };

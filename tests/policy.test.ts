@@ -9,7 +9,8 @@ process.env.LH_DATA_DIR = dataDir;
 process.env.LH_MULTI_USER = "1";
 
 const policy = await import("../src/server/policy.ts");
-const { runAsTenant } = await import("../src/core/tenant-context.ts");
+const { runAsTenant, NoTenantError } = await import("../src/core/tenant-context.ts");
+const { AdminPolicyCorrupt } = await import("../src/core/contracts/admin.ts");
 const { allowedSet, modelKey } = await import("../src/core/contracts/admin.ts");
 
 const U1 = "11111111-1111-4111-8111-111111111111";
@@ -76,4 +77,48 @@ test("validatePolicy rejects unknown model and negative cap; dedupes", () => {
 	assert.equal(policy.validatePolicy({ ...ok, allowedModels: ["nope:nope"] }, [MIMO]).ok, false);
 	assert.equal(policy.validatePolicy({ ...ok, monthlyCapUsd: -1 }, [MIMO]).ok, false);
 	assert.equal(policy.validatePolicy({ ...ok, monthlyCapUsd: null }, [MIMO]).ok, true);
+});
+
+const file = () => path.join(dataDir, "global", "admin.json");
+
+test("empty catalog defaults: empty slots and allowed, cap 5, no throw", () => {
+	const d = policy.builtInDefaults([]);
+	assert.deepEqual(d.slots, {});
+	assert.deepEqual(d.allowedModels, []);
+	assert.equal(d.monthlyCapUsd, 5);
+});
+
+test("restrictedPolicy throws with no tenant in multi-user mode", () => {
+	assert.throws(() => policy.restrictedPolicy(), NoTenantError);
+});
+
+test("setUserPolicy on a fresh install does not freeze newUserDefaults", () => {
+	fs.rmSync(file(), { force: true });
+	policy.setUserPolicy(U1, { slots: {}, allowedModels: [], monthlyCapUsd: 1 });
+	const onDisk = JSON.parse(fs.readFileSync(file(), "utf-8"));
+	assert.equal("newUserDefaults" in onDisk, false);
+	assert.equal(policy.builtInDefaults([MIMO]).allowedModels.length, 1);
+	assert.equal(policy.builtInDefaults([MIMO, DEEP]).allowedModels.length, 2);
+	fs.rmSync(file(), { force: true });
+});
+
+test("corrupt admin.json: writes refuse and leave the file untouched; enforcement fails closed", () => {
+	for (const garbage of ["{not json", JSON.stringify({ version: 1, users: { [U1]: { slots: 3 } } }), JSON.stringify({ version: 1, users: {}, newUserDefaults: { slots: {} } })]) {
+		fs.writeFileSync(file(), garbage);
+		assert.throws(() => policy.setUserPolicy(U1, null), AdminPolicyCorrupt);
+		assert.throws(() => policy.setDefaults({ slots: {}, allowedModels: [], monthlyCapUsd: 1 }), AdminPolicyCorrupt);
+		assert.throws(() => policy.currentPolicy(), AdminPolicyCorrupt);
+		assert.equal(fs.readFileSync(file(), "utf-8"), garbage);
+		const origErr = console.error;
+		console.error = () => {};
+		try {
+			runAsTenant({ id: U1, name: "u", isAdmin: false }, () => {
+				assert.deepEqual(policy.restrictedPolicy(), { slots: {}, allowedModels: [], monthlyCapUsd: 0 });
+			});
+			runAsTenant({ id: U1, name: "u", isAdmin: true }, () => assert.equal(policy.restrictedPolicy(), null));
+		} finally {
+			console.error = origErr;
+		}
+	}
+	fs.rmSync(file(), { force: true });
 });
