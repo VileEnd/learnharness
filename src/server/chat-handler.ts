@@ -43,7 +43,7 @@ import {
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
 import { isPolicyRefusal, modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
-import { assertWithinCap, modelGate, readSettingsView } from "./model-gate.ts";
+import { assertWithinCap, modelGate, readSettingsView, unconfiguredTierRefusal } from "./model-gate.ts";
 import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { notify } from "./push.ts";
@@ -264,9 +264,13 @@ export async function handleChatInput(
 	const effective = effectiveSettings();
 	const requested = resolveConversationSpec(record.settings, effective.models.strong);
 	if (!requested) {
-		const envelope = modelsNotConfigured(["strong"]);
+		// A restricted user cannot fix an empty strong tier through the setup
+		// flow (the admin's policy sets it), so theirs is the 403 model refusal,
+		// which never opens the setup dialog.
+		const restricted = unconfiguredTierRefusal("strong");
+		const envelope = restricted ?? modelsNotConfigured(["strong"]);
 		console.info(`[chat ${chatId}] turn refused — ${JSON.stringify(envelope)}`);
-		return Response.json(envelope, { status: 503 });
+		return Response.json(envelope, { status: restricted ? 403 : 503 });
 	}
 	// Per-user models (multi-user design §10): the conversation runs on the
 	// spec the gate allows (a disallowed chat model falls back to the policy's
@@ -330,15 +334,6 @@ export async function handleChatInput(
 	const compactedRecord = stores.chatStore.getChat(chatId);
 	if (!compactedRecord) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	record = compactedRecord;
-	// A synchronous compaction just spent: re-check the cap while nothing of
-	// this input is persisted yet (cached unless the log moved).
-	try {
-		assertWithinCap();
-	} catch (err) {
-		const refused = policyRefusalResponse(chatId, err);
-		if (refused) return refused;
-		throw err;
-	}
 
 	// The input's native appends (pure; the honest 400 for an answer with no
 	// pending question call). Computed BEFORE beginTurn so a refused input
@@ -362,6 +357,39 @@ export async function handleChatInput(
 		throw err;
 	}
 
+	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
+	// is the seam — a probe_done call in the record means the probe is
+	// concluded: build the TEACHER (planning + the full toolset). Otherwise
+	// the session is still probing: build the PROBER (quiz/ask + probe_done).
+	// Both share this whole composition (write-ahead persist, liveness,
+	// steers, usage, extraction) — only the agent differs.
+	const merged = [...record.messages, ...appends];
+	const teaching = hasProbeDone(merged);
+	// BYOK (owner, 2026-09-22): the conversation chain was resolved by the
+	// turn gate above (chat.model override → strong slot → refused) — the
+	// engine build is pure from here; thinking levels clamp natively.
+	// CANVAS TURNS RUN ON THE SESSION MODEL (owner, 2026-10-28): there is no
+	// canvas model slot; the conversation engine (chat model, else the strong
+	// slot) runs every turn. The send_to_user gate, the usage stamp, the
+	// spend-cap price and the drawing context all read it. Same spec as the
+	// compaction gate's engine, its own purpose. Built HERE, before any
+	// persist and beginTurn: the build passes the per-user gate (multi-user
+	// design §10), and a synchronous compaction above may just have spent
+	// past the cap, so a refusal must leave neither a saved input nor a
+	// claimed turn.
+	let engine: PiEngine;
+	try {
+		engine = piEngineForSpec(conversation, {
+			purpose: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
+			chatId,
+			chatKind,
+		});
+	} catch (err) {
+		const refused = policyRefusalResponse(chatId, err);
+		if (refused) return refused;
+		throw err;
+	}
+
 	// THE PARALLEL-QUESTION GATE (owner, 2026-10-03 — the deepseek parallel
 	// batch incident): an answer that leaves a SIBLING question dangling
 	// defers its wake. The dock advances to the next question (the client's
@@ -372,8 +400,7 @@ export async function handleChatInput(
 	// the sibling question permanently pre-fix). Nothing else can generate
 	// while a question dangles (job wakes wait, continuation folds refuse,
 	// the composer gates), so adjacency holds by construction.
-	if (input.type === "answer" && danglingQuestionOf([...record.messages, ...appends]) !== null) {
-		const merged = [...record.messages, ...appends];
+	if (input.type === "answer" && danglingQuestionOf(merged) !== null) {
 		try { stores.chatStore.saveMessages(chatId, merged); }
 		catch (err) {
 			console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
@@ -397,7 +424,6 @@ export async function handleChatInput(
 	// truth instead of the pre-answer record. (Wave C: the wake's markers
 	// ride this same write-ahead - the pump de-queued them at fire, so this
 	// is the ONLY copy ever appended.)
-	const merged = [...record.messages, ...appends];
 	try {
 		stores.chatStore.saveMessages(chatId, merged);
 	} catch (err) {
@@ -435,37 +461,6 @@ export async function handleChatInput(
 	// are priced at its rates (the compaction precedent: one entry per model).
 	const reader: { id: string; model?: string; steps: CallUsage[] } = { id: crypto.randomUUID(), steps: [] };
 
-	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
-	// is the seam — a probe_done call in the record means the probe is
-	// concluded: build the TEACHER (planning + the full toolset). Otherwise
-	// the session is still probing: build the PROBER (quiz/ask + probe_done).
-	// Both share this whole composition (write-ahead persist, liveness,
-	// steers, usage, extraction) — only the agent differs.
-	const teaching = hasProbeDone(merged);
-	// BYOK (owner, 2026-09-22): the conversation chain was resolved by the
-	// turn gate above (chat.model override → strong slot → refused) — the
-	// engine build is pure from here; thinking levels clamp natively.
-	// CANVAS TURNS RUN ON THE SESSION MODEL (owner, 2026-10-28): there is no
-	// canvas model slot; the conversation engine (chat model, else the strong
-	// slot) runs every turn. The send_to_user gate, the usage stamp, the
-	// spend-cap price and the drawing context all read it. Same spec as the
-	// compaction gate's engine, its own purpose. Only a policy refusal can
-	// throw here (concurrent background spend crossed the cap since the check
-	// above): the claimed turn is released, never leaked; the input is
-	// already saved, and the next allowed turn answers it.
-	let engine: PiEngine;
-	try {
-		engine = piEngineForSpec(conversation, {
-			purpose: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
-			chatId,
-			chatKind,
-		});
-	} catch (err) {
-		endTurn(chatId);
-		const refused = policyRefusalResponse(chatId, err);
-		if (refused) return refused;
-		throw err;
-	}
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;

@@ -22,15 +22,17 @@ after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const { runAsTenant } = await import("../src/core/tenant-context.ts");
 const { stores } = await import("../src/server/stores.ts");
-const { piEngineForSpec } = await import("../src/agent/models.ts");
+const { piEngineForSpec, setModelGate } = await import("../src/agent/models.ts");
 const policy = await import("../src/server/policy.ts");
-const { assertWithinCap } = await import("../src/server/model-gate.ts");
+const { assertWithinCap, modelGate, modelsConfigured } = await import("../src/server/model-gate.ts");
+const { isTurnRunning } = await import("../src/server/turn-liveness.ts");
 const { readSettingsRecord } = await import("../src/server/index.ts");
 const { MonthlyCapReachedError, ModelNotAllowedError, monthlyCapReached, modelNotAllowed, slotsConfigured } = await import("../src/core/settings.ts");
 const chatRoute = await import("../app/api/chat/route.ts");
 const sectionRoute = await import("../app/api/settings/[section]/route.ts");
 const modelsRoute = await import("../app/api/models/route.ts");
 const chatSettingsRoute = await import("../app/api/chats/[id]/settings/route.ts");
+const settingsRoute = await import("../app/api/settings/route.ts");
 const { TurnErrorBanner } = await import("../components/chat.tsx");
 
 const M = (id: string) => ({ provider: "openrouter", id });
@@ -48,7 +50,11 @@ const USER = { id: "user-a", name: "a", isAdmin: false };
 const ADMIN = { id: "admin-b", name: "b", isAdmin: true };
 const NO_SLOTS = { id: "user-c", name: "c", isAdmin: false };
 const FRESH = { id: "user-d", name: "d", isAdmin: false };
+const CAPPED = { id: "user-e", name: "e", isAdmin: false };
+const NO_VISION = { id: "user-f", name: "f", isAdmin: false };
 policy.setUserPolicy(USER.id, POLICY);
+policy.setUserPolicy(CAPPED.id, POLICY);
+policy.setUserPolicy(NO_VISION.id, { ...POLICY, slots: { strong: STRONG, cheap: CHEAP } });
 policy.setUserPolicy(FRESH.id, POLICY);
 policy.setUserPolicy(NO_SLOTS.id, { slots: {}, allowedModels: [`openrouter:${EXTRA.id}`], monthlyCapUsd: null });
 
@@ -98,23 +104,23 @@ test("(f) the month spend is cached on the log file's size and mtime", () => {
 });
 
 test("(d) over the cap, POST /api/chat answers 403 before persisting", async () => {
-	const chatId = runAsTenant(USER, () => {
-		spend(5.09);
+	const chatId = runAsTenant(CAPPED, () => {
+		spend(5.1);
 		const chat = stores.chatStore.createChat("Capped");
 		stores.chatStore.saveSettings(chat.id, { model: STRONG });
 		return chat.id;
 	});
-	const before = runAsTenant(USER, () => JSON.stringify(stores.chatStore.getChat(chatId)));
+	const before = runAsTenant(CAPPED, () => JSON.stringify(stores.chatStore.getChat(chatId)));
 	const res = await chatRoute.POST(
-		new Request("http://x/api/chat", { method: "POST", headers: headers(USER), body: JSON.stringify({ chatId, input: { type: "text", text: "hello" } }) }),
+		new Request("http://x/api/chat", { method: "POST", headers: headers(CAPPED), body: JSON.stringify({ chatId, input: { type: "text", text: "hello" } }) }),
 	);
 	assert.equal(res.status, 403);
 	const body = (await res.json()) as { code: string; capUsd: number; spentUsd: number; error: string };
 	assert.equal(body.code, "monthly_cap_reached");
 	assert.equal(body.capUsd, 5);
 	assert.ok(Math.abs(body.spentUsd - 5.1) < 1e-9);
-	assert.equal(runAsTenant(USER, () => JSON.stringify(stores.chatStore.getChat(chatId))), before);
-	runAsTenant(USER, () => assert.throws(() => assertWithinCap(), MonthlyCapReachedError));
+	assert.equal(runAsTenant(CAPPED, () => JSON.stringify(stores.chatStore.getChat(chatId))), before);
+	runAsTenant(CAPPED, () => assert.throws(() => assertWithinCap(), MonthlyCapReachedError));
 });
 
 test("(e) an admin with the same spend is not blocked", async () => {
@@ -126,7 +132,9 @@ test("(e) an admin with the same spend is not blocked", async () => {
 	const res = await chatRoute.POST(
 		new Request("http://x/api/chat", { method: "POST", headers: headers(ADMIN), body: JSON.stringify({ chatId, input: { type: "text", text: "hello" } }) }),
 	);
+	// Past the cap check: the next gate (no models configured) answers.
 	assert.notEqual(res.status, 403);
+	assert.equal(((await res.json()) as { code: string }).code, "models_not_configured");
 });
 
 test("(g) PUT models and the per-chat model reject a disallowed model with 403, accept an allowed one", async () => {
@@ -174,4 +182,48 @@ test("(j) the chat renders both refusals with their copy, not the generic banner
 	assert.doesNotMatch(cap, /Something went wrong/);
 	assert.match(text(JSON.stringify(modelNotAllowed("openrouter:openai/gpt-5"))), /That model isn't available for your account\./);
 	assert.match(text("boom"), /Something went wrong: boom/);
+});
+
+test("(k) a restricted policy without a vision slot counts as configured", async () => {
+	runAsTenant(NO_VISION, () => {
+		assert.equal(slotsConfigured(readSettingsRecord()?.models), false); // the three-slot rule would fire setup
+		assert.equal(modelsConfigured(), true);
+	});
+	const res = await settingsRoute.GET(new Request("http://x/api/settings", { headers: headers(NO_VISION) }));
+	assert.equal(((await res.json()) as { configured: boolean }).configured, true);
+});
+
+test("(l) a restricted policy without a strong slot refuses a turn with 403 model_not_allowed", async () => {
+	const chatId = runAsTenant(NO_SLOTS, () => stores.chatStore.createChat("No strong").id);
+	const res = await chatRoute.POST(
+		new Request("http://x/api/chat", { method: "POST", headers: headers(NO_SLOTS), body: JSON.stringify({ chatId, input: { type: "text", text: "hello" } }) }),
+	);
+	assert.equal(res.status, 403);
+	assert.equal(((await res.json()) as { code: string }).code, "model_not_allowed");
+});
+
+test("(m) a turn refused at the engine build leaves the chat file unchanged and no turn claimed", async () => {
+	const chatId = runAsTenant(ADMIN, () => {
+		const chat = stores.chatStore.createChat("Late");
+		stores.chatStore.saveSettings(chat.id, { model: STRONG });
+		return chat.id;
+	});
+	const before = runAsTenant(ADMIN, () => JSON.stringify(stores.chatStore.getChat(chatId)));
+	// Only the turn's own engine is refused (as if spend crossed the cap after the up-front checks).
+	setModelGate((spec, opts) => {
+		if (opts.purpose === "compaction") return spec;
+		throw new MonthlyCapReachedError(5, 5.2);
+	});
+	try {
+		const res = await chatRoute.POST(
+			new Request("http://x/api/chat", { method: "POST", headers: headers(ADMIN), body: JSON.stringify({ chatId, input: { type: "text", text: "hello" } }) }),
+		);
+		assert.equal(res.status, 403);
+	} finally {
+		setModelGate(modelGate);
+	}
+	runAsTenant(ADMIN, () => {
+		assert.equal(JSON.stringify(stores.chatStore.getChat(chatId)), before);
+		assert.equal(isTurnRunning(chatId), false);
+	});
 });

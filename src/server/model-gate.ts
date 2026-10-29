@@ -18,6 +18,7 @@ import {
 	MonthlyCapReachedError,
 	ROLE_SLOT,
 	modelNotAllowed,
+	slotsConfigured,
 	type ModelNotAllowed,
 	type ModelSlotName,
 	type ModelsSettings,
@@ -66,15 +67,23 @@ export function assertWithinCap(): void {
 	if (policy) assertPolicyCap(policy);
 }
 
-/** For the paid side channels (embeddings, OCR): false, with one log line,
- *  when the ambient user is over the cap; their work is then skipped. */
+// One "skipped" line per tenant, month and channel (the index ticks every minute).
+const g2 = globalThis as { __lhCapSkipLogged?: Set<string> };
+const capSkipLogged = (g2.__lhCapSkipLogged ??= new Set<string>());
+
+/** For the paid side channels (embeddings): false when the ambient user is
+ *  over the cap, so their work is skipped; logged once per month. */
 export function capAllows(what: string): boolean {
 	try {
 		assertWithinCap();
 		return true;
 	} catch (err) {
 		if (!(err instanceof MonthlyCapReachedError)) throw err;
-		console.info(`[policy] ${what} skipped - monthly cap reached ($${err.envelope.spentUsd.toFixed(2)} of $${err.envelope.capUsd})`);
+		const key = `${requireTenant().id}:${monthKey(new Date())}:${what}`;
+		if (!capSkipLogged.has(key)) {
+			capSkipLogged.add(key);
+			console.info(`[policy] ${what} skipped - monthly cap reached ($${err.envelope.spentUsd.toFixed(2)} of $${err.envelope.capUsd})`);
+		}
 		return false;
 	}
 }
@@ -138,6 +147,28 @@ export function overlaySettings(record: UserSettings | null, policy: UserPolicy 
  *  over its model slots. Every resolution path reads through this. */
 export function readSettingsView(): UserSettings | null {
 	return overlaySettings(stores.settingsStore.readSettings(), restrictedPolicy());
+}
+
+/** The first-run gate's truth (the setup CTA and dialog): every slot set.
+ *  A restricted user needs only the slots their policy defines, since they
+ *  cannot pick any other model; a slot the admin left unset refuses
+ *  honestly where it is needed, never through the setup flow. */
+export function modelsConfigured(): boolean {
+	const policy = restrictedPolicy();
+	const view = overlaySettings(stores.settingsStore.readSettings(), policy);
+	if (!policy) return slotsConfigured(view?.models);
+	return MODEL_SLOTS.every((name) => !policy.slots[name] || Boolean(view?.models?.[name]?.model));
+}
+
+/** A restricted user's refusal for a tier that resolves to no model at all
+ *  (their policy leaves that slot unset): the 403 model refusal, since the
+ *  setup flow cannot fix it. `model` names the user's own stored pick for
+ *  the tier when there is one (the overlay hid it as disallowed), else "".
+ *  Null for admins and in single-user mode (the 503 setup path stays). */
+export function unconfiguredTierRefusal(tier: ModelSlotName): ModelNotAllowed | null {
+	if (!restrictedPolicy()) return null;
+	const mine = stores.settingsStore.readSettings()?.models?.[tier]?.model;
+	return modelNotAllowed(mine ? modelKey(mine) : "");
 }
 
 /** The write-side check: the first model a restricted user may not pick, as

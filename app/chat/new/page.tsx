@@ -1,6 +1,5 @@
 import { NewSession } from "@/components/new-session";
-import { readSettingsRecord, withPageTenant } from "@/src/server";
-import { slotsConfigured } from "@/src/core";
+import { modelsConfigured, withPageTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +22,7 @@ export default async function NewSessionPage({
 	const { mode } = await searchParams;
 	return withPageTenant(() => (
 		<NewSession
-			initialConfigured={slotsConfigured(readSettingsRecord()?.models)}
+			initialConfigured={modelsConfigured()}
 			mode={mode === "practice" ? "practice" : "teach"}
 		/>
 	));

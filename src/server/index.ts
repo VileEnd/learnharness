@@ -24,7 +24,7 @@ export {
 	writeSettings as writeSettingsRecord,
 	settingsStore,
 } from "../store/settings.ts";
-export { readSettingsView as readSettingsRecord, assertWithinCap, spentThisMonth } from "./model-gate.ts";
+export { readSettingsView as readSettingsRecord, assertWithinCap, modelsConfigured, spentThisMonth } from "./model-gate.ts";
 export { promptOverrides } from "../store/prompt-overrides.ts";
 export { isValidSegmentPath } from "../core/prompt-segments.ts";
 // The canonical segment discovery/resolution lives in the agent layer
