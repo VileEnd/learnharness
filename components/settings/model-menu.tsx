@@ -21,12 +21,29 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ModelCatalogEntry } from "@/src/core";
-import { fuzzyScore } from "@/src/core";
+import { fuzzyScore, recommendedFor } from "@/src/core";
+import type { RecommendedModel } from "@/src/core";
 import { formatTokens } from "@/components/usage-format";
 
 function priceLabel(cost: ModelCatalogEntry["cost"]): string {
 	const fmt = (n: number) => `$${n < 1 ? n.toFixed(2).replace(/0$/, "") : n.toFixed(2)}`;
 	return `${fmt(cost.input)}/${fmt(cost.output)}`;
+}
+
+/** The menu's rows: the Recommended group (empty query only) and the
+ *  ranked full list. Pure — exported for tests. */
+export function modelMenuRows(
+	models: ModelCatalogEntry[] | undefined,
+	query: string,
+	recommended: boolean | undefined,
+): { group: Array<{ entry: RecommendedModel; model: ModelCatalogEntry }>; list: ModelCatalogEntry[] } {
+	const list = (models ?? [])
+		.map((m) => ({ m, s: fuzzyScore(query, m.provider, m.id, m.name) }))
+		.filter((r) => r.s !== null)
+		.sort((a, b) => b.s! - a.s! || a.m.id.localeCompare(b.m.id))
+		.map((r) => r.m);
+	const group = recommended && query.trim() === "" ? recommendedFor(models ?? []) : [];
+	return { group, list };
 }
 
 /** The model dropdown body — fuzzy search + ranked list. `models ===
@@ -38,7 +55,10 @@ export function ModelMenuList({
 	effectiveProvider,
 	onPick,
 	footer,
+	recommended,
 }: {
+	/** Show the Recommended group above the list (empty query only). */
+	recommended?: boolean;
 	/** The full catalog — undefined while it loads. */
 	models: ModelCatalogEntry[] | undefined;
 	/** Currently effective id (the row gets the quiet highlight). */
@@ -68,12 +88,13 @@ export function ModelMenuList({
 		listRef.current?.querySelector(`[data-idx="${menuIdx}"]`)?.scrollIntoView({ block: "nearest" });
 	}, [menuIdx]);
 
-	// The filtered, ranked model list.
-	const results = (models ?? [])
-		.map((m) => ({ m, s: fuzzyScore(query, m.provider, m.id, m.name) }))
-		.filter((r) => r.s !== null)
-		.sort((a, b) => b.s! - a.s! || a.m.id.localeCompare(b.m.id))
-		.map((r) => r.m);
+	// One linear walkable array: group rows first, then list rows.
+	const { group, list } = modelMenuRows(models, query, recommended);
+	const results = [...group.map((g) => g.model), ...list];
+	const rowClass = (m: ModelCatalogEntry, i: number) =>
+		`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
+			i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
+		}${m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider) && i !== menuIdx ? " bg-muted/60" : ""}`;
 
 	return (
 		<>
@@ -112,16 +133,48 @@ export function ModelMenuList({
 				<div className="px-2 py-3 text-center text-muted-foreground">No models match.</div>
 			)}
 			<ul ref={listRef} data-testid="model-list" className="flex max-h-72 flex-col overflow-y-auto px-1">
-				{results.map((m, i) => (
+				{group.length > 0 && (
+					<>
+						<li data-testid="model-group-recommended" className="px-2 pb-0.5 pt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+							Recommended
+						</li>
+						{group.map(({ entry, model: m }, i) => (
+							<li key={`rec-${entry.key}`}>
+								<button
+									type="button"
+									data-testid={`model-option-rec-${entry.key}`}
+									data-idx={i}
+									onClick={() => onPick(m)}
+									className={rowClass(m, i)}
+								>
+									<span className="flex items-center justify-between gap-2">
+										<span className="flex min-w-0 items-center gap-1.5">
+											<span className="truncate text-card-foreground">{m.name}</span>
+											<span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+												{entry.badge}
+											</span>
+										</span>
+										<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
+											{priceLabel(m.cost)}
+										</span>
+									</span>
+									<span className="truncate text-muted-foreground">{entry.line}</span>
+								</button>
+							</li>
+						))}
+						<li aria-hidden className="mx-2 my-1 border-t" />
+					</>
+				)}
+				{list.map((m, j) => {
+					const i = group.length + j;
+					return (
 					<li key={`${m.provider}/${m.id}`}>
 						<button
 							type="button"
 							data-testid={`model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
 							data-idx={i}
 							onClick={() => onPick(m)}
-							className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-								i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-							}${m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider) && i !== menuIdx ? " bg-muted/60" : ""}`}
+							className={rowClass(m, i)}
 						>
 							<span className="flex items-center justify-between gap-2">
 								<span className="truncate text-card-foreground">{m.name}</span>
@@ -135,7 +188,8 @@ export function ModelMenuList({
 							</span>
 						</button>
 					</li>
-				))}
+				);
+				})}
 			</ul>
 			{footer && (
 				<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">{footer}</div>

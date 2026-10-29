@@ -385,6 +385,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					<ModelMenuList
+						recommended
 						models={catalog?.models}
 						effectiveId={effectiveId}
 						effectiveProvider={effectiveProvider}
