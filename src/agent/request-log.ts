@@ -26,11 +26,13 @@ export function setRequestSink(next: RequestSink | null): void {
 }
 
 /** Hand one line to the sink. Never throws: a throwing sink costs one
- *  console.error per process, then fails silently. */
+ *  console.error per process, then fails silently. A wall clock that steps
+ *  back (an NTP correction) would make a negative duration: every seam's
+ *  duration is clamped at 0 here, as doc-index clamps its own. */
 export function recordRequest(line: RequestLogLine): void {
 	if (!sink) return;
 	try {
-		sink(line);
+		sink(line.durationMs !== undefined && line.durationMs < 0 ? { ...line, durationMs: 0 } : line);
 	} catch (err) {
 		if (sinkFailed) return;
 		sinkFailed = true;

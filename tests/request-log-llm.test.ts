@@ -1,6 +1,6 @@
 /** The request log's LLM side: every streamFn call through piEngineForSpec writes one line (cost counter, Task 2). */
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, mock } from "node:test";
 import { fauxAssistantMessage, fauxProvider, normalizeContext } from "@earendil-works/pi-ai";
 import type { RequestLogLine } from "../src/core/contracts/usage.ts";
 import { piEngineForSpec, piModels } from "../src/agent/models.ts";
@@ -38,6 +38,24 @@ describe("observed engines write one request-log line per call", () => {
 		assert.equal(line!.input, message.usage.input);
 		assert.equal(line!.output, message.usage.output);
 		assert.ok(line!.durationMs! >= 0);
+	});
+
+	it("a clock that steps back never gives a negative duration", async () => {
+		collect();
+		faux.setResponses([fauxAssistantMessage("hello")]);
+		const engine = teacher();
+		// The clock steps back 624 ms between the request and its end.
+		const start = Date.now();
+		let stepped = false;
+		mock.method(Date, "now", () => (stepped ? start - 624 : start));
+		try {
+			const stream = engine.streamFn(engine.model, context);
+			stepped = true;
+			await stream.result();
+		} finally {
+			mock.restoreAll();
+		}
+		assert.equal(lines[0]!.durationMs, 0);
 	});
 
 	it("error: the line carries the error text", async () => {
