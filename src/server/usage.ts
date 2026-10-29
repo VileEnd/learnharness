@@ -12,14 +12,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { CallUsage, ChatRecord, ExtractionRunUsage, JobKind } from "../core/contracts.ts";
-import type { RequestLogLine, UsageMonth } from "../core/contracts/usage.ts";
+import type { RequestLogLine, UsageFailuresPage, UsageMonthTotal, UsageMonthView } from "../core/contracts/usage.ts";
 import { categoryOf, monthKey, summarizeMonth } from "../core/usage.ts";
 import { callCost } from "./pricing.ts";
 import { stores } from "./stores.ts";
-
-export interface UsageMonthView extends UsageMonth {
-	sessions: Array<UsageMonth["sessions"][number] & { title: string; kind: "teach" | "practice" | "deleted" }>;
-}
 
 /** One month folded and priced (default: the current Berlin month). Each
  *  session carries its chat's title and kind; a chat that no longer exists
@@ -38,7 +34,7 @@ export function usageMonth(month: string = monthKey(new Date())): UsageMonthView
 }
 
 /** The last 12 months that have a log file, oldest first. */
-export function usageMonths(): Array<{ month: string; totalUsd: number | null; unpricedCalls: number }> {
+export function usageMonths(): UsageMonthTotal[] {
 	return stores.requestLog
 		.months()
 		.slice(-12)
@@ -51,7 +47,7 @@ export function usageMonths(): Array<{ month: string; totalUsd: number | null; u
 const FAILURE_PAGE = 50;
 
 /** One page of the month's failed requests (outcome "error"), newest first. */
-export function usageFailures(month: string, page: number): { lines: RequestLogLine[]; total: number; pageSize: 50 } {
+export function usageFailures(month: string, page: number): UsageFailuresPage {
 	const failed = stores.requestLog
 		.readMonth(month)
 		.filter((l) => l.outcome === "error")
