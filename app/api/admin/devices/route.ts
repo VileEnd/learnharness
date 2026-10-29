@@ -4,10 +4,12 @@
  *   POST {userId, name} → 201 {device, config, qrSvg} (the config holds the client private key, shown once, never stored)
  * Admin only; 503 wireguard_not_ready until the host has written server.json.
  */
+import { PeersFileCorrupt } from "@/src/core";
 import { TENANT_ID_RE, WireGuardFull, WireGuardNotReady, createDevice, listDevices, requireAdmin, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
+const corrupt = () => Response.json({ error: "wireguard_peers_corrupt" }, { status: 500 });
 const NAME_RE = /^[A-Za-z0-9 ._-]{1,40}$/;
 
 export const GET = withTenant(async (req: Request) => {
@@ -15,7 +17,12 @@ export const GET = withTenant(async (req: Request) => {
 	if (denied) return denied;
 	const userId = new URL(req.url).searchParams.get("userId") ?? undefined;
 	if (userId !== undefined && !TENANT_ID_RE.test(userId)) return Response.json({ error: "invalid_user" }, { status: 400 });
-	return Response.json({ devices: listDevices(userId) });
+	try {
+		return Response.json({ devices: listDevices(userId) });
+	} catch (e) {
+		if (e instanceof PeersFileCorrupt) return corrupt();
+		throw e;
+	}
 });
 
 export const POST = withTenant(async (req: Request) => {
@@ -28,6 +35,7 @@ export const POST = withTenant(async (req: Request) => {
 		return Response.json(await createDevice(body.userId, body.name), { status: 201 });
 	} catch (e) {
 		if (e instanceof WireGuardNotReady) return Response.json({ error: "wireguard_not_ready" }, { status: 503 });
+		if (e instanceof PeersFileCorrupt) return corrupt();
 		if (e instanceof WireGuardFull) return Response.json({ error: "wireguard_full" }, { status: 409 });
 		throw e;
 	}

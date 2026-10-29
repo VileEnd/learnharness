@@ -37,6 +37,7 @@ const peer = (n: number, extra: Partial<import("../src/core/contracts/wireguard.
 
 test("keypair: public key re-derives from the private key", () => {
 	const { privateKey, publicKey } = wg.generateKeyPair();
+	for (const k of [privateKey, publicKey]) assert.ok(k.length === 44 && k.endsWith("="));
 	assert.equal(Buffer.from(privateKey, "base64").length, 32);
 	assert.equal(Buffer.from(publicKey, "base64").length, 32);
 	const b64u = (b: string) => Buffer.from(b, "base64").toString("base64url");
@@ -126,4 +127,38 @@ test("revoke keeps the entry; list joins handshake and flags stale; psk stripped
 	const after = wg.listDevices(USER);
 	assert.deepEqual(after.map((d) => d.stale), [false, true]);
 	assert.equal(wg.listDevices("other").length, 0);
+});
+
+test("control characters in server.json mean not ready", async () => {
+	const file = path.join(wgDir, "server.json");
+	const good = fs.readFileSync(file, "utf8");
+	try {
+		fs.writeFileSync(file, JSON.stringify({ ...SERVER, endpoint: "vpn.example.com:51820\nPostUp = x" }));
+		const res = await post(true, { userId: USER, name: "evil" });
+		assert.equal(res.status, 503);
+		assert.deepEqual(await res.json(), { error: "wireguard_not_ready" });
+	} finally {
+		fs.writeFileSync(file, good);
+	}
+});
+
+test("corrupt peers.json: create and revoke refuse (500) and leave the file untouched", async () => {
+	const file = path.join(wgDir, "peers.json");
+	const good = fs.readFileSync(file, "utf8");
+	const valid = (JSON.parse(good) as { peers: unknown[] }).peers[0];
+	try {
+		for (const bad of ["{ not json", JSON.stringify({ version: 1, peers: [valid, { id: "x" }] })]) {
+			fs.writeFileSync(file, bad);
+			let res = await post(true, { userId: USER, name: "again" });
+			assert.equal(res.status, 500);
+			assert.deepEqual(await res.json(), { error: "wireguard_peers_corrupt" });
+			res = await device.DELETE(req(true, { method: "DELETE" }), { params: Promise.resolve({ id: "x" }) });
+			assert.equal(res.status, 500);
+			res = await devices.GET(req(true));
+			assert.equal(res.status, 500);
+			assert.equal(fs.readFileSync(file, "utf8"), bad);
+		}
+	} finally {
+		fs.writeFileSync(file, good);
+	}
 });

@@ -68,3 +68,10 @@ export function clientConfig(p: {
 		"",
 	].join("\n");
 }
+
+/** peers.json exists but is unparseable or holds an invalid entry: writers must refuse rather than drop peers. */
+export class PeersFileCorrupt extends Error {
+	constructor() {
+		super("wireguard_peers_corrupt");
+	}
+}

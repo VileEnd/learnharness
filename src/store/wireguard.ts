@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { globalDataRoot } from "../../config.ts";
 import type { WireGuardStore } from "../core/ports.ts";
-import type { WgPeer, WgServerInfo, WgStatus } from "../core/contracts/wireguard.ts";
+import { PeersFileCorrupt, type WgPeer, type WgServerInfo, type WgStatus } from "../core/contracts/wireguard.ts";
 
 const dir = () => path.join(globalDataRoot(), "wireguard");
 
@@ -22,6 +22,8 @@ function readJson(file: string): unknown {
 }
 
 const str = (v: unknown): v is string => typeof v === "string";
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const clean = (v: unknown): v is string => str(v) && !CONTROL.test(v);
 
 function isPeer(v: unknown): v is WgPeer {
 	const p = v as WgPeer | null;
@@ -31,13 +33,17 @@ function isPeer(v: unknown): v is WgPeer {
 export const wireGuardStore: WireGuardStore = {
 	readServer() {
 		const s = readJson(path.join(dir(), "server.json")) as Partial<WgServerInfo> | null;
-		return s && str(s.publicKey) && str(s.endpoint) && str(s.allowedIps)
+		return s && clean(s.publicKey) && clean(s.endpoint) && clean(s.allowedIps)
 			? { publicKey: s.publicKey, endpoint: s.endpoint, allowedIps: s.allowedIps }
 			: null;
 	},
 	readPeers() {
-		const raw = readJson(path.join(dir(), "peers.json")) as { peers?: unknown } | null;
-		return Array.isArray(raw?.peers) ? raw.peers.filter(isPeer) : [];
+		const file = path.join(dir(), "peers.json");
+		if (!fs.existsSync(file)) return [];
+		// Present but unreadable/invalid: throw, so no writer can overwrite (and lose) peers or reuse their IPs.
+		const raw = readJson(file) as { peers?: unknown } | null;
+		if (!raw || !Array.isArray(raw.peers) || !raw.peers.every(isPeer)) throw new PeersFileCorrupt();
+		return raw.peers;
 	},
 	writePeers(peers) {
 		const file = path.join(dir(), "peers.json");

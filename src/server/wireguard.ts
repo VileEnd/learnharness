@@ -36,6 +36,7 @@ function view(p: WgPeer, allowedIps: string | undefined, handshakes: Record<stri
 	return {
 		...rest,
 		latestHandshake: handshakes[p.publicKey]?.latestHandshake ?? null,
+		// A peer without allowedIps predates the field and counts as stale by design.
 		stale: !p.revokedAt && allowedIps !== undefined && p.allowedIps !== allowedIps,
 	};
 }
