@@ -7,7 +7,26 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { ModelCatalogEntry, PolicyModel, UserPolicy } from "@/src/core";
+import { modelKey, recommendedFor } from "@/src/core";
+import { costLabel, formatUsd } from "@/components/usage-format";
 import { SettingsGroup } from "./controls.tsx";
+
+export interface AdminPolicyData {
+	defaults: UserPolicy;
+	users: Record<string, UserPolicy>;
+}
+
+export interface AdminUsageRow {
+	userId: string;
+	spentUsd: number | null;
+	unpricedCalls: number | null;
+	capUsd: number | null;
+	restricted: boolean;
+	error?: "usage_unreadable";
+}
+
+export type PolicySave = UserPolicy | { useDefaults: true };
 
 export interface AdminUser {
 	id: string;
@@ -57,6 +76,15 @@ export interface UsersSectionViewProps {
 	onRevoke: (deviceId: string) => void;
 	onDismissPassword: () => void;
 	onDismissDevice: () => void;
+	/** Defaults + per-user policies (null while loading or unavailable). */
+	policy: AdminPolicyData | null;
+	usage: AdminUsageRow[] | null;
+	/** The model catalog the pickers draw from. */
+	catalog: ModelCatalogEntry[] | undefined;
+	/** Detail of the last rejected policy save (or null). */
+	saveError: string | null;
+	onSaveDefaults: (policy: UserPolicy) => void;
+	onSaveUserPolicy: (userId: string, policy: PolicySave) => void;
 }
 
 const MESSAGES: Record<string, string> = {
@@ -134,6 +162,162 @@ function DownloadConf({ device }: { device: NewDevice }) {
 			Download .conf
 		</a>
 	);
+}
+
+const SLOTS = ["strong", "cheap", "vision"] as const;
+
+/** "provider:id" → coordinates (provider never contains a colon). */
+function parseKey(key: string): PolicyModel {
+	const i = key.indexOf(":");
+	return { provider: key.slice(0, i), id: key.slice(i + 1) };
+}
+
+/** The shared editor: three slot pickers, "Also allowed", monthly limit. */
+function PolicyFields({
+	value,
+	catalog,
+	busy,
+	idPrefix,
+	onSave,
+	saveLabel,
+}: {
+	value: UserPolicy;
+	catalog: ModelCatalogEntry[] | undefined;
+	busy: boolean;
+	idPrefix: string;
+	onSave: (policy: UserPolicy) => void;
+	saveLabel: string;
+}) {
+	const [slots, setSlots] = useState(value.slots);
+	const [allowed, setAllowed] = useState(new Set(value.allowedModels));
+	const [cap, setCap] = useState(value.monthlyCapUsd === null ? "" : String(value.monthlyCapUsd));
+	const [search, setSearch] = useState("");
+	const models = catalog ?? [];
+	const cheapest = new Set(
+		recommendedFor(models)
+			.filter((r) => r.entry.badge === "Cheapest")
+			.map((r) => modelKey(r.model)),
+	);
+	const capNum = cap.trim() === "" ? null : Number(cap);
+	const capValid = capNum === null || (Number.isFinite(capNum) && capNum >= 0);
+	const q = search.trim().toLowerCase();
+	const shown = models.filter((m) => q === "" || `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q));
+	const optionLabel = (m: ModelCatalogEntry) => `${m.name} (${m.provider})${cheapest.has(modelKey(m)) ? " — Recommended" : ""}`;
+	return (
+		<div className="flex flex-col gap-2 text-xs">
+			{SLOTS.map((slot) => {
+				const cur = slots[slot];
+				const curKey = cur ? modelKey(cur) : "";
+				const known = models.some((m) => modelKey(m) === curKey);
+				return (
+					<label key={slot} className="flex items-center gap-2">
+						<span className="w-14 text-muted-foreground">{slot}</span>
+						<select
+							data-testid={`${idPrefix}-slot-${slot}`}
+							className={`${inputCls} flex-1`}
+							value={curKey}
+							onChange={(e) => {
+								const next = { ...slots };
+								if (e.target.value === "") delete next[slot];
+								else next[slot] = parseKey(e.target.value);
+								setSlots(next);
+							}}
+						>
+							<option value="">— none —</option>
+							{cur && !known && <option value={curKey}>{curKey}</option>}
+							{models.map((m) => (
+								<option key={modelKey(m)} value={modelKey(m)}>
+									{optionLabel(m)}
+								</option>
+							))}
+						</select>
+					</label>
+				);
+			})}
+			<div className="flex flex-col gap-1">
+				<span className="text-muted-foreground">Also allowed</span>
+				<input className={inputCls} placeholder="search models" aria-label="search models" value={search} onChange={(e) => setSearch(e.target.value)} />
+				<div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto rounded-sm border border-border/60 p-1">
+					{shown.map((m) => (
+						<label key={modelKey(m)} className="flex items-center gap-1">
+							<input
+								type="checkbox"
+								checked={allowed.has(modelKey(m))}
+								onChange={(e) => {
+									const next = new Set(allowed);
+									if (e.target.checked) next.add(modelKey(m));
+									else next.delete(modelKey(m));
+									setAllowed(next);
+								}}
+							/>
+							{optionLabel(m)}
+						</label>
+					))}
+				</div>
+			</div>
+			<label className="flex items-center gap-2">
+				<span className="text-muted-foreground">Monthly limit ($)</span>
+				<input
+					className={`${inputCls} w-24`}
+					inputMode="decimal"
+					placeholder="no limit"
+					aria-label="Monthly limit"
+					value={cap}
+					onChange={(e) => setCap(e.target.value)}
+				/>
+			</label>
+			<div>
+				<button
+					type="button"
+					className={btnCls}
+					disabled={busy || !capValid}
+					onClick={() => onSave({ slots, allowedModels: [...allowed], monthlyCapUsd: capNum })}
+				>
+					{saveLabel}
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function UserPolicyEditor({
+	userId,
+	policy,
+	catalog,
+	busy,
+	onSave,
+}: {
+	userId: string;
+	policy: AdminPolicyData;
+	catalog: ModelCatalogEntry[] | undefined;
+	busy: boolean;
+	onSave: (policy: PolicySave) => void;
+}) {
+	const own = policy.users[userId];
+	const [useDefaults, setUseDefaults] = useState(own === undefined);
+	return (
+		<div data-testid={`policy-editor-${userId}`} className="flex flex-col gap-2">
+			<span className="text-sm">Models &amp; limit</span>
+			<label className="flex items-center gap-1 text-xs">
+				<input type="checkbox" checked={useDefaults} onChange={(e) => setUseDefaults(e.target.checked)} />
+				Use defaults
+			</label>
+			{useDefaults ? (
+				<div>
+					<button type="button" className={btnCls} disabled={busy} onClick={() => onSave({ useDefaults: true })}>
+						Save
+					</button>
+				</div>
+			) : (
+				<PolicyFields value={own ?? policy.defaults} catalog={catalog} busy={busy} idPrefix={`user-${userId}`} onSave={onSave} saveLabel="Save" />
+			)}
+		</div>
+	);
+}
+
+function spendLine(row: AdminUsageRow): string {
+	const cap = row.capUsd === null ? "no limit" : `of ${formatUsd(row.capUsd)}`;
+	return `${costLabel(row.spentUsd)} this month ${cap}`;
 }
 
 function AddUserForm({ busy, onCreate }: { busy: boolean; onCreate: UsersSectionViewProps["onCreateUser"] }) {
@@ -227,6 +411,16 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 					</div>
 				</Panel>
 			)}
+			{p.saveError && (
+				<p role="alert" data-testid="policy-error" className="rounded-sm border border-red-500/40 px-3 py-2 text-xs text-red-500">
+					Couldn&apos;t save: {p.saveError}
+				</p>
+			)}
+			{p.policy && (
+				<SettingsGroup label="New user defaults">
+					<PolicyFields value={p.policy.defaults} catalog={p.catalog} busy={p.busy} idPrefix="defaults" onSave={p.onSaveDefaults} saveLabel="Save defaults" />
+				</SettingsGroup>
+			)}
 			<SettingsGroup label="Add user">
 				<AddUserForm busy={p.busy} onCreate={p.onCreateUser} />
 			</SettingsGroup>
@@ -238,6 +432,8 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 						const mine = live.filter((d) => d.userId === u.id);
 						const open = p.expandedId === u.id;
 						const self = u.username === p.selfName;
+						const row = p.usage?.find((r) => r.userId === u.id);
+						const reached = row !== undefined && row.spentUsd !== null && row.capUsd !== null && row.spentUsd >= row.capUsd;
 						return (
 							<div key={u.id} data-testid={`user-${u.id}`} className="flex flex-col gap-2 rounded-sm border border-border/60 px-3 py-2">
 								<button type="button" className="flex flex-wrap items-center gap-2 text-left text-sm" aria-expanded={open} onClick={() => p.onToggle(u.id)}>
@@ -246,6 +442,18 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 									{u.isAdmin && (
 										<span data-testid={`user-admin-badge-${u.id}`} className="rounded-sm border border-border px-1.5 text-xs">
 											admin
+										</span>
+									)}
+									{row && (
+										<span data-testid={`user-spend-${u.id}`} className="text-xs text-muted-foreground">
+											{row.restricted ? spendLine(row) : "admin — unrestricted"}
+											{row.restricted && row.unpricedCalls !== null && row.unpricedCalls > 0 && ` (+${row.unpricedCalls} unpriced calls)`}
+											{row.error === "usage_unreadable" && " · Usage unavailable"}
+										</span>
+									)}
+									{reached && (
+										<span data-testid={`user-limit-${u.id}`} className="rounded-sm border border-red-500/50 px-1.5 text-xs text-red-500">
+											limit reached
 										</span>
 									)}
 									<span className="ml-auto text-xs text-muted-foreground">
@@ -266,6 +474,15 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 											</div>
 										))}
 										<AddDeviceForm busy={p.busy} onAdd={(name) => p.onAddDevice(u.id, name)} />
+										{p.policy && row?.restricted && (
+											<UserPolicyEditor
+												userId={u.id}
+												policy={p.policy}
+												catalog={p.catalog}
+												busy={p.busy}
+												onSave={(pol) => p.onSaveUserPolicy(u.id, pol)}
+											/>
+										)}
 										<div>
 											<button
 												type="button"
@@ -308,6 +525,10 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 	const [tempPassword, setTempPassword] = useState<{ username: string; password: string } | null>(null);
 	const [newDevice, setNewDevice] = useState<NewDevice | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [policy, setPolicy] = useState<AdminPolicyData | null>(null);
+	const [usage, setUsage] = useState<AdminUsageRow[] | null>(null);
+	const [catalog, setCatalog] = useState<ModelCatalogEntry[] | undefined>(undefined);
+	const [saveError, setSaveError] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		const u = await call("/api/admin/users");
@@ -320,6 +541,13 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 		const d = await call("/api/admin/devices");
 		if (d.ok) setDevices((d.body.devices as AdminDevice[]) ?? []);
 		else setError((cur) => cur ?? String(d.body.error ?? d.status));
+		const pol = await call("/api/admin/policy");
+		if (pol.ok) setPolicy({ defaults: pol.body.defaults as UserPolicy, users: (pol.body.users as Record<string, UserPolicy>) ?? {} });
+		else setError((cur) => cur ?? String(pol.body.error ?? pol.status));
+		const us = await call("/api/admin/usage");
+		if (us.ok) setUsage((us.body.users as AdminUsageRow[]) ?? []);
+		const cat = await call("/api/models");
+		if (cat.ok) setCatalog((cat.body.models as ModelCatalogEntry[]) ?? []);
 	}, []);
 
 	useEffect(() => {
@@ -341,6 +569,28 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 			await refresh();
 		} catch {
 			setError((cur) => cur ?? "network"); // keep the mutation's own error
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	/** A policy save: a 400 invalid_policy shows its detail, anything else the generic code. */
+	const savePolicy = async (url: string, body: unknown) => {
+		setBusy(true);
+		setSaveError(null);
+		try {
+			const r = await call(url, json("PUT", body));
+			if (!r.ok) {
+				if (r.body.error === "invalid_policy") setSaveError(String(r.body.detail ?? "invalid policy"));
+				else setError(String(r.body.error ?? r.status));
+			}
+		} catch {
+			setError("network");
+		}
+		try {
+			await refresh();
+		} catch {
+			setError((cur) => cur ?? "network");
 		} finally {
 			setBusy(false);
 		}
@@ -377,6 +627,12 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 			onRevoke={(id) => void run(() => call(`/api/admin/devices/${id}`, { method: "DELETE" }))}
 			onDismissPassword={() => setTempPassword(null)}
 			onDismissDevice={() => setNewDevice(null)}
+			policy={policy}
+			usage={usage}
+			catalog={catalog}
+			saveError={saveError}
+			onSaveDefaults={(pol) => void savePolicy("/api/admin/policy/defaults", pol)}
+			onSaveUserPolicy={(id, pol) => void savePolicy(`/api/admin/users/${id}/policy`, pol)}
 		/>
 	);
 }
