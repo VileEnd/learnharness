@@ -43,12 +43,19 @@ export type Stores = typeof stores;
 if (process.env.NODE_ENV !== "test") setRequestSink((line) => stores.requestLog.append(line));
 
 // The one-time usage backfill (cost counter): old records enter the log once
-// per data dir, off the request path, after boot. Not under tests (a suite
-// calls runUsageBackfill itself) and not during `next build`. The globalThis
+// per data dir, off the request path, after boot. Only in the Next server
+// (Next inlines NEXT_RUNTIME into its server bundles; CLI scripts that import
+// src/server never have it), never under tests (a suite calls
+// runUsageBackfill itself) and never during `next build`. The globalThis
 // flag survives dev HMR re-imports; usage.ts imports this module, so it is
 // loaded lazily. A failure is logged and retried on the next start.
 const bootFlags = globalThis as { __lhUsageBackfill?: true };
-if (process.env.NODE_ENV !== "test" && process.env.NEXT_PHASE !== "phase-production-build" && !bootFlags.__lhUsageBackfill) {
+if (
+	process.env.NEXT_RUNTIME === "nodejs" &&
+	process.env.NODE_ENV !== "test" &&
+	process.env.NEXT_PHASE !== "phase-production-build" &&
+	!bootFlags.__lhUsageBackfill
+) {
 	bootFlags.__lhUsageBackfill = true;
 	setTimeout(() => {
 		import("./usage.ts")
