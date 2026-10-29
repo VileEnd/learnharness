@@ -1,6 +1,8 @@
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
+import { recordRequest } from "../request-log.ts";
+import { categoryOf, truncateError } from "../../core/usage.ts";
 // The search-hit shape lives in the core port since the search wave
 // (2026-09-20); this alias keeps callers churn-free.
 import type { SearchHit as WebSearchResult, SearchProvider } from "../../core/search.ts";
@@ -53,20 +55,38 @@ function truncate(text: string): string {
 
 /** Jina Reader fallback for JS-rendered pages (no deps — plain fetch). */
 async function fetchViaJina(url: string): Promise<string | null> {
+	const startedAt = Date.now();
+	const log = (outcome: "ok" | "error", error?: string) =>
+		recordRequest({
+			v: 1,
+			at: new Date(startedAt).toISOString(),
+			purpose: "search",
+			category: categoryOf("search"),
+			provider: "jina",
+			model: "search",
+			durationMs: Date.now() - startedAt,
+			outcome,
+			...(error !== undefined && { error: truncateError(error) }),
+		});
 	try {
 		const res = await fetch(`https://r.jina.ai/${url}`, {
 			headers: { Accept: "text/markdown", "X-No-Cache": "true" },
 			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		});
-		if (!res.ok) return null;
+		if (!res.ok) {
+			log("error", `HTTP ${res.status}`);
+			return null;
+		}
 		const content = await res.text();
+		log("ok");
 		const marker = "Markdown Content:";
 		const start = content.indexOf(marker);
 		if (start < 0) return null;
 		const markdown = content.slice(start + marker.length).trim();
 		if (markdown.length < MIN_USEFUL_CONTENT || markdown.startsWith("Loading...")) return null;
 		return markdown;
-	} catch {
+	} catch (err) {
+		log("error", err instanceof Error ? err.message : String(err));
 		return null;
 	}
 }
