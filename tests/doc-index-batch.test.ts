@@ -421,3 +421,31 @@ describe("concepts through the batch path", () => {
 		assert.deepEqual(or.batches.get("batch_2")!.body.requests.map((r) => r.custom_id), ["cpt_n_bbbbbb2~0"]);
 	});
 });
+
+describe("over the monthly cap", () => {
+	it("keeps collecting a submitted batch but submits nothing new, and search says why it is keyword-only", async () => {
+		const mutex = put("Mutex", MUTEX);
+		const spend = { allowed: true };
+		const { or, clock, make } = setup({
+			spendAllowed: () => spend.allowed,
+			embedder: () => ({ model: MODEL, embed: async () => assert.fail("no query embedding over the cap") }),
+		});
+		const index = make();
+		await index.tick();
+		clock.t += 2 * MINUTE;
+		await index.tick();
+		assert.deepEqual(or.state.submits, ["batch_1"]);
+
+		spend.allowed = false; // the cap is reached while the batch is out
+		put("Sema", SEMA);
+		or.complete("batch_1");
+		clock.t += 3 * MINUTE;
+		await index.tick();
+		assert.equal(documentStore.readVectors(mutex.id)?.model, MODEL, "the paid batch is still collected");
+		assert.deepEqual(or.state.submits, ["batch_1"], "no new submit");
+
+		const r = await index.search({ query: "Semaphoren" });
+		assert.equal(r.mode, "keyword");
+		assert.match(r.note ?? "", /spending limit/);
+	});
+});

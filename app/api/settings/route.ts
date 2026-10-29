@@ -4,7 +4,7 @@
  * settingsFile(), via the SettingsStore port). Non-secret by construction —
  * secrets live in auth.json / .env.local and never enter this record.
  *
- *   GET → 200 {settings} (the sanitized delta record — absent keys mean
+ *   GET → 200 {settings, configured} (the sanitized delta record — absent keys mean
  *         "factory default", never guessed server-side) or 200
  *         {settings: null} on first boot.
  *
@@ -14,10 +14,13 @@
  * (core/settings-resolution.ts resolveSettings — browser-safe).
  */
 
-import { settingsStore, withTenant } from "@/src/server";
+import { modelsConfigured, readSettingsRecord, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withTenant(async () => {
-	return Response.json({ settings: settingsStore.readSettings() });
+	// The read view: a restricted user's policy overlays the model slots.
+	// `configured` (additive): the first-run gate's truth, which for a
+	// restricted user asks only for the slots their policy defines.
+	return Response.json({ settings: readSettingsRecord(), configured: modelsConfigured() });
 });

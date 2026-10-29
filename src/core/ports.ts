@@ -33,6 +33,7 @@ import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/do
 import type { OkfFile } from "./contracts/okf.ts";
 import type { AttributionRow } from "./contracts/learner.ts";
 import type { UserSettings } from "./settings.ts";
+import type { AdminPolicy } from "./contracts/admin.ts";
 import type { WgPeer, WgServerInfo, WgStatus } from "./contracts/wireguard.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
@@ -289,6 +290,14 @@ export interface WireGuardStore {
 	readStatus(): WgStatus | null;
 }
 
+// ─── AdminPolicyStore — per-user model/cap policy (<global>/admin.json) ─────
+
+/** Absent file (ENOENT) reads as null (the caller applies built-in defaults). A present but invalid file throws `AdminPolicyCorrupt`, so no writer can overwrite it. Writes are atomic, mode 0600. */
+export interface AdminPolicyStore {
+	readPolicy(): AdminPolicy | null;
+	writePolicy(p: AdminPolicy): void;
+}
+
 // ─── DocumentStore — the document library (data/documents) ──────────────────
 
 /**
@@ -413,6 +422,9 @@ export interface LearnerStore {
 export interface RequestLogStore {
 	append(line: RequestLogLine): void;
 	readMonth(month: string): RequestLogLine[];
+	/** A cheap change stamp of one month's file (size and mtime), or null
+	 *  when it does not exist: the cap check's cache key. */
+	monthStamp(month: string): string | null;
 	months(): string[];
 	backfillDone(): boolean;
 	markBackfilled(): void;

@@ -68,6 +68,7 @@ import { graphToolsEnabled } from "../core/settings-resolution.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 import { requireTenant, registryKey } from "../core/tenant-context.ts";
 import { tenantSingleton } from "./tenant-singleton.ts";
+import { capAllows } from "./model-gate.ts";
 
 // ─── the embedding seam ──────────────────────────────────────────────────────
 
@@ -362,6 +363,11 @@ export interface DocIndexDeps {
 	conceptsEnabled?(): boolean;
 	/** A cheap change stamp of nodes.jsonl (default: its mtime and size). */
 	graphStamp?(): string;
+	/** False while new embedding spend is refused (a restricted user over the
+	 *  monthly cap, multi-user design §10): no new embeddings or batch
+	 *  submits; already-submitted batches are still collected (reading them
+	 *  is free). Read per call; default true. */
+	spendAllowed?(): boolean;
 }
 
 /** The synthetic index id of a concept: `cpt_<nodeId>`; also its batch id (`cpt_<nodeId>~0`). */
@@ -412,6 +418,7 @@ export const SEARCH_LIMIT = { default: 8, max: 20 } as const;
 const CANDIDATES = 50;
 
 export function createDocIndex(deps: DocIndexDeps) {
+	const spendAllowed = () => deps.spendAllowed?.() ?? true;
 	const { store } = deps;
 	const now = deps.now ?? Date.now;
 	const docs = new Map<string, IndexedDoc>();
@@ -585,7 +592,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 			return;
 		}
 		const embedder = deps.embedder();
-		if (!embedder || now() < backoffUntil) return;
+		if (!embedder || now() < backoffUntil || !spendAllowed()) return;
 		refreshConcepts();
 		if (![...docs.values()].some((d) => needsVectors(d, embedder.model)) && conceptsNeeding(embedder.model).length === 0) return;
 		running = backfill()
@@ -607,7 +614,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		try {
 			for (;;) {
 				const embedder = deps.embedder(); // re-read: the model or key may have changed mid-run
-				if (!embedder) return;
+				if (!embedder || !spendAllowed()) return;
 				const todo = [...docs.values()].filter((d) => needsVectors(d, embedder.model));
 				const doc = todo[0];
 				if (!doc) {
@@ -772,7 +779,9 @@ export function createDocIndex(deps: DocIndexDeps) {
 					lastPolled.set(p.batchId, now());
 					await pollOne(batcher, p);
 				}
-				if (deps.batchMode?.() ?? true) await submitDue(batcher);
+				// Polling above collects what is already paid for; only a NEW
+				// submit is spend, so only it waits on the cap.
+				if ((deps.batchMode?.() ?? true) && spendAllowed()) await submitDue(batcher);
 			}
 			syncRow();
 			planNext(batcher);
@@ -1070,6 +1079,8 @@ export function createDocIndex(deps: DocIndexDeps) {
 		const embeddedConcepts = embedder && conceptModel === embedder.model ? conceptCandidates.filter((c) => c.vector) : [];
 		if (!embedder) {
 			note = "Keyword search only: no OpenRouter key is set, so documents are not embedded.";
+		} else if (!spendAllowed()) {
+			note = "Keyword search only: this month's spending limit is reached, so the query is not embedded.";
 		} else if (embedded.length === 0 && embeddedConcepts.length === 0) {
 			note = "Keyword search only: the documents are not embedded yet (indexing runs in the background).";
 		} else {
@@ -1179,4 +1190,6 @@ export const docIndex: DocIndex = tenantSingleton("__lhDocIndexByTenant", () => 
 	embedder: liveEmbedder,
 	batcher: liveBatcher,
 	batchMode: () => effectiveSettings().documents.embeddingBatch,
+	// Over the monthly cap (multi-user design §10): no new embedding spend.
+	spendAllowed: () => capAllows("embedding"),
 }));

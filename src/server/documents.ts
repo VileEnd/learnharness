@@ -40,7 +40,7 @@ import {
 	parseFrontMatter,
 	sha256Hex,
 } from "../core/documents.ts";
-import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
+import { isPolicyRefusal, ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 import type { NotesImportInput } from "../agent/subagents/extraction.ts";
 import { NotesImportError } from "../agent/subagents/extraction.ts";
 import type { DocumentDescription } from "../agent/subagents/describe.ts";
@@ -357,6 +357,10 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		}
 		if (err instanceof ProviderKeyMissingError) {
 			return { ok: false, outcome: "failed", error: err.envelope.error, code: "provider_key_missing", provider: err.envelope.provider, slots: err.envelope.slots };
+		}
+		// Per-user policy (multi-user design §10): the refusal's own copy and code.
+		if (isPolicyRefusal(err)) {
+			return { ok: false, outcome: "failed", error: err.envelope.error, code: err.envelope.code };
 		}
 		if (err instanceof NotesImportError) {
 			return { ok: false, outcome: err.outcome, stats: err.partialStats, error: err.message };

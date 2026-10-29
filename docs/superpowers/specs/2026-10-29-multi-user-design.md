@@ -176,6 +176,29 @@ My calls (vetoable):
 - **Endpoint.** `vpn.moyjak.com:51820` is an A record kept current by a 5-minute DDNS timer on the VM, using `CLOUDFLARE_API_TOKEN` from `secrets.env`. The record is created by the script, not by OpenTofu. Verified 2026-10-29: the FRITZ!Box WAN has a public IPv4 (no DS-Lite).
 - **Client config:** `AllowedIPs = <VM LAN IP>/32`, no `DNS` line, `PersistentKeepalive = 25`. The existing public names resolve to the LAN IP, so the browser goes through the tunnel and OIDC is unchanged.
 
+### 10. Addendum (2026-10-29): per-user models and monthly caps, as built
+User decisions:
+- **New users start with admin-set defaults.** There is a "New user defaults" box (slots, allowed models, monthly cap). The pre-fill is "the best of the cheap models": the strong and cheap slots get the first available `Cheapest` entry of `src/core/recommended-models.ts` (MiMo v2.6 Flash, TutorBench #1). The allowed extras are the available `Cheapest` entries.
+- **Spending:** over the cap, the user is blocked with a clear message.
+
+My calls (vetoable):
+- **Initial default cap:** $5/month. It is editable in the box.
+- **Vision slot default:** the first `Cheapest` recommended model with image input. If none has image input, it is unset and visual jobs refuse honestly.
+- **Admins** (Keycloak `learnharness-admin`) are unrestricted. Single-user mode has no policy.
+- **Policy file:** `<globalDataRoot()>/admin.json`, shaped `{version:1, newUserDefaults: UserPolicy, users: {[userId]: UserPolicy}}` with `UserPolicy = {slots:{strong?,cheap?,vision?: {provider,id}}, allowedModels: string[] ("provider:id"), monthlyCapUsd: number|null}`. A user without an entry gets `newUserDefaults`. An absent file means the built-in pre-fill above.
+- **One enforcement point.** Every LLM call goes through `piEngineForSpec` (src/agent/models.ts). A gate is injected there from the server, the same way the request-log sink is (`setRequestSink`). The gate does two things:
+  1. **Cap check.** It folds this month's spend from the user's request log (`usageMonth().totalUsd`, cached by the month file's size and mtime). When `spend >= cap`, it throws `MonthlyCapReachedError`.
+  2. **Model check.** It confirms the model is in `allowedModels ∪ slot models`. Otherwise it substitutes the policy slot for that role's tier (`ROLE_SLOT`; conversation = strong). If that slot is unset, it throws `ModelNotAllowedError`.
+- **Before a turn is persisted,** `handleChatRequest` checks the cap up front and answers `403 {code:"monthly_cap_reached", capUsd, spentUsd}`. Background work catches both errors as contained failures, like `ModelsNotConfiguredError`.
+- **Restricted users' settings:**
+  - Reads overlay the policy. A missing or disallowed slot shows the policy slot, so the first-run "pick models" gate never fires for them.
+  - Writes (`PUT` models, per-chat model) of disallowed models answer `403 {code:"model_not_allowed"}`.
+  - `/api/models` lists only their allowed models.
+- **Admin view:**
+  - per-user spend this month (folded under `runAsTenant(userId)`), the cap, and editors for slots, allowed models and cap;
+  - "use defaults" resets a user to `newUserDefaults`;
+  - changes apply on the next call, with no re-login needed.
+
 ## Delivery (PRs, each through the normal release flow: bump in PR, merge, tag, deploy)
 1. **Tenant context + per-user paths.** `tenant.ts`, ALS, `config.ts` getters, store and module-constant conversion, per-user `docIndex`/`library`, background sweeps, event/activity/push filtering, migration script and boot guard, Caddy and oauth2-proxy header changes, and docs: `docs/architecture.md` (new "Tenancy" section, fix the stale PracticeStore line) and `docs/self-hosting.md` §"one shared data set".
 2. **Admin policy + models.** `AdminStore`, `admin.json`, admin-only keys, the allowed-list resolution, and the `/admin` page (users and models).

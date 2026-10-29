@@ -33,6 +33,8 @@ Hold the architecture along two orthogonal axes:
 | **Notifier** — Web Push | `data/push/*` (subscriptions, VAPID keys) | `src/server/push.ts`: device registration (`/api/push`) and fire-and-forget `notify()` from the turn-settle, job-finalize and extraction-finish seams |
 | **Machine room** — host | process + config | Docker image (standalone Next server), the deploy/ stack (Caddy · oauth2-proxy · Keycloak), `config.ts`, data-dir seam, BYOK keys |
 
+**Policy seams (multi-user, design §10).** `setModelGate` (`src/agent/models.ts`), installed by `src/server/stores.ts` with `modelGate` from `src/server/model-gate.ts`, is the one gate every engine passes (per-user model allowlist and monthly cap; the agent layer never imports policy). Per-user policy lives in `<globalDataRoot()>/admin.json`, behind the `AdminPolicyStore` port (`src/store/admin-policy.ts`); a corrupt file fails closed for enforcement and refuses every write.
+
 **The unifying law** (generates everything else): **imports point inward, writes point to append-only evidence, and everything else is derived.** Dependency flows toward purity; data flows toward evidence; no state is stored where it can be recomputed.
 
 ---
@@ -87,7 +89,7 @@ flowchart TB
     subgraph SERVER["SERVER — src/server — composition + seams"]
         SBAR["barrel index.ts — THE server surface"]
         ROOTS["composition roots: stores.ts (storage) · chat-handler.ts (turn)"]
-        SEAMS["service seams: turn-service · jobs (wake) · turn-liveness · commit-positions · observability · model-catalog · settings-body"]
+        SEAMS["service seams: turn-service · jobs (wake) · turn-liveness · commit-positions · observability · model-catalog · settings-body · model-gate (policy)"]
         PIB["pi/ — engine bridge: record-adapter (record → pi messages) · ui-stream (pi events → SSE)"]
     end
 

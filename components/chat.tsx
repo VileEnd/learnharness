@@ -34,6 +34,7 @@ import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
 	isProviderKeyRefusal,
+	policyRefusalCopy,
 	firstSourceTextParts,
 	messageAnchorId,
 	textPartMessageId,
@@ -167,6 +168,31 @@ export function parseProviderKeyRefusal(message: string | undefined): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/** The per-user policy refusals (multi-user design §10): the 403 body rides
+ *  the transport's error text verbatim, as the BYOK envelopes do. Returns
+ *  the copy to show (built by the envelope's home module, so it cannot
+ *  drift), else null. These never open the setup flow: picking models
+ *  cannot lift an admin's cap or allow a model. Exported pure for tests. */
+export function parsePolicyRefusal(message: string | undefined): string | null {
+	if (!message) return null;
+	try {
+		return policyRefusalCopy(JSON.parse(message));
+	} catch {
+		return null;
+	}
+}
+
+/** The turn's error banner: a policy refusal in its own words, anything
+ *  else as the honest generic failure. */
+export function TurnErrorBanner({ message }: { message: string }) {
+	const refusal = parsePolicyRefusal(message);
+	return (
+		<div data-testid="turn-error" className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
+			{refusal ?? `Something went wrong: ${message}`}
+		</div>
+	);
 }
 
 /** useLayoutEffect that is silent during SSR (client components still render on the server in Next). */
@@ -615,8 +641,10 @@ export function Chat({
 	useSettingsSaved((section) => {
 		if (section !== "models") return;
 		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings?: { models?: ModelsSettings } | null } | null>)
-			.then((body) => setConfigured(slotsConfigured(body?.settings?.models)))
+			.then((r) => r.json() as Promise<{ settings?: { models?: ModelsSettings } | null; configured?: unknown } | null>)
+			// The server's `configured` wins when present (a restricted user
+			// needs only their policy's slots); else the record's three slots.
+			.then((body) => setConfigured(typeof body?.configured === "boolean" ? body.configured : slotsConfigured(body?.settings?.models)))
 			.catch(() => {});
 	});
 	const [setupOpen, setSetupOpen] = useState(false);
@@ -643,7 +671,12 @@ export function Chat({
 		// provider key is gone gets the SAME treatment — revert-draft and
 		// open setup (the dialog derives to its first-key stage on its own).
 		const keyRefused = parseProviderKeyRefusal(error.message);
-		if (!missing && !keyRefused) return; // a real error keeps the honest banner
+		// The per-user policy refusals (cap reached, model not allowed) also
+		// refuse before the persist, so the orphan goes home and the draft
+		// returns the same way, but the banner STAYS (it carries the reason)
+		// and the setup dialog never opens: no pick can lift either refusal.
+		const policyRefused = parsePolicyRefusal(error.message) !== null;
+		if (!missing && !keyRefused && !policyRefused) return; // a real error keeps the honest banner
 		// ORDER MATTERS: clearError() flips this effect's own dep (`error`)
 		// and would cancel the in-flight work below — so the banner dismiss,
 		// the draft restore, and the dialog open all land TOGETHER after the
@@ -660,6 +693,7 @@ export function Chat({
 				applyText(draftRef.current);
 				draftRef.current = null;
 			}
+			if (policyRefused) return;
 			clearError();
 			setSetupOpen(true);
 		})();
@@ -1641,11 +1675,7 @@ export function Chat({
 									</Shimmer>
 								</span>
 							)}
-							{error && (
-								<div className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
-									Something went wrong: {error.message}
-								</div>
-							)}
+							{error && <TurnErrorBanner message={error.message} />}
 						</div>
 
 						{/* The dock's reserved tail (DockOverlay reports its height):

@@ -186,6 +186,100 @@ export class ProviderKeyMissingError extends Error {
 	}
 }
 
+/** The monthly spending cap refusal (multi-user design §10): a restricted
+ *  user at or over their cap. HTTP callers get 403 + this JSON; background
+ *  work catches the typed error below as a contained failure. Same envelope
+ *  family as modelsNotConfigured: the human `error` is the chat's copy. */
+export const MONTHLY_CAP_REACHED_CODE = "monthly_cap_reached" as const;
+export interface MonthlyCapReached {
+	error: string;
+	code: typeof MONTHLY_CAP_REACHED_CODE;
+	capUsd: number;
+	/** The priced spend this month (unpriced calls count 0). */
+	spentUsd: number;
+}
+/** "$5" for whole dollars, else "$2.50". */
+function capLabel(usd: number): string {
+	return Number.isInteger(usd) ? `$${usd}` : `$${usd.toFixed(2)}`;
+}
+export function monthlyCapReached(capUsd: number, spentUsd: number): MonthlyCapReached {
+	return {
+		error: `You've reached this month's spending limit (${capLabel(capUsd)}). Ask your admin to raise it.`,
+		code: MONTHLY_CAP_REACHED_CODE,
+		capUsd,
+		spentUsd,
+	};
+}
+export class MonthlyCapReachedError extends Error {
+	readonly envelope: MonthlyCapReached;
+	constructor(capUsd: number, spentUsd: number) {
+		const envelope = monthlyCapReached(capUsd, spentUsd);
+		super(envelope.error);
+		this.name = "MonthlyCapReachedError";
+		this.envelope = envelope;
+	}
+}
+
+/** The per-user model refusal (multi-user design §10): the model is outside
+ *  the user's allowed set and its tier has no policy slot to substitute.
+ *  HTTP callers get 403 + this JSON. `model` is the "provider:id" key. */
+export const MODEL_NOT_ALLOWED_CODE = "model_not_allowed" as const;
+export interface ModelNotAllowed {
+	error: string;
+	code: typeof MODEL_NOT_ALLOWED_CODE;
+	model: string;
+}
+export function modelNotAllowed(model: string): ModelNotAllowed {
+	return { error: "That model isn't available for your account.", code: MODEL_NOT_ALLOWED_CODE, model };
+}
+export class ModelNotAllowedError extends Error {
+	readonly envelope: ModelNotAllowed;
+	constructor(model: string) {
+		const envelope = modelNotAllowed(model);
+		super(envelope.error);
+		this.name = "ModelNotAllowedError";
+		this.envelope = envelope;
+	}
+}
+
+/** The policy file is damaged, so enforcement fails closed (deny-all): the
+ *  user is refused, with copy that does not blame their own spending. */
+export const POLICY_UNAVAILABLE_CODE = "policy_unavailable" as const;
+export interface PolicyUnavailable {
+	error: string;
+	code: typeof POLICY_UNAVAILABLE_CODE;
+}
+export function policyUnavailable(): PolicyUnavailable {
+	return { error: "Your account settings can't be read right now. Ask your admin.", code: POLICY_UNAVAILABLE_CODE };
+}
+export class PolicyUnavailableError extends Error {
+	readonly envelope: PolicyUnavailable;
+	constructor() {
+		const envelope = policyUnavailable();
+		super(envelope.error);
+		this.name = "PolicyUnavailableError";
+		this.envelope = envelope;
+	}
+}
+
+/** The copy for a policy refusal's JSON body (as a route answers it), else
+ *  null. One home for the wording, so no surface drifts. */
+export function policyRefusalCopy(body: unknown): string | null {
+	if (!body || typeof body !== "object") return null;
+	const b = body as { code?: unknown; capUsd?: unknown; spentUsd?: unknown; model?: unknown };
+	if (b.code === MONTHLY_CAP_REACHED_CODE && typeof b.capUsd === "number") {
+		return monthlyCapReached(b.capUsd, typeof b.spentUsd === "number" ? b.spentUsd : 0).error;
+	}
+	if (b.code === POLICY_UNAVAILABLE_CODE) return policyUnavailable().error;
+	if (b.code === MODEL_NOT_ALLOWED_CODE) return modelNotAllowed(typeof b.model === "string" ? b.model : "").error;
+	return null;
+}
+
+/** Any policy refusal: callers that contain refusals treat them alike. */
+export function isPolicyRefusal(err: unknown): err is MonthlyCapReachedError | ModelNotAllowedError | PolicyUnavailableError {
+	return err instanceof MonthlyCapReachedError || err instanceof ModelNotAllowedError || err instanceof PolicyUnavailableError;
+}
+
 /** One slot's stored state. BYOK (owner, 2026-09-22): the WRITE side
  *  requires model (a level alone can never run — no factory floor); the
  *  sanitizer keeps whatever is on disk, but RESOLUTION treats a slot
@@ -731,4 +825,11 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 		if (!(key in out)) out[key] = value;
 	}
 	return out;
+}
+
+/** A failed POST /api/chats as the line to show the learner: the policy
+ *  refusal's own copy, else a generic one. */
+export async function chatCreateFailure(res: Response): Promise<string> {
+	const body: unknown = await res.json().catch(() => null);
+	return policyRefusalCopy(body) ?? "Couldn't start the session. Try again.";
 }

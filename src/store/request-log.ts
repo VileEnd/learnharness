@@ -53,6 +53,14 @@ export const requestLogStore: RequestLogStore = {
 		}
 		return lines;
 	},
+	monthStamp(month) {
+		try {
+			const st = fs.statSync(file(month));
+			return `${st.size}:${st.mtimeMs}`;
+		} catch {
+			return null;
+		}
+	},
 	months() {
 		let names: string[];
 		try {

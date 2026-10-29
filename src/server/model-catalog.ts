@@ -22,6 +22,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
 import { settingsStore } from "../store/settings.ts";
 import { effectiveSettings } from "./stores.ts";
+import { allowedModelsOnly } from "./model-gate.ts";
 import { keyValue, providerKeyPresent } from "./keys.ts";
 import type { ChatSettings } from "../core/contracts/chat.ts";
 import type {
@@ -174,16 +175,23 @@ export function catalogContextLimits(): Map<string, number> {
 	return index;
 }
 
+/** Every model of every keyed provider, unfiltered by any user policy: the
+ *  policy's own source (built-in defaults, admin validation). */
+export function catalogModels(): Model<Api>[] {
+	const keyed = keyedProviderIds();
+	return piModels()
+		.getProviders()
+		.filter((p) => keyed.has(p.id))
+		.flatMap((p) => piModels().getModels(p.id));
+}
+
 /** The full picker payload: every model of every configured provider
  *  (sorted by provider then id — stable, diff-friendly) + the config
  *  defaults a settings-less chat runs + the background roles' resolved
- *  pins (the settings UI's per-role default captions). */
+ *  pins (the settings UI's per-role default captions). A restricted user
+ *  sees only their allowed models (multi-user design §10). */
 export function modelCatalog(): ModelCatalogResponse {
-	const keyed = keyedProviderIds();
-	const models = piModels()
-		.getProviders()
-		.filter((p) => keyed.has(p.id))
-		.flatMap((p) => piModels().getModels(p.id))
+	const models = allowedModelsOnly(catalogModels())
 		.map(toModelDto)
 		.sort((a, b) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)));
 	return {

@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { Chat } from "@/components/chat";
-import { slotsConfigured } from "@/src/core";
-import { compactionInFlight, getChat, isTurnRunning, readSettingsRecord, turnFailure, withPageTenant } from "@/src/server";
+import { compactionInFlight, getChat, isTurnRunning, modelsConfigured, turnFailure, withPageTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +18,7 @@ export default async function ChatPage({
 		// The persistent setup CTA's seed (BYOK, owner 2026-09-22): slotsConfigured
 		// over the settings record, server-read — the same gate home/new read. The
 		// server's 503 stays the truth; this only decides whether the pill rides.
-		const record = readSettingsRecord();
+		// A restricted user needs only their policy's slots (modelsConfigured).
 		return (
 			<Chat
 				key={chat.id}
@@ -31,7 +30,7 @@ export default async function ChatPage({
 					// native messages).
 					initialMessages={chat.messages}
 				initialError={turnFailure(chat.id)}
-				initialConfigured={slotsConfigured(record?.models)}
+				initialConfigured={modelsConfigured()}
 				initialPrompt={prompt}
 				// A teacher turn that outlived its client: the remounted view must
 				// attach (busy shimmer + poll), never resurrect the stale record.

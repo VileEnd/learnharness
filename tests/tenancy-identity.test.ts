@@ -87,7 +87,7 @@ test("settings written as user a are invisible to user b through the real routes
 	const a = await (await get(new Request("http://x/api/settings", { headers: asUser("a") }))).json();
 	assert.ok(a.settings);
 	const b = await (await get(new Request("http://x/api/settings", { headers: asUser("b") }))).json();
-	assert.deepEqual(b, { settings: null });
+	assert.equal(b.settings, null); // `configured` rides along additively
 });
 
 test("every app/api route except health wraps each exported HTTP method in withTenant(", () => {
@@ -111,5 +111,5 @@ test("every app/api route except health wraps each exported HTTP method in withT
 		for (const m of methods) assert.ok(m[2]!.startsWith("withTenant("), `${f}: ${m[1]} not wrapped`);
 		checked++;
 	}
-	assert.equal(checked, 56);
+	assert.equal(checked, 60);
 });

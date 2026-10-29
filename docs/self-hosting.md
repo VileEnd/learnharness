@@ -153,6 +153,17 @@ Admins (members of `learnharness-admin`) see **Settings → Users**. There they 
 
 The app does this through its own Keycloak client, `learnharness-admin-api`. That client has only a service account with the `realm-management` roles `view-users`, `query-users`, `query-groups` and `manage-users`; the Keycloak admin password never reaches the app. On the NixOS VM, `learnharness-stack` generates the client secret `KC_ADMIN_API_SECRET` into `secrets.env` once. On every start it creates the group, the client, its secret and the roles if any are missing (`deploy/nixos/bootstrap-keycloak.sh`). If Keycloak doesn't come up within 3 minutes, the journal says `keycloak bootstrap failed` and the stack runs anyway. The section then shows "User management isn't set up on this server yet." until the next `systemctl restart learnharness-stack`. On a manual host, set `KC_ADMIN_API_SECRET` in `deploy/.env` and run `deploy/nixos/bootstrap-keycloak.sh deploy/.env` once the stack is up (it needs `KC_ADMIN_USER`, `KC_ADMIN_PASSWORD` and `KC_ADMIN_API_SECRET` in that file).
 
+### Per-user models and spending limits
+
+Each non-admin user runs under a policy: which models they may use, which model fills each slot (strong, cheap, vision), and a monthly spending cap in USD (or none).
+
+- **New user defaults.** The "New user defaults" box in Settings → Users applies to every user without their own policy. Until you save them, the defaults are built in: the cheapest recommended models from the live catalog, with a $5 monthly cap.
+- **Per-user overrides.** Open a user's "Models & limit" editor to give them their own models and cap. Tick "Use defaults" and Save to put them back on the defaults.
+- **Admins are unrestricted.** Members of `learnharness-admin` (and single-user installs) are never gated by models or caps.
+- **The cap uses the request log.** A user's month is the sum of the priced calls in their own request log; calls without a known price count as zero. Raising a cap takes effect on the user's next request.
+- **When it is checked.** Before every turn and every paid background job (extraction, document import, embeddings). A user at or over the cap is refused with "You've reached this month's spending limit", and no chat is created or saved. A running turn is also clamped to what is left of the month, so a user at $4.99 of $5 cannot start a turn that spends $20.
+- **Where it lives.** The policy is `data/global/admin.json` (under the data directory, mode 0600, back it up with the rest of `data/`). If the file is damaged, restricted users are refused (their account shows "Your account settings can't be read right now. Ask your admin.") and Settings → Users refuses every change until the file is fixed or removed. Nothing overwrites a damaged file.
+
 ## Remote access (WireGuard)
 
 Away from home, devices reach LearnHarness through a WireGuard tunnel that ends **on the VM**, not on the router. A tunnel can reach only the app: Caddy on 80/443, through which Keycloak's login still applies. It can't reach SSH, the VM's other ports, or anything else on the LAN. The client config sends only the VM's LAN address (`AllowedIPs = <VM LAN IP>/32`) through the tunnel. The usual names (`learnharness.home.moyjak.com`, `auth.home.moyjak.com`) already point there, so links, logins and certificates are the same as at home.

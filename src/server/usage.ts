@@ -34,6 +34,15 @@ export function usageMonth(month: string = monthKey(new Date())): UsageMonthView
 	};
 }
 
+/** One month's priced total and unpriced count, without the session view
+ *  (the cap check: no chat reads). Unpriced calls count 0 here; the caller
+ *  keeps the count so they are never mistaken for free. */
+export function monthSpend(month: string = monthKey(new Date())): { usd: number; unpriced: number } {
+	ensureBackfill();
+	const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), callCost);
+	return { usd: totalUsd ?? 0, unpriced: unpricedCalls };
+}
+
 /** The last 12 months that have a log file, oldest first. */
 export function usageMonths(): UsageMonthTotal[] {
 	ensureBackfill();

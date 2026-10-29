@@ -25,7 +25,7 @@
 import { getGraph } from "../core/graph.ts";
 import { eligibleForAttribution, unattributedItems } from "../core/learner.ts";
 import type { ChatStore, GraphStore, LearnerStore } from "../core/ports.ts";
-import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
+import { isPolicyRefusal, ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 import type { AttributionConcept, Attributor } from "../agent/subagents/attribution.ts";
 
 /** Candidates offered per item (library hits first, then the chat's own propositions). */
@@ -128,9 +128,10 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 			}
 			return appended;
 		} catch (err) {
-			// BYOK: an unconfigured or keyless cheap slot skips quietly (the items stay
+			// BYOK: an unconfigured or keyless cheap slot, or a per-user policy
+			// refusal (cap reached, model not allowed), skips quietly (the items stay
 			// unattributed and the next trigger retries); anything else is logged.
-			if (err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) {
+			if (err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError || isPolicyRefusal(err)) {
 				console.info(`[chat ${chatId}] attribution skipped - ${err.envelope.error}`);
 			} else {
 				console.error(`[chat ${chatId}] attribution failed:`, err);
