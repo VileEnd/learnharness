@@ -18,6 +18,7 @@ import { pushStore } from "../store/push.ts";
 import { requestLogStore } from "../store/request-log.ts";
 import { settingsStore } from "../store/settings.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
+import { setRequestSink } from "../agent/request-log.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
 	chatStore,
@@ -34,6 +35,12 @@ export const stores = {
 };
 
 export type Stores = typeof stores;
+
+// The request log's LLM sink (cost counter): every engine call lands one line
+// in data/logs. Wired here because every engine is built behind this module.
+// Skipped under tests (the extraction precedent): suites set their own sink,
+// and a suite on the real data/ must not write the owner's cost log.
+if (process.env.NODE_ENV !== "test") setRequestSink((line) => stores.requestLog.append(line));
 
 /**
  * The resolved view of the settings record (core/settings-resolution.ts):

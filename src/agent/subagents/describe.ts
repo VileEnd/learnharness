@@ -18,7 +18,7 @@ import {
 	type ModelSlotName,
 	type ProviderKeyMissing,
 } from "../../core/settings.ts";
-import type { PiEngine } from "../models.ts";
+import type { EngineOptions, PiEngine } from "../models.ts";
 import { runSubmitAgent } from "./submit-agent.ts";
 
 /** How much of the document the describer reads. */
@@ -41,8 +41,10 @@ const describeSchema = Type.Object({
 const DESCRIBE_INSTRUCTIONS = `You describe a learning document from its content alone. You see the opening of the document; judge what it is about and submit one describe_document call: a specific title, a short summary of what it teaches, and its subject topics (short noun phrases that name the subject matter, not the document's structure). Write in the document's own language.`;
 
 export interface DescriberDeps {
-	/** The engine for the role, or undefined when the chain ends empty. */
-	engineFor: (role: ModelRole) => PiEngine | undefined;
+	/** The engine for the role, or undefined when the chain ends empty.
+	 *  `opts` names the request-log purpose when it is not the role's
+	 *  (topicist, attribution ride the describer's role). */
+	engineFor: (role: ModelRole, opts?: EngineOptions) => PiEngine | undefined;
 	/** Key-presence gate (the extraction pipeline's twin). */
 	providerKeyMissing?: (provider: string, tier: ModelSlotName) => ProviderKeyMissing | null;
 }

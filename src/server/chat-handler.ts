@@ -94,9 +94,10 @@ const jobRunner = createJobRunner({
 	// BYOK (owner, 2026-09-22): job engines resolve the chain — role
 	// override → slot → NOTHING — read FRESH per job (a settings PUT
 	// between dispatch and spawn lands); an empty chain flows through as
-	// undefined and the runner refuses the spawn honestly.
-	engineFor: (role) =>
-		resolveEngine(role),
+	// undefined and the runner refuses the spawn honestly. The runner adds
+	// the job's chat id (request log: a session's spend includes its jobs).
+	engineFor: (role, opts) =>
+		resolveEngine(role, opts),
 	// Key-presence gate (provider-key interlude, 2026-09-25): the runner
 	// reads the resolved engine's provider and asks THIS check (the agent
 	// layer may not read the key store); a missing key refuses the spawn
@@ -113,7 +114,7 @@ const jobRunner = createJobRunner({
  *  describer's role; shared by session extraction (below), the document
  *  service (library.ts) and the topic backfill. */
 export const topicist = createTopicist({
-	engineFor: (role) => resolveEngine(role),
+	engineFor: (role, opts) => resolveEngine(role, opts),
 	providerKeyMissing: (provider, tier) =>
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
 });
@@ -131,7 +132,7 @@ export const attribution = createAttributionService({
 		),
 	extractionEnabled: () => extractionEnabled(effectiveSettings().graph),
 	attributor: createAttributor({
-		engineFor: (role) => resolveEngine(role),
+		engineFor: (role, opts) => resolveEngine(role, opts),
 		providerKeyMissing: (provider, tier) =>
 			providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
 	}),
@@ -145,8 +146,9 @@ export const extraction = createExtractionPipeline({
 	// role override → slot → NOTHING — read FRESH per stage call; an empty
 	// chain flows through as undefined and the pipeline refuses the run
 	// with the typed ModelsNotConfiguredError. Direct test values still win.
-	engineFor: (role) =>
-		resolveEngine(role),
+	// Chat runs add the chat id (request log).
+	engineFor: (role, opts) =>
+		resolveEngine(role, opts),
 	// Key-presence gate (provider-key interlude, 2026-09-25): same check
 	// the job runner gets — a stage engine whose provider key is gone
 	// refuses BEFORE any batch runs (the typed throw), never mid-run.
@@ -178,10 +180,12 @@ setTurnRunner(async (chatId, input) => {
 /** The settings-resolved engine for one role — BYOK (owner, 2026-09-22):
  *  the chain (role override → slot → NOTHING) may end empty, and undefined
  *  flows through to the per-need refusal gates (runner/extraction), read
- *  FRESH so a settings PUT between dispatch and spawn lands. */
+ *  FRESH so a settings PUT between dispatch and spawn lands. The role is
+ *  the request log's purpose unless the caller names its own (topicist,
+ *  attribution ride the describer's role). */
 export function resolveEngine(role: ModelRole, opts?: EngineOptions): PiEngine | undefined {
 	const spec = resolveRoleSpec(role, stores.settingsStore.readSettings());
-	return spec ? piEngineForSpec(spec, opts) : undefined;
+	return spec ? piEngineForSpec(spec, { purpose: role, ...opts }) : undefined;
 }
 
 setJobRespawn((jobId) => void jobRunner.runJob(jobId));
@@ -269,14 +273,18 @@ export async function handleChatInput(
 	// placement mirrors the BYOK/key gates — BEFORE appends and
 	// beginTurn, no liveness effects — and the record re-reads after
 	// because compaction appends the marker.
-	let conversationEngine: PiEngine;
-	try { conversationEngine = piEngineForSpec(conversation); }
+	// The session's request-log identity: every call of this chat carries it.
+	const chatKind = record.kind === "practice" ? "practice" : "teach";
+	// The gate's engine summarizes, so it logs as compaction; the turn builds
+	// its own engine off the same spec below (teacher / prober / practice).
+	let compactionEngine: PiEngine;
+	try { compactionEngine = piEngineForSpec(conversation, { purpose: "compaction", chatId, chatKind }); }
 	catch { return Response.json({ error: "The selected model is unavailable." }, { status: 503 }); }
-	const modelIdForCompaction = `${conversationEngine.model.provider}:${conversationEngine.model.id}`;
+	const modelIdForCompaction = `${compactionEngine.model.provider}:${compactionEngine.model.id}`;
 	await ensureCompacted(
 		{
 			chatStore: stores.chatStore,
-			engine: conversationEngine,
+			engine: compactionEngine,
 			modelId: modelIdForCompaction,
 			kind: record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe",
 			thresholdTokens: effectiveThresholdTokens(
@@ -396,12 +404,16 @@ export async function handleChatInput(
 	// BYOK (owner, 2026-09-22): the conversation chain was resolved by the
 	// turn gate above (chat.model override → strong slot → refused) — the
 	// engine build is pure from here; thinking levels clamp natively.
-	// (Built once above the compaction gate; reused verbatim.)
 	// CANVAS TURNS RUN ON THE SESSION MODEL (owner, 2026-10-28): there is no
 	// canvas model slot; the conversation engine (chat model, else the strong
 	// slot) runs every turn. The send_to_user gate, the usage stamp, the
-	// spend-cap price and the drawing context all read it.
-	const engine = conversationEngine;
+	// spend-cap price and the drawing context all read it. Same spec as the
+	// compaction gate's engine (so it cannot throw here), its own purpose.
+	const engine = piEngineForSpec(conversation, {
+		purpose: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
+		chatId,
+		chatKind,
+	});
 	// Provider-qualified stamp (model slots wave): matches the price table's
 	// provider:id keys.
 	const modelId = `${engine.model.provider}:${engine.model.id}`;
@@ -424,7 +436,7 @@ export async function handleChatInput(
 			engine,
 			{
 				drawingStore: stores.drawingStore,
-				transcriber: createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, opts) }),
+				transcriber: createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, { ...opts, chatId, chatKind }) }),
 				onUsage: (usage, model) => {
 					reader.model = model;
 					reader.steps.push(callUsageOf(usage));
@@ -687,10 +699,10 @@ export async function handleChatInput(
 						const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
 						if (!spec) return null;
 						let kickEngine: PiEngine;
-						try { kickEngine = piEngineForSpec(spec); } catch { return null; }
-						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 						const freshRecord = stores.chatStore.getChat(chatId);
 						if (!freshRecord) return null;
+						try { kickEngine = piEngineForSpec(spec, { purpose: "compaction", chatId, chatKind }); } catch { return null; }
+						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 						return {
 							chatStore: stores.chatStore,
 							engine: kickEngine,
