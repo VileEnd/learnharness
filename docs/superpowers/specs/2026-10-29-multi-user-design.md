@@ -83,15 +83,11 @@ My calls (flagged so you can veto them):
   - The model picker (`/api/models` catalog) lists only the allowed models for non-admins.
 
 ### 4. Spending caps
-- **Spend is derived at read time** (invariant: never dual-tracked). It sums the current month's priced usage across the user's records, using the existing folds in `src/core/prices.ts` and `src/server/pricing.ts`:
-  - chat `turns[].at`
-  - chat `extractions[].at`
-  - job `usage` by `createdAt`
-- Unpriced calls are reported as an "unpriced" count, never as zero (invariant). Embedding batch calls are currently untracked; I note this in the admin view.
+- **Spend comes from the request log** that 0.29.0 added (`src/store/request-log.ts`, `data/logs/requests-YYYY-MM.jsonl`, folded by `src/server/usage.ts` `usageMonth()`). The log already covers every LLM call, embeddings, OCR and search. It lives under `PATHS.logs`, so after PR 1 it is per user automatically. The cap check is `usageMonth().total` for the caller's tenant: a read-time fold, nothing dual-tracked. Unpriced lines stay "unpriced", never zero.
 - **Enforcement:**
   - `handleChatRequest` checks before each user turn and before ack-and-steer job launches. Over the cap, it returns a typed refusal (like `ModelsNotConfigured`), which the chat UI renders as "Monthly limit reached — ask your admin".
   - Background extraction already queued for an over-cap user is skipped, not run. It catches up after a reset. This is contained and never touches the response.
-- To avoid rescanning every chat on every turn, the result is cached per user and keyed by a cheap stamp (mtime of the chats dir + the jobs dir). This is a cache, not a second source of truth.
+- If folding the month file per turn proves slow, cache the fold per user, keyed by the month file's size and mtime. This is a cache, not a second source of truth.
 
 ### 5. Admin UI
 - A new page `app/admin/page.tsx`, with routes `app/api/admin/{users,policy}`. Both are admin-only and return 403 for anyone else.
