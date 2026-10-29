@@ -32,8 +32,25 @@ if (fs.existsSync(path.join(root, "users"))) fail("users/ already exists; nothin
 
 const dest = path.join(root, "users", owner);
 const shared = path.join(root, "global");
-fs.mkdirSync(dest, { recursive: true });
-fs.mkdirSync(shared, { recursive: true });
+// Pre-flight: refuse before any change if a shared destination is taken.
+for (const taken of [path.join(shared, "prompts"), path.join(shared, "push", "vapid.json")]) {
+	if (fs.existsSync(taken)) fail(`${taken} already exists; nothing changed`);
+}
+
+// Run as root (docker exec default), the dirs we create must still belong to the data owner.
+const { uid, gid } = fs.statSync(root);
+const asRoot = process.getuid?.() === 0;
+function mkdirOwned(dir) {
+	const first = fs.mkdirSync(dir, { recursive: true });
+	if (!asRoot || !first) return;
+	// first = topmost dir created; chown it and everything down to dir.
+	for (let d = dir; ; d = path.dirname(d)) {
+		fs.chownSync(d, uid, gid);
+		if (d === first) break;
+	}
+}
+mkdirOwned(dest);
+mkdirOwned(shared);
 
 let moved = 0;
 for (const name of fs.readdirSync(root)) {
@@ -44,7 +61,7 @@ for (const name of fs.readdirSync(root)) {
 
 const vapid = path.join(dest, "push", "vapid.json");
 if (fs.existsSync(vapid)) {
-	fs.mkdirSync(path.join(shared, "push"), { recursive: true });
+	mkdirOwned(path.join(shared, "push"));
 	fs.renameSync(vapid, path.join(shared, "push", "vapid.json"));
 }
 const prompts = path.join(dest, "prompts");

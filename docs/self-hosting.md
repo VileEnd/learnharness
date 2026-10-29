@@ -153,7 +153,7 @@ cd ~/learnharness && git pull && cd deploy && docker compose up -d --build   # m
 With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 503 `legacy_layout`. Move it under its owner (their Keycloak `sub`) once:
 
 ```bash
-docker compose exec learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
+docker compose exec -u node learnharness node scripts/migrate-to-tenants.mjs --owner <keycloak-sub>
 ```
 
 ## Backups
