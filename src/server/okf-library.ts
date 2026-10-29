@@ -11,14 +11,12 @@
 
 import { createLibrary, type Library } from "./okf.ts";
 import { multiUser } from "../core/tenant-context.ts";
+import { tenantSingleton } from "./tenant-singleton.ts";
 import { stores } from "./stores.ts";
 
-interface LibraryGlobal {
-	__lhLibrary?: Library;
-}
-
-// globalThis anchor: dev HMR re-imports modules, the single-flight must survive.
-export const library: Library = ((globalThis as LibraryGlobal).__lhLibrary ??= (() => {
+// One library per tenant (tenantSingleton keeps the map on globalThis: dev HMR
+// re-imports modules, the single-flight must survive).
+export const library: Library = tenantSingleton("__lhLibraryByTenant", () => {
 	const lib = createLibrary({
 		okfStore: stores.okfBundleStore,
 		graphStore: stores.graphStore,
@@ -27,7 +25,12 @@ export const library: Library = ((globalThis as LibraryGlobal).__lhLibrary ??= (
 		learnerStore: stores.learnerStore,
 		settings: () => stores.settingsStore.readSettings(),
 	});
-	// Multi-user: no tenant at boot; per-tenant warm-up arrives with the tenant registries.
-	if (!multiUser() && process.env.NODE_ENV !== "test" && process.env.NEXT_PHASE !== "phase-production-build") void lib.ensureFresh();
+	// Warm-up on first use: single-user that is at import (first property
+	// access), multi-user it is the tenant's first touch of the library.
+	if (process.env.NODE_ENV !== "test" && process.env.NEXT_PHASE !== "phase-production-build") void lib.ensureFresh();
 	return lib;
-})());
+});
+
+// Single-user: keep the boot warm-up at import (the instance is built, and
+// warmed, by this first touch). Multi-user has no tenant at boot.
+if (!multiUser()) void library.root;

@@ -46,6 +46,7 @@ import { NotesImportError } from "../agent/subagents/extraction.ts";
 import type { DocumentDescription } from "../agent/subagents/describe.ts";
 import { OcrError, type OcrClient, type OcrKnown } from "./ocr-client.ts";
 import type { PushEvent } from "./push.ts";
+import { requireTenant, registryKey } from "../core/tenant-context.ts";
 
 // ─── inputs / outputs ────────────────────────────────────────────────────────
 
@@ -143,6 +144,8 @@ export interface RunningScan {
 	title: string;
 	startedAt: number;
 	controller: AbortController;
+	/** Owning tenant id: the registry is process-wide, rows are per tenant. */
+	tenant?: string;
 }
 
 interface LhScanGlobal {
@@ -156,7 +159,9 @@ function scans(): Map<string, RunningScan> {
 
 /** The running PDF scans, oldest first (the activity feed reads this). */
 export function scanStatuses(): { id: string; title: string; startedAt: number }[] {
+	const me = requireTenant().id;
 	return [...scans().values()]
+		.filter((r) => (r.tenant ?? "local") === me)
 		.map(({ id, title, startedAt }) => ({ id, title, startedAt }))
 		.sort((a, b) => a.startedAt - b.startedAt);
 }
@@ -170,7 +175,8 @@ export async function withActivityRow<T>(
 ): Promise<T> {
 	const controller = new AbortController();
 	const row: RunningScan = { id, title, startedAt: Date.now(), controller };
-	scans().set(id, row);
+	scans().set(registryKey(id), row);
+	row.tenant = requireTenant().id;
 	emit("activity-changed", {});
 	try {
 		return await run((next) => {
@@ -179,14 +185,14 @@ export async function withActivityRow<T>(
 			emit("activity-changed", {});
 		}, controller.signal);
 	} finally {
-		scans().delete(id);
+		scans().delete(registryKey(id));
 		emit("activity-changed", {});
 	}
 }
 
 /** The dock's abort for a scan row; idempotent (nothing running = fine). */
 export function abortScan(id: string): void {
-	scans().get(id)?.controller.abort();
+	scans().get(registryKey(id))?.controller.abort();
 }
 
 // ─── pure helpers ────────────────────────────────────────────────────────────
@@ -505,7 +511,8 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 	/** Run one OCR job to completion, mirroring progress into the scan row. */
 	async function scan(file: IncomingFile, rowId: string, controller: AbortController) {
 		const row: RunningScan = { id: rowId, title: `Scanning ${stem(file.name)}`, startedAt: Date.now(), controller };
-		scans().set(rowId, row);
+		row.tenant = requireTenant().id;
+		scans().set(registryKey(rowId), row);
 		emit("activity-changed", {});
 		try {
 			const job = await ocr.start([{ name: file.name, bytes: file.bytes }]);
@@ -539,7 +546,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 				});
 			}
 		} finally {
-			scans().delete(rowId);
+			scans().delete(registryKey(rowId));
 			emit("activity-changed", {});
 		}
 	}

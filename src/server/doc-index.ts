@@ -66,6 +66,8 @@ import { recordRequest } from "../agent/request-log.ts";
 import { categoryOf, truncateError } from "../core/usage.ts";
 import { graphToolsEnabled } from "../core/settings-resolution.ts";
 import { effectiveSettings, stores } from "./stores.ts";
+import { requireTenant, registryKey } from "../core/tenant-context.ts";
+import { tenantSingleton } from "./tenant-singleton.ts";
 
 // ─── the embedding seam ──────────────────────────────────────────────────────
 
@@ -302,11 +304,25 @@ interface ScanRow {
 	title: string;
 	startedAt: number;
 	controller: AbortController;
+	/** Owning tenant id: the registry is process-wide, rows are per tenant. */
+	tenant?: string;
 }
 interface ScanGlobal {
 	__lhDocumentScans?: Map<string, ScanRow>;
 }
-const scanRows = (): Map<string, ScanRow> => ((globalThis as ScanGlobal).__lhDocumentScans ??= new Map());
+const scanMap = (): Map<string, ScanRow> => ((globalThis as ScanGlobal).__lhDocumentScans ??= new Map());
+/** The shared scan registry seen through the current tenant (keys namespaced by tenantKey). */
+const scanRows = () => {
+	const m = scanMap();
+	return {
+		// The row object is stored as is (callers mutate its title later).
+		set: (id: string, row: ScanRow) => {
+			row.tenant = requireTenant().id;
+			m.set(registryKey(id), row);
+		},
+		delete: (id: string) => void m.delete(registryKey(id)),
+	};
+};
 
 const BACKFILL_ROW = "index_library";
 const BATCH_ROW = "index_library_batch";
@@ -1154,10 +1170,8 @@ function liveBatcher(): BatchClient | null {
 // Anchored on globalThis like the other registries: Next may load this module
 // once per route bundle, and every copy must share ONE index (the store
 // wrapper that feeds it and the search route would otherwise disagree).
-interface IndexGlobal {
-	__lhDocIndex?: DocIndex;
-}
-export const docIndex: DocIndex = ((globalThis as IndexGlobal).__lhDocIndex ??= createDocIndex({
+// Multi-user: one index per tenant (tenantSingleton), built on first use.
+export const docIndex: DocIndex = tenantSingleton("__lhDocIndexByTenant", () => createDocIndex({
 	store: stores.documentStore,
 	graphStore: stores.graphStore,
 	conceptVectors: stores.conceptVectorStore,

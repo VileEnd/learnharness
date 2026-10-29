@@ -13,6 +13,7 @@ import {
 	type AssistantMessageEventStream,
 } from "@earendil-works/pi-ai";
 import type { RequestLogLine, RequestOutcome } from "../core/contracts/usage.ts";
+import { NoTenantError } from "../core/tenant-context.ts";
 import { categoryOf, truncateError } from "../core/usage.ts";
 
 export type RequestSink = (line: RequestLogLine) => void;
@@ -34,6 +35,12 @@ export function recordRequest(line: RequestLogLine): void {
 	try {
 		sink(line.durationMs !== undefined && line.durationMs < 0 ? { ...line, durationMs: 0 } : line);
 	} catch (err) {
+		// A missing tenant is a wiring bug, not a broken sink: always loud,
+		// and it never spends the once-only silence.
+		if (err instanceof NoTenantError) {
+			console.error("[request-log] no tenant in scope; a request line was dropped:", err);
+			return;
+		}
 		if (sinkFailed) return;
 		sinkFailed = true;
 		console.error("[request-log] writing the request log failed; further failures are silent:", err);
