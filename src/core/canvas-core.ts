@@ -631,7 +631,7 @@ export function annotationMarkPlace(mark: AnnotationMark): string {
 }
 
 /** Ids of annotate calls that really happened: a result exists and is neither isError nor {ok:false}. */
-function succeededCallIds(messages: readonly unknown[]): Set<string> {
+export function succeededCallIds(messages: readonly unknown[]): Set<string> {
 	const ids = new Set<string>();
 	for (const m of messages) {
 		const r = m as { role?: string; toolCallId?: string; isError?: boolean; details?: unknown };

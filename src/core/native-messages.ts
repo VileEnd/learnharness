@@ -46,7 +46,7 @@ import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.
 import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 import { isHintScopedInput, stripInternalLabels } from "./internal-labels.ts";
-import { drawingRefOf } from "./canvas-core.ts";
+import { drawingRefOf, parseAnnotateInput, submittedDrawingIds, succeededCallIds, type AnnotationMark } from "./canvas-core.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -667,6 +667,35 @@ export function hintsFor(messages: readonly unknown[], callId: string): { reques
 		out.push({ requestId: m.id, text: parts.length > 0 ? parts.join("\n\n") : null });
 	}
 	return out;
+}
+
+/** The marks the live canvas shows for one task: those of the NEWEST marking turn. Walks the record forward
+ *  over successful annotate calls (read through parseAnnotateInput, as annotationsOf) on one of the task's
+ *  drawings (submittedDrawingIds); a turn is the span between input boundaries (isInputBoundary). A call in
+ *  the same turn on the same drawing as the current pick adds its marks; any other replaces the pick. So
+ *  repeated hints on an unchanged canvas (one content-addressed id) show only the newest marks, and an
+ *  undo back to an earlier drawing shows that drawing. Null until the teacher marks. */
+export function latestTaskMarks(messages: readonly unknown[], taskCallId: string): { drawingId: string; marks: AnnotationMark[] } | null {
+	const drawings = new Set(submittedDrawingIds(messages, taskCallId));
+	const ok = succeededCallIds(messages);
+	let turn = 0;
+	let pick: { turn: number; drawingId: string; marks: AnnotationMark[] } | null = null;
+	for (const m of messages) {
+		if (isInputBoundary(m)) {
+			turn++;
+			continue;
+		}
+		const a = m as { role?: string; content?: unknown };
+		if (a.role !== "assistant" || !Array.isArray(a.content)) continue;
+		for (const b of a.content as { type?: string; name?: string; id?: string; arguments?: unknown }[]) {
+			if (b.type !== "toolCall" || b.name !== "annotate" || typeof b.id !== "string" || !ok.has(b.id)) continue;
+			const args = parseAnnotateInput(b.arguments);
+			if (!args || !drawings.has(args.drawingId)) continue;
+			if (pick && pick.turn === turn && pick.drawingId === args.drawingId) pick.marks.push(...args.marks);
+			else pick = { turn, drawingId: args.drawingId, marks: [...args.marks] };
+		}
+	}
+	return pick && { drawingId: pick.drawingId, marks: pick.marks };
 }
 
 /** The active canvas task: the NEWEST cleanly-acked work/sketch call that no

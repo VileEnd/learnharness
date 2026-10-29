@@ -19,8 +19,8 @@ import { DrawingThumb, WorkSubmissionCard, drawingPngUrl } from "../components/w
 import { GradeChip } from "../components/artifacts/grade-chip.tsx";
 import { AnnotateCard } from "../components/artifacts/annotate-card.tsx";
 import { artifactRenderers } from "../components/artifacts/index.ts";
-import { TeacherInk, wobblePath } from "../components/canvas/teacher-ink.tsx";
-import { canSubmitWork, CanvasWorkspace, newestMarkedDrawing } from "../components/canvas/canvas-workspace.tsx";
+import { TeacherInk, teacherInkBoxes, wobblePath } from "../components/canvas/teacher-ink.tsx";
+import { canRequestHint, canSubmitWork, CanvasWorkspace } from "../components/canvas/canvas-workspace.tsx";
 import { pickDraft } from "../components/canvas/draft.ts";
 import { tableAddCol, tableAddRow, tableNextCell, tableRemoveCol, tableRemoveRow } from "../components/canvas/object-edit.ts";
 import { isCanvasCapable } from "../components/use-canvas-capable.ts";
@@ -250,6 +250,22 @@ describe("teacher ink", () => {
 	const box = sceneBoundingBox(inkScene)!;
 	const ink = (marks: AnnotationMark[], space: "world" | "percent") => renderToStaticMarkup(<TeacherInk marks={marks} scene={inkScene} box={box} space={space} />);
 
+	it("teacherInkBoxes gives each mark's extent and its note's box, where the note is drawn", () => {
+		const marks: AnnotationMark[] = [{ kind: "circle", target: { object: "o1" }, label: "which x?" }];
+		const boxes = teacherInkBoxes(marks, inkScene, box);
+		assert.equal(boxes.length, 2, "the circle and its note");
+		const [circle, note] = boxes as [{ x: number; y: number; w: number; h: number }, { x: number; y: number; w: number; h: number }];
+		// the circle loops round o1 (100..300 x 100..160), so its extent covers it
+		assert.ok(circle.x < 100 && circle.x + circle.w > 300 && circle.y < 100 && circle.y + circle.h > 160);
+		// the note is drawn at its box: first tspan at (x, y + 0.9 fs), and the box sits below the circle
+		const html = ink(marks, "world");
+		const fs = Number(html.match(/<text[^>]*font-size="([\d.]+)"/)?.[1]);
+		const [, tx, ty] = html.match(/<tspan x="([\d.]+)" y="([\d.]+)"/)!.map(Number);
+		assert.ok(Math.abs(note.x - tx!) < 0.01 && Math.abs(note.y + fs * 0.9 - ty!) < 0.01);
+		assert.ok(note.y >= circle.y + circle.h - 0.01, "below the circle");
+		assert.equal(teacherInkBoxes([{ kind: "circle", target: { object: "gone" } }], inkScene, box).length, 0);
+	});
+
 	it("TeacherInk renders a circle for an object target as a hand-drawn path", () => {
 		const html = ink([{ kind: "circle", target: { object: "o1" } }], "world");
 		assert.match(html, /data-testid="teacher-ink"/);
@@ -367,10 +383,12 @@ describe("teacher ink", () => {
 		assert.deepEqual(ids, ["drw_a", "drw_h"]);
 	});
 
-	it("the live canvas overlays only the newest drawing that has marks", () => {
-		const mark: AnnotationMark = { kind: "check", target: { cell: "A1" } };
-		assert.deepEqual(newestMarkedDrawing([{ id: "drw_a", marks: [mark] }, { id: "drw_h", marks: [mark] }, { id: "drw_n", marks: [] }]), { id: "drw_h", marks: [mark] });
-		assert.equal(newestMarkedDrawing([{ id: "drw_a", marks: [] }]), null);
+	it("the canvas Hint is disabled while any turn runs (its send would be dropped)", () => {
+		const idle = { loaded: true, compactionRunning: false, busy: false, turnBusy: false };
+		assert.equal(canRequestHint(idle), true);
+		assert.equal(canRequestHint({ ...idle, turnBusy: true }), false);
+		assert.equal(canRequestHint({ ...idle, busy: true }), false);
+		assert.equal(canRequestHint({ ...idle, loaded: false }), false);
 	});
 });
 
