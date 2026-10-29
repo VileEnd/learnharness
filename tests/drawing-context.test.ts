@@ -238,6 +238,21 @@ describe("drawings in the model context", () => {
 		}
 	});
 
+	it("the reader asks for its engine at the lowest thinking level", async () => {
+		const asked: unknown[] = [];
+		const f = createFauxCore({});
+		f.setResponses([fauxAssistantMessage("[C4] y")]);
+		const transcriber = createDrawingTranscriber({ engineFor: (_role, opts) => (asked.push(opts), { model: f.getModel(), streamFn: f.streamSimple }) });
+		await transcriber.transcribe(new Uint8Array([1]), "");
+		assert.deepEqual(asked, [{ thinking: "lowest" }]);
+	});
+
+	it("a hint snapshot on a closed task collapses to the omitted stub", async () => {
+		const messages = [...pose(), newHintRequest("w1", 1, { drawingId: IDS[0] }), ...close()];
+		const ctx = await prepareDrawingContext(chat("c", messages), multimodal, { drawingStore: store().s });
+		assert.match(textOf(toLlmMessages(messages as never, { drawing: ctx })), new RegExp(`\\[Drawing ${IDS[0]} omitted — task closed\\]`));
+	});
+
 	it("the reader's prompt does not assume a blind tutor", () => {
 		assert.ok(TRANSCRIBE_PROMPT.includes("for a tutor (who may or may not also see the image)"));
 	});
