@@ -35,6 +35,12 @@ export const markSteer = (drawingId: string, spoke = false) =>
 	`You have not marked his drawing yet. Call annotate on drawing ${drawingId}: a mark on the first place the work breaks, or a check on what holds. ${
 		spoke ? "You have already replied in text, so just mark the drawing; you need not repeat what you said." : "Then tell him in plain text what you saw and what to do next."
 	}`;
+/** The mark steer for a hint turn that carries his drawing: the hint goes
+ *  where it points. `spoke` as for markSteer (the hint is already in prose). */
+export const hintMarkSteer = (drawingId: string, spoke = false) =>
+	`Mark his drawing ${drawingId} where your hint points (a circle or arrow at that spot, its label a short question)${
+		spoke ? ". You have already replied in text, so just mark the drawing; you need not repeat what you said." : ", then give the hint in plain text."
+	}`;
 export const PLAN_INIT_STEER = "Call plan_init with that plan.";
 
 export function newTurnNudge(text: string): LhMarkerMessage {
@@ -85,14 +91,15 @@ export function silentAfterSubmission(messages: readonly LhMessage[]): boolean {
 	return !turnSpeaks(since, true);
 }
 
-/** A drawn submission (canvas task or practice thinking) whose turn has no
- *  successful annotate ON THAT DRAWING yet: returns the drawing id to mark. A
- *  refused annotate, or one on another drawing, does not count. Hint requests
- *  and drawing-less submissions are exempt. */
+/** A drawn submission (canvas task or practice thinking), or a hint request
+ *  sent with a snapshot of the canvas, whose turn has no successful annotate
+ *  ON THAT DRAWING yet: returns the drawing id to mark. A refused annotate, or
+ *  one on another drawing, does not count. Drawing-less submissions and
+ *  drawing-less hint requests are exempt. */
 export function unmarkedSubmission(messages: readonly LhMessage[]): string | undefined {
 	const { boundary, since } = sinceInput(messages);
 	if (boundary?.role !== "custom") return undefined;
-	if (boundary.customType !== "work-submission" && boundary.customType !== "practice-thinking") return undefined;
+	if (boundary.customType !== "work-submission" && boundary.customType !== "practice-thinking" && boundary.customType !== "hint-request") return undefined;
 	const drawingId = (boundary.details as { drawingId?: unknown } | null | undefined)?.drawingId;
 	if (typeof drawingId !== "string") return undefined;
 	const onThis = new Set<string>();
@@ -132,12 +139,14 @@ export function planWrittenAsProse(messages: readonly LhMessage[]): boolean {
 export function nextNudge(messages: readonly LhMessage[], done: { used: boolean }): string | undefined {
 	if (done.used) return undefined;
 	// The mark steer also asks for the plain-text reply when the turn has
-	// none, so it covers the silent-turn case for a drawn submission; after
-	// visible prose it asks only for the marks.
+	// none, so it covers the silent-turn case for a drawn submission or hint;
+	// after visible prose it asks only for the marks.
 	const unmarked = unmarkedSubmission(messages);
+	const { boundary, since } = sinceInput(messages);
+	const steer = boundary?.role === "custom" && boundary.customType === "hint-request" ? hintMarkSteer : markSteer;
 	const text =
 		unmarked !== undefined
-			? markSteer(unmarked, turnSpeaks(sinceInput(messages).since, false))
+			? steer(unmarked, turnSpeaks(since, false))
 			: silentAfterSubmission(messages)
 				? SILENT_TURN_STEER
 				: planWrittenAsProse(messages)

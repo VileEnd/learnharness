@@ -24,6 +24,8 @@ export interface TeacherInkProps {
 	box: Box;
 	space: "world" | "percent";
 	theme?: "light" | "dark";
+	/** World space only: the workspace's current zoom, so a note's text keeps NOTE_SCREEN_MIN_PX on screen. */
+	zoom?: number;
 }
 
 interface Ctx {
@@ -97,17 +99,22 @@ const NOTE_MAX_LINES = 2;
 /** Shantell Sans runs about 0.6em per character. */
 const NOTE_CHAR_EM = 0.6;
 
+/** The smallest a workspace note's text is drawn on screen, in px, whatever the zoom ("clearly readable"). */
+export const NOTE_SCREEN_MIN_PX = 13;
+
 /**
  * The note size: today's badge size x 1.15 (u*2.6*1.15). The chat thumbnail is drawn at most 160px tall
  * (DrawingThumb, max-h-40), where that comes out near 6px, so in percent space a note is at least 7% of the
  * box height (about 11px there; owner: "clearly readable", 2026-10-28). In world space (the workspace, zoom 1
- * by default) a note is at least 14 world px, i.e. 14px unzoomed; it is not counter-scaled with the zoom,
- * which is the learner's choice. Never so large that a full line overflows the drawing's width.
+ * by default) a note is at least 14 world px, i.e. 14px unzoomed. Never so large that a full line overflows
+ * the drawing's width, except that a workspace note never drops below NOTE_SCREEN_MIN_PX on screen at the
+ * current `zoom` (13 / zoom world px): when the two conflict the floor wins and the note wraps as usual (the
+ * marks themselves keep scaling with the drawing).
  */
-function noteSize(u: number, percent: boolean, w: number, h: number): number {
+function noteSize(u: number, percent: boolean, w: number, h: number, zoom = 1): number {
 	const base = u * 2.6 * 1.15;
-	const size = Math.max(base, percent ? h * 0.07 : 14);
-	return Math.min(size, w / (NOTE_LINE_CHARS * NOTE_CHAR_EM));
+	const size = Math.min(Math.max(base, percent ? h * 0.07 : 14), w / (NOTE_LINE_CHARS * NOTE_CHAR_EM));
+	return percent ? size : Math.max(size, NOTE_SCREEN_MIN_PX / Math.max(zoom, 1e-6));
 }
 
 /** Word-wrap at NOTE_LINE_CHARS into NOTE_MAX_LINES lines at most (an overlong word is split), cut with an ellipsis beyond. */
@@ -138,25 +145,43 @@ function noteLines(text: string): string[] {
 	return kept;
 }
 
+/** Where a note goes: it hangs below `bottom` or stands on `top` (the mark's extent), at `x`. */
+interface NoteSpot {
+	x: number;
+	top: number;
+	bottom: number;
+	prefer: "above" | "below";
+	text: string;
+}
+
 /**
- * A note in the teacher's hand: Shantell Sans over a paper halo (`paint-order="stroke"`), at most two lines,
- * kept inside the drawing. It hangs below `bottom` or stands on `top` (the mark's extent), on the preferred
- * side when the drawing has room there, else on the other, else clamped in. The full text stays in the
- * tooltip (and the AnnotateCard).
+ * A note's lines and box, kept inside the drawing: below `bottom` or on `top`, on the preferred side when
+ * the drawing has room there, else on the other, else clamped in. Pure: HandNote draws exactly this box, and
+ * teacherInkBoxes reports it (the workspace brings it into view).
  */
-function HandNote({ x: x0, top, bottom, prefer, text: full, color, c }: { x: number; top: number; bottom: number; prefer: "above" | "below"; text: string; color: string; c: Ctx }) {
-	const fs = c.fs; // the halo below is fs*0.4: u*1.2 at the base size, growing with a floored note
+function notePlace({ x: x0, top, bottom, prefer, text }: NoteSpot, c: Ctx): R & { lines: string[]; lh: number } {
+	const fs = c.fs;
 	const lh = fs * 1.2;
-	const lines = noteLines(full);
+	const lines = noteLines(text);
 	const w = Math.max(...lines.map((l) => l.length), 2) * fs * NOTE_CHAR_EM;
 	const h = lines.length * lh;
 	const x = Math.max(c.minX, Math.min(x0, c.maxX - w));
 	const fitsBelow = bottom + h <= c.maxY, fitsAbove = top - h >= c.minY;
 	const below = prefer === "below" ? fitsBelow || !fitsAbove : fitsBelow && !fitsAbove;
 	const y = Math.max(c.minY, Math.min(below ? bottom : top - h, c.maxY - h));
+	return { x, y, w, h, lines, lh };
+}
+
+/**
+ * A note in the teacher's hand: Shantell Sans over a paper halo (`paint-order="stroke"`), at most two lines,
+ * placed by notePlace. The full text stays in the tooltip (and the AnnotateCard).
+ */
+function HandNote({ spot, color, c }: { spot: NoteSpot; color: string; c: Ctx }) {
+	const fs = c.fs; // the halo below is fs*0.4: u*1.2 at the base size, growing with a floored note
+	const { x, y, lines, lh } = notePlace(spot, c);
 	return (
 		<g>
-			<title>{full}</title>
+			<title>{spot.text}</title>
 			<text
 				fontSize={f(fs)}
 				fill={color}
@@ -177,11 +202,18 @@ function HandNote({ x: x0, top, bottom, prefer, text: full, color, c }: { x: num
 	);
 }
 
-function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: number; scene: DrawingScene; box: Box; c: Ctx }) {
-	const color = mark.kind === "check" ? c.green : c.red;
-	const sw = f(c.u);
-	const common = { fill: "none", stroke: color, strokeWidth: sw, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-	const note = (x: number, top: number, bottom: number, prefer: "above" | "below", text: string) => <HandNote x={x} top={top} bottom={bottom} prefer={prefer} text={text} color={color} c={c} />;
+/** One mark's geometry in space coordinates: what Mark draws, the extent it covers, and where its note goes.
+ *  Null when an anchor no longer resolves. */
+type MarkGeometry =
+	| { kind: "arrow"; x1: number; y1: number; x2: number; y2: number; mx: number; my: number; hl: number; extent: R; note: NoteSpot | null }
+	| { kind: "circle"; pts: Array<[number, number]>; extent: R; note: NoteSpot | null }
+	| { kind: "underline"; pts: Array<[number, number]>; extent: R; note: NoteSpot | null }
+	| { kind: "check" | "cross"; r: R; g: number; extent: R; note: NoteSpot | null }
+	| { kind: "note"; extent: null; note: NoteSpot };
+
+const grow = (r: R, d: number): R => ({ x: r.x - d, y: r.y - d, w: r.w + 2 * d, h: r.h + 2 * d });
+
+function markGeometry(mark: AnnotationMark, scene: DrawingScene, box: Box, c: Ctx): MarkGeometry | null {
 	if (mark.kind === "arrow") {
 		const a = rectOf(mark.from, scene, box, c);
 		const b = rectOf(mark.to, scene, box, c);
@@ -190,25 +222,21 @@ function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: numbe
 		// A slightly curved shaft: the middle bowed off the straight line by 6% of its length.
 		const bow = 0.06;
 		const mx = (x1 + x2) / 2 - (y2 - y1) * bow, my = (y1 + y2) / 2 + (x2 - x1) * bow;
-		const ang = Math.atan2(y2 - my, x2 - mx);
 		const hl = c.u * 4;
-		const barb = (d: number): [number, number] => [x2 - hl * Math.cos(ang + d), y2 - hl * Math.sin(ang + d)];
+		const lx = Math.min(x1, x2, mx), ly = Math.min(y1, y2, my);
+		const extent = grow({ x: lx, y: ly, w: Math.max(x1, x2, mx) - lx, h: Math.max(y1, y2, my) - ly }, hl);
 		// The label sits clear of the shaft: right of the bowed middle, and below (or above) it by a unit.
-		const head = wobblePath([[x2, y2], barb(-0.45)], seed + 1, c.u * 0.25) + wobblePath([[x2, y2], barb(0.45)], seed + 2, c.u * 0.25);
-		return (
-			<g data-mark="arrow">
-				<path d={wobblePath([[x1, y1], [mx, my], [x2, y2]], seed, c.u * 0.5)} {...common} />
-				<path d={head} {...common} />
-				{mark.label ? note(Math.max((x1 + x2) / 2, mx) + c.u, Math.min((y1 + y2) / 2, my) - c.u, Math.max((y1 + y2) / 2, my) + c.u, "below", mark.label) : null}
-			</g>
-		);
+		const note: NoteSpot | null = mark.label
+			? { x: Math.max((x1 + x2) / 2, mx) + c.u, top: Math.min((y1 + y2) / 2, my) - c.u, bottom: Math.max((y1 + y2) / 2, my) + c.u, prefer: "below", text: mark.label }
+			: null;
+		return { kind: "arrow", x1, y1, x2, y2, mx, my, hl, extent, note };
 	}
 	const r = rectOf(mark.target, scene, box, c);
 	if (!r) return null;
 	const g = c.u * 4; // glyph size
 	// A label sits clear of its mark (never on the underline or the circle's rim, which its halo would erase),
 	// below it, or above when the drawing has no room below.
-	const labelAt = (top: number, bottom: number) => (mark.label ? note(r.x, top, bottom, "below", mark.label) : null);
+	const label = (top: number, bottom: number): NoteSpot | null => (mark.label ? { x: r.x, top, bottom, prefer: "below", text: mark.label } : null);
 	switch (mark.kind) {
 		case "circle": {
 			// About 14 points round the ellipse, overshooting the start by ~25 degrees, like a pen loop.
@@ -218,55 +246,91 @@ function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: numbe
 				const t = from + (sweep * i) / (n - 1);
 				return [cx + rx * Math.cos(t), cy + ry * Math.sin(t)];
 			});
-			return (
-				<g data-mark="circle">
-					<path d={wobblePath(pts, seed, c.u * 0.6)} {...common} />
-					{labelAt(cy - ry - c.u, cy + ry + c.u)}
-				</g>
-			);
+			return { kind: "circle", pts, extent: grow({ x: cx - rx, y: cy - ry, w: 2 * rx, h: 2 * ry }, c.u), note: label(cy - ry - c.u, cy + ry + c.u) };
 		}
 		case "underline": {
 			const y = r.y + r.h + c.u;
 			const pts = [0, 1 / 3, 2 / 3, 1].map((t): [number, number] => [r.x + r.w * t, y]);
+			return { kind: "underline", pts, extent: grow({ x: r.x, y: y, w: r.w, h: 0 }, c.u), note: label(r.y - c.u, y + c.u) };
+		}
+		case "check":
+			return { kind: "check", r, g, extent: grow({ x: r.x + r.w - g, y: r.y - g * 0.7, w: g * 1.3, h: g * 1.1 }, c.u), note: label(r.y - g * 0.7 - c.u, r.y + r.h + c.u) };
+		case "cross":
+			return { kind: "cross", r, g, extent: grow({ x: r.x + r.w - g * 0.5, y: r.y - g * 0.5, w: g, h: g }, c.u), note: label(r.y - g * 0.7 - c.u, r.y + r.h + c.u) };
+		case "note":
+			return { kind: "note", extent: null, note: { x: r.x + r.w, top: r.y, bottom: r.y + r.h, prefer: "above", text: mark.label ?? "note" } };
+	}
+}
+
+function Mark({ mark, seed, scene, box, c }: { mark: AnnotationMark; seed: number; scene: DrawingScene; box: Box; c: Ctx }) {
+	const geo = markGeometry(mark, scene, box, c);
+	if (!geo) return null;
+	const color = mark.kind === "check" ? c.green : c.red;
+	const sw = f(c.u);
+	const common = { fill: "none", stroke: color, strokeWidth: sw, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+	const note = geo.note ? <HandNote spot={geo.note} color={color} c={c} /> : null;
+	switch (geo.kind) {
+		case "arrow": {
+			const { x1, y1, x2, y2, mx, my, hl } = geo;
+			const ang = Math.atan2(y2 - my, x2 - mx);
+			const barb = (d: number): [number, number] => [x2 - hl * Math.cos(ang + d), y2 - hl * Math.sin(ang + d)];
+			const head = wobblePath([[x2, y2], barb(-0.45)], seed + 1, c.u * 0.25) + wobblePath([[x2, y2], barb(0.45)], seed + 2, c.u * 0.25);
 			return (
-				<g data-mark="underline">
-					<path d={wobblePath(pts, seed, c.u * 0.5)} {...common} />
-					{labelAt(r.y - c.u, y + c.u)}
+				<g data-mark="arrow">
+					<path d={wobblePath([[x1, y1], [mx, my], [x2, y2]], seed, c.u * 0.5)} {...common} />
+					<path d={head} {...common} />
+					{note}
 				</g>
 			);
 		}
+		case "circle":
+			return (
+				<g data-mark="circle">
+					<path d={wobblePath(geo.pts, seed, c.u * 0.6)} {...common} />
+					{note}
+				</g>
+			);
+		case "underline":
+			return (
+				<g data-mark="underline">
+					<path d={wobblePath(geo.pts, seed, c.u * 0.5)} {...common} />
+					{note}
+				</g>
+			);
 		case "check": {
+			const { r, g } = geo;
 			const vertex: [number, number] = [r.x + r.w - g * 0.6, r.y + g * 0.4];
 			const pts: Array<[number, number]> = [[r.x + r.w - g, r.y - g * 0.1], vertex, vertex, [r.x + r.w + g * 0.3, r.y - g * 0.7]];
 			return (
 				<g data-mark="check">
 					<path d={wobblePath(pts, seed, c.u * 0.25)} {...common} strokeWidth={f(c.u * 1.3)} />
-					{labelAt(r.y - g * 0.7 - c.u, r.y + r.h + c.u)}
+					{note}
 				</g>
 			);
 		}
 		case "cross": {
+			const { r, g } = geo;
 			const [l, rt, t, b] = [r.x + r.w - g * 0.5, r.x + r.w + g * 0.5, r.y - g * 0.5, r.y + g * 0.5];
 			const d = wobblePath([[l, t], [(l + rt) / 2, (t + b) / 2], [rt, b]], seed, c.u * 0.25) + wobblePath([[rt, t], [(l + rt) / 2, (t + b) / 2], [l, b]], seed + 1, c.u * 0.25);
 			return (
 				<g data-mark="cross">
 					<path d={d} {...common} strokeWidth={f(c.u * 1.3)} />
-					{labelAt(r.y - g * 0.7 - c.u, r.y + r.h + c.u)}
+					{note}
 				</g>
 			);
 		}
 		case "note":
-			return <g data-mark="note">{note(r.x + r.w, r.y, r.y + r.h, "above", mark.label ?? "note")}</g>;
+			return <g data-mark="note">{note}</g>;
 	}
 }
 
-export function TeacherInk({ marks, scene, box, space, theme = "dark" }: TeacherInkProps) {
+function inkContext(box: Box, space: "world" | "percent", theme: "light" | "dark", zoom?: number): Ctx {
 	const percent = space === "percent";
 	const k = percent ? 100 / Math.max(box.w, 1) : 1;
 	// Base unit: 3 world px, but never thinner than 1/120 of the box width (so a thumbnail still shows it).
 	const worldUnit = Math.max(3, box.w / 120);
 	const ox = percent ? box.x : 0, oy = percent ? box.y : 0;
-	const c: Ctx = {
+	return {
 		k,
 		ox,
 		oy,
@@ -278,8 +342,30 @@ export function TeacherInk({ marks, scene, box, space, theme = "dark" }: Teacher
 		maxX: (box.x + box.w - ox) * k,
 		minY: (box.y - oy) * k,
 		maxY: (box.y + box.h - oy) * k,
-		fs: noteSize(worldUnit * k, percent, box.w * k, box.h * k),
+		fs: noteSize(worldUnit * k, percent, box.w * k, box.h * k, zoom),
 	};
+}
+
+/** Pure: the world-space boxes the marks cover as drawn in the workspace at `zoom`, each mark's extent and
+ *  each note's box (the same geometry TeacherInk draws), in mark order; a mark that no longer resolves gives
+ *  none. */
+export function teacherInkBoxes(marks: readonly AnnotationMark[], scene: DrawingScene, box: Box, zoom?: number): Box[] {
+	const c = inkContext(box, "world", "dark", zoom);
+	const out: Box[] = [];
+	for (const m of marks) {
+		const geo = markGeometry(m, scene, box, c);
+		if (!geo) continue;
+		if (geo.extent) out.push(geo.extent);
+		if (geo.note) {
+			const { x, y, w, h } = notePlace(geo.note, c);
+			out.push({ x, y, w, h });
+		}
+	}
+	return out;
+}
+
+export function TeacherInk({ marks, scene, box, space, theme = "dark", zoom }: TeacherInkProps) {
+	const c = inkContext(box, space, theme, space === "world" ? zoom : undefined);
 	const body = (
 		<g data-testid="teacher-ink">
 			{marks.map((m, i) => (
@@ -287,7 +373,7 @@ export function TeacherInk({ marks, scene, box, space, theme = "dark" }: Teacher
 			))}
 		</g>
 	);
-	if (!percent) return body;
+	if (space !== "percent") return body;
 	return (
 		<svg viewBox={`0 0 100 ${f((100 * Math.max(box.h, 1)) / Math.max(box.w, 1))}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
 			{body}

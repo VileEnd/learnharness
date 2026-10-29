@@ -88,12 +88,28 @@ function defaultThinkingLevel(model: Model<Api>): ThinkingLevel {
 	return supported[0] ?? "off";
 }
 
+/** The lowest thinking level the model supports: "off" when it can turn
+ *  thinking off, else the first of getSupportedThinkingLevels (pi's
+ *  ascending order). */
+export function lowestThinkingLevel(model: Model<Api>): ThinkingLevel {
+	const supported = getSupportedThinkingLevels(model);
+	return supported.includes("off") ? "off" : (supported[0] ?? "off");
+}
+
+/** How an engine is built beyond its spec. `thinking: "lowest"` overrides
+ *  the spec's level with the model's lowest (lowestThinkingLevel): a
+ *  transcription needs no reasoning, and a reasoning reader is too slow
+ *  (the drawing reader, live check 2026-10-29). */
+export interface EngineOptions {
+	thinking?: "lowest";
+}
+
 /** The production engine for a RESOLVED spec (model slots wave,
  *  2026-09-20): provider-aware catalog lookup + thinking clamp. The API
  *  key is resolved by pi-ai itself from the environment per request (the
  *  keys seam reflects file-saved keys into env), so the engine never
  *  hardcodes OpenRouter's. */
-export function piEngineForSpec(spec: ResolvedModelSpec): PiEngine {
+export function piEngineForSpec(spec: ResolvedModelSpec, opts: EngineOptions = {}): PiEngine {
 	const models: Models = piModels();
 	const model = models.getModel(spec.provider, spec.id);
 	if (!model) {
@@ -102,9 +118,12 @@ export function piEngineForSpec(spec: ResolvedModelSpec): PiEngine {
 	// UNSET level → the baked default order (first entry the model
 	// supports); SET level → pi's native nearest-clamp (model swaps keep
 	// the user's intent and adapt honestly).
-	const level = spec.thinkingLevel
-		? clampThinkingLevel(model, spec.thinkingLevel)
-		: defaultThinkingLevel(model);
+	const level =
+		opts.thinking === "lowest"
+			? lowestThinkingLevel(model)
+			: spec.thinkingLevel
+				? clampThinkingLevel(model, spec.thinkingLevel)
+				: defaultThinkingLevel(model);
 	return {
 		model,
 		level,

@@ -147,6 +147,22 @@ describe("the work fold", () => {
 		assert.equal(inputAppends({ id: "c1", messages: problem, kind: "practice" }, { type: "hint", callId: "p1" }).length, 1);
 	});
 
+	it("a hint from the canvas carries his snapshot and thinking; an unknown drawing is refused", () => {
+		assert.deepEqual(parseChatInput({ type: "hint", callId: "w1", drawingId: "drw_h", text: "half done" }), { type: "hint", callId: "w1", drawingId: "drw_h", text: "half done" });
+		assert.throws(() => parseChatInput({ type: "hint", callId: "w1", drawingId: "" }), ChatInputError);
+		assert.throws(
+			() => inputAppends({ id: "c1", messages: pose() }, { type: "hint", callId: "w1", drawingId: "drw_nope" }, { drawingExists: drawingExists([]) }),
+			ChatInputError,
+		);
+		const [h] = inputAppends({ id: "c1", messages: pose() }, { type: "hint", callId: "w1", drawingId: "drw_h", text: "half done" }, { drawingExists: drawingExists(["drw_h"]) });
+		const marker = h as { customType: string; content: string; details: unknown };
+		assert.equal(marker.customType, "hint-request");
+		assert.deepEqual(marker.details, { callId: "w1", n: 1, drawingId: "drw_h", text: "half done" });
+		assert.equal(marker.content, "Hint request 1 for this task — give the next, smallest hint only.\nYour thinking so far:\nhalf done\n[drawing drw_h]");
+		const textOnly = newHintRequest("w1", 2, { text: "stuck" }).content;
+		assert.ok(textOnly.includes("Your thinking so far:\nstuck") && !textOnly.includes("[drawing"));
+	});
+
 	it("markers: wire text, view parts", () => {
 		const sub = newWorkSubmission("w1", "my try", "drw_a");
 		const dismissed = newWorkDismissedMarker("w1");

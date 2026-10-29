@@ -631,7 +631,7 @@ export function annotationMarkPlace(mark: AnnotationMark): string {
 }
 
 /** Ids of annotate calls that really happened: a result exists and is neither isError nor {ok:false}. */
-function succeededCallIds(messages: readonly unknown[]): Set<string> {
+export function succeededCallIds(messages: readonly unknown[]): Set<string> {
 	const ids = new Set<string>();
 	for (const m of messages) {
 		const r = m as { role?: string; toolCallId?: string; isError?: boolean; details?: unknown };
@@ -661,15 +661,25 @@ export function annotationsOf(messages: readonly unknown[], drawingId: string): 
 	return out;
 }
 
-/** Drawing ids the learner submitted for one task (a work call or a practice problem), oldest first, deduplicated. */
+/** The drawing a learner marker carries and the task it belongs to: a canvas submission, a practice thinking
+ *  submission, or a hint request sent with a snapshot of the canvas. Null for any other message. */
+export function drawingRefOf(message: unknown): { taskId: string; drawingId: string } | null {
+	const r = message as { role?: string; customType?: string; details?: { workCallId?: unknown; problemCallId?: unknown; callId?: unknown; drawingId?: unknown } | null };
+	if (r?.role !== "custom") return null;
+	const d = r.details;
+	const task =
+		r.customType === "work-submission" ? d?.workCallId : r.customType === "practice-thinking" ? d?.problemCallId : r.customType === "hint-request" ? d?.callId : undefined;
+	if (typeof task !== "string" || typeof d?.drawingId !== "string") return null;
+	return { taskId: task, drawingId: d.drawingId };
+}
+
+/** Drawing ids the learner sent for one task (a work call or a practice problem: submissions and hint
+ *  snapshots), oldest first, deduplicated. */
 export function submittedDrawingIds(messages: readonly unknown[], taskCallId: string): string[] {
 	const ids: string[] = [];
 	for (const m of messages) {
-		const r = m as { role?: string; customType?: string; details?: { workCallId?: unknown; problemCallId?: unknown; drawingId?: unknown } | null };
-		if (r.role !== "custom") continue;
-		const task = r.customType === "work-submission" ? r.details?.workCallId : r.customType === "practice-thinking" ? r.details?.problemCallId : undefined;
-		const id = r.details?.drawingId;
-		if (task === taskCallId && typeof id === "string" && !ids.includes(id)) ids.push(id);
+		const ref = drawingRefOf(m);
+		if (ref?.taskId === taskCallId && !ids.includes(ref.drawingId)) ids.push(ref.drawingId);
 	}
 	return ids;
 }
