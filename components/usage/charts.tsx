@@ -11,7 +11,7 @@
  * a thin or empty bar is still easy to hover.
  */
 
-import type { UsageCategory, UsageMonth } from "@/src/core";
+import type { UsageCategory, UsageMonth, UsageMonthTotal } from "@/src/core";
 import { costLabel } from "@/components/usage-format";
 
 /** Display order: bottom of the stack first, and the order of every table. */
@@ -57,13 +57,6 @@ export const CATEGORY_COLORS: Record<UsageCategory, string> = {
 	learner: "#9085e9",
 	search: "#e66767",
 };
-
-/** One month of the 12-month strip (GET /api/usage/months). */
-export interface UsageMonthTotal {
-	month: string;
-	totalUsd: number | null;
-	unpricedCalls: number;
-}
 
 const PLOT_H = 120;
 /** Headroom above the top gridline, px. */
@@ -243,40 +236,49 @@ export function DailyBars({ days, month }: { days: UsageMonth["days"]; month: st
 	);
 }
 
+/** "YYYY-MM" moved by `delta` calendar months. */
+function shiftMonth(month: string, delta: number): string {
+	const [yy, mm] = month.split("-").map(Number);
+	const d = new Date(Date.UTC(yy ?? 1970, (mm ?? 1) - 1 + delta, 1));
+	return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 /**
- * Monthly totals, the last 12 months with data, oldest first, laid on a
- * fixed 12-slot axis that ends at the right edge (so a short history keeps
- * its bar width). One neutral series; the selected month is drawn in the
- * foreground ink. An unpriced month is an empty column, "—" in its tooltip.
+ * Monthly totals over twelve contiguous calendar months ending at the
+ * newest month with data (GET /api/usage/months lists only months that
+ * have a log, so the gaps are filled here; older months fall off). One
+ * neutral series; the selected month is drawn in the foreground ink. A
+ * month without a log is an empty column that says "no requests"; an
+ * unpriced month is an empty column with "—" (never $0).
  */
 export function MonthBars({ months, selected }: { months: UsageMonthTotal[]; selected?: string }) {
-	const slots = Math.max(12, months.length);
-	const offset = slots - months.length;
-	const max = niceCeil(Math.max(0, ...months.map((m) => m.totalUsd ?? 0)));
+	const newest = months.map((m) => m.month).sort().at(-1);
+	if (!newest) return null;
+	const byMonth = new Map(months.map((m) => [m.month, m]));
+	const window = Array.from({ length: 12 }, (_, i) => shiftMonth(newest, i - 11));
+	const max = niceCeil(Math.max(0, ...window.map((m) => byMonth.get(m)?.totalUsd ?? 0)));
 	// Every other month name on a phone, counted back from the newest.
-	const ticks: Array<[number, string, boolean]> = months.map((m, i) => [
-		offset + i,
-		monthName(m.month, "short"),
-		(months.length - 1 - i) % 2 === 1,
-	]);
+	const ticks: Array<[number, string, boolean]> = window.map((m, i) => [i, monthName(m, "short"), (11 - i) % 2 === 1]);
 	return (
 		<div data-testid="usage-month-chart">
-			<Plot max={max} slots={slots} ticks={ticks} label="Monthly spend">
-				{months.map((m, i) => {
-					const slot = offset + i;
-					const h = max > 0 && m.totalUsd ? (m.totalUsd / max) * (PLOT_H - TOP) : 0;
-					const unpriced = m.unpricedCalls ? ` · ${m.unpricedCalls} calls unpriced` : "";
+			<Plot max={max} slots={12} ticks={ticks} label="Monthly spend">
+				{window.map((month, i) => {
+					const m = byMonth.get(month);
+					const h = max > 0 && m?.totalUsd ? (m.totalUsd / max) * (PLOT_H - TOP) : 0;
+					const tip = !m
+						? `${formatMonth(month)} · no requests`
+						: `${formatMonth(month)} · ${costLabel(m.totalUsd)}${m.unpricedCalls ? ` · ${m.unpricedCalls} calls unpriced` : ""}`;
 					return (
-						<g key={m.month} data-month={m.month}>
-							<title>{`${formatMonth(m.month)} · ${costLabel(m.totalUsd)}${unpriced}`}</title>
-							<HitPath i={slot} />
+						<g key={month} data-month={month}>
+							<title>{tip}</title>
+							<HitPath i={i} />
 							{h > 0 && (
 								<rect
-									x={slot * SLOT + (SLOT - BAR) / 2}
+									x={i * SLOT + (SLOT - BAR) / 2}
 									width={BAR}
 									y={PLOT_H - h}
 									height={h}
-									fill={m.month === selected ? "var(--foreground)" : "var(--muted-foreground)"}
+									fill={month === selected ? "var(--foreground)" : "var(--muted-foreground)"}
 								/>
 							)}
 						</g>

@@ -59,3 +59,23 @@ export interface UsageMonth {
 	/** Sorted by usd descending, null last. */
 	sessions: Array<{ chatId: string; usd: number | null; calls: number }>;
 }
+
+/** GET /api/usage: the month, each session with its chat's title and kind
+ *  ("deleted" when the chat no longer exists). */
+export interface UsageMonthView extends UsageMonth {
+	sessions: Array<UsageMonth["sessions"][number] & { title: string; kind: "teach" | "practice" | "deleted" }>;
+}
+
+/** One entry of GET /api/usage/months (the last 12 months with a log). */
+export interface UsageMonthTotal {
+	month: string;
+	totalUsd: number | null;
+	unpricedCalls: number;
+}
+
+/** GET /api/usage/failures: one page of failed requests, newest first. */
+export interface UsageFailuresPage {
+	lines: RequestLogLine[];
+	total: number;
+	pageSize: number;
+}

@@ -10,9 +10,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DailyBars, MonthBars } from "../components/usage/charts.tsx";
-import { UsageView, type UsageMonthView } from "../components/settings/usage-section.tsx";
+import { UsageView } from "../components/settings/usage-section.tsx";
 import { SettingsDialogBody } from "../components/settings/settings-dialog.tsx";
-import type { CategoryTotal, RequestLogLine, UsageCategory } from "../src/core/index.ts";
+import type { CategoryTotal, RequestLogLine, UsageCategory, UsageMonthView } from "../src/core/index.ts";
 
 /** Each day's bar group, by its data-day attribute. */
 function dayGroups(html: string): string[] {
@@ -34,8 +34,13 @@ describe("DailyBars", () => {
 	});
 });
 
+/** Each month slot, by its data-month attribute. */
+function monthGroups(html: string): string[] {
+	return html.split("<g data-month=").slice(1).map((g) => g.slice(0, g.indexOf("</g>")));
+}
+
 describe("MonthBars", () => {
-	it("draws one bar per month", () => {
+	it("draws one bar per priced month", () => {
 		const html = renderToStaticMarkup(
 			<MonthBars
 				months={[
@@ -45,7 +50,23 @@ describe("MonthBars", () => {
 				]}
 			/>,
 		);
-		assert.equal(html.split("<g data-month=").length - 1, 3);
+		assert.equal(html.match(/<rect/g)?.length, 2, "Aug and Oct; Sep is unpriced");
+	});
+
+	it("lays twelve contiguous calendar months: a month without a log is an empty \"no requests\" slot", () => {
+		const html = renderToStaticMarkup(
+			<MonthBars
+				months={[
+					{ month: "2026-01", totalUsd: 1, unpricedCalls: 0 },
+					{ month: "2026-03", totalUsd: 2, unpricedCalls: 0 },
+				]}
+			/>,
+		);
+		const groups = monthGroups(html);
+		assert.equal(groups.length, 12);
+		assert.ok(groups[0]?.startsWith('"2025-04"') && groups[11]?.startsWith('"2026-03"'));
+		const feb = groups.find((g) => g.startsWith('"2026-02"'));
+		assert.ok(feb?.includes("no requests") && !feb.includes("<rect"));
 	});
 });
 
@@ -92,6 +113,23 @@ describe("UsageView (the section, stubbed)", () => {
 		);
 		assert.ok(html.includes("429 rate limited by upstream"));
 		assert.ok(html.includes('href="/chat/c1"'));
+	});
+
+	it("a failed failures page leaves the month and its charts standing", () => {
+		const html = renderToStaticMarkup(
+			<UsageView
+				months={[{ month: "2026-10", totalUsd: 0.42, unpricedCalls: 0 }]}
+				month="2026-10"
+				view={view}
+				failures="error"
+				page={0}
+				onMonth={() => {}}
+				onPage={() => {}}
+			/>,
+		);
+		assert.ok(html.includes('data-testid="usage-daily-chart"'));
+		assert.ok(html.includes('data-testid="usage-month-chart"'));
+		assert.ok(html.includes("Failed requests could not be loaded."));
 	});
 
 	it("an empty month says so", () => {
