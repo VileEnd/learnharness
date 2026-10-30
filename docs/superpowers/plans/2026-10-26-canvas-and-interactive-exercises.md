@@ -12,7 +12,7 @@
 
 **Tech Stack:** TypeScript (strict, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`), Next.js 16 (read `node_modules/next/dist/docs/` before writing route or config code), pi-ai / pi-agent-core with TypeBox tool schemas, React, node:test via tsx, `perfect-freehand@1.2.3`, KaTeX 0.18.2 (already a dependency). PR 5 adds `pyodide`, `@yowasp/clang` and `@bjorn3/browser_wasi_shim` as vendored static runtimes.
 
-**Spec:** The source proposal is `/home/test/.gemini/antigravity-cli/brain/2444bbca-957a-4703-b437-398bcd15ab37/implementation_plan.md`. This plan supersedes it wherever they differ. The **Decisions** section below records the owner's rulings from 2026-10-26.
+**Spec:** The source proposal is `<source proposal>`. This plan supersedes it wherever they differ. The **Decisions** section below records the owner's rulings from 2026-10-26.
 
 ## Decisions (owner, 2026-10-26)
 

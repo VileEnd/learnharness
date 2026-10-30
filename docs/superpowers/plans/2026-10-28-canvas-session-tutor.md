@@ -277,7 +277,7 @@ it("is idempotent", () => { for (const [i] of cases) assert.equal(stripInternalL
 - Modify: `package.json` / `package-lock.json` version → `0.27.0`; `CHANGELOG.md` if present (follow the 0.26.x entries)
 
 - [ ] **Step 1: Live check on a scratch server.**
-  - Port 3030, `LH_DATA_DIR` = a copy of `tests/fixtures/golden-data`, `LH_AUTH_FILE=/home/test/.config/learnharness/dev-auth.json`, `LH_PROVIDER_EVENTS=1`.
+  - Port 3030, `LH_DATA_DIR` = a copy of `tests/fixtures/golden-data`, `LH_AUTH_FILE=~/.config/learnharness/dev-auth.json`, `LH_PROVIDER_EVENTS=1`.
   - Models: session model `openrouter deepseek/deepseek-v4.1-flash`, and the vision slot on a cheap image-capable OpenRouter model from the catalog. The owner's standing rule is no Sonnet/Opus test spend; the mechanics under test are model-independent. Cap: $0.50.
   - Reuse the driver from `/tmp/claude-1002/-home-test-learnharness-learnharness/b1ac23c0-2778-41a8-a85b-9a0a7051bd81/scratchpad/mimo2/run.mts` and its drawings. Run English and German: wrong submission, then hint, then corrected submission.
   - **Pass means:**

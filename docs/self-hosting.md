@@ -157,6 +157,10 @@ ssh -t root@<vm-host> docker exec -it learnharness-claude-1 claude
 
 then type `/login` and follow the prompts. The login lives in `deploy/volumes/claude` (on the VM `/var/lib/learnharness/volumes/claude`) and must never be backed up or copied: it is a personal Claude subscription credential. Using a subscription this way may conflict with Anthropic's Consumer Terms, so check them before you enable it.
 
+**Updating the CLI.** The image pins the CLI version, and its auto-updater is off. To update, bump the pinned `@anthropic-ai/claude-code@<version>` in `deploy/claude/Dockerfile` and rebuild: `docker compose up -d --build` on a manual host, or `systemctl restart learnharness-stack` on the NixOS VM once the change is on `main` (it pulls and rebuilds). The login in `volumes/claude` survives the rebuild. When the installed CLI is below the minimum version the app needs, the Claude Code status in Settings shows "Needs an update" and turns are refused until you update.
+
+**Upgrading an older install.** `docker compose up` refuses to start unless `CLAUDE_RUNNER_TOKEN` is set, even while Claude Code is off. The NixOS stack generates it into `secrets.env`. On a manual host, add `CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)` to `deploy/.env` first (put the command's output in the file, not the command), and create `deploy/volumes/claude` as above.
+
 ## Users
 
 Admins (members of `learnharness-admin`) see **Settings → Users**. There they can:
@@ -252,7 +256,7 @@ Back up the volumes (app data and keys, Caddy CA, Keycloak database; **not** `vo
 
 ## Move-day switch
 
-When the UniFi gateway takes over the LAN (`/home/test/network/fritzbox-to-unifi-plan.md`), the VM moves to **10.20.1.70**. The hostnames and certificates stay the same; only the DNS records change:
+When the UniFi gateway takes over the LAN (`<network migration plan>`), the VM moves to **10.20.1.70**. The hostnames and certificates stay the same; only the DNS records change:
 
 1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC (`BC:24:11:B3:41:E1`).
 2. **Point the records at the new address:** run `deploy/proxmox/tofu.sh apply -var lan_ipv4=10.20.1.70`, or change the default in `variables.tf` and commit it.

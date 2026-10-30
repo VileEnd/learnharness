@@ -11,7 +11,7 @@
 
 **Tech Stack:** Next.js 16, TypeScript, pi-ai/pi-agent-core, `@modelcontextprotocol/sdk` 1.32.1 (new; published 2026-10-05), `@anthropic-ai/claude-code` 2.1.301 (in the runner image only; published 2026-10-15), Docker Compose, NixOS, node:test.
 
-**Spec:** `docs/superpowers/specs/2026-10-30-claude-code-admin-design.md`. Upstream source is read with `git -C /home/test/learnharness/learnharness show dc4c398:<path>`; the `upstream` remote is already fetched there.
+**Spec:** `docs/superpowers/specs/2026-10-30-claude-code-admin-design.md`. Upstream source is read with `git -C <upstream checkout> show dc4c398:<path>`; the `upstream` remote is already fetched there.
 
 ## Global Constraints
 - **Never available to non-admins.** In multi-user mode the gate refuses `claude-code:*` unless `requireTenant().isAdmin`, whatever an allow-list or saved setting says. Single-user mode counts as admin (`LOCAL_TENANT.isAdmin`).

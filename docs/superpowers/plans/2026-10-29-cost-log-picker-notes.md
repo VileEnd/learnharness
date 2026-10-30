@@ -431,7 +431,7 @@
 ### Task 9: Live check, release 0.29.0 and live backfill
 
 - [ ] **Step 1: Live check on a scratch server.**
-  - Setup: port 3030, a golden-data copy, `LH_AUTH_FILE=/home/test/.config/learnharness/dev-auth.json`, and cheap models only (DeepSeek V4.1 Flash; reader `qwen/qwen3.7-flash`). Cap: $0.30.
+  - Setup: port 3030, a golden-data copy, `LH_AUTH_FILE=~/.config/learnharness/dev-auth.json`, and cheap models only (DeepSeek V4.1 Flash; reader `qwen/qwen3.7-flash`). Cap: $0.30.
   - Run:
     1. a teaching turn;
     2. a canvas task with a hint on a crowded drawing;

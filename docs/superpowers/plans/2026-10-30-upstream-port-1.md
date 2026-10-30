@@ -4,11 +4,11 @@
 
 **Goal:** Bring over a set of small upstream (amosblomqvist/learnharness 0.3.9/0.4.0) fixes, adapted to the fork.
 
-**Architecture:** These are ports of individual upstream commits. Use `git show <sha>` on the `upstream` remote (it is already fetched in /home/test/learnharness/learnharness). Each change is adapted to fork code and keeps the fork's multi-user policy checks.
+**Architecture:** These are ports of individual upstream commits. Use `git show <sha>` on the `upstream` remote (it is already fetched in `<upstream checkout>`). Each change is adapted to fork code and keeps the fork's multi-user policy checks.
 
 **Tech Stack:** Next.js 16, TypeScript, streamdown, node:test.
 
-**Spec:** the owner-approved porting evaluation at `/home/test/learnharness/upstream-eval.md`, groups A, B, C, D, E (label part only) and P. That file is outside the repo; read it, but do not commit it.
+**Spec:** the owner-approved porting evaluation at `<upstream eval report>`, groups A, B, C, D, E (label part only) and P. That file is outside the repo; read it, but do not commit it.
 
 ## Global Constraints
 - Keep fork behaviour wherever upstream conflicts with it:
