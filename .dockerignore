@@ -15,3 +15,5 @@ auth.json
 # Not needed in the image build.
 .git/
 deploy/
+# …except the runner module, which the tests import (next build type-checks tests/).
+!deploy/claude/runner.mjs
