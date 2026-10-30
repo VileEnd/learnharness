@@ -15,6 +15,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-custom-lifecycle-"));
 process.env.LH_DATA_DIR = dir;
 process.env.LH_AUTH_FILE = path.join(dir, "auth.json");
 process.env.LH_MULTI_USER = "1";
+delete process.env.LH_ADMIN_GROUP;
 delete process.env.CUSTOM_OPENAI_API_KEY;
 after(() => {
 	mock.restoreAll();

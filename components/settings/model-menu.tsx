@@ -28,6 +28,8 @@ import type { RecommendedModel } from "@/src/core";
 import { formatTokens } from "@/components/usage-format";
 
 function priceLabel(cost: ModelCatalogEntry["cost"]): string {
+	// Unpriced (a paid custom model without rates) renders absent, never $0.
+	if (!cost) return "—";
 	const fmt = (n: number) => `$${n < 1 ? n.toFixed(2).replace(/0$/, "") : n.toFixed(2)}`;
 	return `${fmt(cost.input)}/${fmt(cost.output)}`;
 }

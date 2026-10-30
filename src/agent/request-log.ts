@@ -55,6 +55,8 @@ export interface ObserveMeta {
 	model: string;
 	/** Date.now() at the request start. */
 	startedAt: number;
+	/** Known dollars for a billable call: the free custom endpoint's real $0. */
+	providerCostUsd?: number;
 }
 
 function lineOf(message: AssistantMessage, outcome: RequestOutcome, meta: ObserveMeta): RequestLogLine {
@@ -80,6 +82,7 @@ function lineOf(message: AssistantMessage, outcome: RequestOutcome, meta: Observ
 		line.cacheRead = u.cacheRead;
 		line.cacheWrite = u.cacheWrite;
 		if (u.cacheWrite1h !== undefined) line.cacheWrite1h = u.cacheWrite1h;
+		if (meta.providerCostUsd !== undefined) line.providerCostUsd = meta.providerCostUsd;
 	}
 	if (outcome !== "ok" && message.errorMessage) line.error = truncateError(message.errorMessage);
 	return line;

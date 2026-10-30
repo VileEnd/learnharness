@@ -16,6 +16,14 @@ export const CUSTOM_MODEL_DEFAULT_CONTEXT = 8192;
 export const CUSTOM_MODEL_DEFAULT_MAX_OUTPUT = 4096;
 /** Discovery and manual lists are capped at this many models. */
 export const CUSTOM_MODEL_LIMIT = 10_000;
+/** Sane ceilings for a probed or pinned limit: anything larger is clamped before it reaches the engine or a budget. */
+export const CUSTOM_MODEL_MAX_CONTEXT = 10_000_000;
+export const CUSTOM_MODEL_MAX_OUTPUT = 1_000_000;
+
+/** Clamp a token limit to its ceiling. */
+export function clampCustomLimit(field: "context" | "maxOutput", value: number): number {
+	return Math.min(value, field === "context" ? CUSTOM_MODEL_MAX_CONTEXT : CUSTOM_MODEL_MAX_OUTPUT);
+}
 
 export type CustomProviderMode = "keyless" | "key";
 /** free: local compute, every call priced $0. paid: priced from per-model rates; no rates = unpriced. */
@@ -119,7 +127,7 @@ export function parseCustomModelSettings(
 			const v = value[field];
 			if (v === undefined) continue;
 			if (!positiveInt(v)) return { ok: false, error: `${field} for ${id} must be a whole number of tokens of at least 1` };
-			entry[field] = v;
+			entry[field] = clampCustomLimit(field, v);
 		}
 		if (value.reasoning !== undefined) {
 			if (typeof value.reasoning !== "boolean") return { ok: false, error: `reasoning for ${id} must be true or false` };
@@ -163,14 +171,15 @@ export function isCustomProviderConfig(v: unknown): v is CustomProviderConfig {
 	return true;
 }
 
-/** The ladder: the admin's pin wins, then the endpoint's metadata, then the compiled default. */
+/** The ladder: the admin's pin wins, then the endpoint's metadata, then the
+ *  compiled default; every limit clamped (a hand-edited file included). */
 export function resolveCustomModel(model: CustomModel, settings: CustomModelSettings | undefined): ResolvedCustomModel {
 	const out: ResolvedCustomModel = {
 		id: model.id,
 		image: Boolean(model.image),
 		reasoning: settings?.reasoning ?? Boolean(model.reasoning),
-		contextWindow: settings?.context ?? model.context ?? CUSTOM_MODEL_DEFAULT_CONTEXT,
-		maxOutput: settings?.maxOutput ?? model.maxOutput ?? CUSTOM_MODEL_DEFAULT_MAX_OUTPUT,
+		contextWindow: clampCustomLimit("context", settings?.context ?? model.context ?? CUSTOM_MODEL_DEFAULT_CONTEXT),
+		maxOutput: clampCustomLimit("maxOutput", settings?.maxOutput ?? model.maxOutput ?? CUSTOM_MODEL_DEFAULT_MAX_OUTPUT),
 	};
 	if (settings?.inputUsdPerMTok !== undefined && settings.outputUsdPerMTok !== undefined) {
 		out.rates = { inputUsdPerMTok: settings.inputUsdPerMTok, outputUsdPerMTok: settings.outputUsdPerMTok };

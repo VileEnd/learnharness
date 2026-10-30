@@ -77,15 +77,18 @@ test("keyless probe never forwards a key, and a keyless edit drops the stored ke
 });
 
 test("a new key is trimmed, probed exactly and stored; no response carries it", async () => {
-	const res = await h.post({ baseUrl: NEW, mode: "key", pricing: "paid", key: " k " });
+	const KEY = "sk-distinctive-7f3a9c2e";
+	const res = await h.post({ baseUrl: NEW, mode: "key", pricing: "paid", key: ` ${KEY} ` });
 	assert.equal(res.status, 200);
-	assert.equal(requests[0]?.authorization, "Bearer k");
-	assert.equal(customKey(), "k");
+	assert.ok(!(await res.text()).includes(KEY), "the POST response never carries the key");
+	assert.equal(requests[0]?.authorization, `Bearer ${KEY}`);
+	assert.equal(customKey(), KEY);
 	const status = (await (await h.get()).json()) as { keyPresent: boolean; keyBound: boolean; usable: boolean };
 	assert.equal(status.keyPresent, true);
 	assert.equal(status.keyBound, true);
 	assert.equal(status.usable, true);
-	assert.ok(!(await (await h.get()).text()).includes("Bearer"));
+	const body = await (await h.get()).text();
+	assert.ok(!body.includes(KEY) && !body.includes("Bearer"), "the GET response never carries the key");
 });
 
 test("an edit to a different URL drops the key binding: no reuse without re-entering the key", async () => {
@@ -204,6 +207,10 @@ test("forbidden URL components, modes and pricing are rejected before probing", 
 	assert.equal(((await (await h.post({ baseUrl: NEW, mode: "apiKey", pricing: "free" })).json()) as { error: string }).error, "invalid_mode");
 	assert.equal(((await (await h.post({ baseUrl: NEW, mode: "keyless" })).json()) as { error: string }).error, "invalid_pricing");
 	assert.equal(((await (await h.post({ baseUrl: NEW, mode: "key", pricing: "free", key: "a\nb" })).json()) as { error: string }).error, "invalid_key");
+	// Outside printable ASCII (a header value the transport would mangle or reject).
+	for (const key of ["sk-\u00e9t\u00e9", "sk-\u200bzero-width", "sk-\u{1F511}"]) {
+		assert.equal(((await (await h.post({ baseUrl: NEW, mode: "key", pricing: "free", key })).json()) as { error: string }).error, "invalid_key");
+	}
 	assert.equal(requests.length, 0);
 });
 

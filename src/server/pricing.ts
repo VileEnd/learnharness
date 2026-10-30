@@ -1,21 +1,34 @@
 /** Read-time API-dollar estimates. Pi owns both rates and arithmetic.
  * Catalog resolution is key-independent; no provider dispatch/auth is needed.
  * Never mutate saved native messages: calculateCost mutates its usage.cost.
+ * The admin's custom endpoint (upstream port 6) is priced from its own
+ * config, never its pi entry: free = $0 (the one sanctioned real zero), paid
+ * = the admin's per-model rates, paid without rates = unpriced (null).
  */
-import { calculateCost, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, type Model, type Api, type Models, type Usage } from "@earendil-works/pi-ai";
 import { piModels } from "../agent/models.ts";
+import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import type { CallUsage, ChatRecord, JobRecord, TurnUsage } from "../core/contracts.ts";
-import { sessionCost as foldSessionCost, turnCost as foldTurnCost, jobCost as foldJobCost } from "../core/prices.ts";
+import { sessionCost as foldSessionCost, turnCost as foldTurnCost, jobCost as foldJobCost, type CallPricer } from "../core/prices.ts";
+import { customModelCost, customProviderConfig, type CustomModelCost, type CustomProviderRuntime } from "./custom-provider.ts";
 
-function catalogModel(id: string) {
+/** "provider:id" split on the FIRST colon: ids may contain one (Ollama `qwen3:8b`). */
+function split(id: string): { provider: string; model: string } | undefined {
 	const colon = id.indexOf(":");
-	if (colon < 0) return undefined;
-	return piModels().getModel(id.slice(0, colon), id.slice(colon + 1));
+	return colon < 0 ? undefined : { provider: id.slice(0, colon), model: id.slice(colon + 1) };
 }
 
-export function callCost(call: Partial<CallUsage>, modelId: string): number | null {
-	const model = catalogModel(modelId);
-	if (!model || call.inputTokens === undefined || call.outputTokens === undefined) return null;
+/** A built-in catalog model. The custom endpoint is never read here: its pi
+ *  entry carries a zero placeholder when unpriced (customModelCost decides). */
+function catalogModel(id: string, models: Models = piModels()) {
+	const parts = split(id);
+	if (!parts || parts.provider === CUSTOM_PROVIDER.id) return undefined;
+	return models.getModel(parts.provider, parts.model);
+}
+
+/** Tokens → dollars against one rate card; null for impossible usage. */
+function priceWith(cost: Model<Api>["cost"], call: Partial<CallUsage>, legacyCacheGuard: boolean): number | null {
+	if (call.inputTokens === undefined || call.outputTokens === undefined) return null;
 	const input = call.inputTokens;
 	const output = call.outputTokens;
 	const cacheRead = call.cacheReadTokens ?? 0;
@@ -24,27 +37,49 @@ export function callCost(call: Partial<CallUsage>, modelId: string): number | nu
 	if ([input, output, cacheRead, cacheWrite, cacheWrite1h].some((v) => !Number.isFinite(v) || v < 0) || cacheWrite1h > cacheWrite) return null;
 	// Old records discarded this split. Only price them if it cannot affect
 	// the result; do not invent short-retention precision from a missing field.
-	if (cacheWrite > 0 && call.cacheWrite1hTokens === undefined &&
-		[model.cost, ...(model.cost.tiers ?? [])].some((rate) => rate.cacheWrite !== 2 * rate.input)) return null;
+	if (legacyCacheGuard && cacheWrite > 0 && call.cacheWrite1hTokens === undefined &&
+		[cost, ...(cost.tiers ?? [])].some((rate) => rate.cacheWrite !== 2 * rate.input)) return null;
 	const usage: Usage = {
 		input, output, cacheRead, cacheWrite, cacheWrite1h,
 		totalTokens: input + output + cacheRead + cacheWrite,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	const total = calculateCost(model, usage).total;
+	const total = calculateCost({ cost } as Model<Api>, usage).total;
 	return Number.isFinite(total) && total >= 0 ? total : null;
 }
 
+/** A pricer bound to one read of the catalog and the custom endpoint: a fold
+ *  over many lines (the month view, the cap check) reads the config once.
+ *  Custom: free = $0, paid = the admin's rates, no rates = unpriced (null). */
+export function createPricer(): CallPricer {
+	const models = piModels();
+	let runtime: CustomProviderRuntime | null | undefined;
+	const custom = (id: string): CustomModelCost | null => customModelCost((runtime ??= customProviderConfig()), id);
+	return (call, modelId) => {
+		const parts = split(modelId);
+		if (parts?.provider === CUSTOM_PROVIDER.id) {
+			const cost = custom(parts.model);
+			return cost ? priceWith(cost, call, false) : null;
+		}
+		const model = catalogModel(modelId, models);
+		return model ? priceWith(model.cost, call, true) : null;
+	};
+}
+
+export function callCost(call: Partial<CallUsage>, modelId: string): number | null {
+	return createPricer()(call, modelId);
+}
+
 export function turnCost(turn: TurnUsage): number | null {
-	return foldTurnCost(turn, callCost);
+	return foldTurnCost(turn, createPricer());
 }
 export function sessionCost(record: Pick<ChatRecord, "turns">) {
-	return foldSessionCost(record, callCost);
+	return foldSessionCost(record, createPricer());
 }
 export function jobCost(job: Pick<JobRecord, "usage">): number | null {
 	const usage = job.usage;
 	if (!usage || usage.steps < 1) return null;
 	const hasCalls = usage.calls?.length === usage.steps;
 	if (!hasCalls && usage.steps > 1 && catalogModel(usage.model)?.cost.tiers?.length) return null;
-	return foldJobCost(job, callCost);
+	return foldJobCost(job, createPricer());
 }

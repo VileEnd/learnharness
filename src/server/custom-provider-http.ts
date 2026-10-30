@@ -178,7 +178,8 @@ export async function customProviderMutation(request: Request): Promise<Response
 		const { mode, pricing } = raw;
 		if (raw.key !== undefined && typeof raw.key !== "string") return failure("invalid_key", 400);
 		const supplied = mode === "key" ? (raw.key as string | undefined)?.trim() || undefined : undefined;
-		if (supplied && /[\u0000-\u001f\u007f]/.test(supplied)) return failure("invalid_key", 400, "The key contains control characters.");
+		// Printable ASCII only: it rides an HTTP header, where anything else is mangled or refused.
+		if (supplied && !/^[\x20-\x7e]+$/.test(supplied)) return failure("invalid_key", 400, "The key may contain printable ASCII characters only.");
 		const sameTarget = before.config?.baseUrl === baseUrl;
 		// A stored key goes only to the URL it was bound to: a new URL needs the key re-entered.
 		if (mode === "key" && !supplied && !(sameTarget && customKeyAuthorized(before.config, before.auth))) {

@@ -5,12 +5,14 @@ import {
 	type Api,
 	type Model,
 	type Models,
+	type MutableModels,
 	type StreamFunction,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type ModelRole } from "../../config.ts";
-import { DEFAULT_THINKING_ORDER } from "../core/settings.ts";
+import { DEFAULT_THINKING_ORDER, isPolicyRefusal, modelNotAllowed } from "../core/settings.ts";
 import { observeStream } from "./request-log.ts";
 import packageMetadata from "../../package.json" with { type: "json" };
 
@@ -46,6 +48,32 @@ export type { ThinkingLevel };
 
 let collection: ReturnType<typeof createModels> | undefined;
 
+/** Configured providers the server syncs into the collection (upstream
+ *  configureProviderSource; today the admin's one custom endpoint). The
+ *  agent never reads configuration: the server injects this
+ *  (src/server/stores.ts), the setModelGate precedent. */
+export interface ProviderSource {
+	/** Register or retire the source's providers. Runs on every piModels()
+	 *  call, so it must be cheap when nothing changed. */
+	sync(models: MutableModels): void;
+	isCustom(providerId: string): boolean;
+	/** Calls to this custom provider cost nothing (as of the last sync):
+	 *  they are logged priced at a real $0, not unpriced. */
+	isFree(providerId: string): boolean;
+}
+let providerSource: ProviderSource | undefined;
+
+/** Install the source. A re-evaluated server module can replace it while
+ *  the collection survives: retire only the previous source's providers. */
+export function configureProviderSource(source: ProviderSource): void {
+	if (collection && providerSource) {
+		for (const provider of collection.getProviders()) {
+			if (providerSource.isCustom(provider.id)) collection.deleteProvider(provider.id);
+		}
+	}
+	providerSource = source;
+}
+
 /** The process-wide pi-ai Models collection — EVERY builtin provider's
  *  catalog (model slots wave, 2026-09-20): engines and the picker resolve
  *  against all of pi-ai's per-provider catalogs, so a settings slot can pin
@@ -59,6 +87,7 @@ export function piModels() {
 		collection = createModels({ identity: APP_IDENTITY });
 		for (const provider of builtinProviders()) collection.setProvider(provider);
 	}
+	providerSource?.sync(collection);
 	return collection;
 }
 
@@ -132,24 +161,43 @@ export function setModelGate(next: ModelGate | null): void {
  *  2026-09-20): provider-aware catalog lookup + thinking clamp. The API
  *  key is resolved by pi-ai itself from the environment per request (the
  *  keys seam reflects file-saved keys into env), so the engine never
- *  hardcodes OpenRouter's. */
+ *  hardcodes OpenRouter's; the custom endpoint resolves its own key.
+ *
+ *  The custom endpoint (upstream port 6) can change under a live engine (an
+ *  agent loop spans many calls), so after the gate every custom call
+ *  revalidates: the gate again (allow-list, pricing and cap), the model in
+ *  the current collection, and thinking re-resolved from the ORIGINAL
+ *  preference against current metadata (upstream 313a3c8). Its engine model
+ *  is a clone permitting images, since discovery metadata is sparse; the
+ *  registered capability is never promoted. */
 export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOptions = {}): PiEngine {
 	// Every engine passes the gate first: the one enforcement point.
 	const spec = modelGate ? modelGate(requested, opts) : requested;
 	const models: Models = piModels();
-	const model = models.getModel(spec.provider, spec.id);
-	if (!model) {
+	const registered = models.getModel(spec.provider, spec.id);
+	if (!registered) {
 		throw new Error(`${spec.provider} catalog has no model ${spec.id}`);
 	}
+	const custom = providerSource?.isCustom(spec.provider) ?? false;
+	const model = custom ? permitImages(registered) : registered;
 	// UNSET level → the baked default order (first entry the model
 	// supports); SET level → pi's native nearest-clamp (model swaps keep
 	// the user's intent and adapt honestly).
-	const level =
+	const levelFor = (m: Model<Api>): ThinkingLevel =>
 		opts.thinking === "lowest"
-			? lowestThinkingLevel(model)
+			? lowestThinkingLevel(m)
 			: spec.thinkingLevel
-				? clampThinkingLevel(model, spec.thinkingLevel)
-				: defaultThinkingLevel(model);
+				? clampThinkingLevel(m, spec.thinkingLevel)
+				: defaultThinkingLevel(m);
+	const level = levelFor(model);
+	const meta = (modelId: string) => ({
+		purpose: opts.purpose ?? "unlabelled",
+		chatId: opts.chatId,
+		chatKind: opts.chatKind,
+		provider: spec.provider,
+		model: modelId,
+		startedAt: Date.now(),
+	});
 	return {
 		model,
 		level,
@@ -158,22 +206,51 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 		// the pin honest even when config or settings drift off the map.
 		// Every call is observed for the request log (one line per call,
 		// beneath any retry wrapper, so a retried attempt logs too).
-		streamFn: (requestModel, context, options) =>
-			observeStream(
-				models.streamSimple(requestModel, context, {
-					...options,
-					reasoning: level === "off" ? undefined : level,
-				}),
-				{
-					purpose: opts.purpose ?? "unlabelled",
-					chatId: opts.chatId,
-					chatKind: opts.chatKind,
-					provider: requestModel.provider,
-					model: requestModel.id,
-					startedAt: Date.now(),
-				},
-			),
+		streamFn: (requestModel, context, options) => {
+			if (!custom) {
+				return observeStream(
+					models.streamSimple(requestModel, context, { ...options, reasoning: level === "off" ? undefined : level }),
+					{ ...meta(requestModel.id), provider: requestModel.provider },
+				);
+			}
+			const refusal = customRefusal(spec, opts);
+			const current = piModels();
+			const currentModel = current.getModel(spec.provider, spec.id);
+			if (refusal || !currentModel) {
+				const reason = refusal ?? "The selected custom model is unavailable.";
+				return observeStream(lazyStream(requestModel, async () => { throw new Error(reason); }), meta(spec.id));
+			}
+			const currentLevel = levelFor(currentModel);
+			const free = providerSource?.isFree(spec.provider) ?? false;
+			return observeStream(
+				current.streamSimple(permitImages(currentModel), context, { ...options, reasoning: currentLevel === "off" ? undefined : currentLevel }),
+				{ ...meta(currentModel.id), ...(free && { providerCostUsd: 0 }) },
+			);
+		},
 	};
+}
+
+/** A custom endpoint's owner authorizes image attempts regardless of sparse
+ *  discovery metadata: a clone, never the registered model. */
+function permitImages(model: Model<Api>): Model<Api> {
+	return { ...model, input: ["text", "image"] };
+}
+
+/** Re-run the gate before a custom call: the refusal as the stream's error
+ *  message (a policy envelope as JSON, which the chat renders with its copy),
+ *  or undefined when the same model is still allowed. A substituted spec
+ *  means the model is no longer allowed (an admin edit, or a pricing change
+ *  that leaves a capped user on an unpriced model, mid-session). */
+function customRefusal(spec: ResolvedModelSpec, opts: EngineOptions): string | undefined {
+	if (!modelGate) return undefined;
+	try {
+		const again = modelGate(spec, opts);
+		if (again.provider === spec.provider && again.id === spec.id) return undefined;
+		return JSON.stringify(modelNotAllowed(`${spec.provider}:${spec.id}`));
+	} catch (err) {
+		if (isPolicyRefusal(err)) return JSON.stringify(err.envelope);
+		return err instanceof Error ? err.message : String(err);
+	}
 }
 
 /** The LEGACY role entry point — BYOK made it an honest THROWER (owner,

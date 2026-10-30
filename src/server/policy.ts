@@ -7,6 +7,7 @@
 import { AdminPolicyCorrupt, DEFAULT_MONTHLY_CAP_USD, DENY_ALL_POLICY, modelKey, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
 import { recommendedFor } from "../core/recommended-models.ts";
 import { multiUser, requireTenant } from "../core/tenant-context.ts";
+import { isCustomKey, isUnpricedCustomKey, pricedCustomKeys } from "./custom-provider.ts";
 import { catalogModels } from "./model-catalog.ts";
 import { stores } from "./stores.ts";
 
@@ -105,6 +106,17 @@ export function validatePolicy(raw: unknown, models: readonly CatalogModelLike[]
 	const cap = r.monthlyCapUsd;
 	if (cap !== null && (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0)) {
 		return { ok: false, error: "monthlyCapUsd must be null or a finite number >= 0" };
+	}
+	// A capped user must never get an unpriced custom model (paid, no rates):
+	// unpriced calls count $0 toward the cap. The gate enforces it too, since
+	// pricing can change after this save.
+	if (cap !== null) {
+		const named = [...allowedModels, ...Object.values(slots).map((m) => modelKey(m))];
+		if (named.some(isCustomKey)) {
+			const priced = pricedCustomKeys();
+			const bad = named.find((k) => isUnpricedCustomKey(k, priced));
+			if (bad) return { ok: false, error: `${bad} has no rates (a paid custom model), so it cannot be allowed under a monthly limit` };
+		}
 	}
 	return { ok: true, policy: { slots, allowedModels, monthlyCapUsd: cap } };
 }

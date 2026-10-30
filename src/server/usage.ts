@@ -1,7 +1,8 @@
 /**
  * The usage surface (cost counter, 2026-10-29): the month view, the
  * 12-month strip and the failed-request pages behind /api/usage, all folded
- * from the request log (data/logs) at read time and priced with callCost.
+ * from the request log (data/logs) at read time and priced with callCost
+ * (one createPricer() per fold).
  * Plus the ONE-TIME backfill: the usage the records already hold (chat
  * turns, extraction runs, jobs, OCR'd documents) enters the log as
  * `imported: true` lines, so the month is right on day one and a deleted
@@ -14,7 +15,7 @@ import { PATHS } from "../../config.ts";
 import type { CallUsage, ChatRecord, ExtractionRunUsage, JobKind } from "../core/contracts.ts";
 import type { RequestLogLine, UsageFailuresPage, UsageMonthTotal, UsageMonthView } from "../core/contracts/usage.ts";
 import { categoryOf, monthKey, summarizeMonth } from "../core/usage.ts";
-import { callCost } from "./pricing.ts";
+import { createPricer } from "./pricing.ts";
 import { stores } from "./stores.ts";
 
 /** One month folded and priced (default: the current Berlin month). Each
@@ -22,7 +23,7 @@ import { stores } from "./stores.ts";
  *  keeps its spend as "Deleted session". */
 export function usageMonth(month: string = monthKey(new Date())): UsageMonthView {
 	ensureBackfill();
-	const summary = summarizeMonth(month, stores.requestLog.readMonth(month), callCost);
+	const summary = summarizeMonth(month, stores.requestLog.readMonth(month), createPricer());
 	return {
 		...summary,
 		sessions: summary.sessions.map((s) => {
@@ -39,7 +40,7 @@ export function usageMonth(month: string = monthKey(new Date())): UsageMonthView
  *  keeps the count so they are never mistaken for free. */
 export function monthSpend(month: string = monthKey(new Date())): { usd: number; unpriced: number } {
 	ensureBackfill();
-	const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), callCost);
+	const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), createPricer());
 	return { usd: totalUsd ?? 0, unpriced: unpricedCalls };
 }
 
@@ -50,7 +51,7 @@ export function usageMonths(): UsageMonthTotal[] {
 		.months()
 		.slice(-12)
 		.map((month) => {
-			const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), callCost);
+			const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), createPricer());
 			return { month, totalUsd, unpricedCalls };
 		});
 }

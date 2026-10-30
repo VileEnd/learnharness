@@ -6,13 +6,19 @@
  * catalog: the global record (never tenant settings) plus its key, paired
  * only while the auth-file binding matches nonce, URL and mode. It re-reads
  * both files on every call and never throws; anything unusable is null.
+ *
+ * The engine half lives in custom-provider-engine.ts. Pricing and the gate
+ * read this same view: free = a real $0, paid = the admin's rates, and a paid
+ * model without rates is unpriced (so a capped restricted user never gets it).
  */
 
+import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { CustomBodyLimitError, readBoundedJson } from "./custom-provider-body.ts";
 import { customAuthState, customKeyAuthorized, type CustomAuthState } from "./custom-provider-auth.ts";
 import { customBindingMatches } from "../core/custom-provider-auth.ts";
 import {
 	CUSTOM_MODEL_LIMIT,
+	clampCustomLimit,
 	normalizeBaseUrl,
 	resolveCustomModel,
 	type CustomModel,
@@ -46,7 +52,8 @@ export function customProviderRuntime(config: CustomProviderConfig | null, auth:
 		pricing: config.pricing,
 		...(config.mode === "key" ? { apiKey: auth.key } : {}),
 		bindingId: config.bindingId,
-		models: config.snapshot.map((m) => resolveCustomModel(m, config.models?.[m.id])),
+		// Own keys only: a model id like "constructor" must never read the prototype.
+		models: config.snapshot.map((m) => resolveCustomModel(m, config.models && Object.hasOwn(config.models, m.id) ? config.models[m.id] : undefined)),
 	};
 }
 
@@ -61,6 +68,50 @@ export function customProviderConfig(): CustomProviderRuntime | null {
 /** The usable endpoint's models, without the key (catalog, pricing, gate). */
 export function customProviderModels(): ResolvedCustomModel[] {
 	return customProviderConfig()?.models ?? [];
+}
+
+// ─── Pricing and gate (Task 2) ───────────────────────────────────────
+
+/** pi-ai's per-MTok cost shape. */
+export interface CustomModelCost {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
+export const FREE_COST: CustomModelCost = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+/** What one custom model costs per MTok, or null when it is unpriced (paid
+ *  without both rates, or not in the usable endpoint at all). Free is the one
+ *  sanctioned real zero (local compute). Cached tokens are priced at the
+ *  input rate: an OpenAI-compatible host's discount is unknown, so the
+ *  estimate never under-counts against a cap. */
+export function customModelCost(runtime: CustomProviderRuntime | null, id: string): CustomModelCost | null {
+	const model = runtime?.models.find((m) => m.id === id);
+	if (!runtime || !model) return null;
+	if (runtime.pricing === "free") return FREE_COST;
+	if (!model.rates) return null;
+	const { inputUsdPerMTok: input, outputUsdPerMTok: output } = model.rates;
+	return { input, output, cacheRead: input, cacheWrite: input };
+}
+
+/** `custom:<id>` keys a capped restricted user may run: every model in free
+ *  mode, only the rated ones in paid mode, none when nothing is usable. */
+export function pricedCustomKeys(runtime: CustomProviderRuntime | null = customProviderConfig()): Set<string> {
+	const keys = new Set<string>();
+	for (const m of runtime?.models ?? []) if (customModelCost(runtime, m.id)) keys.add(`${CUSTOM_PROVIDER.id}:${m.id}`);
+	return keys;
+}
+
+/** A `custom:<id>` model key (split on the first colon: the id may hold one). */
+export function isCustomKey(key: string): boolean {
+	return key.startsWith(`${CUSTOM_PROVIDER.id}:`);
+}
+
+/** A custom model key outside the priced set (fail closed: an unknown custom key is unpriced too). */
+export function isUnpricedCustomKey(key: string, priced: ReadonlySet<string>): boolean {
+	return isCustomKey(key) && !priced.has(key);
 }
 
 /** Outcome of a discovery probe. `status` is the endpoint's HTTP status when
@@ -169,9 +220,9 @@ function extractModels(body: unknown): CustomModel[] | null {
 			if (detectImage(row)) model.image = true;
 			if (detectReasoning(row)) model.reasoning = true;
 			const context = firstPositive(row, CONTEXT_KEYS);
-			if (context) model.context = context;
+			if (context) model.context = clampCustomLimit("context", context);
 			const maxOutput = firstPositive(row, MAX_OUTPUT_KEYS);
-			if (maxOutput) model.maxOutput = maxOutput;
+			if (maxOutput) model.maxOutput = clampCustomLimit("maxOutput", maxOutput);
 			byId.set(id, model);
 		}
 	}
