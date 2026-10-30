@@ -26,6 +26,7 @@ import { setRequestSink } from "../agent/request-log.ts";
 import { setModelGate } from "../agent/models.ts";
 import { modelGate, readSettingsView } from "./model-gate.ts";
 import { installCustomProviderSource } from "./custom-provider-engine.ts";
+import { installClaudeCodeSource } from "./claude-code-engine.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
 	adminPolicyStore,
@@ -65,6 +66,12 @@ setModelGate(modelGate);
 // settings), so every tenant sees the same endpoint and no one's key leaks.
 // Wired in every process, tests included: an absent record registers nothing.
 installCustomProviderSource();
+
+// Claude Code (admin-only experiment): the provider is registered only while
+// the admin toggle is on and a runner is configured (CLAUDE_RUNNER_ADDR); the
+// model gate admits it only for the admin's own chat turns. Wired in every
+// process, tests included: off by default, so it registers nothing.
+installClaudeCodeSource();
 
 // The one-time usage backfill (cost counter): old records enter the log once
 // per data dir, off the request path, after boot. Only in the Next server

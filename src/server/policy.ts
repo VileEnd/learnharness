@@ -5,6 +5,7 @@
  */
 
 import { AdminPolicyCorrupt, DEFAULT_MONTHLY_CAP_USD, DENY_ALL_POLICY, modelKey, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
+import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import { recommendedFor } from "../core/recommended-models.ts";
 import { multiUser, requireTenant } from "../core/tenant-context.ts";
 import { isCustomKey, isUnpricedCustomKey, pricedCustomKeys } from "./custom-provider.ts";
@@ -80,6 +81,22 @@ export function setDefaults(p: UserPolicy): void {
 	stores.adminPolicyStore.writePolicy({ ...stored(), newUserDefaults: p });
 }
 
+/** The Claude Code toggle, read fresh on every call. Off unless the file
+ *  says `enabled: true`; FAILS CLOSED (off) when the policy file is corrupt. */
+export function claudeCodeEnabled(): boolean {
+	try {
+		return stored().claudeCode?.enabled === true;
+	} catch (e) {
+		if (!(e instanceof AdminPolicyCorrupt)) throw e;
+		return false;
+	}
+}
+
+/** Refuses (throws AdminPolicyCorrupt) on a corrupt file; never persists newUserDefaults. */
+export function setClaudeCodeEnabled(on: boolean): void {
+	stores.adminPolicyStore.writePolicy({ ...stored(), claudeCode: { enabled: on } });
+}
+
 export type PolicyValidation = { ok: true; policy: UserPolicy } | { ok: false; error: string };
 
 const isModel = (v: unknown): v is PolicyModel =>
@@ -102,6 +119,9 @@ export function validatePolicy(raw: unknown, models: readonly CatalogModelLike[]
 		return { ok: false, error: "allowedModels must be a list of provider:id strings" };
 	}
 	const allowedModels = [...new Set(r.allowedModels)];
+	// Claude Code is the admin's own experiment: never grantable, whatever the catalog holds.
+	const claudeCode = [...allowedModels, ...Object.values(slots).map((m) => modelKey(m))].find((k) => k.startsWith(`${CLAUDE_CODE_PROVIDER}:`));
+	if (claudeCode) return { ok: false, error: `${claudeCode} is a Claude Code model, which only the admin can use` };
 	for (const k of allowedModels) if (!known.has(k)) return { ok: false, error: `unknown model ${k}` };
 	const cap = r.monthlyCapUsd;
 	if (cap !== null && (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0)) {

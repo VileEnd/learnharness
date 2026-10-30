@@ -25,8 +25,9 @@ export interface ModelCatalogEntry {
 	 *  without admin rates. Never a fake zero (a free custom endpoint's zeros
 	 *  are real). */
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
-	contextWindow: number;
-	maxTokens: number;
+	/** Null for Claude Code's CLI aliases, whose effective limits are session-specific. */
+	contextWindow: number | null;
+	maxTokens: number | null;
 }
 
 /** The conversation agents' resolved default (BYOK, owner 2026-09-22): the

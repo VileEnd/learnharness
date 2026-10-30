@@ -23,3 +23,4 @@ export * from "./contracts/usage.ts";
 export * from "./contracts/wireguard.ts";
 export * from "./contracts/admin.ts";
 export * from "./contracts/custom-provider.ts";
+export * from "./contracts/claude-code.ts";

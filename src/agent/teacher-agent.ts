@@ -22,6 +22,7 @@ import { newTurnNudge, nextNudge, withEmptyErrorRetry } from "./turn-nudge.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
+import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext, type LhMessage } from "../core/native-messages.ts";
 
 /**
@@ -237,10 +238,12 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			// Claude models only, matched on the model id across providers
 			// (anthropic, OpenRouter, Bedrock — same model, same text-after-tool
 			// conversion), as upstream 87b04cc gates it — not on the API
-			// transport. Explicit test registries remain caller-owned.
+			// transport — plus Claude Code, whose ids are bare aliases
+			// (opus/sonnet/haiku), as upstream dc4c398 gates it. Explicit test
+			// registries remain caller-owned.
 			tools: [
 				...tools,
-				...(opts.tools === undefined && /claude/i.test(engine.model.id)
+				...(opts.tools === undefined && (engine.model.provider === CLAUDE_CODE_PROVIDER || /claude/i.test(engine.model.id))
 					? [withArgumentHeal(sendToUserTool)]
 					: []),
 			],

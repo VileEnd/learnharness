@@ -20,6 +20,11 @@
 import { clampThinkingLevel, getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
+import { CLAUDE_CODE_MODELS } from "../agent/claude-code/provider.ts";
+import { claudeCodeEnabled } from "./policy.ts";
+import { runnerAddress } from "./claude-code.ts";
+import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
+import { multiUser, requireTenant } from "../core/tenant-context.ts";
 import { settingsStore } from "../store/settings.ts";
 import { effectiveSettings } from "./stores.ts";
 import { allowedModelsOnly } from "./model-gate.ts";
@@ -128,6 +133,8 @@ export function catalogProviders(): CatalogProvider[] {
 		envVar: p.envVar,
 		keyPresent: keyValue(p.envVar) !== undefined,
 	}))
+		// Claude Code has no key row: it is no BYOK provider (modelCatalog adds its models for the admin).
+		.filter((p) => p.id !== CLAUDE_CODE_PROVIDER)
 		// The admin's custom endpoint (upstream port 6): a row only while it is
 		// usable (registered in piModels()). Its key is file-only, so no env var.
 		.concat(customRegistered() ? [{ id: CUSTOM_PROVIDER.id, envVar: "", keyPresent: true }] : [])
@@ -150,7 +157,8 @@ function keyedProviderIds(): Set<string> {
  *  from `customCost` (its pi entry's zeros are a placeholder): free = real
  *  zeros, paid = the admin's rates, null = unpriced (paid without rates). */
 export function toModelDto(model: Model<Api>, customCost: (id: string) => CustomModelCost | null = () => null): ModelDto {
-	const cost = model.provider === CUSTOM_PROVIDER.id ? customCost(model.id) : model.cost;
+	// Claude Code is unpriced: its pi entry's zeros are placeholders, never $0.
+	const cost = model.provider === CLAUDE_CODE_PROVIDER ? null : model.provider === CUSTOM_PROVIDER.id ? customCost(model.id) : model.cost;
 	return {
 		id: model.id,
 		name: model.name,
@@ -164,8 +172,9 @@ export function toModelDto(model: Model<Api>, customCost: (id: string) => Custom
 			cacheRead: cost.cacheRead,
 			cacheWrite: cost.cacheWrite,
 		},
-		contextWindow: model.contextWindow,
-		maxTokens: model.maxTokens,
+		// The CLI aliases' effective limits are session-specific: absent, not pi's placeholders.
+		contextWindow: model.provider === CLAUDE_CODE_PROVIDER ? null : model.contextWindow,
+		maxTokens: model.provider === CLAUDE_CODE_PROVIDER ? null : model.maxTokens,
 	};
 }
 
@@ -190,13 +199,14 @@ export function catalogContextLimits(): Map<string, number> {
 }
 
 /** Every model of every keyed provider, unfiltered by any user policy: the
- *  policy's own source (built-in defaults, admin validation). */
+ *  policy's own source (built-in defaults, admin validation). Never Claude
+ *  Code: it is not grantable, so no policy may name it. */
 export function catalogModels(): Model<Api>[] {
 	const keyed = keyedProviderIds();
 	const models = piModels();
 	return models
 		.getProviders()
-		.filter((p) => keyed.has(p.id))
+		.filter((p) => keyed.has(p.id) && p.id !== CLAUDE_CODE_PROVIDER)
 		.flatMap((p) => models.getModels(p.id));
 }
 
@@ -222,6 +232,7 @@ export function modelCatalog(): ModelCatalogResponse {
 	const runtime = customProviderConfig();
 	const models = allowedModelsOnly(catalogModels())
 		.map((m) => toModelDto(m, (id) => customModelCost(runtime, id)))
+		.concat(claudeCodeListed() ? CLAUDE_CODE_MODELS.map((m) => toModelDto(m)) : [])
 		.sort(catalogOrder);
 	return {
 		models,
@@ -230,6 +241,12 @@ export function modelCatalog(): ModelCatalogResponse {
 		slots: catalogSlots(),
 		providers: catalogProviders(),
 	};
+}
+
+/** The ambient tenant may see and pick Claude Code models: an admin (single-user mode counts as admin)
+ *  with the toggle on and a runner configured (else the provider isn't registered and nothing resolves). */
+function claudeCodeListed(): boolean {
+	return (!multiUser() || requireTenant().isAdmin) && claudeCodeEnabled() && runnerAddress() !== null;
 }
 
 /** One validated outcome for a settings write. */
@@ -247,6 +264,9 @@ export function validateChatSettings(settings: ChatSettings): SettingsValidation
 	const providers = piModels().getProviders().map((p) => p.id);
 	if (settings.model) {
 		const { provider, id } = settings.model;
+		if (provider === CLAUDE_CODE_PROVIDER && multiUser() && !requireTenant().isAdmin) {
+			return { ok: false, error: "Claude Code models are only available to the admin." };
+		}
 		if (!providers.includes(provider)) {
 			return { ok: false, error: `Unknown provider "${provider}" — configured: ${providers.join(", ")}` };
 		}
@@ -272,6 +292,8 @@ export function validateModelsSettings(settings: ModelsSettings, stored?: Models
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot) continue;
+		// Before the unchanged-pin skip: no claude-code slot is grandfathered.
+		if (slot.model?.provider === CLAUDE_CODE_PROVIDER) return { ok: false, error: "Claude Code models can't be used as a model slot." };
 		const previous = stored?.[name]?.model;
 		if (slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id) continue;
 		const verdict = validateSlotSpec(name, slot);

@@ -22,6 +22,9 @@ export interface AdminPolicy {
 	/** Persisted only by an explicit setDefaults; absent = built-in live-catalog defaults at read time. */
 	newUserDefaults?: UserPolicy;
 	users: Record<string, UserPolicy>;
+	/** Claude Code as an admin-only provider. Absent (or anything but
+	 *  `enabled: true`) = off. Optional, so no version bump: older builds ignore it. */
+	claudeCode?: { enabled: boolean };
 }
 
 export const DEFAULT_MONTHLY_CAP_USD = 5;

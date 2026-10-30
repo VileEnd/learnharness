@@ -31,7 +31,8 @@ after(() => {
 const h = await import("./helpers/custom-provider.ts");
 const { runAsTenant } = await import("../src/core/tenant-context.ts");
 const { stores } = await import("../src/server/stores.ts");
-const { piEngineForSpec, piModels } = await import("../src/agent/models.ts");
+const { addProviderSource, piEngineForSpec, piModels } = await import("../src/agent/models.ts");
+const { installCustomProviderSource } = await import("../src/server/custom-provider-engine.ts");
 const { setRequestSink } = await import("../src/agent/request-log.ts");
 const policy = await import("../src/server/policy.ts");
 const { assertWithinCap, spentThisMonth } = await import("../src/server/model-gate.ts");
@@ -365,4 +366,16 @@ test("per-model settings are read only from own keys (no prototype lookups)", ()
 	assert.equal(callCost({ inputTokens: 1, outputTokens: 1 }, "custom:constructor"), null);
 	const resolved = runAsTenant(ADMIN, () => modelCatalog()).models.filter((m) => m.provider === "custom");
 	assert.deepEqual(resolved.map((m) => [m.id, m.contextWindow, m.cost]), [["constructor", 8192, null], ["toString", 8192, null]]);
+});
+
+test("re-installing the custom source replaces it and keeps the other sources", () => {
+	seedFree();
+	let otherSyncs = 0;
+	addProviderSource({ id: "other-source", isCustom: () => false, isPriced: () => false, sync: () => void otherSyncs++ });
+	assert.ok(piModels().getModel("custom", OLLAMA));
+	installCustomProviderSource(() => null);
+	assert.equal(piModels().getProvider("custom"), undefined, "the replaced source's provider is retired");
+	installCustomProviderSource();
+	assert.ok(piModels().getModel("custom", OLLAMA));
+	assert.equal(otherSyncs, 3, "the other source syncs on every piModels() call");
 });

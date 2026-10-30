@@ -9,7 +9,7 @@
  */
 import { createProvider, type Api, type Model, type Provider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { configureProviderSource } from "../agent/models.ts";
+import { addProviderSource } from "../agent/models.ts";
 import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import type { ResolvedCustomModel } from "../core/contracts/custom-provider.ts";
 import { customModelCost, customProviderConfig, FREE_COST, pricedCustomKeys, type CustomProviderRuntime } from "./custom-provider.ts";
@@ -67,7 +67,8 @@ export function buildCustomProvider(runtime: CustomProviderRuntime): Provider<Ap
 export function installCustomProviderSource(read: () => CustomProviderRuntime | null = customProviderConfig): void {
 	let fingerprint: string | undefined;
 	let priced = new Set<string>();
-	configureProviderSource({
+	addProviderSource({
+		id: CUSTOM_PROVIDER.id,
 		isCustom: (id) => id === CUSTOM_PROVIDER.id,
 		isPriced: (id, modelId) => id === CUSTOM_PROVIDER.id && priced.has(`${id}:${modelId}`),
 		sync(models) {

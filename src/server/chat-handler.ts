@@ -7,7 +7,9 @@ import {
 	type AgentBuildOptions,
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
-import { piEngineForSpec, type EngineOptions, type PiEngine } from "../agent/models.ts";
+import { piEngineForSpec, type EngineOptions, type PiEngine, type ResolvedModelSpec } from "../agent/models.ts";
+import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
+import type { EffectiveSlot } from "../core/settings-resolution.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
 import { createTopicist } from "../agent/subagents/topics.ts";
@@ -190,6 +192,16 @@ export function resolveEngine(role: ModelRole, opts?: EngineOptions): PiEngine |
 	return spec ? piEngineForSpec(spec, { purpose: role, ...opts, role }) : undefined;
 }
 
+/** The compaction engine for a chat whose turns run on `conversation`: the
+ *  conversation engine itself (the session's own model summarizes), except
+ *  for Claude Code, which only chat turns may use; its chats compact on the
+ *  strong slot, and not at all (null) while that slot is unset. Throws what
+ *  piEngineForSpec throws (a policy refusal, an unknown model). */
+export function buildCompactionEngine(conversation: ResolvedModelSpec, strong: EffectiveSlot | null, opts: EngineOptions): PiEngine | null {
+	const spec = conversation.provider === CLAUDE_CODE_PROVIDER ? strong : conversation;
+	return spec ? piEngineForSpec(spec, opts) : null;
+}
+
 /** A per-user policy refusal (multi-user design §10) as its 403 envelope,
  *  else null: the cap and the model refusals answer alike. */
 function policyRefusalResponse(chatId: string, err: unknown): Response | null {
@@ -295,9 +307,14 @@ export async function handleChatInput(
 	// spec the gate allows (a disallowed chat model falls back to the policy's
 	// strong slot), resolved here so the key gate below checks the provider
 	// that will actually run; no slot to fall back to is a 403.
+	// The session's request-log identity: every call of this chat carries it.
+	const chatKind = record.kind === "practice" ? "practice" : "teach";
+	// The turn's own identity (the same purpose the turn engine below uses), so
+	// the gate sees a chat turn: Claude Code admits nothing else.
+	const turnPurpose = record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teacher" : "prober";
 	let conversation: typeof requested;
 	try {
-		conversation = modelGate(requested, { purpose: "teacher" });
+		conversation = modelGate(requested, { purpose: turnPurpose, chatId, chatKind });
 	} catch (err) {
 		const refused = policyRefusalResponse(chatId, err);
 		if (refused) return refused;
@@ -328,28 +345,29 @@ export async function handleChatInput(
 	// placement mirrors the BYOK/key gates — BEFORE appends and
 	// beginTurn, no liveness effects — and the record re-reads after
 	// because compaction appends the marker.
-	// The session's request-log identity: every call of this chat carries it.
-	const chatKind = record.kind === "practice" ? "practice" : "teach";
 	// The gate's engine summarizes, so it logs as compaction; the turn builds
 	// its own engine off the same spec below (teacher / prober / practice).
-	let compactionEngine: PiEngine;
-	try { compactionEngine = piEngineForSpec(conversation, { purpose: "compaction", chatId, chatKind }); }
+	// A Claude Code chat compacts on the strong slot (buildCompactionEngine).
+	let compactionEngine: PiEngine | null;
+	try { compactionEngine = buildCompactionEngine(conversation, effective.models.strong, { purpose: "compaction", chatId, chatKind }); }
 	catch (err) { return policyRefusalResponse(chatId, err) ?? Response.json({ error: "The selected model is unavailable." }, { status: 503 }); }
-	const modelIdForCompaction = `${compactionEngine.model.provider}:${compactionEngine.model.id}`;
-	await ensureCompacted(
-		{
-			chatStore: stores.chatStore,
-			engine: compactionEngine,
-			modelId: modelIdForCompaction,
-			kind: record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe",
-			thresholdTokens: effectiveThresholdTokens(
-				effective.compaction?.thresholdTokens,
-				catalogContextLimits().get(modelIdForCompaction),
-			),
-			systemPromptTokens: Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4),
-		},
-		chatId,
-	);
+	if (compactionEngine) {
+		const modelIdForCompaction = `${compactionEngine.model.provider}:${compactionEngine.model.id}`;
+		await ensureCompacted(
+			{
+				chatStore: stores.chatStore,
+				engine: compactionEngine,
+				modelId: modelIdForCompaction,
+				kind: record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe",
+				thresholdTokens: effectiveThresholdTokens(
+					effective.compaction?.thresholdTokens,
+					catalogContextLimits().get(modelIdForCompaction),
+				),
+				systemPromptTokens: Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4),
+			},
+			chatId,
+		);
+	}
 	const compactedRecord = stores.chatStore.getChat(chatId);
 	if (!compactedRecord) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	record = compactedRecord;
@@ -422,9 +440,12 @@ export async function handleChatInput(
 			chatKind,
 		});
 	} catch (err) {
+		// A model the compaction gate did not build (a Claude Code chat compacts
+		// on the strong slot) can still be missing here: the same 503.
 		const refused = policyRefusalResponse(chatId, err);
 		if (refused) return refused;
-		throw err;
+		console.info(`[chat ${chatId}] turn refused - the model is unavailable:`, err);
+		return Response.json({ error: "The selected model is unavailable." }, { status: 503 });
 	}
 
 	// THE PARALLEL-QUESTION GATE (owner, 2026-10-03 — the deepseek parallel
@@ -784,10 +805,11 @@ export async function handleChatInput(
 						const fresh = effectiveSettings();
 						const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
 						if (!spec) return null;
-						let kickEngine: PiEngine;
+						let kickEngine: PiEngine | null;
 						const freshRecord = stores.chatStore.getChat(chatId);
 						if (!freshRecord) return null;
-						try { kickEngine = piEngineForSpec(spec, { purpose: "compaction", chatId, chatKind }); } catch { return null; }
+						try { kickEngine = buildCompactionEngine(spec, fresh.models.strong, { purpose: "compaction", chatId, chatKind }); } catch { return null; }
+						if (!kickEngine) return null;
 						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 						return {
 							chatStore: stores.chatStore,

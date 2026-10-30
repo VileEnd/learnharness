@@ -77,7 +77,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
 import { SettingsGroup, SettingsRow, Toggle, CommitInput } from "./controls.tsx";
-import { isVisionPickable, ModelMenuList, ThinkingMenuList } from "./model-menu";
+import { isSlotPickable, isVisionPickable, ModelMenuList, ThinkingMenuList } from "./model-menu";
 
 /** One slot's display identity — the tier's roster as the row hint rides
  *  with the resolved default (owner: the hint ALWAYS names the default). */
@@ -90,8 +90,9 @@ const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 /** The models a slot's picker offers. Vision: image-capable plus custom endpoint models. Pure - exported for tests. */
 export function slotCatalogFor(slot: ModelSlotName, catalog: ModelCatalogEntry[] | null): ModelCatalogEntry[] | undefined {
 	if (!catalog) return undefined;
-	if (slot === "vision") return catalog.filter(isVisionPickable);
-	return catalog;
+	const pickable = catalog.filter(isSlotPickable);
+	if (slot === "vision") return pickable.filter(isVisionPickable);
+	return pickable;
 }
 
 /** The search engines this wave ships (src/core/search.ts) + their labels. */

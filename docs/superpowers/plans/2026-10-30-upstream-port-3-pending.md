@@ -8,7 +8,7 @@
 
 **Tech Stack:** React, TypeScript, node:test.
 
-**Spec:** group F of the owner-approved evaluation at `/home/test/learnharness/upstream-eval.md`. That file is outside the repo: read it, never commit it. Upstream commits (`git show <sha>`):
+**Spec:** group F of the owner-approved evaluation at `<upstream eval report>`. That file is outside the repo: read it, never commit it. Upstream commits (`git show <sha>`):
 - 82f0b59: `findPendingToolCall(view, nativeId)`, with chat.tsx passing `danglingQuestionOf(nativeMessages)?.toolCallId`.
 - 6ff4924: occurrence-qualified pending keys.
 - 3993122: transient `c_` questionResult placeholders (details null) are not answers.

@@ -38,7 +38,7 @@ import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import type React from "react";
 import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings } from "@/src/core";
 import { prettyModel } from "@/components/usage-format";
-import { isVisionPickable, ModelMenuList } from "@/components/settings/model-menu";
+import { isSlotPickable, isVisionPickable, ModelMenuList } from "@/components/settings/model-menu";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { Hint } from "@/components/ui/hint";
@@ -484,7 +484,7 @@ export function SetupDialog({
 							const level = levels[slot];
 							const levelsForEntry = entry?.supportedLevels ?? [];
 							const catalog =
-								slot === "vision" ? body?.models.filter(isVisionPickable) : body?.models;
+								slot === "vision" ? body?.models.filter(isSlotPickable).filter(isVisionPickable) : body?.models.filter(isSlotPickable);
 							return (
 								<div key={slot} data-testid={`setup-slot-${slot}`} className="flex flex-col gap-1.5">
 									<span className="flex items-center gap-1.5">

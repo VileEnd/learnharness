@@ -143,6 +143,24 @@ The graph you migrated already holds the nodes the old app extracted from your n
 
 The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdown through OpenRouter. It has no published port and no Caddy route: only the app reaches it at `http://ocr:8000`, and every call carries the shared secret `OCR_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env`). The OpenRouter key is the one in the app's Settings, sent per job. Results and cache live in `volumes/ocr/`, which belongs in the backups.
 
+## Claude Code (admin, experimental)
+
+The stack includes `claude`, a locked-down container (`deploy/claude`) that runs the Claude Code CLI for admins. It has no `/data`, no app secrets, no published port, and runs as a non-root user with a read-only filesystem. The app reaches it over the private `claude-bridge` network with the shared secret `CLAUDE_RUNNER_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env` and create `deploy/volumes/claude` owned by uid 1000, mode 0700).
+
+The claude container must not reach the app's port (the API trusts every caller): the app listens on the `internal` network only (`HOSTNAME=lh-app` in `compose.yaml`), and only the MCP bridge port is open on `claude-bridge`.
+
+Off by default: an admin turns it on with the toggle in Settings. Log in once, after the stack is up:
+
+```bash
+ssh -t root@<vm-host> docker exec -it learnharness-claude-1 claude
+```
+
+then type `/login` and follow the prompts. The login lives in `deploy/volumes/claude` (on the VM `/var/lib/learnharness/volumes/claude`) and must never be backed up or copied: it is a personal Claude subscription credential. Using a subscription this way may conflict with Anthropic's Consumer Terms, so check them before you enable it.
+
+**Updating the CLI.** The image pins the CLI version, and its auto-updater is off. To update, bump the pinned `@anthropic-ai/claude-code@<version>` in `deploy/claude/Dockerfile` and rebuild: `docker compose up -d --build` on a manual host, or `systemctl restart learnharness-stack` on the NixOS VM once the change is on `main` (it pulls and rebuilds). The login in `volumes/claude` survives the rebuild. When the installed CLI is below the minimum version the app needs, the Claude Code status in Settings shows "Needs an update" and turns are refused until you update.
+
+**Upgrading an older install.** `docker compose up` refuses to start unless `CLAUDE_RUNNER_TOKEN` is set, even while Claude Code is off. The NixOS stack generates it into `secrets.env`. On a manual host, add `CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)` to `deploy/.env` first (put the command's output in the file, not the command), and create `deploy/volumes/claude` as above.
+
 ## Users
 
 Admins (members of `learnharness-admin`) see **Settings → Users**. There they can:
@@ -222,7 +240,7 @@ With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 5
 6. **Check health** from inside the network; it should print `{"ok":true}`, not a `legacy_layout` error:
 
    ```bash
-   docker exec learnharness-learnharness-1 node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>r.text()).then(console.log)"
+   docker exec learnharness-learnharness-1 node -e "fetch('http://lh-app:3000/api/health').then(r=>r.text()).then(console.log)"
    ```
 
    No restart is needed: the legacy check runs on every request.
@@ -234,11 +252,11 @@ Docker is the supported runtime (the NixOS module is Docker-based). If you move 
 
 ## Backups
 
-Back up the volumes (app data and keys, Caddy CA, Keycloak database) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything.
+Back up the volumes (app data and keys, Caddy CA, Keycloak database; **not** `volumes/claude`, which holds the Claude Code login) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything, but a VM-level backup contains the Claude Code login, so treat those backups as being as sensitive as the login itself, or use file-level backups that skip `volumes/claude`.
 
 ## Move-day switch
 
-When the UniFi gateway takes over the LAN (`/home/test/network/fritzbox-to-unifi-plan.md`), the VM moves to **10.20.1.70**. The hostnames and certificates stay the same; only the DNS records change:
+When the UniFi gateway takes over the LAN (`<network migration plan>`), the VM moves to **10.20.1.70**. The hostnames and certificates stay the same; only the DNS records change:
 
 1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC (`BC:24:11:B3:41:E1`).
 2. **Point the records at the new address:** run `deploy/proxmox/tofu.sh apply -var lan_ipv4=10.20.1.70`, or change the default in `variables.tf` and commit it.

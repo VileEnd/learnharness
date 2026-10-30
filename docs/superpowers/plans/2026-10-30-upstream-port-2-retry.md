@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js 16, TypeScript, pi-agent-core, node:test.
 
-**Spec:** group G of the owner-approved evaluation at `/home/test/learnharness/upstream-eval.md`. That file is outside the repo: read it, never commit it. Upstream commits, read via `git show <sha>`:
+**Spec:** group G of the owner-approved evaluation at `<upstream eval report>`. That file is outside the repo: read it, never commit it. Upstream commits, read via `git show <sha>`:
 - a572675 (retry event)
 - 82c6999 (keep failed responses)
 - 5984eb4 (readable refusal text)
