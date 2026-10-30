@@ -106,7 +106,7 @@ function getAssistantErrorMessage(error: string, text: string): string {
 }
 
 class ClaudeTurn {
-	private readonly output: AssistantMessage & { cliContextWindow?: number };
+	private readonly output: AssistantMessage;
 	private readonly contentIndexes = new Map<number, number>();
 	private readonly partialJson = new Map<number, string>();
 	private readonly toolBlocks = new Map<number, ToolCall>();
@@ -201,10 +201,6 @@ class ClaudeTurn {
 	getIntents(): ToolCall[] { return this.intents; }
 
 	getMessage(): AssistantMessage { return this.output; }
-
-	setContextWindow(tokens: number | undefined): void {
-		if (!this.finished && tokens !== undefined) this.output.cliContextWindow = tokens;
-	}
 
 	admit(calls: ToolCall[]): void {
 		this.start();
@@ -349,7 +345,6 @@ class ClaudeProcess implements LiveProcess {
 	private admitted: PendingToolCall[] = [];
 	private readonly cancelledIds = new Set<string>();
 	private pendingError: string | undefined;
-	private contextWindow: number | undefined;
 	private contextProbe: ContextWindowProbe | undefined;
 
 	constructor(
@@ -375,7 +370,9 @@ class ClaudeProcess implements LiveProcess {
 		this.contextProbe = new ContextWindowProbe(
 			(line) => this.child.stdin.write(`${line}\n`),
 			() => { if (!this.stopping) this.child.stdin.write(`${stdinLine}\n`); },
-			(tokens) => { this.contextWindow = tokens; this.turn.setContextWindow(tokens); },
+			// The window is not stamped on messages: nothing reads it, and a dead field
+			// on a persisted message would replay to other providers.
+			() => {},
 		);
 		createInterface({ input: this.child.stdout }).on("line", (line) => {
 			try { this.handleLine(line); }
@@ -402,7 +399,6 @@ class ClaudeProcess implements LiveProcess {
 		this.admitted = [];
 		this.conversation = structuredClone(conversationForReuse(messages));
 		this.turn = turn;
-		this.turn.setContextWindow(this.contextWindow);
 		this.sourceComplete = this.sourceCalls.length > 0;
 		this.setSignal(signal);
 		if (this.stopping) return;

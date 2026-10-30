@@ -4,12 +4,15 @@
  * The admin's custom endpoint (upstream port 6) is priced from its own
  * config, never its pi entry: free = $0 (the one sanctioned real zero), paid
  * = the admin's per-model rates, paid without rates = unpriced (null).
+ * Claude Code is never priced (null): the CLI's own login decides charges,
+ * and its pi entry's zeros are placeholders.
  * Known gap: chat turns and jobs store no dollars, so their custom calls are
  * priced from the CURRENT config (display only; the cap reads the log stamp).
  */
 import { calculateCost, type Model, type Api, type Models, type Usage } from "@earendil-works/pi-ai";
 import { piModels } from "../agent/models.ts";
 import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import type { CallUsage, ChatRecord, JobRecord, TurnUsage } from "../core/contracts.ts";
 import { sessionCost as foldSessionCost, turnCost as foldTurnCost, jobCost as foldJobCost, type CallPricer } from "../core/prices.ts";
 import { customModelCost, customProviderConfig, type CustomModelCost, type CustomProviderRuntime } from "./custom-provider.ts";
@@ -20,11 +23,12 @@ function split(id: string): { provider: string; model: string } | undefined {
 	return colon < 0 ? undefined : { provider: id.slice(0, colon), model: id.slice(colon + 1) };
 }
 
-/** A built-in catalog model. The custom endpoint is never read here: its pi
- *  entry carries a zero placeholder when unpriced (customModelCost decides). */
+/** A built-in catalog model. The custom endpoint and Claude Code are never
+ *  read here: their pi entries carry zero placeholders (customModelCost
+ *  decides the custom price; Claude Code is unpriced). */
 function catalogModel(id: string, models: Models = piModels()) {
 	const parts = split(id);
-	if (!parts || parts.provider === CUSTOM_PROVIDER.id) return undefined;
+	if (!parts || parts.provider === CUSTOM_PROVIDER.id || parts.provider === CLAUDE_CODE_PROVIDER) return undefined;
 	return models.getModel(parts.provider, parts.model);
 }
 
@@ -66,6 +70,7 @@ export function createPricer({ customFromConfig = true }: { customFromConfig?: b
 	const custom = (id: string): CustomModelCost | null => customModelCost((runtime ??= customProviderConfig()), id);
 	return (call, modelId) => {
 		const parts = split(modelId);
+		if (parts?.provider === CLAUDE_CODE_PROVIDER) return null;
 		if (parts?.provider === CUSTOM_PROVIDER.id) {
 			if (!customFromConfig) return null;
 			const cost = custom(parts.model);

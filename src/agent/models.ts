@@ -49,31 +49,39 @@ export type { ThinkingLevel };
 let collection: ReturnType<typeof createModels> | undefined;
 
 /** Configured providers the server syncs into the collection (upstream
- *  configureProviderSource; today the admin's one custom endpoint). The
- *  agent never reads configuration: the server injects this
- *  (src/server/stores.ts), the setModelGate precedent. */
+ *  addProviderSource: the admin's custom endpoint, Claude Code). The agent
+ *  never reads configuration: the server injects these (src/server/stores.ts),
+ *  the setModelGate precedent. */
 export interface ProviderSource {
-	/** Register or retire the source's providers. Runs on every piModels()
+	/** The provider id the source registers. Installing a source with the id
+	 *  of an installed one replaces it. */
+	id: string;
+	/** Register or retire the source's provider. Runs on every piModels()
 	 *  call, so it must be cheap when nothing changed. */
 	sync(models: MutableModels): void;
+	/** The provider is the admin's custom endpoint (per-call revalidation,
+	 *  the image clone, call-time pricing). */
 	isCustom(providerId: string): boolean;
 	/** The custom model has a price (as of the last sync): free, or paid
 	 *  with admin rates on its entry. Its calls are logged with their
 	 *  call-time dollars; any other custom call stays unpriced. */
 	isPriced(providerId: string, modelId: string): boolean;
 }
-let providerSource: ProviderSource | undefined;
+const providerSources: ProviderSource[] = [];
 
-/** Install the source. A re-evaluated server module can replace it while
- *  the collection survives: retire only the previous source's providers. */
-export function configureProviderSource(source: ProviderSource): void {
-	if (collection && providerSource) {
-		for (const provider of collection.getProviders()) {
-			if (providerSource.isCustom(provider.id)) collection.deleteProvider(provider.id);
-		}
+/** Install a source. A re-evaluated server module can replace one while the
+ *  collection survives: retire only the replaced source's provider. */
+export function addProviderSource(source: ProviderSource): void {
+	const at = providerSources.findIndex((s) => s.id === source.id);
+	if (at >= 0) {
+		collection?.deleteProvider(providerSources[at]!.id);
+		providerSources.splice(at, 1, source);
+	} else {
+		providerSources.push(source);
 	}
-	providerSource = source;
 }
+
+const isCustomProvider = (providerId: string): boolean => providerSources.some((s) => s.isCustom(providerId));
 
 /** The process-wide pi-ai Models collection — EVERY builtin provider's
  *  catalog (model slots wave, 2026-09-20): engines and the picker resolve
@@ -88,7 +96,7 @@ export function piModels() {
 		collection = createModels({ identity: APP_IDENTITY });
 		for (const provider of builtinProviders()) collection.setProvider(provider);
 	}
-	providerSource?.sync(collection);
+	for (const source of providerSources) source.sync(collection);
 	return collection;
 }
 
@@ -179,7 +187,7 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 	if (!registered) {
 		throw new Error(`${spec.provider} catalog has no model ${spec.id}`);
 	}
-	const custom = providerSource?.isCustom(spec.provider) ?? false;
+	const custom = isCustomProvider(spec.provider);
 	const model = custom ? permitImages(registered) : registered;
 	// UNSET level → the baked default order (first entry the model
 	// supports); SET level → pi's native nearest-clamp (model swaps keep
@@ -222,7 +230,7 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 				return observeStream(lazyStream(requestModel, async () => { throw new Error(reason); }), meta(spec.id));
 			}
 			const currentLevel = levelFor(currentModel);
-			const priced = providerSource?.isPriced(spec.provider, spec.id) ?? false;
+			const priced = providerSources.some((s) => s.isPriced(spec.provider, spec.id));
 			return observeStream(
 				current.streamSimple(permitImages(currentModel), context, { ...options, reasoning: currentLevel === "off" ? undefined : currentLevel }),
 				{ ...meta(currentModel.id), ...(priced && { priceFromUsage: true }) },

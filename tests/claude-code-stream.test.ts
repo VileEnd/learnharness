@@ -904,19 +904,18 @@ test("a caller without a session ID uses fresh replay and retains no held proces
 	await assertCleanedUp(getOnlyCall(fresh.calls));
 });
 
-test("CLI window metadata stays on its own process and survives a held-tool continuation", async (t) => {
+test("CLI window metadata is never stamped on messages, across a held-tool continuation", async (t) => {
 	const read: ToolUse = { id: "toolu_window", name: "read", arguments: { path: "one" } };
 	const one = createFakeRun(t, [...toToolUseMessage([read]), callTool(read), REPLY], { FAKE_CLAUDE_WINDOW: "200000" });
 	const two = createFakeRun(t, [...toToolUseMessage([read]), callTool(read), REPLY], { FAKE_CLAUDE_WINDOW: "750000" });
 	let spawns = 0;
 	const stream = createClaudeCodeStreamFunction((request, opts) => (++spawns === 1 ? one : two).runClaude(request, opts));
-	const window = (m: AssistantMessage) => (m as AssistantMessage & { cliContextWindow?: number }).cliContextWindow;
 	const a = await runTurn(stream, [HI], { sessionId: "context-one" });
 	const b = await runTurn(stream, [HI], { sessionId: "context-two" });
-	assert.equal(window(a), 200000); assert.equal(window(b), 750000);
 	const ra = await runTurn(stream, [HI, a, toToolResult(read, "a")], { sessionId: "context-one" });
 	const rb = await runTurn(stream, [HI, b, toToolResult(read, "b")], { sessionId: "context-two" });
-	assert.equal(window(ra), 200000); assert.equal(window(rb), 750000); assert.equal(spawns, 2);
+	for (const m of [a, b, ra, rb]) assert(!("cliContextWindow" in m));
+	assert.equal(spawns, 2);
 });
 
 for (const extraEnv of [{ FAKE_CLAUDE_INIT: "error" }, { FAKE_CLAUDE_WINDOW: "-1" }, {}] as Record<string, string>[]) test(`missing/unsupported CLI window never prevents a normal response: ${JSON.stringify(extraEnv)}`, async (t) => {

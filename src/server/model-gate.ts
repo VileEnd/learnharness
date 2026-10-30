@@ -25,6 +25,7 @@ import {
 	type ModelsSettings,
 	type UserSettings,
 } from "../core/settings.ts";
+import { claudeCodeRefusal } from "./claude-code.ts";
 import { isCustomKey, isUnpricedCustomKey, pricedCustomKeys } from "./custom-provider.ts";
 import { restrictedPolicy } from "./policy.ts";
 import { stores } from "./stores.ts";
@@ -138,8 +139,11 @@ function allowedSpec(policy: UserPolicy, spec: ResolvedModelSpec, tier: ModelSlo
 	return { provider: slot.provider, id: slot.id, ...(spec.thinkingLevel !== undefined && { thinkingLevel: spec.thinkingLevel }) };
 }
 
-/** THE gate (installed by stores.ts): the cap first, then the model. */
+/** THE gate (installed by stores.ts): Claude Code first (it binds admins
+ *  too, so it precedes the admin early-return), then the cap, then the model. */
 export function modelGate(spec: ResolvedModelSpec, opts: EngineOptions): ResolvedModelSpec {
+	const refusal = claudeCodeRefusal(spec, opts);
+	if (refusal) throw refusal;
 	const policy = restrictedPolicy();
 	if (!policy) return spec;
 	assertPolicyCap(policy);
