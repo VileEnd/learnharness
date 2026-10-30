@@ -105,8 +105,19 @@ export function createDictationLanguageStore(request: typeof fetch, saved: () =>
 		return toLanguage(await confirmed());
 	}
 
+	/** For starting a run: never rejects. A failed read falls back to the last
+	 *  confirmed choice, else undefined (the Deepgram default). The error stays
+	 *  published on the snapshot for the picker. */
+	async function getLanguageForCapture(): Promise<DictationLanguage | undefined> {
+		try {
+			return await getLanguage();
+		} catch {
+			return snapshot.choice === undefined ? undefined : toLanguage(snapshot.choice);
+		}
+	}
+
 	return {
-		load, save, getLanguage,
+		load, save, getLanguage, getLanguageForCapture,
 		getSnapshot: () => snapshot,
 		getServerSnapshot: () => INITIAL,
 		subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -138,5 +149,5 @@ function subscribe(listener: () => void) {
 
 export function useDictationLanguage() {
 	const snapshot = useSyncExternalStore(subscribe, store.getSnapshot, store.getServerSnapshot);
-	return { ...snapshot, load: store.load, save: store.save, getLanguage: store.getLanguage };
+	return { ...snapshot, load: store.load, save: store.save, getLanguage: store.getLanguage, getLanguageForCapture: store.getLanguageForCapture };
 }

@@ -111,25 +111,40 @@ export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
  * it and deep-links Settings → Keys → the Deepgram row. */
 export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
 
-/** What the errored button says. Keys are admin-managed (0.32.0): a signed-in
- *  non-admin cannot add the Deepgram key, so the line says an admin does.
- *  `canManageKeys` null = still unknown / single-user mode (the owner adds it). */
+/** What the errored button says. Keys are admin-managed (0.32.0): only a
+ *  viewer KNOWN to be able to manage keys (an admin, or the single-user
+ *  owner) is told to add the key; everyone else, including while the account
+ *  is still loading, is told an admin adds it. */
 export function dictationErrorLabel(error: string, canManageKeys: boolean | null): string {
-	return error === DICTATION_KEYLESS && canManageKeys === false
+	return error === DICTATION_KEYLESS && canManageKeys !== true
 		? `${DICTATION_KEYLESS}. Ask your admin to add it`
 		: error;
 }
 
-/** Can this viewer add provider keys? A signed-in non-admin cannot. Cached
- *  for the page (the account does not change under a mounted composer). */
-let accountAdmin: Promise<boolean | null> | undefined;
+/** Can this viewer add provider keys? `/api/me` → `{account: null}` is the
+ *  single-user owner (true); `{account: {isAdmin}}` is isAdmin; anything else
+ *  (non-ok, rejected, malformed) fails closed to false. */
+export async function loadCanManageKeys(request: typeof fetch = fetch): Promise<boolean> {
+	try {
+		const res = await request("/api/me");
+		if (!res.ok) return false;
+		const body = (await res.json()) as { account?: unknown } | null;
+		if (body === null || typeof body !== "object" || !("account" in body)) return false;
+		if (body.account === null) return true;
+		if (typeof body.account !== "object" || Array.isArray(body.account)) return false;
+		return (body.account as { isAdmin?: unknown }).isAdmin === true;
+	} catch {
+		return false;
+	}
+}
+
+/** Cached for the page (the account does not change under a mounted composer).
+ *  null = still loading: treated as non-admin by every consumer. */
+let accountAdmin: Promise<boolean> | undefined;
 function useCanManageKeys(): boolean | null {
 	const [can, setCan] = useState<boolean | null>(null);
 	useEffect(() => {
-		accountAdmin ??= fetch("/api/me")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((b: { account?: { isAdmin?: boolean } | null } | null) => b?.account ? b.account.isAdmin === true : true)
-			.catch(() => null);
+		accountAdmin ??= loadCanManageKeys();
 		let live = true;
 		void accountAdmin.then((v) => { if (live) setCan(v); });
 		return () => { live = false; };
@@ -310,7 +325,7 @@ export type Dictation = {
  * question waits.
  */
 export function useDictation({ append }: { append: (text: string) => void }): Dictation {
-	const { getLanguage } = useDictationLanguage();
+	const { getLanguageForCapture: getLanguage } = useDictationLanguage();
 	const [phase, setPhase] = useState<DictationPhase>("idle");
 	const [error, setError] = useState<string | null>(null);
 	/** Latest RMS from the worklet — the meter samples this (dictate pattern). */
@@ -353,7 +368,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	}, []);
 
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
-	const cleanup = useCallback(() => {
+	const cleanup = useCallback((warmNext = true) => {
 		genRef.current++;
 		setDictationActive(false);
 		flush(); // the deferred transcript appears when the run ends (owner round 2)
@@ -383,7 +398,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		for (const w of waitersRef.current.splice(0)) w();
 		// Pre-mint for the next run (mitigation D) — best-effort; a keyless
 		// page just doesn't warm.
-		warmTokens.refresh();
+		if (warmNext) warmTokens.refresh();
 	}, []);
 
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
@@ -471,7 +486,6 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		// first read); it must NOT be awaited before the audio graph resumes —
 		// iOS only starts an AudioContext inside the tap's own task.
 		const languagePromise = getLanguage();
-		languagePromise.catch(() => {});
 		let stream: MediaStream;
 		try {
 			// iOS only lets an AudioContext start inside the tap's own task: create
@@ -552,15 +566,9 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			return;
 		}
 		if (gen !== genRef.current) return;
-		let language: DictationLanguage | undefined;
-		try {
-			language = await languagePromise;
-		} catch (e) {
-			if (gen !== genRef.current) return;
-			setError(e instanceof Error ? e.message : "Dictation language unavailable");
-			cleanup();
-			return;
-		}
+		// Never rejects: a failed settings read falls back to the last confirmed
+		// choice, else the Deepgram default (the picker alone shows the error).
+		const language = await languagePromise;
 		if (gen !== genRef.current) return;
 		// Mitigation B: the handshake fires the moment the graph is live,
 		// overlapping any remaining token wait — mic-gated, never before it.
@@ -641,7 +649,13 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	// attached.
 	useEffect(() => {
 		warmTokens.refresh(); // pre-mint at mount (mitigation D) — silent if keyless
-	}, []);
+		return () => {
+			// Navigation cancels capture: invalidate every pending await before
+			// releasing resources, and never append into a different page's input.
+			bufferRef.current = [];
+			cleanup(false);
+		};
+	}, [cleanup]);
 	// A backgrounded tab or a closing page must not keep the mic open (iOS
 	// suspends the context under us, leaving a dead "recording").
 	useEffect(() => {
@@ -701,7 +715,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 	 *  error keeps the old behavior (click = retry, which clears). */
 	const keyless = error === DICTATION_KEYLESS;
 	const canManageKeys = useCanManageKeys();
-	/** A non-admin has no Keys row to land on: the click just clears. */
+	/** Only a viewer known to manage keys gets the Keys deep link; otherwise the click just clears. */
 	const shown = error === null ? null : dictationErrorLabel(error, canManageKeys);
 	const [levels, setLevels] = useState<number[]>(() => new Array(METER_CELLS).fill(0));
 	const recording = phase === "recording" || phase === "stopping";
@@ -761,7 +775,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 					onClick={() => {
 						if (keyless) {
 							clearError();
-							if (canManageKeys !== false) openSettings("keys", DEEPGRAM_KEY_ID);
+							if (canManageKeys === true) openSettings("keys", DEEPGRAM_KEY_ID);
 						} else {
 							toggle();
 						}

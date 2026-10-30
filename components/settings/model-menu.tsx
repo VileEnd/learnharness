@@ -12,11 +12,12 @@
  * same machine: FontMenuList (families instead of models, plus the
  * always-offerable DEFAULT row and a custom-family escape input).
  *
- * Keyboard machine (owner polish, 2026-09-17): focus STAYS in the search
- * field — ↑/↓ walk the filtered results (clamped, no wrap), Enter picks
- * the walked row (or the first result when nothing is walked).
- * stopPropagation keeps these keys out of every other listener while the
- * menu is open.
+ * The search / arrow-walk / Enter-pick machine (owner polish, 2026-09-17:
+ * focus STAYS in the search field, ↑/↓ walk the filtered results clamped
+ * with no wrap, Enter picks the walked row or the first result) now lives
+ * once in search-menu-list.tsx (SearchMenuList), shared with the dictation
+ * language picker. ModelMenuList supplies only the catalog, the row content
+ * and the Recommended group (SearchMenuList's `pinned` rows).
  */
 
 import { useEffect, useRef, useState } from "react";

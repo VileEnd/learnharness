@@ -41,7 +41,9 @@ export function SearchMenuList<T>({
 	const searchRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLUListElement>(null);
 
-	useEffect(() => { searchRef.current?.focus(); }, []);
+	// Focus on mount, and again whenever the input becomes enabled (settings
+	// finished loading, or a failed save released it): a disabled input drops focus.
+	useEffect(() => { if (!disabled) searchRef.current?.focus(); }, [disabled]);
 	useEffect(() => {
 		if (menuIdx === null) return;
 		listRef.current?.querySelector(`[data-idx="${menuIdx}"]`)?.scrollIntoView({ block: "nearest" });

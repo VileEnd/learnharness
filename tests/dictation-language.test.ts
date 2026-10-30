@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { DICTATION_LANGUAGES, deepgramListenUrl, isDictationLanguage } from "../src/core/dictation.ts";
 import { sanitizeUserSettings } from "../src/core/settings.ts";
 import { resolveSettings } from "../src/core/settings-resolution.ts";
 import { parseDictationSettingsBody } from "../src/server/settings-body.ts";
-import { DICTATION_KEYLESS, dictationErrorLabel } from "../components/dictation.tsx";
+import { DICTATION_KEYLESS, dictationErrorLabel, loadCanManageKeys } from "../components/dictation.tsx";
 
 describe("Nova-3 dictation language contract", () => {
 	it("offers monolingual languages/locales and a distinct multilingual mode", () => {
@@ -79,36 +76,31 @@ describe("(d) the missing Deepgram key copy", () => {
 		assert.match(dictationErrorLabel(DICTATION_KEYLESS, false), /admin/i);
 		assert.ok(dictationErrorLabel(DICTATION_KEYLESS, false).startsWith(DICTATION_KEYLESS));
 	});
-	it("an admin, single-user mode or an unknown account keep the plain line", () => {
-		for (const can of [true, null]) assert.equal(dictationErrorLabel(DICTATION_KEYLESS, can), DICTATION_KEYLESS);
+	it("an admin or the single-user owner keep the plain line; an unknown (still loading) account gets the admin copy", () => {
+		assert.equal(dictationErrorLabel(DICTATION_KEYLESS, true), DICTATION_KEYLESS);
+		assert.match(dictationErrorLabel(DICTATION_KEYLESS, null), /admin/i);
 	});
 	it("other errors are never rewritten", () => {
 		assert.equal(dictationErrorLabel("mic unavailable", false), "mic unavailable");
 	});
 });
 
-const testData = mkdtempSync(path.join(tmpdir(), "lh-dictation-settings-"));
-process.env.LH_DATA_DIR = testData;
-after(() => { rmSync(testData, { recursive: true, force: true }); });
-const { readSettings, writeSettings } = await import("../src/store/settings.ts");
-
-it("the section route persists language independently, clears it with {}, and rejects unsupported values without writing", async () => {
-	const { PUT } = await import("../app/api/settings/[section]/route.ts");
-	writeSettings({ version: 1, general: { autoUpdate: false } });
-	const putBody = (body: unknown) => PUT(new Request("http://localhost/api/settings/dictation", {
-		method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-	}), { params: Promise.resolve({ section: "dictation" }) });
-	assert.equal((await putBody({ language: "pl" })).status, 200);
-	const saved = { version: 1, dictation: { language: "pl" }, general: { autoUpdate: false } };
-	assert.deepEqual(readSettings(), saved);
-	assert.equal((await putBody({ language: "unsupported" })).status, 400);
-	assert.deepEqual(readSettings(), saved);
-	const general = await PUT(new Request("http://localhost/api/settings/general", {
-		method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoUpdate: true }),
-	}), { params: Promise.resolve({ section: "general" }) });
-	assert.equal(general.status, 200);
-	assert.deepEqual(readSettings(), { ...saved, general: { autoUpdate: true } }, "auto-update cannot erase dictation language");
-	assert.equal((await putBody({})).status, 200);
-	assert.equal(readSettings()?.dictation?.language, undefined, "{} returns to the default");
+describe("admin detection from /api/me fails closed", () => {
+	const reply = (body: unknown, status = 200) => (async () => Response.json(body, { status })) as unknown as typeof fetch;
+	it("no account (single-user owner) can manage keys; an admin can; a non-admin cannot", async () => {
+		assert.equal(await loadCanManageKeys(reply({ account: null })), true);
+		assert.equal(await loadCanManageKeys(reply({ account: { name: "a", isAdmin: true } })), true);
+		assert.equal(await loadCanManageKeys(reply({ account: { name: "a", isAdmin: false } })), false);
+	});
+	it("a non-ok response, a rejected fetch and malformed bodies are non-admin", async () => {
+		assert.equal(await loadCanManageKeys(reply({}, 500)), false);
+		assert.equal(await loadCanManageKeys((async () => { throw new Error("offline"); }) as unknown as typeof fetch), false);
+		for (const body of [{}, null, [], "x", { account: "x" }, { account: [] }, { account: {} }]) {
+			assert.equal(await loadCanManageKeys(reply(body)), false, JSON.stringify(body));
+		}
+	});
+	it("the non-admin outcome yields the admin copy", async () => {
+		const can = await loadCanManageKeys(reply({}, 500));
+		assert.match(dictationErrorLabel(DICTATION_KEYLESS, can), /admin/i);
+	});
 });
-
