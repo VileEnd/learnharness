@@ -5,9 +5,10 @@
  * 2026-09-26, the verdict death):
  *
  *   probe  — until the prober's `probe_done` call CONCLUDES (a clean,
- *            non-refused toolResult for it — native-messages.ts
- *            isProbeConclusion; a {ok:false} refusal concludes nothing; the
- *            assessment rides the call's arguments)
+ *            non-refused toolResult for a call from a non-failed,
+ *            non-aborted generation — native-messages.ts
+ *            probeDoneResultIds/isProbeConclusion; a {ok:false} refusal
+ *            concludes nothing; the assessment rides the call's arguments)
  *   plan   — probe concluded, until teaching actually BEGINS
  *   teach  — the first quiz tool call tagged with a `nodeId` (a question
  *            ABOUT a plan node — probe quizzes carry no nodeId in their
@@ -35,8 +36,8 @@
  * Both are strictly sequential; the two derivations agree on every settled
  * record (a call's part projects into the same view boundary).
  *
- * Pure: core-only imports (the shared isProbeConclusion predicate), no
- * runtime deps — safe on server, client, and tests.
+ * Pure: core-only imports (the shared probe-conclusion seam), no runtime
+ * deps — safe on server, client, and tests.
  */
 
 /** The three phases of a session, as the picker / header / dividers see them. */
@@ -161,7 +162,7 @@ export function phaseTimeline(messages: readonly PhaseMessage[]): Phase3[] {
 
 // ─── the native fold (Wave D: record-side phase over LhMessage[]) ───────────
 
-import { isProbeConclusion, type LhMessage } from "./native-messages.ts";
+import { isProbeConclusion, probeDoneResultIds, type LhMessage } from "./native-messages.ts";
 
 /** The phase at `upToIndex` (inclusive; default: the last message) of a
  *  NATIVE record. probe→plan advances at the probe_done call's clean
@@ -171,14 +172,12 @@ import { isProbeConclusion, type LhMessage } from "./native-messages.ts";
 export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): Phase3 {
 	let phase: Phase3 = "probe";
 	const last = Math.min(upToIndex ?? messages.length - 1, messages.length - 1);
+	const concluded = probeDoneResultIds(messages.slice(0, last + 1));
 	for (let i = 0; i <= last; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
 		if (role === "toolResult") {
-			const result = m as { toolName?: string; isError?: boolean; details?: unknown };
-			if (phase === "probe" && result.toolName === "probe_done" && isProbeConclusion(result)) {
-				phase = "plan";
-			}
+			if (phase === "probe" && concluded.has(m.id)) phase = "plan";
 		} else if (role === "assistant") {
 			const content = (m as { content?: ReadonlyArray<{ type?: string; name?: string; arguments?: unknown }> }).content ?? [];
 			if (phase === "plan") {

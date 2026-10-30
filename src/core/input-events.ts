@@ -16,6 +16,9 @@
  *   continue — run the next turn on the current record (mount
  *             continuations, job-settle re-syncs: the record ends at an
  *             answered question with no teacher reaction yet).
+ *   retry   — retry a failed model response (upstream issue #110), without
+ *             new input. Failed attempts stay in the record; only the
+ *             retry's temporary agent history omits the trailing failures.
  *
  * (The plan verdict input died 2026-09-26 with the verdict itself — the
  * learner's post-plan reply is a natural text message.)
@@ -52,6 +55,8 @@ export type ChatInput =
 	| { type: "text"; text: string }
 	| { type: "answer"; toolCallId: string; answer: QuestionAnswerData }
 	| { type: "continue" }
+	/** The failed-turn retry (upstream issue #110): the banner's Retry button. */
+	| { type: "retry" }
 	/** The practice dock's two buttons (owner, 2026-10-04): the learner's
 	 *  thinking on the ACTIVE problem — one lane (owner 2026-10-05):
 	 *  whether it claims an answer is read from the text. One
@@ -206,6 +211,8 @@ export function parseChatInput(input: unknown): ChatInput {
 			return { type: "answer", toolCallId: i.toolCallId, answer: i.answer as QuestionAnswerData };
 		case "continue":
 			return { type: "continue" };
+		case "retry":
+			return { type: "retry" };
 		case "thinking":
 			if (typeof i.problemCallId !== "string" || i.problemCallId.length === 0) {
 				throw new ChatInputError("thinking input requires problemCallId");
@@ -326,6 +333,10 @@ export function inputAppends(
 		}
 		case "continue":
 			return dismissalConclusion(record);
+		case "retry":
+			// The input already landed write-ahead. retryDrops affects only
+			// the temporary agent history: nothing new appends here.
+			return [];
 		case "thinking": {
 			const active = activeProblemOf(record.messages);
 			if (!active || active.toolCallId !== input.problemCallId) {
@@ -391,6 +402,61 @@ export function inputAppends(
 			];
 		}
 	}
+}
+
+/** The failure owning the ephemeral banner. Plan presentation and
+ *  compaction do not resolve an error; substantive later input/output does.
+ *  This is deliberately broader than Retry eligibility below. */
+export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhMessage, { role: "assistant" }> | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction")) continue;
+		return m.role === "assistant" && m.stopReason === "error" ? m : undefined;
+	}
+	return undefined;
+}
+
+/** Does the record end in a failure with input that can be retried?
+ *  Aborts are deliberate stops; compaction after a failure requires new
+ *  learner input rather than a retry using a changed context. */
+export function endsInFailedTurn(messages: readonly LhMessage[]): boolean {
+	const { ids, before } = failedTail(messages);
+	return ids.size > 0 && before !== undefined && before.role !== "assistant";
+}
+
+/** The ids omitted ONLY from the retry's temporary agent history (pure).
+ *  Failed attempts (including partial text and their ids) stay on disk.
+ *  Pi's provider conversion already skips error/aborted responses, but
+ *  continue() rejects an assistant tail BEFORE conversion. Omitting the
+ *  trailing failures lets that continuation start from the saved input or
+ *  completed tool results without replaying tools or resubmitting input.
+ *  Plan blocks may follow the failure and stay; a later compaction blocks
+ *  Retry without changing compaction itself. Honest 400s otherwise. */
+export function retryDrops(messages: readonly LhMessage[]): Set<string> {
+	const { ids, before } = failedTail(messages);
+	if (ids.size === 0) {
+		const failure = failedResponseAtEnd(messages);
+		if (failure) {
+			throw new ChatInputError(`${failure.errorMessage ?? "An error occurred."}\n\nThis response cannot be retried after compaction. Send a new message to continue.`);
+		}
+		throw new ChatInputError("retry input requires a failed turn to retry");
+	}
+	if (!before || before.role === "assistant") throw new ChatInputError("retry input leaves no input to continue from");
+	return ids;
+}
+
+/** Walk back over failed assistants and UI-only plan blocks. A compaction
+ *  is a boundary, not a marker Retry may cross. A failure AFTER a compaction
+ *  can still retry: that compacted context was already its starting state. */
+function failedTail(messages: readonly LhMessage[]): { ids: Set<string>; before: LhMessage | undefined } {
+	const ids = new Set<string>();
+	let i = messages.length - 1;
+	for (; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role === "assistant" && m.stopReason === "error") ids.add(m.id);
+		else if (!(m.role === "custom" && m.customType === "plan-block")) break;
+	}
+	return { ids, before: messages[i] };
 }
 
 /** The deferred conclude synthesis (owner ruling, 2026-10-04): a

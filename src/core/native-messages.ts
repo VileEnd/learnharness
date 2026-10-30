@@ -1011,9 +1011,12 @@ export const GRID_NOTE =
  * - markers flatten to a user message carrying their content (the
  *   canonical text single-sourced in core/contracts); plan blocks are
  *   UI-only and filtered.
- * - dangling tool calls (an aborted turn's unanswered questions) get the
- *   synthesized interrupted result — the provider protocol's hard
- *   invariant: a tool call must be followed by its result.
+ * - dangling calls from successfully generated assistant messages (for
+ *   example, an unanswered question) get a synthesized interrupted result:
+ *   the provider protocol's hard invariant (a tool call must be followed by
+ *   its result). Error/aborted generations do not: Pi drops those assistant
+ *   messages, so manufacturing their results would leave orphan results on
+ *   the wire.
  *
  * Contract (pi-agent-core): never throws — an unknown shape passes
  * through untouched rather than killing the loop.
@@ -1108,9 +1111,12 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 		} else out.push(native as Message);
 		// Dangling-call synthesis: an assistant message whose toolCalls have
 		// no results in the remaining tail (abort mid-question) — the
-		// provider rejects unanswered calls outright.
+		// provider rejects unanswered calls outright. Only for completed
+		// generations: Pi filters error/aborted assistants itself, and a
+		// result for one of their unexecuted calls would be an orphan.
 		if (role === "assistant") {
 			const assistant = m as AssistantMessage;
+			if (assistant.stopReason === "error" || assistant.stopReason === "aborted") continue;
 			const calls = assistant.content.filter((b) => b.type === "toolCall");
 			if (calls.length === 0) continue;
 			const answered = resultIdsFrom(messages.slice(i + 1));
@@ -1142,6 +1148,10 @@ export function danglingQuestionOf(
 		const m = messages[mi]!;
 		if ((m as { role?: string }).role !== "assistant") continue;
 		const assistant = m as AssistantMessage & { id: string };
+		// A failed or aborted generation never executes its calls (pi drops
+		// the message): its questions are not open, and an answer to one
+		// would be an orphan result the provider rejects on every turn.
+		if (assistant.stopReason === "error" || assistant.stopReason === "aborted") return null;
 		const answered = resultIdsFrom(messages.slice(mi + 1));
 		for (const block of assistant.content) {
 			if (block.type !== "toolCall") continue;
@@ -1173,25 +1183,43 @@ export function openQuestionOf(messages: readonly LhMessage[]): ReturnType<typeo
  *  (not isError) whose details are not a refusal ({ok:false}: an open
  *  question, an open canvas task, already concluded). A refused call
  *  concludes nothing: the prober stays, the handoff steer was never queued.
- *  The one predicate both the construction seam (hasProbeDone) and the phase
- *  folds (core/phases.ts) read. */
+ *  Older clean acknowledgments without an explicit ok:true still count.
+ *  The one result predicate the native seam (probeDoneResultIds) and the
+ *  view fold (core/phases.ts) read. */
 export function isProbeConclusion(result: { isError?: boolean; details?: unknown; output?: unknown }, view = false): boolean {
 	if (result.isError) return false;
 	const payload = view ? result.output : result.details;
 	return (payload as { ok?: unknown } | null | undefined)?.ok !== false;
 }
 
-/** The probe→teach construction seam (chat-handler): a probe_done call with
- *  a CONCLUDING result (isProbeConclusion) means the probe is concluded:
- *  teach. A refused or errored call, or one with no result yet, keeps the
+/** Concluding probe_done result MESSAGE ids, in transcript order (upstream
+ *  f01fdf3 merged with isProbeConclusion). A call from a failed/aborted
+ *  generation grants no completion authority (a Retry keeps such attempts
+ *  in the record). The later result must match both the call id and the
+ *  tool name and must pass isProbeConclusion. Never changes history. */
+export function probeDoneResultIds(messages: readonly LhMessage[]): Set<string> {
+	const calls = new Set<string>();
+	const results = new Set<string>();
+	for (const m of messages) {
+		if (m.role === "assistant") {
+			if (m.stopReason === "error" || m.stopReason === "aborted") continue;
+			for (const block of m.content) {
+				if (block.type === "toolCall" && block.name === "probe_done") calls.add(block.id);
+			}
+		} else if (m.role === "toolResult" && m.toolName === "probe_done" && calls.has(m.toolCallId) && isProbeConclusion(m)) {
+			results.add(m.id);
+		}
+	}
+	return results;
+}
+
+/** The probe→teach construction seam (chat-handler and the tool guard):
+ *  only a non-failed probe_done call with a matching CONCLUDING result
+ *  means the probe is concluded: teach. A refused or errored call, one from
+ *  a failed or aborted generation, or one with no result yet keeps the
  *  prober. */
 export function hasProbeDone(messages: readonly LhMessage[]): boolean {
-	for (const m of messages) {
-		if ((m as { role?: string }).role !== "toolResult") continue;
-		const result = m as ToolResultMessage;
-		if (result.toolName === "probe_done" && isProbeConclusion(result)) return true;
-	}
-	return false;
+	return probeDoneResultIds(messages).size > 0;
 }
 
 /** Every toolResult id in the record — answer-event validation (the call

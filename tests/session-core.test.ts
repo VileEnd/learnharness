@@ -25,7 +25,7 @@ import { absorbed, pendingCallTool, SessionModel } from "../components/session-c
 import type { ChatInput } from "../src/core/input-events.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
 import { newUserMessage, newAnswerResult, newThinkingMessage, needsContinuation, endsInDismissal } from "../src/core/native-messages.ts";
-import { newCompactionMarker, newPlanBlockMessage, projectView } from "../src/core/index.ts";
+import { endsInFailedTurn, newCompactionMarker, newPlanBlockMessage, projectView } from "../src/core/index.ts";
 import { dismissedAnswer } from "../src/core/question-core.ts";
 import { buildAnswer, type QuestionData } from "../src/core/question-core.ts";
 
@@ -513,7 +513,7 @@ describe("provider-error banner (live and saved)", () => {
 		assert.equal(model().getState().error, null);
 	});
 
-	it("any later entry supersedes the failure, including plan/compaction markers and aborts", () => {
+	it("substantive later input/output supersedes the failure, including aborts", () => {
 		const failure = failed();
 		const later: LhMessage[] = [
 			newUserMessage("retry"),
@@ -521,8 +521,6 @@ describe("provider-error banner (live and saved)", () => {
 			{ ...assistantMsg("aborted", ""), stopReason: "aborted", errorMessage: "Aborted" } as LhMessage,
 			newThinkingMessage("problem", "my attempt"),
 			resultMsg("call"),
-			newPlanBlockMessage("plan", { kind: "full", nodes: [], edges: [], current: null }),
-			newCompactionMarker("summary", { firstKeptMessageId: failure.id, tokensBefore: 100, model: "fixture", at: "2026-01-01T00:00:00Z" }),
 		];
 		for (const entry of later) {
 			const m = model({ initialMessages: [failure] });
@@ -532,6 +530,54 @@ describe("provider-error banner (live and saved)", () => {
 			assert.equal(m.getState().error, null, `live banner superseded by ${entry.role}`);
 			assert.equal(model({ initialMessages: [failure, entry] }).getState().error, null, "reopened view agrees");
 		}
+	});
+
+	it("plan and compaction markers preserve the banner on sync, adoption and reopen", async () => {
+		const failure = failed();
+		const record = [newUserMessage("topic"), failure];
+		const markers = [
+			newPlanBlockMessage("plan", { kind: "full", nodes: [], edges: [], current: null }),
+			newCompactionMarker("summary", { firstKeptMessageId: failure.id, tokensBefore: 100, model: "fixture", at: "2026-01-01T00:00:00Z" }),
+		];
+		for (const marker of markers) {
+			const saved = [...record, marker];
+			let posts = 0;
+			const m = model({ initialMessages: record, fetch: async () => { posts++; throw new Error("unexpected request"); } });
+			m.setMessages(saved);
+			assert.equal(m.getState().error?.message, "Google 500: fixture failure");
+			assert.equal(model({ initialMessages: saved }).getState().error?.message, m.getState().error?.message);
+			const adopted = model({ initialMessages: record });
+			adopted.adoptRecord(saved);
+			assert.equal(adopted.getState().error?.message, m.getState().error?.message);
+			assert.equal(endsInFailedTurn(saved), marker.customType === "plan-block", "later compaction removes Retry eligibility, not the error notice");
+			await m.continueIfOwed(saved);
+			assert.equal(posts, 0, "restoring the banner is never an automatic retry");
+			m.setMessages([...saved, newUserMessage("continue from here")]);
+			assert.equal(m.getState().error, null, "new learner input supersedes the notice");
+		}
+	});
+
+	for (const { status, body, expected } of [
+		{ status: 400, body: '{"error":"retry input requires a failed turn to retry"}', expected: "There's nothing to retry \u2014 the last answer didn't fail." },
+		{ status: 400, body: '{"error":"Model failed\\n\\nThis response cannot be retried after compaction. Send a new message to continue."}', expected: "Model failed\n\nThis response cannot be retried after compaction. Send a new message to continue." },
+		{ status: 400, body: "Plain refusal", expected: "Plain refusal" },
+		{ status: 400, body: '{"reason":"not an error envelope"}', expected: '{"reason":"not an error envelope"}' },
+		{ status: 503, body: '{"error":"model gate","code":"models_not_configured"}', expected: '{"error":"model gate","code":"models_not_configured"}' },
+		{ status: 403, body: '{"error":"cap","code":"monthly_cap_reached"}', expected: '{"error":"cap","code":"monthly_cap_reached"}' },
+	]) {
+		it(`Retry refusal ${status} reads as ${JSON.stringify(expected).slice(0, 50)}`, async () => {
+			const m = model({ initialMessages: [newUserMessage("hello"), failed("f")], fetch: async () => new Response(body, { status }) });
+			await m.send({ type: "retry" });
+			assert.equal(m.getState().status, "error");
+			assert.equal(m.getState().error?.message, expected);
+		});
+	}
+
+	it("a non-retry 400 keeps its raw body", async () => {
+		const body = '{"error":"x"}';
+		const m = model({ fetch: async () => new Response(body, { status: 400 }) });
+		await m.send({ type: "text", text: "hi" });
+		assert.equal(m.getState().error?.message, body);
 	});
 
 	it("a newer live message supersedes the failure before its response finishes", () => {
@@ -555,7 +601,7 @@ describe("provider-error banner (live and saved)", () => {
 		assert.equal(m.getState().error?.message, "Google 500: fixture failure");
 	});
 
-	for (const input of [{ type: "text", text: "retry" }, { type: "continue" }] as const) {
+	for (const input of [{ type: "text", text: "retry" }, { type: "continue" }, { type: "retry" }] as const) {
 		it(`hides the old failure during the optimistic ${input.type} wait, then shows a new live failure`, async () => {
 			let acknowledge!: (response: Response) => void;
 			const ack = new Promise<Response>((resolve) => { acknowledge = resolve; });

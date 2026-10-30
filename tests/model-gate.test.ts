@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, mock, test } from "node:test";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -52,8 +53,10 @@ const NO_SLOTS = { id: "user-c", name: "c", isAdmin: false };
 const FRESH = { id: "user-d", name: "d", isAdmin: false };
 const CAPPED = { id: "user-e", name: "e", isAdmin: false };
 const NO_VISION = { id: "user-f", name: "f", isAdmin: false };
+const RETRY_CAPPED = { id: "user-g", name: "g", isAdmin: false };
 policy.setUserPolicy(USER.id, POLICY);
 policy.setUserPolicy(CAPPED.id, POLICY);
+policy.setUserPolicy(RETRY_CAPPED.id, POLICY);
 policy.setUserPolicy(NO_VISION.id, { ...POLICY, slots: { strong: STRONG, cheap: CHEAP } });
 policy.setUserPolicy(FRESH.id, POLICY);
 policy.setUserPolicy(NO_SLOTS.id, { slots: {}, allowedModels: [`openrouter:${EXTRA.id}`], monthlyCapUsd: null });
@@ -121,6 +124,27 @@ test("(d) over the cap, POST /api/chat answers 403 before persisting", async () 
 	assert.ok(Math.abs(body.spentUsd - 5.1) < 1e-9);
 	assert.equal(runAsTenant(CAPPED, () => JSON.stringify(stores.chatStore.getChat(chatId))), before);
 	runAsTenant(CAPPED, () => assert.throws(() => assertWithinCap(), MonthlyCapReachedError));
+});
+
+test("(d2) a Retry at the cap gets the same 403 cap envelope and leaves the chat file unchanged", async () => {
+	const chatId = runAsTenant(RETRY_CAPPED, () => {
+		spend(5.1);
+		const chat = stores.chatStore.createChat("Capped retry");
+		stores.chatStore.saveSettings(chat.id, { model: STRONG });
+		const failed = { ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "fetch failed" }), id: "failed" };
+		stores.chatStore.saveMessages(chat.id, [{ id: "u1", role: "user", content: "hello", timestamp: 1 }, failed]);
+		return chat.id;
+	});
+	const before = runAsTenant(RETRY_CAPPED, () => JSON.stringify(stores.chatStore.getChat(chatId)));
+	const res = await chatRoute.POST(
+		new Request("http://x/api/chat", { method: "POST", headers: headers(RETRY_CAPPED), body: JSON.stringify({ chatId, input: { type: "retry" } }) }),
+	);
+	assert.equal(res.status, 403);
+	assert.equal(((await res.json()) as { code: string }).code, "monthly_cap_reached");
+	runAsTenant(RETRY_CAPPED, () => {
+		assert.equal(JSON.stringify(stores.chatStore.getChat(chatId)), before);
+		assert.equal(isTurnRunning(chatId), false);
+	});
 });
 
 test("(e) an admin with the same spend is not blocked", async () => {

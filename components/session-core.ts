@@ -19,6 +19,7 @@ import {
 	needsContinuation,
 	danglingQuestionOf,
 	answeredCallIds,
+	failedResponseAtEnd,
 	measuredContextTokens,
 	newAnswerResult,
 	newHintRequest,
@@ -83,6 +84,18 @@ async function turnInFlight(model: SessionModel): Promise<boolean | null> {
 	} catch {
 		return null; // network hiccup: keep waiting, the deadline bounds us
 	}
+}
+
+/** A Retry the server refused with readable guidance (shown without the generic prefix). */
+export class RetryRefusalError extends Error {}
+
+/** The server's terse "nothing to retry" refusal, in the learner's words.
+ *  Every other Retry 400 (no input to continue from, compaction) is already
+ *  readable and passes through. */
+export function readableRetryRefusal(text: string): string {
+	return text === "retry input requires a failed turn to retry"
+		? "There's nothing to retry \u2014 the last answer didn't fail."
+		: text;
 }
 
 const STREAM_DROPPED = "The connection dropped before the turn completed.";
@@ -186,7 +199,7 @@ export interface SessionState {
 	/** Completed conversation usage; null after compaction or before first usage. */
 	contextTokens: number | null;
 	status: SessionStatus;
-	error: { message: string } | null;
+	error: { message: string; plain?: boolean } | null;
 	/** Steers sent but not yet drained (composer steering, 2026-10-03):
 	 *  the queued indicator's truth. An entry dies when its id lands in
 	 *  the messages (the drain's verbatim events upsert the real card) —
@@ -257,7 +270,7 @@ export class SessionModel {
 	private streamingMessageId: string | null = null;
 	private statusValue: SessionStatus = "ready";
 	/** Request/loop failures are transient; provider failures derive from messages. */
-	private errorValue: { message: string } | null = null;
+	private errorValue: { message: string; plain?: boolean } | null = null;
 	/** Dismissing a banner must not authorize an automatic replacement turn. */
 	private automaticContinuationBlocked = false;
 	/** A completed failure from THIS consume, not the previous attempt's record. */
@@ -296,12 +309,12 @@ export class SessionModel {
 				? { executions: this.executions, inFlight: true, streamingIds: this.streamingIds }
 				: undefined;
 		const messages = [...this.base, ...this.tail];
-		const latest = messages.at(-1);
-		// One rule for live and restored failures: only the final completed
-		// assistant can own the banner. While trying again, hide the old
-		// failure from the first Thinking frame, but show a new failure at end.
+		const latest = failedResponseAtEnd(messages);
+		// Presentation/compaction markers do not resolve a failure. While
+		// trying again, hide the old banner from the first Thinking frame,
+		// but show a new completed failure from this consume immediately.
 		const providerError =
-			latest?.role === "assistant" && latest.stopReason === "error" &&
+			latest !== undefined &&
 			!this.incompleteUsageIds.has(latest.id) && (!live || latest.id === this.liveFailureId)
 				? { message: latest.errorMessage ?? "An error occurred." }
 				: null;
@@ -332,8 +345,8 @@ export class SessionModel {
 		this.onChange?.();
 	}
 
-	private setError(message: string | null): void {
-		this.errorValue = message === null ? null : { message };
+	private setError(message: string | null, plain = false): void {
+		this.errorValue = message === null ? null : plain ? { message, plain } : { message };
 		if (message === null) this.streamLost = false;
 		if (message !== null) this.automaticContinuationBlocked = true;
 		this.onChange?.();
@@ -757,10 +770,18 @@ export class SessionModel {
 				throw new Error("A turn is already running — try again in a moment.");
 			}
 			if (!res.ok) {
-				// Refusal envelopes (503 BYOK/key gates) and 400s: the RAW body
-				// text rides the error message — the banner shows it, and the
-				// page's refusal flow JSON-parses the envelope out of it.
-				throw new Error((await res.text()) || `The send failed (${res.status}).`);
+				// Keep model/key/policy refusal envelopes verbatim: the page's
+				// refusal flow parses them. Retry's 400s are ordinary user-facing
+				// guidance, so show their error text without JSON syntax.
+				let message = (await res.text()) || `The send failed (${res.status}).`;
+				let retryRefusal = false;
+				if (input.type === "retry" && res.status === 400) {
+					try {
+						const refusal = JSON.parse(message) as { error?: unknown } | null;
+						if (typeof refusal?.error === "string" && refusal.error.length > 0) { message = readableRetryRefusal(refusal.error); retryRefusal = true; }
+					} catch { /* Non-envelope failures keep their original text. */ }
+				}
+				throw retryRefusal ? new RetryRefusalError(message) : new Error(message);
 			}
 			// CONNECTION DIET B (owner, 2026-10-10 — parallel-session freeze
 			// postmortem): the POST acknowledges and closes; there is no stream
@@ -787,7 +808,7 @@ export class SessionModel {
 					for (const id of ids) this.unconfirmedAnswers.delete(id);
 				});
 			}
-			this.setError((err as Error).message);
+			this.setError((err as Error).message, err instanceof RetryRefusalError);
 			this.setStatus("error");
 		}
 	}
