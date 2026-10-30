@@ -55,12 +55,15 @@ const launched = (bin: string) => existsSync(`${bin}.launches`);
 
 let lastBin = "";
 
-async function startRunner(t: TestContext, scenario = "text.jsonl", options: { maxConcurrent?: number } = {}): Promise<number> {
-	lastBin = fakeBin(t, scenario);
-	const server = createRunner({ claudeBin: lastBin, token: TOKEN, appHost: APP_HOST, killGraceMs: 300, ...options });
+async function listen(t: TestContext, server: net.Server): Promise<number> {
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => { server.close(); });
 	return (server.address() as net.AddressInfo).port;
+}
+
+async function startRunner(t: TestContext, scenario = "text.jsonl", options: { maxConcurrent?: number } = {}): Promise<number> {
+	lastBin = fakeBin(t, scenario);
+	return listen(t, createRunner({ claudeBin: lastBin, token: TOKEN, appHost: APP_HOST, killGraceMs: 300, ...options }));
 }
 
 function connect(t: TestContext, port: number) {
@@ -117,6 +120,36 @@ test("reports the CLI status", async (t) => {
 	client.send({ token: TOKEN, op: "status" });
 	await client.until(() => client.closed());
 	assert.deepEqual(client.frames, [{ status: { state: "meets-minimum", version: "2.1.301", minimumVersion: "2.1.259" } }]);
+});
+
+/** Sends one first frame and returns every frame the runner sent before closing. */
+async function exchange(t: TestContext, port: number, frame: Frame): Promise<Frame[]> {
+	const client = connect(t, port);
+	client.send(frame);
+	await client.until(() => client.closed());
+	return client.frames;
+}
+
+test("refuses a run readably when the CLI is missing", async (t) => {
+	const port = await listen(t, createRunner({ claudeBin: "/nonexistent/claude", token: TOKEN, appHost: APP_HOST }));
+	assert.deepEqual(await exchange(t, port, { token: TOKEN, op: "run", run: validRun() }), [{ error: "spawn_failed", message: "claude CLI not found in the container" }]);
+});
+
+test("re-probes an unchecked CLI version on demand, at most once per window", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "runner-test-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const bin = join(dir, "claude");
+	writeFileSync(bin, `#!/bin/sh\nif [ -f ${dir}/fixed ]; then echo "2.1.301 (Claude Code)"; fi\n`);
+	chmodSync(bin, 0o755);
+	const eager = await listen(t, createRunner({ claudeBin: bin, token: TOKEN, appHost: APP_HOST, reprobeMs: 0 }));
+	const throttled = await listen(t, createRunner({ claudeBin: bin, token: TOKEN, appHost: APP_HOST }));
+	const state = async (port: number) => ((await exchange(t, port, { token: TOKEN, op: "status" }))[0]?.status as Frame | undefined)?.state;
+
+	assert.deepEqual(await exchange(t, eager, { token: TOKEN, op: "run", run: validRun() }), [{ error: "spawn_failed", message: "Claude Code's version couldn't be checked" }]);
+	assert.equal(await state(throttled), "version-unchecked");
+	writeFileSync(join(dir, "fixed"), "");
+	assert.equal(await state(eager), "meets-minimum");
+	assert.equal(await state(throttled), "version-unchecked");
 });
 
 test("refuses an MCP url on another host and a non-MCP tool", async (t) => {

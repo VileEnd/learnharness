@@ -168,9 +168,12 @@ class RemoteChild extends EventEmitter implements ClaudeChild {
 
 function refusal(frame: Frame): Error {
 	const error = String(frame.error);
+	const message = typeof frame.message === "string" ? frame.message : "";
 	const copy = REFUSAL_COPY[error];
 	if (copy) return new ClaudeLaunchError(copy);
-	return new Error(`claude runner refused the run (${error}${typeof frame.message === "string" ? `: ${frame.message}` : ""})`);
+	// The runner's spawn_failed reason is readable (CLI missing, version unreadable, spawn error).
+	if (error === "spawn_failed" && message) return new ClaudeLaunchError(message.replace(/\.?$/, "."));
+	return new Error(`claude runner refused the run (${error}${message ? `: ${message}` : ""})`);
 }
 
 /**

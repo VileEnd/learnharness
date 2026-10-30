@@ -156,6 +156,14 @@ test("a runner lost mid-run fails with the unreachable copy, or its refusal copy
 	assert.equal(errorOf(await turn(refused, [HI])), "Claude Code runner refused the request.");
 });
 
+test("a missing CLI fails with the runner's reason", async (t) => {
+	const server = createRunner({ claudeBin: "/nonexistent/claude", token: TOKEN, appHost: "127.0.0.1" });
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(() => { server.close(); });
+	const runClaude = createRunnerClient({ addr: `127.0.0.1:${(server.address() as net.AddressInfo).port}`, token: TOKEN });
+	assert.equal(errorOf(await turn(runClaude, [HI])), "claude CLI not found in the container.");
+});
+
 test("a wrong token fails with the refusal copy", async (t) => {
 	const runClaude = createRunnerClient({ addr: await startRunner(t, fixtureLines("text.jsonl")), token: "wrong" });
 	assert.equal(errorOf(await turn(runClaude, [HI])), "Claude Code runner refused the request.");

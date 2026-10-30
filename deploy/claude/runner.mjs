@@ -13,6 +13,7 @@ export const MINIMUM_VERSION = "2.1.259";
 const MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const VERSION_TIMEOUT_MS = 10_000;
+const REPROBE_MS = 30_000;
 const MODELS = ["opus", "sonnet", "haiku"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const RUN_KEYS = ["model", "effort", "systemPrompt", "mcp", "allowedTools"];
@@ -124,7 +125,7 @@ function tokenMatches(given, expected) {
 	return timingSafeEqual(digest(given), digest(expected));
 }
 
-export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, killGraceMs = 1000 }) {
+export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, killGraceMs = 1000, reprobeMs = REPROBE_MS }) {
 	const baseEnv = {
 		PATH: process.env.PATH ?? "",
 		HOME: process.env.HOME ?? "",
@@ -132,7 +133,16 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 		DISABLE_AUTOUPDATER: "1",
 		MCP_TOOL_TIMEOUT: "1800000",
 	};
-	const status = probeVersion(claudeBin, baseEnv);
+	let status = probeVersion(claudeBin, baseEnv);
+	let probedAt = Date.now();
+	// A CLI that was missing or unreadable (a slow first probe, a fixed image) is
+	// probed again on demand, at most once per reprobeMs. A good result sticks.
+	const currentStatus = () => status.then((info) => {
+		if (info.state === "meets-minimum" || Date.now() - probedAt < reprobeMs) return info;
+		probedAt = Date.now();
+		status = probeVersion(claudeBin, baseEnv);
+		return status;
+	});
 	let active = 0;
 
 	function handleConnection(socket) {
@@ -184,9 +194,11 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 			const checked = validateRun(request, appHost);
 			if (!checked.ok) return refuse("invalid", checked.message);
 			running = true;
-			status.then((info) => {
+			currentStatus().then((info) => {
 				if (closed) return;
-				if (info.state !== "meets-minimum") return refuse("update_required", `claude CLI is ${info.state}`);
+				if (info.state === "update-required") return refuse("update_required", `claude CLI ${info.version} is below ${MINIMUM_VERSION}`);
+				if (info.state === "not-found") return refuse("spawn_failed", "claude CLI not found in the container");
+				if (info.state !== "meets-minimum") return refuse("spawn_failed", "Claude Code's version couldn't be checked");
 				if (active >= maxConcurrent) return refuse("busy", "too many concurrent runs");
 				launch(checked.run);
 			});
@@ -212,7 +224,7 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 				}), { cwd: EMPTY_CWD, env: baseEnv, stdio: ["pipe", "pipe", "pipe"], detached: true });
 			} catch (error) {
 				if (dir) rmSync(dir, { recursive: true, force: true });
-				return refuse("spawn_failed", error instanceof Error ? error.message : String(error));
+				return refuse("spawn_failed", `claude CLI failed to start: ${error instanceof Error ? error.message : String(error)}`);
 			}
 			active++;
 
@@ -228,7 +240,7 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 			};
 			child.once("spawn", () => send({ started: true }));
 			child.once("error", (error) => {
-				if (child.pid === undefined) finish({ error: "spawn_failed", message: error.message });
+				if (child.pid === undefined) finish({ error: "spawn_failed", message: `claude CLI failed to start: ${error.message}` });
 			});
 			child.stdin.on("error", () => {});
 			child.stderr.setEncoding("utf8");
@@ -276,7 +288,7 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 			if (wasFirst) {
 				if (!tokenMatches(frame.token, token)) return refuse("unauthorized");
 				if (frame.op === "status") {
-					return void status.then((info) => {
+					return void currentStatus().then((info) => {
 						send({ status: info });
 						socket.end();
 					});
