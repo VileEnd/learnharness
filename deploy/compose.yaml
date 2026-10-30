@@ -27,7 +27,43 @@ services:
       # Admin Users section: Keycloak service-account client (learnharness-admin-api); empty secret disables it.
       KC_ADMIN_API_URL: http://keycloak:8080
       KC_ADMIN_API_SECRET: ${KC_ADMIN_API_SECRET:-}
-    networks: [internal]
+      # Claude Code (admin, experimental): the runner in the claude service, reached on the private claude-bridge network.
+      CLAUDE_RUNNER_ADDR: 172.30.66.3:8790
+      CLAUDE_RUNNER_TOKEN: ${CLAUDE_RUNNER_TOKEN:?set CLAUDE_RUNNER_TOKEN in .env}
+      CLAUDE_BRIDGE_HOST: 172.30.66.2
+    networks:
+      internal:
+      claude-bridge:
+        ipv4_address: 172.30.66.2
+
+  claude:
+    # The Claude Code CLI behind a TCP runner (claude/runner.mjs). Locked down:
+    # no /data, no app secrets, non-root, read-only. It reaches the app only
+    # over claude-bridge (internal, no internet) and api.anthropic.com over
+    # claude-egress. The login lives in volumes/claude: never back it up.
+    build: ./claude
+    image: learnharness-claude:local
+    restart: unless-stopped
+    user: node
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    mem_limit: 2g
+    environment:
+      CLAUDE_RUNNER_TOKEN: ${CLAUDE_RUNNER_TOKEN:?set CLAUDE_RUNNER_TOKEN in .env}
+      CLAUDE_RUNNER_LISTEN: 172.30.66.3:8790
+      LH_APP_HOST: 172.30.66.2
+      CLAUDE_CONFIG_DIR: /claude
+      DISABLE_AUTOUPDATER: "1"
+      HOME: /home/node
+    volumes:
+      # Owned by uid 1000, mode 0700 (the NixOS module does this).
+      - ./volumes/claude:/claude
+    networks:
+      claude-bridge:
+        ipv4_address: 172.30.66.3
+      claude-egress:
 
   ocr:
     # PDF -> markdown service (services/ocr). No published port and no Caddy route:
@@ -143,3 +179,11 @@ services:
 
 networks:
   internal:
+  # Private link between the app and the claude runner: no route out.
+  claude-bridge:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.66.0/29
+  # Plain bridge so the claude service can reach api.anthropic.com.
+  claude-egress:

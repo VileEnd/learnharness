@@ -55,7 +55,7 @@ in
     virtualisation.docker.enable = true;
 
     systemd.services.learnharness-stack = {
-      description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app, OCR)";
+      description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app, OCR, Claude runner)";
       wantedBy = [ "multi-user.target" ];
       requires = [ "docker.service" ];
       wants = [ "network-online.target" ];
@@ -88,6 +88,8 @@ in
         # points at ${stateDir}/volumes.
         mkdir -p ${stateDir}/volumes
         ln -sfn ${stateDir}/volumes "$src/deploy/volumes"
+        # The claude container runs as node (uid 1000) and keeps its login here.
+        install -d -m 0700 -o 1000 -g 1000 ${stateDir}/volumes/claude
 
         secrets=${stateDir}/secrets.env
         if [ ! -f "$secrets" ]; then
@@ -100,12 +102,15 @@ in
             echo "OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32 | tr -- '+/' '-_')"
             echo "OCR_TOKEN=$(openssl rand -hex 32)"
             echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)"
+            echo "CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)"
           } > "$secrets"
         fi
         # secrets.env of an older install has no OCR_TOKEN yet (PDF scanning service): add it once.
         grep -q '^OCR_TOKEN=' "$secrets" || (umask 077; echo "OCR_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
         # …nor KC_ADMIN_API_SECRET (the app's Keycloak client for the admin Users section).
         grep -q '^KC_ADMIN_API_SECRET=' "$secrets" || (umask 077; echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)" >> "$secrets")
+        # …nor CLAUDE_RUNNER_TOKEN (the app's token for the Claude Code runner).
+        grep -q '^CLAUDE_RUNNER_TOKEN=' "$secrets" || (umask 077; echo "CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
 
         cd "$src/deploy"
         docker compose --env-file ${hostsEnv} --env-file "$secrets" up -d --build --remove-orphans

@@ -143,6 +143,18 @@ The graph you migrated already holds the nodes the old app extracted from your n
 
 The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdown through OpenRouter. It has no published port and no Caddy route: only the app reaches it at `http://ocr:8000`, and every call carries the shared secret `OCR_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env`). The OpenRouter key is the one in the app's Settings, sent per job. Results and cache live in `volumes/ocr/`, which belongs in the backups.
 
+## Claude Code (admin, experimental)
+
+The stack includes `claude`, a locked-down container (`deploy/claude`) that runs the Claude Code CLI for admins. It has no `/data`, no app secrets, no published port, and runs as a non-root user with a read-only filesystem. The app reaches it over the private `claude-bridge` network with the shared secret `CLAUDE_RUNNER_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env` and create `deploy/volumes/claude` owned by uid 1000, mode 0700).
+
+Off by default: an admin turns it on with the toggle in Settings. Log in once, after the stack is up:
+
+```bash
+ssh -t root@<vm-host> docker exec -it learnharness-claude-1 claude
+```
+
+then type `/login` and follow the prompts. The login lives in `deploy/volumes/claude` (on the VM `/var/lib/learnharness/volumes/claude`) and must never be backed up or copied: it is a personal Claude subscription credential. Using a subscription this way may conflict with Anthropic's Consumer Terms, so check them before you enable it.
+
 ## Users
 
 Admins (members of `learnharness-admin`) see **Settings → Users**. There they can:
@@ -234,7 +246,7 @@ Docker is the supported runtime (the NixOS module is Docker-based). If you move 
 
 ## Backups
 
-Back up the volumes (app data and keys, Caddy CA, Keycloak database) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything.
+Back up the volumes (app data and keys, Caddy CA, Keycloak database; **not** `volumes/claude`, which holds the Claude Code login) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything.
 
 ## Move-day switch
 
