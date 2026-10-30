@@ -974,14 +974,15 @@ function drawingMessage(marker: LhMarkerMessage, index: number, plan: DrawingPla
 		return text(`${marker.content}\n[earlier drawing ${d.drawingId} \u2014 superseded]${structured}`);
 	}
 	if (!resolved) return text(`${marker.content}\n[Drawing ${d.drawingId}: unavailable]`);
+	const note = resolved.imageNote ? `\n${resolved.imageNote}` : "";
 	if (resolved.png) {
 		return user([
-			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${resolved.transcript ? `\nTranscription:\n${resolved.transcript}` : ""}${structured}` },
+			{ type: "text", text: `${marker.content}\n${GRID_NOTE}${note}${resolved.transcript ? `\nTranscription:\n${resolved.transcript}` : ""}${structured}` },
 			{ type: "image", data: resolved.png.data, mimeType: resolved.png.mimeType },
 		]);
 	}
-	if (resolved.transcript) return text(`${marker.content}\nTranscription:\n${resolved.transcript}${structured}`);
-	return text(`${marker.content}\n[Drawing ${d.drawingId}: transcription unavailable]${structured}`);
+	if (resolved.transcript) return text(`${marker.content}${note}\nTranscription:\n${resolved.transcript}${structured}`);
+	return text(`${marker.content}${note}\n[Drawing ${d.drawingId}: transcription unavailable]${structured}`);
 }
 
 /** What the model sees of a drawing. Supplied by the server per turn
@@ -991,7 +992,11 @@ export interface DrawingContext {
 	 *  transcript: the reader always runs, so a vision tutor gets both) and,
 	 *  for closed tasks, to re-resolve the structured text only. */
 	resolve(drawingId: string): {
-		png?: { data: string; mimeType: "image/png" };
+		/** The image as processed for the session model (base64; PNG or JPEG). */
+		png?: { data: string; mimeType: string };
+		/** The image processor's note: its resize hints beside `png`, or the
+		 *  "[Image omitted: …]" line when the image could not be processed. */
+		imageNote?: string;
 		transcript?: string;
 		structured: string;
 	} | null;

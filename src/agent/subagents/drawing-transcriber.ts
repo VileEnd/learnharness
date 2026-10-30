@@ -4,13 +4,17 @@
  * text. It always runs (2026-10-28): a text-only tutor reads the transcript
  * instead of the image, a vision tutor gets both. Rules ported from the OCR
  * sidecar's SCAN_PROMPT (services/ocr/app/pipeline.py): LaTeX for math,
- * Mermaid for diagrams, ~~struck~~ for crossed-out work.
+ * Mermaid for diagrams, ~~struck~~ for crossed-out work. The PNG is
+ * processed for the reader's own model (Pi image processing, its
+ * inputLimits.images.resize); one that cannot be processed fails the
+ * transcription, which the caller contains (server/drawing-context.ts).
  */
 
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { EngineOptions, PiEngine } from "../models.ts";
 import { runSubagent } from "./pi-run.ts";
+import { processImage } from "../image-processing/index.ts";
 
 export const TRANSCRIBE_PROMPT = `You are transcribing a learner's hand-drawn canvas (an image) into text for a tutor (who may or may not also see the image).
 The image has a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text you are given. Freehand strokes appear there as [s4 blue stroke, vertical line @D1-D5] with a code-computed shape hint; trust the hint and the cell span over your reading of the picture.
@@ -51,11 +55,15 @@ export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingT
 			if (!engine) throw new Error("no transcriber model configured");
 			const model = `${engine.model.provider}:${engine.model.id}`;
 			const { onUsage } = opts;
+			const image = await processImage(png, "image/png", { resizeOptions: engine.model.inputLimits?.images?.resize });
+			opts.signal?.throwIfAborted();
+			if (!image.ok) throw new Error(image.message);
+			const intro = structured ? `Structured text (typed objects, then a code-computed stroke digest, one line per freehand stroke):\n${structured}` : "No typed objects or strokes.";
 			const message: AgentMessage = {
 				role: "user",
 				content: [
-					{ type: "text", text: structured ? `Structured text (typed objects, then a code-computed stroke digest, one line per freehand stroke):\n${structured}` : "No typed objects or strokes." },
-					{ type: "image", data: Buffer.from(png).toString("base64"), mimeType: "image/png" },
+					{ type: "text", text: [intro, ...image.hints].join("\n") },
+					{ type: "image", data: image.data, mimeType: image.mimeType },
 				],
 				timestamp: Date.now(),
 			};

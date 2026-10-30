@@ -17,6 +17,7 @@ import {
 import { practiceTools, type PracticeToolContext } from "./tools/practice.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserTool } from "./tools/send-to-user.ts";
+import { bindReadModel } from "./tools/read.ts";
 import { createTurnGuard } from "./turn-guard.ts";
 import { newTurnNudge, nextNudge, withEmptyErrorRetry } from "./turn-nudge.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
@@ -242,7 +243,9 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			// (opus/sonnet/haiku), as upstream dc4c398 gates it. Explicit test
 			// registries remain caller-owned.
 			tools: [
-				...tools,
+				// The library read processes images within THIS agent's model
+				// limits (upstream 84f9399), explicit test registries included.
+				...bindReadModel(tools, engine.model),
 				...(opts.tools === undefined && (engine.model.provider === CLAUDE_CODE_PROVIDER || /claude/i.test(engine.model.id))
 					? [withArgumentHeal(sendToUserTool)]
 					: []),
