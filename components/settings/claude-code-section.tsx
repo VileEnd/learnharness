@@ -23,12 +23,15 @@ export function claudeCodeStatusLine(status: ClaudeCodeStatus | null): string {
 export function ClaudeCodeSectionView({
 	enabled,
 	status,
+	loaded,
 	busy,
 	error,
 	onToggle,
 }: {
 	enabled: boolean;
 	status: ClaudeCodeStatus | null;
+	/** The first GET has finished (either way); until then the toggle is off. */
+	loaded: boolean;
 	busy: boolean;
 	error: string | null;
 	onToggle: (next: boolean) => void;
@@ -37,11 +40,14 @@ export function ClaudeCodeSectionView({
 		<div data-testid="claude-code-section" className="flex flex-col gap-1 px-1 py-1.5">
 			<div className="flex items-center justify-between gap-3">
 				<span className="font-ui text-xs text-foreground">Use Claude Code (experimental)</span>
-				<Toggle checked={enabled} disabled={busy} onChange={onToggle} label="Use Claude Code (experimental)" />
+				<Toggle checked={enabled} disabled={busy || !loaded} onChange={onToggle} label="Use Claude Code (experimental)" />
 			</div>
-			<p data-testid="claude-code-status" className="font-mono text-[11px] text-muted-foreground">
-				{claudeCodeStatusLine(status)}
-			</p>
+			{/* A failed GET leaves status null for good: show the error alone, not "Checking…". */}
+			{(status !== null || !loaded) && (
+				<p data-testid="claude-code-status" className="font-mono text-[11px] text-muted-foreground">
+					{claudeCodeStatusLine(status)}
+				</p>
+			)}
 			{error && (
 				<p role="alert" data-testid="claude-code-error" className="text-xs text-red-500">
 					{error}
@@ -57,6 +63,7 @@ export function ClaudeCodeSectionView({
 export function ClaudeCodeSection({ isAdmin }: { isAdmin: boolean }) {
 	const [enabled, setEnabled] = useState(false);
 	const [status, setStatus] = useState<ClaudeCodeStatus | null>(null);
+	const [loaded, setLoaded] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +77,8 @@ export function ClaudeCodeSection({ isAdmin }: { isAdmin: boolean }) {
 			setError(null);
 		} catch {
 			setError("Could not load the Claude Code settings.");
+		} finally {
+			setLoaded(true);
 		}
 	}, []);
 	useEffect(() => {
@@ -94,5 +103,5 @@ export function ClaudeCodeSection({ isAdmin }: { isAdmin: boolean }) {
 			setBusy(false);
 		}
 	};
-	return <ClaudeCodeSectionView enabled={enabled} status={status} busy={busy} error={error} onToggle={(n) => void toggle(n)} />;
+	return <ClaudeCodeSectionView enabled={enabled} status={status} loaded={loaded} busy={busy} error={error} onToggle={(n) => void toggle(n)} />;
 }

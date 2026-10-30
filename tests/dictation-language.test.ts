@@ -4,7 +4,7 @@ import { DICTATION_LANGUAGES, deepgramListenUrl, isDictationLanguage } from "../
 import { sanitizeUserSettings } from "../src/core/settings.ts";
 import { resolveSettings } from "../src/core/settings-resolution.ts";
 import { parseDictationSettingsBody } from "../src/server/settings-body.ts";
-import { DICTATION_KEYLESS, dictationErrorLabel, loadCanManageKeys } from "../components/dictation.tsx";
+import { DICTATION_KEYLESS, createCanManageKeysCache, dictationErrorLabel, loadCanManageKeys } from "../components/dictation.tsx";
 
 describe("Nova-3 dictation language contract", () => {
 	it("offers monolingual languages/locales and a distinct multilingual mode", () => {
@@ -98,6 +98,18 @@ describe("admin detection from /api/me fails closed", () => {
 		for (const body of [{}, null, [], "x", { account: "x" }, { account: [] }, { account: {} }]) {
 			assert.equal(await loadCanManageKeys(reply(body)), false, JSON.stringify(body));
 		}
+	});
+	it("a failed fetch is not cached: the next call retries and sees admin", async () => {
+		let calls = 0;
+		const flaky = (async () => {
+			if (calls++ === 0) throw new TypeError("Failed to fetch");
+			return Response.json({ account: { name: "a", isAdmin: true } });
+		}) as unknown as typeof fetch;
+		const get = createCanManageKeysCache(flaky);
+		assert.equal(await get(), false);
+		assert.equal(await get(), true);
+		assert.equal(await get(), true);
+		assert.equal(calls, 2, "the success is cached");
 	});
 	it("the non-admin outcome yields the admin copy", async () => {
 		const can = await loadCanManageKeys(reply({}, 500));

@@ -11,6 +11,7 @@ import type { ModelCatalogEntry, PolicyModel, UserPolicy } from "@/src/core";
 import { modelKey, recommendedFor } from "@/src/core";
 import { costLabel, formatUsd } from "@/components/usage-format";
 import { SettingsGroup } from "./controls.tsx";
+import { isSlotPickable } from "./model-menu";
 
 export interface AdminPolicyData {
 	defaults: UserPolicy;
@@ -431,6 +432,11 @@ function AddDeviceForm({ busy, onAdd }: { busy: boolean; onAdd: (name: string) =
 	);
 }
 
+/** The pickers' catalog: the server refuses Claude Code for other users, so don't offer it. */
+export function policyCatalog(models: ModelCatalogEntry[]): ModelCatalogEntry[] {
+	return models.filter(isSlotPickable);
+}
+
 export function UsersSectionView(p: UsersSectionViewProps) {
 	const live = p.devices.filter((d) => d.revokedAt === undefined);
 	return (
@@ -623,7 +629,7 @@ export function UsersSection({ selfName }: { selfName: string | null }) {
 		const us = await call("/api/admin/usage");
 		if (us.ok) setUsage((us.body.users as AdminUsageRow[]) ?? []);
 		const cat = await call("/api/models");
-		if (cat.ok) setCatalog((cat.body.models as ModelCatalogEntry[]) ?? []);
+		if (cat.ok) setCatalog(policyCatalog((cat.body.models as ModelCatalogEntry[]) ?? []));
 	}, []);
 
 	useEffect(() => {

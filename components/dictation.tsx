@@ -125,28 +125,42 @@ export function dictationErrorLabel(error: string, canManageKeys: boolean | null
  *  single-user owner (true); `{account: {isAdmin}}` is isAdmin; anything else
  *  (non-ok, rejected, malformed) fails closed to false. */
 export async function loadCanManageKeys(request: typeof fetch = fetch): Promise<boolean> {
+	return (await probeCanManageKeys(request)) ?? false;
+}
+
+/** undefined = the answer is unknown (non-ok or rejected fetch): callers fail
+ *  closed but must not remember it. A malformed body is a definitive false. */
+async function probeCanManageKeys(request: typeof fetch): Promise<boolean | undefined> {
 	try {
 		const res = await request("/api/me");
-		if (!res.ok) return false;
+		if (!res.ok) return undefined;
 		const body = (await res.json()) as { account?: unknown } | null;
 		if (body === null || typeof body !== "object" || !("account" in body)) return false;
 		if (body.account === null) return true;
 		if (typeof body.account !== "object" || Array.isArray(body.account)) return false;
 		return (body.account as { isAdmin?: unknown }).isAdmin === true;
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 
-/** Cached for the page (the account does not change under a mounted composer).
- *  null = still loading: treated as non-admin by every consumer. */
-let accountAdmin: Promise<boolean> | undefined;
+/** Cached for the page (the account does not change under a mounted composer),
+ *  but only a successful answer is kept: a transient failure retries next time. */
+export function createCanManageKeysCache(request: typeof fetch = (...args) => fetch(...args)) {
+	let cached: Promise<boolean> | undefined;
+	return () => cached ??= probeCanManageKeys(request).then((v) => {
+		if (v === undefined) cached = undefined;
+		return v ?? false;
+	});
+}
+
+/** null = still loading: treated as non-admin by every consumer. */
+const accountAdmin = createCanManageKeysCache();
 function useCanManageKeys(): boolean | null {
 	const [can, setCan] = useState<boolean | null>(null);
 	useEffect(() => {
-		accountAdmin ??= loadCanManageKeys();
 		let live = true;
-		void accountAdmin.then((v) => { if (live) setCan(v); });
+		void accountAdmin().then((v) => { if (live) setCan(v); });
 		return () => { live = false; };
 	}, []);
 	return can;

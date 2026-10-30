@@ -35,7 +35,7 @@ Object.assign(globalThis, {
 	}),
 });
 // Import after installing window so the hook uses its browser layout effect.
-const { dockHeightBudget, syncDockHeight, useDockHeight, forwardDockWheel } = await import("../components/dock-height.ts");
+const { dockHeightBudget, shouldRevealFocus, syncDockHeight, useDockHeight, forwardDockWheel } = await import("../components/dock-height.ts");
 
 const normal = {
 	columnHeight: 700, outsideHeight: 60, beforeShellHeight: 0,
@@ -323,5 +323,18 @@ describe("canvas workspace in a short window", async () => {
 	});
 	it("still renders the toolbar and the bottom bar controls", () => {
 		for (const id of ["canvas-toolbar", "canvas-undo", "canvas-minimize", "canvas-hint", "canvas-submit"]) assert.match(html, new RegExp(`data-testid="${id}"`));
+	});
+});
+
+describe("shouldRevealFocus", () => {
+	const { document } = parseHTML("<div id='v'><input id='in'></div><input id='out'>");
+	const viewport = document.getElementById("v")!;
+	const inside = document.getElementById("in")!;
+	const outside = document.getElementById("out")!;
+	it("is true only after a flip with focus inside the viewport", () => {
+		assert.equal(shouldRevealFocus(viewport, inside, true), true);
+		assert.equal(shouldRevealFocus(viewport, inside, false), false, "no flip, no scroll");
+		assert.equal(shouldRevealFocus(viewport, outside, true), false, "focus outside the dock");
+		assert.equal(shouldRevealFocus(viewport, null, true), false, "nothing focused");
 	});
 });

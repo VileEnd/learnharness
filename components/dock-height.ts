@@ -35,6 +35,13 @@ export function dockHeightBudget(m: DockHeightMeasurements) {
 	return { viewportMaxHeight, shellMaxHeight, questionMaxHeight, scrollWholeContent };
 }
 
+/** After the viewport flips to whole-content scrolling its fresh scroll box
+ * starts at scrollTop 0, which can hide the focused field. Reveal only when
+ * the flip just happened and focus is inside the dock viewport. */
+export function shouldRevealFocus(viewport: Node, active: Element | null, flippedToScroll: boolean): boolean {
+	return flippedToScroll && !!active && viewport.contains(active);
+}
+
 interface DockHeightElements {
 	column: HTMLElement;
 	block: HTMLElement;
@@ -74,7 +81,13 @@ export function syncDockHeight(elements: DockHeightElements, expanded: boolean) 
 	viewport.style.maxHeight = `${budget.viewportMaxHeight}px`;
 	// Overflow is visible in normal layouts: keep the shell's shadow intact.
 	// The stats/model toolbar is a sibling, never inside this overflow box.
+	const wasScrolling = viewport.style.overflowY === "auto";
 	viewport.style.overflowY = budget.scrollWholeContent ? "auto" : "visible";
+	// Never moves focus, only scrolls the focused field into view.
+	const active = document.activeElement;
+	if (shouldRevealFocus(viewport, active, budget.scrollWholeContent && !wasScrolling)) {
+		active!.scrollIntoView({ block: "nearest" });
+	}
 	// Clamp animated starting heights too, so a previous tall variant cannot
 	// paint above the column while morphing into a constrained layout.
 	shell.style.maxHeight = budget.scrollWholeContent ? "none" : `${budget.shellMaxHeight}px`;

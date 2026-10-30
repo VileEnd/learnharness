@@ -8,7 +8,7 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { UsersSectionView, errorMessage, toPolicy, type UsersSectionViewProps } from "../components/settings/users-section.tsx";
+import { UsersSectionView, errorMessage, policyCatalog, toPolicy, type UsersSectionViewProps } from "../components/settings/users-section.tsx";
 import type { ModelCatalogEntry, UserPolicy } from "../src/core/index.ts";
 
 const NOW = 1_800_000_000_000;
@@ -205,5 +205,12 @@ describe("errorMessage", () => {
 		assert.equal(errorMessage("username_taken"), "That username is already taken.");
 		assert.equal(errorMessage("email_taken"), "That email is already used by another account.");
 		assert.equal(errorMessage("weird"), "Something went wrong (weird)");
+	});
+});
+
+describe("policyCatalog", () => {
+	it("drops Claude Code models from the per-user pickers", () => {
+		const models = [entry("openrouter", "a", "A"), entry("claude-code", "sonnet", "Sonnet")];
+		assert.deepEqual(policyCatalog(models).map((m) => m.provider), ["openrouter"]);
 	});
 });
