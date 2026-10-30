@@ -26,7 +26,7 @@ const { piEngineForSpec, setModelGate } = await import("../src/agent/models.ts")
 const policy = await import("../src/server/policy.ts");
 const { assertWithinCap, modelGate, modelsConfigured } = await import("../src/server/model-gate.ts");
 const { isTurnRunning } = await import("../src/server/turn-liveness.ts");
-const { readSettingsRecord } = await import("../src/server/index.ts");
+const { readSettingsRecord, writeSettingsRecord } = await import("../src/server/index.ts");
 const { MonthlyCapReachedError, ModelNotAllowedError, monthlyCapReached, modelNotAllowed, slotsConfigured } = await import("../src/core/settings.ts");
 const chatRoute = await import("../app/api/chat/route.ts");
 const sectionRoute = await import("../app/api/settings/[section]/route.ts");
@@ -155,6 +155,24 @@ test("(g) PUT models and the per-chat model reject a disallowed model with 403, 
 		);
 	assert.equal((await pick(OTHER)).status, 403);
 	assert.equal((await pick(EXTRA)).status, 200);
+});
+
+test("(g2) an unchanged stored pin whose provider left the catalog does not block saving another slot; new disallowed picks still 403", async () => {
+	const GONE = { provider: "gone-provider", id: "fixture-model" };
+	const put = (body: unknown) =>
+		sectionRoute.PUT(
+			new Request("http://x/api/settings/models", { method: "PUT", headers: headers(USER), body: JSON.stringify(body) }),
+			{ params: Promise.resolve({ section: "models" }) },
+		);
+	runAsTenant(USER, () => writeSettingsRecord({ version: 1, models: { strong: { model: GONE }, cheap: { model: CHEAP } } }));
+	assert.equal((await put({ strong: { model: GONE }, cheap: { model: EXTRA } })).status, 200);
+	assert.deepEqual(runAsTenant(USER, () => stores.settingsStore.readSettings())?.models?.strong?.model, GONE);
+	// The bypass is catalog-existence only: a NEW disallowed pick is still refused by the allow-list.
+	const refused = await put({ strong: { model: GONE }, cheap: { model: OTHER } });
+	assert.equal(refused.status, 403);
+	assert.equal(((await refused.json()) as { code: string }).code, "model_not_allowed");
+	// Swapping the gone slot to a different unknown model is a new selection: refused, not bypassed.
+	assert.equal((await put({ strong: { model: { ...GONE, id: "other-fixture" } }, cheap: { model: EXTRA } })).status, 403);
 });
 
 test("(h) /api/models lists only allowed models for a restricted user", async () => {

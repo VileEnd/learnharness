@@ -94,6 +94,12 @@ describe("stats bar", () => {
 		assert.equal(prettyModel("qwen/qwen3.8-max-0902"), "qwen3.8-max");
 	});
 
+	it("prettyModel keeps a bare id's :variant suffix (only qualified stamps are split)", () => {
+		assert.equal(prettyModel("google/gemma-4-27b-it:free"), "gemma-4-27b-it:free");
+		assert.equal(prettyModel("model:free"), "model:free");
+		assert.equal(prettyModel("openrouter:google/gemma-4-27b-it:free", true), "gemma-4-27b-it:free · openrouter");
+	});
+
 	it("provider-qualified stamps (usage contract, model-slots wave)", () => {
 		// qualified: the provider rides as a quiet suffix — federation makes
 		// the same model via two providers different bookkeeping

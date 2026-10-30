@@ -234,10 +234,17 @@ export function validateChatSettings(settings: ChatSettings): SettingsValidation
 	return { ok: true };
 }
 
-export function validateModelsSettings(settings: ModelsSettings): SettingsValidation {
+/** Validate introduced/replaced model selections, not unchanged saved pins:
+ *  a slot whose provider+id equal the STORED raw record's same slot skips the
+ *  catalog-existence check (a disconnected provider must not block repairing
+ *  another slot). Existence only; the multi-user allow-list is a separate
+ *  gate (sectionModelRefusal). No stored section = strict. */
+export function validateModelsSettings(settings: ModelsSettings, stored?: ModelsSettings): SettingsValidation {
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot) continue;
+		const previous = stored?.[name]?.model;
+		if (slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id) continue;
 		const verdict = validateSlotSpec(name, slot);
 		if (!verdict.ok) return verdict;
 	}
