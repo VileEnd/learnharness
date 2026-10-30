@@ -10,7 +10,9 @@
  *   (server/settings-body.ts): a bad shape/type is a 400 carrying the
  *   supported list where one exists. The chat and models sections
  *   additionally pass the catalog gate (validateChatSettings /
- *   validateModelsSettings — unknown provider/model = 400). Thinking
+ *   validateModelsSettings — unknown provider/model = 400, except a model slot
+ *   unchanged from the stored raw record, so one slot can be repaired while
+ *   another's provider is gone). Thinking
  *   levels never reject a write (owner, interlude 2026-09-22): a pinned
  *   level CLAMPS to the named model's nearest supported level and the
  *   clamped value is stored — model swaps just work, same as the
@@ -85,7 +87,7 @@ export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ 
 	// catalog gate the chat section gets — a slot must name a real
 	// provider+model and a thinking level it supports.
 	if (section === "models") {
-		const verdict = validateModelsSettings(parsed.settings as ModelsSettings);
+		const verdict = validateModelsSettings(parsed.settings as ModelsSettings, (stored?.models as ModelsSettings | undefined) ?? undefined);
 		if (!verdict.ok) {
 			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 		}

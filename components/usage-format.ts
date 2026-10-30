@@ -42,7 +42,9 @@ export function splitQualified(id: string): { provider: string | null; id: strin
  * different bookkeeping. Bare catalog ids are unchanged.
  */
 export function prettyModel(id: string, qualified = false): string {
-	const { provider, id: bare } = splitQualified(id);
+	// Only qualified usage stamps are split: a bare catalog id's colon
+	// belongs to the model (":free"), not to a provider.
+	const { provider, id: bare } = qualified ? splitQualified(id) : { provider: null, id };
 	const short = bare.includes("/") ? bare.slice(bare.lastIndexOf("/") + 1) : bare;
 	const parts = short.split("-");
 	const trimmed = /^\d+$/.test(parts[parts.length - 1] ?? "") ? parts.slice(0, -1) : parts;

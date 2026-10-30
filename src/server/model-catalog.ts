@@ -234,10 +234,17 @@ export function validateChatSettings(settings: ChatSettings): SettingsValidation
 	return { ok: true };
 }
 
-export function validateModelsSettings(settings: ModelsSettings): SettingsValidation {
+/** Validate introduced/replaced model selections, not unchanged saved pins:
+ *  a slot whose provider+id equal the STORED raw record's same slot skips the
+ *  catalog-existence check (a disconnected provider must not block repairing
+ *  another slot). Existence only; the multi-user allow-list is a separate
+ *  gate (sectionModelRefusal). No stored section = strict. */
+export function validateModelsSettings(settings: ModelsSettings, stored?: ModelsSettings): SettingsValidation {
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot) continue;
+		const previous = stored?.[name]?.model;
+		if (slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id) continue;
 		const verdict = validateSlotSpec(name, slot);
 		if (!verdict.ok) return verdict;
 	}
@@ -270,8 +277,9 @@ function validateSlotSpec(name: ModelSlotName, slot: { model?: { provider: strin
 // server is the truth: the record shows the clamped level after write.
 
 /** Clamp one level against one model (identity when the model is unknown
- *  or the level already supported — the existence gate rejects unknown
- *  models separately, so this only ever sees real ones in practice). */
+ *  or the level already supported). When catalog metadata is unavailable
+ *  for an unchanged saved pin, the preference is preserved; the runtime
+ *  clamps after the provider reconnects. */
 function clampLevelFor(provider: string, id: string, level: ThinkingLevel): ThinkingLevel {
 	const model = piModels().getModel(provider, id);
 	return model ? clampThinkingLevel(model, level) : level;

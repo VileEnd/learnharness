@@ -94,12 +94,18 @@ describe("stats bar", () => {
 		assert.equal(prettyModel("qwen/qwen3.8-max-0902"), "qwen3.8-max");
 	});
 
+	it("prettyModel keeps a bare id's :variant suffix (only qualified stamps are split)", () => {
+		assert.equal(prettyModel("google/gemma-4-27b-it:free"), "gemma-4-27b-it:free");
+		assert.equal(prettyModel("model:free"), "model:free");
+		assert.equal(prettyModel("openrouter:google/gemma-4-27b-it:free", true), "gemma-4-27b-it:free · openrouter");
+	});
+
 	it("provider-qualified stamps (usage contract, model-slots wave)", () => {
 		// qualified: the provider rides as a quiet suffix — federation makes
 		// the same model via two providers different bookkeeping
 		assert.equal(prettyModel("openrouter:z-ai/glm-5.3-flash", true), "glm-5.3-flash · openrouter");
 		assert.equal(prettyModel("openai:gpt-5.2", true), "gpt-5.2 · openai");
-		// unqualified on a qualified stamp: provider silently dropped (old shape)
+		// unqualified on a qualified stamp: passes only because the `/` split comes after the colon
 		assert.equal(prettyModel("openrouter:z-ai/glm-5.3-flash"), "glm-5.3-flash");
 		// qualified on a bare id: no suffix invented
 		assert.equal(prettyModel("z-ai/glm-5.3-flash", true), "glm-5.3-flash");

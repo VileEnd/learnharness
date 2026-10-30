@@ -69,7 +69,7 @@ async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ s
 		totalTokens: 0,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	const { text } = await runSubagent([], {
+	const { text, newMessages } = await runSubagent([], {
 		// The engine override is always present (the chat's own conversation
 		// engine — owner ruling), so the role label never resolves an
 		// engine; "researcher" is the least-wrong existing ModelRole label
@@ -83,6 +83,11 @@ async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ s
 			usage = u;
 		},
 	});
+	// A provider-declared incomplete response is not a usable checkpoint,
+	// even with nonempty text: leave the history and prior summary untouched.
+	if (newMessages.some((message) => message.role === "assistant" && message.stopReason === "length")) {
+		throw new Error("Compaction summary hit the output limit and is incomplete");
+	}
 	return { summary: text, usage };
 }
 
@@ -201,7 +206,11 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 		spanStart = prevKept;
 		priorSummary = previous.content;
 	}
-	const spanText = serializeForSummary(messages.slice(spanStart, cut));
+	const span = messages.slice(spanStart, cut);
+	// The separately supplied prior summary replaces all summary markers in
+	// this span; without a resolved prior boundary keep the legacy fallback.
+	const summaryMessages = priorSummary ? span.filter((m) => m.role !== "custom" || m.customType !== "compaction") : span;
+	const spanText = serializeForSummary(summaryMessages);
 	const fullSpan = priorSummary ? `[SYSTEM NOTE — prior compaction summary, still authoritative where not superseded]\n${priorSummary}\n\n${spanText}` : spanText;
 
 	const prompt = buildCompactionPrompt({
