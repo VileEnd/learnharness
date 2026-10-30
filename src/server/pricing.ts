@@ -4,6 +4,8 @@
  * The admin's custom endpoint (upstream port 6) is priced from its own
  * config, never its pi entry: free = $0 (the one sanctioned real zero), paid
  * = the admin's per-model rates, paid without rates = unpriced (null).
+ * Known gap: chat turns and jobs store no dollars, so their custom calls are
+ * priced from the CURRENT config (display only; the cap reads the log stamp).
  */
 import { calculateCost, type Model, type Api, type Models, type Usage } from "@earendil-works/pi-ai";
 import { piModels } from "../agent/models.ts";
@@ -50,14 +52,22 @@ function priceWith(cost: Model<Api>["cost"], call: Partial<CallUsage>, legacyCac
 
 /** A pricer bound to one read of the catalog and the custom endpoint: a fold
  *  over many lines (the month view, the cap check) reads the config once.
- *  Custom: free = $0, paid = the admin's rates, no rates = unpriced (null). */
-export function createPricer(): CallPricer {
+ *  Custom: free = $0, paid = the admin's rates, no rates = unpriced (null).
+ *
+ *  `customFromConfig: false` is the request-log fold (usage page, cap): a
+ *  priced custom call already carries its call-time providerCostUsd, so a
+ *  custom line without one is unpriced for good, whatever the config says
+ *  now. The default (true) serves the chat and job views: persisted turns
+ *  and jobs carry no dollars, so their custom calls are priced from the
+ *  CURRENT config (display only; see docs/architecture.md). */
+export function createPricer({ customFromConfig = true }: { customFromConfig?: boolean } = {}): CallPricer {
 	const models = piModels();
 	let runtime: CustomProviderRuntime | null | undefined;
 	const custom = (id: string): CustomModelCost | null => customModelCost((runtime ??= customProviderConfig()), id);
 	return (call, modelId) => {
 		const parts = split(modelId);
 		if (parts?.provider === CUSTOM_PROVIDER.id) {
+			if (!customFromConfig) return null;
 			const cost = custom(parts.model);
 			return cost ? priceWith(cost, call, false) : null;
 		}

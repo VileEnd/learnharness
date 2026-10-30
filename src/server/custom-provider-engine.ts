@@ -12,15 +12,17 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { configureProviderSource } from "../agent/models.ts";
 import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import type { ResolvedCustomModel } from "../core/contracts/custom-provider.ts";
-import { customModelCost, customProviderConfig, FREE_COST, type CustomProviderRuntime } from "./custom-provider.ts";
+import { customModelCost, customProviderConfig, FREE_COST, pricedCustomKeys, type CustomProviderRuntime } from "./custom-provider.ts";
 
 /** Placeholder bearer for a keyless endpoint (the OpenAI client needs *a* key). */
 const KEYLESS_PLACEHOLDER = "not-needed";
 
 /** One resolved custom model as a pi-ai entry: image → input, reasoning →
  *  pi's standard levels (reasoning_effort on the wire), the clamped limits.
- *  The cost is the priced rate or a zero placeholder that pricing never reads
- *  (pricing.ts and the catalog DTO go through customModelCost). */
+ *  The cost is the real rate card (free zeros, or the admin's rates): pi
+ *  prices each call with it and the engine stamps that on the request log.
+ *  An unpriced model (paid, no rates) gets a zero placeholder that nothing
+ *  reads: isPriced is false for it, so its calls carry no stamp. */
 function toPiModel(runtime: CustomProviderRuntime, model: ResolvedCustomModel): Model<Api> {
 	return {
 		id: model.id,
@@ -64,17 +66,17 @@ export function buildCustomProvider(runtime: CustomProviderRuntime): Provider<Ap
  *  in flight keeps the setup it started with. */
 export function installCustomProviderSource(read: () => CustomProviderRuntime | null = customProviderConfig): void {
 	let fingerprint: string | undefined;
-	let free = false;
+	let priced = new Set<string>();
 	configureProviderSource({
 		isCustom: (id) => id === CUSTOM_PROVIDER.id,
-		isFree: (id) => id === CUSTOM_PROVIDER.id && free,
+		isPriced: (id, modelId) => id === CUSTOM_PROVIDER.id && priced.has(`${id}:${modelId}`),
 		sync(models) {
 			const runtime = read();
 			const next = runtime ? JSON.stringify(runtime) : ""; // private, in memory only
 			if (next === fingerprint) return;
 			if (runtime) models.setProvider(buildCustomProvider(runtime));
 			else models.deleteProvider(CUSTOM_PROVIDER.id);
-			free = runtime?.pricing === "free";
+			priced = pricedCustomKeys(runtime);
 			fingerprint = next;
 		},
 	});

@@ -57,9 +57,10 @@ export interface ProviderSource {
 	 *  call, so it must be cheap when nothing changed. */
 	sync(models: MutableModels): void;
 	isCustom(providerId: string): boolean;
-	/** Calls to this custom provider cost nothing (as of the last sync):
-	 *  they are logged priced at a real $0, not unpriced. */
-	isFree(providerId: string): boolean;
+	/** The custom model has a price (as of the last sync): free, or paid
+	 *  with admin rates on its entry. Its calls are logged with their
+	 *  call-time dollars; any other custom call stays unpriced. */
+	isPriced(providerId: string, modelId: string): boolean;
 }
 let providerSource: ProviderSource | undefined;
 
@@ -221,10 +222,10 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 				return observeStream(lazyStream(requestModel, async () => { throw new Error(reason); }), meta(spec.id));
 			}
 			const currentLevel = levelFor(currentModel);
-			const free = providerSource?.isFree(spec.provider) ?? false;
+			const priced = providerSource?.isPriced(spec.provider, spec.id) ?? false;
 			return observeStream(
 				current.streamSimple(permitImages(currentModel), context, { ...options, reasoning: currentLevel === "off" ? undefined : currentLevel }),
-				{ ...meta(currentModel.id), ...(free && { providerCostUsd: 0 }) },
+				{ ...meta(currentModel.id), ...(priced && { priceFromUsage: true }) },
 			);
 		},
 	};

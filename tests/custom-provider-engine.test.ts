@@ -34,10 +34,12 @@ const { stores } = await import("../src/server/stores.ts");
 const { piEngineForSpec, piModels } = await import("../src/agent/models.ts");
 const { setRequestSink } = await import("../src/agent/request-log.ts");
 const policy = await import("../src/server/policy.ts");
-const { spentThisMonth } = await import("../src/server/model-gate.ts");
+const { assertWithinCap, spentThisMonth } = await import("../src/server/model-gate.ts");
 const { callCost } = await import("../src/server/pricing.ts");
 const { catalogContextLimits, modelCatalog } = await import("../src/server/model-catalog.ts");
-const { ModelNotAllowedError } = await import("../src/core/settings.ts");
+const { ModelNotAllowedError, MonthlyCapReachedError, modelNotAllowed } = await import("../src/core/settings.ts");
+const { monthSpend } = await import("../src/server/usage.ts");
+const { parsePolicyRefusal } = await import("../components/chat.tsx");
 const { allowedSet } = await import("../src/core/contracts/admin.ts");
 const { lineCost } = await import("../src/core/usage.ts");
 const { parseCustomModelSettings, resolveCustomModel } = await import("../src/core/contracts/custom-provider.ts");
@@ -60,8 +62,9 @@ const routeHeaders = (t: { id: string; isAdmin: boolean }) => ({
 
 let requests: { url: string; auth: string | null; body: Record<string, unknown> }[] = [];
 let lines: RequestLogLine[] = [];
+let usage = { prompt_tokens: 10, completion_tokens: 5 };
 
-function answer(usage = { prompt_tokens: 10, completion_tokens: 5 }) {
+function answer() {
 	const chunk = (v: unknown) => `data: ${JSON.stringify(v)}\n\n`;
 	return new Response(
 		chunk({ id: "fake", choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }] }) +
@@ -97,6 +100,7 @@ policy.setUserPolicy(UNCAPPED.id, allowCustom(null));
 beforeEach(() => {
 	requests = [];
 	lines = [];
+	usage = { prompt_tokens: 10, completion_tokens: 5 };
 	fs.writeFileSync(path.join(dir, "auth.json"), "{}");
 	fs.rmSync(path.join(dir, "global", "custom-provider.json"), { force: true });
 	setRequestSink((line) => {
@@ -120,7 +124,7 @@ test("a custom model streams through the gate with faux fetch (Ollama id, image 
 	assert.equal(requests.length, 1);
 	assert.equal(requests[0]!.url, `${h.BASE}/chat/completions`);
 	assert.equal(requests[0]!.body.model, OLLAMA);
-	assert.notEqual(requests[0]!.auth, "Bearer env-key-must-not-be-sent");
+	assert.equal(requests[0]!.auth, "Bearer not-needed", "keyless sends upstream's placeholder, never the env key");
 	assert.deepEqual(piModels().getModel("custom", OLLAMA)!.input, ["text"], "the registered capability is never promoted");
 });
 
@@ -157,8 +161,13 @@ test("paid mode with rates prices the call; without rates it is unpriced, never 
 		await settle();
 	});
 	const line = lines.at(-1)!;
-	assert.equal(line.providerCostUsd, undefined, "paid calls are priced at read time, not stamped");
-	assert.ok(Math.abs(lineCost(line, callCost)! - (10 * 2 + 5 * 8) / 1_000_000) < 1e-12);
+	assert.ok(Math.abs(line.providerCostUsd! - (10 * 2 + 5 * 8) / 1_000_000) < 1e-12, "paid calls are stamped with their call-time dollars");
+	assert.equal(lineCost(line, callCost), line.providerCostUsd);
+	await runAsTenant(UNCAPPED, async () => {
+		await run(piEngineForSpec({ provider: "custom", id: "paid-norates" }));
+		await settle();
+	});
+	assert.equal(lines.at(-1)!.providerCostUsd, undefined, "a paid model without rates is never stamped");
 });
 
 test("a capped user never gets a paid model without rates: 403, not in /api/models, refused by the editor", async () => {
@@ -243,6 +252,16 @@ test("a model removed from the snapshot mid-session refuses cleanly, without a r
 		fs.rmSync(path.join(dir, "global", "custom-provider.json"));
 		assert.equal((await run(engine)).stopReason, "error", "a disconnected endpoint refuses too");
 	});
+	// A capped restricted user is refused by the re-gate first: the removed model is no longer priced.
+	seedFree();
+	await runAsTenant(CAPPED, async () => {
+		const engine = piEngineForSpec({ provider: "custom", id: OLLAMA }, { purpose: "teacher" });
+		seedFree({ snapshot: [{ id: "other" }] });
+		const refused = await run(engine);
+		assert.equal(refused.stopReason, "error");
+		assert.equal(refused.errorMessage, JSON.stringify(modelNotAllowed(`custom:${OLLAMA}`)));
+		assert.ok(parsePolicyRefusal(refused.errorMessage), "the chat renders it as a policy refusal");
+	});
 	assert.equal(requests.length, 1);
 	assert.ok(piModels().getProvider("openrouter"), "built-in routes survive custom removal");
 });
@@ -255,8 +274,63 @@ test("a mid-session pricing change re-gates the next call for a capped user", as
 		h.seed({ pricing: "paid", snapshot: [{ id: "paid-norates" }] });
 		const refused = await run(engine);
 		assert.equal(refused.stopReason, "error");
+		assert.equal(refused.errorMessage, JSON.stringify(modelNotAllowed("custom:paid-norates")));
+		assert.ok(parsePolicyRefusal(refused.errorMessage), "the chat renders it as a policy refusal");
 	});
 	assert.equal(requests.length, 1);
+});
+
+/** One paid call at 1M input / 100k output tokens on paid-rated ($2/$8): $2.80. */
+async function paidCall(tenant: { id: string; name: string; isAdmin: boolean }): Promise<number> {
+	seedPaid();
+	usage = { prompt_tokens: 1_000_000, completion_tokens: 100_000 };
+	return runAsTenant(tenant, async () => {
+		stores.requestLog.markBackfilled();
+		assert.equal((await run(piEngineForSpec({ provider: "custom", id: "paid-rated" }, { purpose: "teacher" }))).stopReason, "stop");
+		await settle();
+		return monthSpend().usd;
+	});
+}
+const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
+const SPEND_A = { id: "user-spend-a", name: "a", isAdmin: false };
+const SPEND_B = { id: "user-spend-b", name: "b", isAdmin: false };
+const SPEND_C = { id: "user-spend-c", name: "c", isAdmin: false };
+// Cap $2: the $2.80 call (allowed while under the cap) leaves the user over it.
+for (const t of [SPEND_A, SPEND_B, SPEND_C]) policy.setUserPolicy(t.id, allowCustom(2));
+
+test("(a) a paid call stays in the month's spend and the cap after a switch to free", async () => {
+	near(await paidCall(SPEND_A), 2.8);
+	seedFree({ snapshot: [{ id: "paid-rated" }] });
+	runAsTenant(SPEND_A, () => {
+		near(monthSpend().usd, 2.8);
+		assert.equal(monthSpend().unpriced, 0);
+		assert.throws(() => assertWithinCap(), MonthlyCapReachedError);
+	});
+});
+
+test("(b) a paid call stays in the spend after its model is removed or the endpoint disconnects", async () => {
+	near(await paidCall(SPEND_B), 2.8);
+	h.seed({ pricing: "paid", snapshot: [{ id: "other" }] });
+	runAsTenant(SPEND_B, () => near(monthSpend().usd, 2.8));
+	fs.rmSync(path.join(dir, "global", "custom-provider.json"));
+	runAsTenant(SPEND_B, () => {
+		near(monthSpend().usd, 2.8);
+		assert.throws(() => assertWithinCap(), MonthlyCapReachedError);
+	});
+});
+
+test("(c) a rate change after a call does not re-price it; an unpriced call stays unpriced", async () => {
+	near(await paidCall(SPEND_C), 2.8);
+	h.seed({ pricing: "paid", snapshot: [{ id: "paid-rated" }, { id: "paid-norates" }], models: { "paid-rated": { inputUsdPerMTok: 100, outputUsdPerMTok: 100 } } });
+	runAsTenant(SPEND_C, () => near(monthSpend().usd, 2.8));
+	// A line logged without a stamp (paid, no rates) never picks up rates added later.
+	runAsTenant(SPEND_C, () => {
+		stores.requestLog.append({ v: 1, at: new Date().toISOString(), purpose: "teacher", category: "teaching", provider: "custom", model: "paid-norates", input: 1000, output: 1000, outcome: "ok" });
+		h.seed({ pricing: "paid", snapshot: [{ id: "paid-norates" }], models: { "paid-norates": { inputUsdPerMTok: 1, outputUsdPerMTok: 1 } } });
+		const after = monthSpend();
+		near(after.usd, 2.8);
+		assert.equal(after.unpriced, 1);
+	});
 });
 
 test("thinking re-resolves per request from the original preference", async () => {
