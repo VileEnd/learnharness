@@ -122,6 +122,19 @@ export const AUTH_PROVIDER_KEYS: readonly AuthProviderInfo[] = [
 	{ id: "zai-coding-cn", envVar: "ZAI_CODING_CN_API_KEY", label: "Z.AI Coding CN" },
 ] as const;
 
+/**
+ * The admin-managed custom endpoint's key (upstream port 6). NOT part of
+ * AUTH_PROVIDER_KEYS (that table is pinned to pi-ai's built-ins): this key is
+ * file-only, bound to a base URL in LH_AUTH_FILE (core/custom-provider-auth.ts),
+ * written only through /api/custom-provider and never reflected into or read
+ * from the environment. The generic key API refuses both reserved names.
+ */
+export const CUSTOM_PROVIDER = {
+	id: "custom",
+	envVar: "CUSTOM_OPENAI_API_KEY",
+	label: "Custom endpoint",
+} as const;
+
 /** Every distinct env var a model-provider key rides in (the write side's
  *  writability check — see isProviderEnvVar below; also drives which
  *  PRESENT provider vars surface as status rows). */

@@ -192,12 +192,20 @@ export function SettingsDialogBody({
 	const [active, setActive] = useState<SectionId>(initialSection);
 	// Who is signed in (null in single-user mode) — gates the Users section.
 	const [account, setAccount] = useState<{ name: string; isAdmin: boolean } | null>(null);
+	// Whether /api/me answered: single-user mode (account null) is the
+	// instance owner, but only once the read succeeded. Pending or failed
+	// reads are non-admin (fail safe).
+	const [meLoaded, setMeLoaded] = useState(false);
 	useEffect(() => {
 		fetch("/api/me")
 			.then((r) => (r.ok ? r.json() : null))
-			.then((b: { account?: { name: string; isAdmin: boolean } | null } | null) => setAccount(b?.account ?? null))
+			.then((b: { account?: { name: string; isAdmin: boolean } | null } | null) => {
+				setAccount(b?.account ?? null);
+				setMeLoaded(b !== null);
+			})
 			.catch(() => setAccount(null));
 	}, []);
+	const canManageInstance = account ? account.isAdmin : meLoaded;
 	// A deep-link fired while the dialog is ALREADY open (first exercised by
 	// the wave-6 embedding picker's "Add a provider key first…" link — the
 	// picker itself died with wave 7, the mechanism is general) changes
@@ -403,7 +411,7 @@ export function SettingsDialogBody({
 							)}
 							{active === "keys" && (
 								<SettingsSection title="Providers" testid="section-keys">
-									<KeysSection initialRow={initialRow ?? undefined} />
+									<KeysSection initialRow={initialRow ?? undefined} isAdmin={canManageInstance} />
 								</SettingsSection>
 							)}
 							{active === "agent" && (

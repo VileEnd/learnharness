@@ -55,6 +55,11 @@ export interface ObserveMeta {
 	model: string;
 	/** Date.now() at the request start. */
 	startedAt: number;
+	/** Stamp the call's own dollars (pi's usage.cost.total, from the model's
+	 *  rate card AT CALL TIME) on a billable line: the priced custom endpoint
+	 *  (free = a real $0, paid = the admin's rates), so a later config change
+	 *  never re-prices what this month already counted toward a cap. */
+	priceFromUsage?: boolean;
 }
 
 function lineOf(message: AssistantMessage, outcome: RequestOutcome, meta: ObserveMeta): RequestLogLine {
@@ -80,6 +85,8 @@ function lineOf(message: AssistantMessage, outcome: RequestOutcome, meta: Observ
 		line.cacheRead = u.cacheRead;
 		line.cacheWrite = u.cacheWrite;
 		if (u.cacheWrite1h !== undefined) line.cacheWrite1h = u.cacheWrite1h;
+		const total = u.cost?.total;
+		if (meta.priceFromUsage && typeof total === "number" && Number.isFinite(total) && total >= 0) line.providerCostUsd = total;
 	}
 	if (outcome !== "ok" && message.errorMessage) line.error = truncateError(message.errorMessage);
 	return line;

@@ -43,6 +43,7 @@ import {
 	AUTH_KEYS,
 	AUTH_PROVIDER_KEYS,
 	AUTH_PROVIDER_ENV_VARS,
+	CUSTOM_PROVIDER,
 	type AuthKeyInfo,
 	type AuthKeyStatus,
 	genericProviderKeyGuard,
@@ -52,6 +53,14 @@ import {
 	validateKeyShape,
 } from "../core/auth-keys.ts";
 import { authStore } from "../store/auth.ts";
+import { CUSTOM_AUTH_BINDING } from "../core/custom-provider-auth.ts";
+
+/** The custom endpoint's key and binding (upstream port 6): written only
+ *  through /api/custom-provider, never reflected into the env, never
+ *  returned by keyValue, and the key is fully redacted in the inventory. */
+function isReservedName(name: string): boolean {
+	return name === CUSTOM_AUTH_BINDING || name === CUSTOM_PROVIDER.envVar;
+}
 
 // The once-per-process boot record — globalThis anchor (HMR re-imports the
 // module; the snapshot must not re-run and misread fill-gapped vars as real
@@ -74,7 +83,7 @@ function boot(): AuthBoot {
 /** Is `id` a WRITABLE key name — curated catalog or model-provider env
  *  var (provider-keys interlude: PUT/DELETE accept both). */
 export function isWritableAuthKey(id: string): boolean {
-	return isKnownAuthKey(id) || isProviderEnvVar(id);
+	return !isReservedName(id) && (isKnownAuthKey(id) || isProviderEnvVar(id));
 }
 
 /** The settings page's provider dropdown: every pi-ai provider that takes
@@ -100,7 +109,7 @@ export function envKeysIgnored(): boolean {
  */
 export function initAuthEnv(): void {
 	const record = boot();
-	const fileVars = authStore.authVars();
+	const fileVars = Object.fromEntries(Object.entries(authStore.authVars()).filter(([name]) => !isReservedName(name)));
 	const managed = new Set<string>([
 		...Object.keys(fileVars),
 		...AUTH_KEYS.map((k) => k.id),
@@ -135,7 +144,7 @@ export function initAuthEnv(): void {
 /** Is this env-var name one the keys system manages (curated, provider,
  *  or held in the file)? */
 function isManagedName(name: string): boolean {
-	return isWritableAuthKey(name) || name in authStore.authVars();
+	return !isReservedName(name) && (isWritableAuthKey(name) || name in authStore.authVars());
 }
 
 /**
@@ -152,14 +161,18 @@ export function resolveKeyStatuses(
 	providerEnvVars: ReadonlySet<string> = new Set(),
 ): AuthKeyStatus[] {
 	const ids = new Set<string>([...AUTH_KEYS.map((k) => k.id), ...Object.keys(fileVars)]);
+	ids.delete(CUSTOM_AUTH_BINDING);
+	ids.delete(CUSTOM_PROVIDER.envVar);
 	for (const envVar of providerEnvVars) {
 		if (env[envVar] !== undefined || fileVars[envVar] !== undefined) ids.add(envVar);
 	}
 	const rows: AuthKeyStatus[] = [];
 	for (const id of ids) {
-		const envValue = env[id];
+		// The custom key is file-only: the environment never counts for it.
+		const custom = id === CUSTOM_PROVIDER.envVar;
+		const envValue = custom ? undefined : env[id];
 		const fileValue = fileVars[id];
-		const isRealEnv = realEnv.has(id);
+		const isRealEnv = !custom && realEnv.has(id);
 		// Env wins: the live value is the env's when set (real or reflected —
 		// post fill-gap the file's values LIVE in env, so realEnv is what
 		// distinguishes a REAL env var from the store's own reflection).
@@ -168,7 +181,9 @@ export function resolveKeyStatuses(
 			id,
 			info: AUTH_KEYS.find((k) => k.id === id) ?? null,
 			present: live !== undefined,
-			masked: live !== undefined ? `${maskKey(live)} (${live.trim().length} chars)` : null,
+			// A custom key may be one character: even a masked tail could be the
+			// whole credential, so it shows no key characters and no length (6158723).
+			masked: live === undefined ? null : custom ? "••••" : `${maskKey(live)} (${live.trim().length} chars)`,
 			source: isRealEnv ? "env" : live !== undefined ? "file" : "none",
 			shadowedByEnv: isRealEnv && fileValue !== undefined && envValue !== fileValue,
 		});
@@ -186,6 +201,7 @@ export function keyStatuses(): AuthKeyStatus[] {
  *  STT route was the one cold-boot hole: a first-ever request to it would
  *  otherwise read env before any fill-gap ran). */
 export function keyValue(id: string): string | undefined {
+	if (isReservedName(id)) return undefined; // the custom key goes only through its binding
 	// The fresh-user switch: ONLY the file store counts (belt-and-
 	// suspenders — the boot deletion already emptied the env; this guards
 	// any env key reintroduced after boot).
@@ -211,6 +227,7 @@ export function providerKeyPresent(provider: string): boolean {
  * reports shadowedByEnv so the page can explain it).
  */
 export function saveKey(id: string, value: string): { ok: true; status: AuthKeyStatus } | { ok: false; error: string } {
+	if (isReservedName(id)) return { ok: false, error: "Use the custom endpoint editor" };
 	const shape = isProviderEnvVar(id) ? genericProviderKeyGuard(id, value) : validateKeyShape(id, value);
 	if (!shape.ok) return { ok: false, error: shape.error };
 	const trimmed = value.trim();
@@ -230,6 +247,7 @@ export function saveKey(id: string, value: string): { ok: true; status: AuthKeyS
  * wins) and the status shows the key still present from env.
  */
 export function deleteKey(id: string): AuthKeyStatus {
+	if (isReservedName(id)) throw new Error("Use the custom endpoint editor");
 	authStore.deleteAuthVar(id);
 	const record = boot();
 	if (record.fillGap.has(id) && !record.realEnv.has(id)) {

@@ -25,6 +25,7 @@ import {
 	type ModelsSettings,
 	type UserSettings,
 } from "../core/settings.ts";
+import { isCustomKey, isUnpricedCustomKey, pricedCustomKeys } from "./custom-provider.ts";
 import { restrictedPolicy } from "./policy.ts";
 import { stores } from "./stores.ts";
 import { monthSpend } from "./usage.ts";
@@ -99,6 +100,23 @@ export function capAllows(what: string): boolean {
 	}
 }
 
+/** The models a restricted user may run: allowedModels ∪ slots, minus, for a
+ *  capped user, every custom model without a price (a paid endpoint's model
+ *  without rates). An unpriced call counts $0 toward the cap, so it would
+ *  bypass it (upstream port 6). The custom config is read only when the set
+ *  names a custom model. */
+export function effectiveAllowed(policy: UserPolicy): Set<string> {
+	const allowed = allowedSet(policy);
+	if (policy.monthlyCapUsd === null) return allowed;
+	let priced: Set<string> | undefined;
+	for (const key of allowed) {
+		if (!isCustomKey(key)) continue;
+		priced ??= pricedCustomKeys();
+		if (isUnpricedCustomKey(key, priced)) allowed.delete(key);
+	}
+	return allowed;
+}
+
 const isRole = (purpose: string | undefined): purpose is ModelRole => purpose !== undefined && Object.hasOwn(ROLE_SLOT, purpose);
 
 /** The slot tier an engine draws from: its role's tier; a conversation turn,
@@ -112,9 +130,11 @@ export function tierOf(opts: Pick<EngineOptions, "role" | "purpose">): ModelSlot
  *  tier's policy slot (keeping the requested thinking level, which the engine
  *  clamps), else ModelNotAllowedError. */
 function allowedSpec(policy: UserPolicy, spec: ResolvedModelSpec, tier: ModelSlotName): ResolvedModelSpec {
-	if (allowedSet(policy).has(modelKey(spec))) return spec;
+	const allowed = effectiveAllowed(policy);
+	if (allowed.has(modelKey(spec))) return spec;
 	const slot = policy.slots[tier];
-	if (!slot) throw new ModelNotAllowedError(modelKey(spec));
+	// A slot the effective set excludes (an unpriced custom model for a capped user) is no fallback.
+	if (!slot || !allowed.has(modelKey(slot))) throw new ModelNotAllowedError(modelKey(spec));
 	return { provider: slot.provider, id: slot.id, ...(spec.thinkingLevel !== undefined && { thinkingLevel: spec.thinkingLevel }) };
 }
 
@@ -126,19 +146,20 @@ export function modelGate(spec: ResolvedModelSpec, opts: EngineOptions): Resolve
 	return allowedSpec(policy, spec, tierOf(opts));
 }
 
-/** Pure: a settings record as a restricted user reads it. Each slot that is
+/** A settings record as a restricted user reads it. Each slot that is
  *  missing or names a disallowed model shows the policy slot instead (unset
- *  when the policy has none). Never written to disk. */
+ *  when the policy has none, or when its model is outside the effective set).
+ *  Never written to disk. Reads only the custom endpoint's pricing. */
 export function overlaySettings(record: UserSettings | null, policy: UserPolicy | null): UserSettings | null {
 	if (!policy) return record;
-	const allowed = allowedSet(policy);
+	const allowed = effectiveAllowed(policy);
 	const models: ModelsSettings = { ...record?.models };
 	let changed = false;
 	for (const name of MODEL_SLOTS) {
 		const mine = models[name];
 		if (mine?.model && allowed.has(modelKey(mine.model))) continue;
 		const slot: PolicyModel | undefined = policy.slots[name];
-		if (slot) {
+		if (slot && allowed.has(modelKey(slot))) {
 			models[name] = {
 				model: { provider: slot.provider, id: slot.id },
 				...(mine?.thinkingLevel !== undefined && { thinkingLevel: mine.thinkingLevel }),
@@ -168,7 +189,13 @@ export function modelsConfigured(): boolean {
 	const policy = restrictedPolicy();
 	const view = overlaySettings(stores.settingsStore.readSettings(), policy);
 	if (!policy) return slotsConfigured(view?.models);
-	return MODEL_SLOTS.every((name) => !policy.slots[name] || Boolean(view?.models?.[name]?.model));
+	// A policy slot outside the effective set counts as unset: it refuses at
+	// the turn (unconfiguredTierRefusal), never through the setup flow.
+	const allowed = effectiveAllowed(policy);
+	return MODEL_SLOTS.every((name) => {
+		const slot = policy.slots[name];
+		return !slot || !allowed.has(modelKey(slot)) || Boolean(view?.models?.[name]?.model);
+	});
 }
 
 /** A restricted user's refusal for a tier that resolves to no model at all
@@ -187,7 +214,7 @@ export function unconfiguredTierRefusal(tier: ModelSlotName): ModelNotAllowed | 
 export function disallowedModel(models: readonly (PolicyModel | undefined)[]): ModelNotAllowed | null {
 	const policy = restrictedPolicy();
 	if (!policy) return null;
-	const allowed = allowedSet(policy);
+	const allowed = effectiveAllowed(policy);
 	const bad = models.find((m): m is PolicyModel => m !== undefined && !allowed.has(modelKey(m)));
 	return bad ? modelNotAllowed(modelKey(bad)) : null;
 }
@@ -196,6 +223,6 @@ export function disallowedModel(models: readonly (PolicyModel | undefined)[]): M
 export function allowedModelsOnly<T extends PolicyModel>(models: readonly T[]): T[] {
 	const policy = restrictedPolicy();
 	if (!policy) return [...models];
-	const allowed = allowedSet(policy);
+	const allowed = effectiveAllowed(policy);
 	return models.filter((m) => allowed.has(modelKey(m)));
 }

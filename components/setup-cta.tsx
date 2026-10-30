@@ -19,6 +19,7 @@ import type { AuthKeyStatus } from "@/src/core";
 import { classifyKeys, type ProviderKeyInfo } from "@/components/settings/keys-section";
 import { useModelCatalog } from "@/components/model-picker";
 import type { ModelCatalogResponse } from "@/src/core";
+import { hasUsableProvider } from "@/components/settings/custom-endpoint";
 
 /** Pure: does a MODEL-PROVIDER key exist among the statuses? Reuses
  *  classifyKeys (the keys section's own classification — no drift):
@@ -39,7 +40,14 @@ export function hasProviderKey(
  *  leans on). Re-reads on the keys signal. */
 export function useZeroKeys(): boolean {
 	const { catalog } = useModelCatalog();
-	return catalog ? !catalog.providers.some((provider) => provider.keyPresent) : false;
+	return catalog ? zeroKeys(catalog) : false;
+}
+
+/** Pure: no provider unlocks a model for this user. The custom endpoint's
+ *  row is keyPresent for every tenant, so a restricted user whose allow-list
+ *  leaves them no custom model must not count as set up because of it. */
+export function zeroKeys(catalog: Pick<ModelCatalogResponse, "providers" | "models">): boolean {
+	return !hasUsableProvider(catalog.providers, catalog.models);
 }
 
 /** The pill itself — the models CTA's chrome and placement, the keys

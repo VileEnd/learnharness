@@ -9,6 +9,7 @@
 import { adminPolicyStore } from "../store/admin-policy.ts";
 import { chatStore } from "../store/chats.ts";
 import { conceptVectorStore } from "../store/concept-vectors.ts";
+import { customProviderStore } from "../store/custom-provider.ts";
 import { documentStore } from "../store/documents.ts";
 import { drawingStore } from "../store/drawings.ts";
 import { graphStore } from "../store/graph.ts";
@@ -24,11 +25,13 @@ import { multiUser } from "../core/tenant-context.ts";
 import { setRequestSink } from "../agent/request-log.ts";
 import { setModelGate } from "../agent/models.ts";
 import { modelGate, readSettingsView } from "./model-gate.ts";
+import { installCustomProviderSource } from "./custom-provider-engine.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
 	adminPolicyStore,
 	chatStore,
 	conceptVectorStore,
+	customProviderStore,
 	documentStore,
 	drawingStore,
 	graphStore,
@@ -56,6 +59,12 @@ if (process.env.NODE_ENV !== "test") setRequestSink((line) => stores.requestLog.
 // passes it. Wired in every process, tests included: it is a no-op for
 // admins and in single-user mode, and the gate suites exercise it as wired.
 setModelGate(modelGate);
+
+// The admin's custom endpoint (upstream port 6): one provider synced into the
+// process-wide piModels() from the GLOBAL record only (never tenant
+// settings), so every tenant sees the same endpoint and no one's key leaks.
+// Wired in every process, tests included: an absent record registers nothing.
+installCustomProviderSource();
 
 // The one-time usage backfill (cost counter): old records enter the log once
 // per data dir, off the request path, after boot. Only in the Next server

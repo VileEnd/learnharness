@@ -187,7 +187,7 @@ export function toPolicy(slots: UserPolicy["slots"], allowed: Iterable<string>, 
 }
 
 /** The shared editor: three slot pickers, "Also allowed", monthly limit. */
-function PolicyFields({
+export function PolicyFields({
 	value,
 	catalog,
 	busy,
@@ -215,9 +215,21 @@ function PolicyFields({
 			.map((r) => modelKey(r.model)),
 	);
 	const draft = toPolicy(slots, allowed, cap);
+	// A capped user must never hold a paid custom model without rates: its calls
+	// would count $0 toward the limit. validatePolicy refuses it server-side too.
+	const capped = draft !== null && draft.monthlyCapUsd !== null;
+	const unpriced = (m: ModelCatalogEntry) => m.provider === "custom" && m.cost === null;
+	const unpricedKeys = new Set(models.filter(unpriced).map(modelKey));
+	const heldUnpriced = draft === null ? [] : [...Object.values(draft.slots).map(modelKey), ...draft.allowedModels].filter((k) => unpricedKeys.has(k));
+	const blocked = capped && heldUnpriced.length > 0;
+	// Held allowed keys the catalog no longer lists (endpoint down, model removed)
+	// stay visible and removable; otherwise the save would keep failing on them.
+	const catalogKeys = new Set(models.map(modelKey));
+	const unknownAllowed = catalog === undefined ? [] : value.allowedModels.filter((k) => !catalogKeys.has(k));
 	const q = search.trim().toLowerCase();
 	const shown = models.filter((m) => q === "" || `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q));
-	const optionLabel = (m: ModelCatalogEntry) => `${m.name} (${m.provider})${cheapest.has(modelKey(m)) ? " — Recommended" : ""}`;
+	const optionLabel = (m: ModelCatalogEntry) =>
+		`${m.name} (${m.provider})${cheapest.has(modelKey(m)) ? " — Recommended" : ""}${unpriced(m) ? " — no rates" : ""}`;
 	return (
 		<div className="flex flex-col gap-2 text-xs">
 			{SLOTS.map((slot) => {
@@ -239,9 +251,10 @@ function PolicyFields({
 							}}
 						>
 							<option value="">— none —</option>
-							{cur && !known && <option value={curKey}>{curKey}</option>}
+							{cur && !known && catalog !== undefined && <option value={curKey}>{curKey} (unavailable)</option>}
+							{cur && !known && catalog === undefined && <option value={curKey}>{curKey}</option>}
 							{models.map((m) => (
-								<option key={modelKey(m)} value={modelKey(m)}>
+								<option key={modelKey(m)} value={modelKey(m)} disabled={capped && unpriced(m) && modelKey(m) !== curKey}>
 									{optionLabel(m)}
 								</option>
 							))}
@@ -253,11 +266,29 @@ function PolicyFields({
 				<span className="text-muted-foreground">Also allowed</span>
 				<input className={inputCls} placeholder="search models" aria-label="search models" value={search} onChange={(e) => setSearch(e.target.value)} />
 				<div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto rounded-sm border border-border/60 p-1">
+					{unknownAllowed
+						.filter((k) => q === "" || k.toLowerCase().includes(q))
+						.map((k) => (
+							<label key={k} data-testid={`${idPrefix}-unavailable-${k}`} className="flex items-center gap-1">
+								<input
+									type="checkbox"
+									checked={allowed.has(k)}
+									onChange={(e) => {
+										const next = new Set(allowed);
+										if (e.target.checked) next.add(k);
+										else next.delete(k);
+										setAllowed(next);
+									}}
+								/>
+								{k} (unavailable)
+							</label>
+						))}
 					{shown.map((m) => (
 						<label key={modelKey(m)} className="flex items-center gap-1">
 							<input
 								type="checkbox"
 								checked={allowed.has(modelKey(m))}
+								disabled={capped && unpriced(m) && !allowed.has(modelKey(m))}
 								onChange={(e) => {
 									const next = new Set(allowed);
 									if (e.target.checked) next.add(modelKey(m));
@@ -270,6 +301,11 @@ function PolicyFields({
 					))}
 				</div>
 			</div>
+			{unpricedKeys.size > 0 && (
+				<p data-testid={`${idPrefix}-unpriced-hint`} className="text-muted-foreground">
+					Custom models marked &quot;no rates&quot; are unpriced: set rates to offer this to users with a spending limit (Settings, Providers).
+				</p>
+			)}
 			<label className="flex items-center gap-2">
 				<span className="text-muted-foreground">Monthly limit ($)</span>
 				<input
@@ -285,12 +321,17 @@ function PolicyFields({
 				<button
 					type="button"
 					className={btnCls}
-					disabled={busy || draft === null}
-					onClick={() => draft && onSave(draft)}
+					disabled={busy || draft === null || blocked}
+					onClick={() => draft && !blocked && onSave(draft)}
 				>
 					{saveLabel}
 				</button>
 			</div>
+			{blocked && (
+				<p role="alert" data-testid={`${idPrefix}-unpriced-blocked`} className="text-red-500">
+					A user with a monthly limit cannot use a custom model without rates ({heldUnpriced.join(", ")}). Remove it or clear the limit.
+				</p>
+			)}
 			{error && (
 				<p role="alert" data-testid={`${idPrefix}-save-error`} className="text-red-500">
 					Couldn&apos;t save: {error}

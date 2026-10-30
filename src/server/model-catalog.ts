@@ -34,7 +34,8 @@ import type {
 	SlotPins,
 } from "../core/contracts/models.ts";
 import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolution.ts";
-import { AUTH_PROVIDER_KEYS } from "../core/auth-keys.ts";
+import { AUTH_PROVIDER_KEYS, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { customModelCost, customProviderConfig, type CustomModelCost } from "./custom-provider.ts";
 import { BACKGROUND_MODEL_ROLES, MODEL_SLOTS, type BackgroundModelRole, type ModelSlotName, type ModelsSettings } from "../core/settings.ts";
 
 /** The picker's client-safe model entry (contract: core/contracts/models.ts). */
@@ -126,7 +127,16 @@ export function catalogProviders(): CatalogProvider[] {
 		id: p.id,
 		envVar: p.envVar,
 		keyPresent: keyValue(p.envVar) !== undefined,
-	})).sort((a, b) => a.id.localeCompare(b.id));
+	}))
+		// The admin's custom endpoint (upstream port 6): a row only while it is
+		// usable (registered in piModels()). Its key is file-only, so no env var.
+		.concat(customRegistered() ? [{ id: CUSTOM_PROVIDER.id, envVar: "", keyPresent: true }] : [])
+		.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** The custom endpoint is usable: piModels() synced its provider in. */
+function customRegistered(): boolean {
+	return piModels().getProvider(CUSTOM_PROVIDER.id) !== undefined;
 }
 
 /** The providers whose key is present — the picker federates exactly
@@ -136,8 +146,11 @@ function keyedProviderIds(): Set<string> {
 	return new Set(catalogProviders().filter((p) => p.keyPresent).map((p) => p.id));
 }
 
-/** Project one catalog model to the client DTO. */
-export function toModelDto(model: Model<Api>): ModelDto {
+/** Project one catalog model to the client DTO. A custom model's cost comes
+ *  from `customCost` (its pi entry's zeros are a placeholder): free = real
+ *  zeros, paid = the admin's rates, null = unpriced (paid without rates). */
+export function toModelDto(model: Model<Api>, customCost: (id: string) => CustomModelCost | null = () => null): ModelDto {
+	const cost = model.provider === CUSTOM_PROVIDER.id ? customCost(model.id) : model.cost;
 	return {
 		id: model.id,
 		name: model.name,
@@ -145,11 +158,11 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
-		cost: {
-			input: model.cost.input,
-			output: model.cost.output,
-			cacheRead: model.cost.cacheRead,
-			cacheWrite: model.cost.cacheWrite,
+		cost: cost && {
+			input: cost.input,
+			output: cost.output,
+			cacheRead: cost.cacheRead,
+			cacheWrite: cost.cacheWrite,
 		},
 		contextWindow: model.contextWindow,
 		maxTokens: model.maxTokens,
@@ -166,9 +179,10 @@ export function toModelDto(model: Model<Api>): ModelDto {
 export function catalogContextLimits(): Map<string, number> {
 	const keyed = keyedProviderIds();
 	const index = new Map<string, number>();
-	for (const provider of piModels().getProviders()) {
+	const models = piModels();
+	for (const provider of models.getProviders()) {
 		if (!keyed.has(provider.id)) continue;
-		for (const model of piModels().getModels(provider.id)) {
+		for (const model of models.getModels(provider.id)) {
 			index.set(`${provider.id}:${model.id}`, model.contextWindow);
 		}
 	}
@@ -179,21 +193,36 @@ export function catalogContextLimits(): Map<string, number> {
  *  policy's own source (built-in defaults, admin validation). */
 export function catalogModels(): Model<Api>[] {
 	const keyed = keyedProviderIds();
-	return piModels()
+	const models = piModels();
+	return models
 		.getProviders()
 		.filter((p) => keyed.has(p.id))
-		.flatMap((p) => piModels().getModels(p.id));
+		.flatMap((p) => models.getModels(p.id));
+}
+
+/** Picker order: provider, then id; within the custom endpoint, image-capable
+ *  models first (upstream 5b1fd81: every custom model stays selectable for
+ *  vision, since its capability may be unreported, but reported ones lead). */
+function catalogOrder(a: ModelDto, b: ModelDto): number {
+	if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+	if (a.provider === CUSTOM_PROVIDER.id) {
+		const image = Number(b.input.includes("image")) - Number(a.input.includes("image"));
+		if (image) return image;
+	}
+	return a.id.localeCompare(b.id);
 }
 
 /** The full picker payload: every model of every configured provider
  *  (sorted by provider then id — stable, diff-friendly) + the config
  *  defaults a settings-less chat runs + the background roles' resolved
  *  pins (the settings UI's per-role default captions). A restricted user
- *  sees only their allowed models (multi-user design §10). */
+ *  sees only their allowed models (multi-user design §10); a capped one
+ *  never sees an unpriced custom model (model-gate effectiveAllowed). */
 export function modelCatalog(): ModelCatalogResponse {
+	const runtime = customProviderConfig();
 	const models = allowedModelsOnly(catalogModels())
-		.map(toModelDto)
-		.sort((a, b) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)));
+		.map((m) => toModelDto(m, (id) => customModelCost(runtime, id)))
+		.sort(catalogOrder);
 	return {
 		models,
 		defaults: catalogDefaults(),

@@ -27,6 +27,7 @@ import { useEffect, useRef, useState } from "react";
 import { AUTH_KEYS, type AuthKeyStatus } from "@/src/core";
 import { SettingsGroup } from "./controls.tsx";
 import { ProviderMenuList } from "./model-menu.tsx";
+import { CustomEndpointSection } from "./custom-endpoint.tsx";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
@@ -320,8 +321,12 @@ export function KeysSection({
 	 *  while mounted too — the settings dialog's while-open retarget
 	 *  pattern. undefined = nothing seeded. */
 	initialRow,
+	/** Admins only (the fork's global custom endpoint). Unknown or pending
+	 *  means false: the editor never renders on a guess. */
+	isAdmin = false,
 }: {
 	initialRow?: string;
+	isAdmin?: boolean;
 }) {
 	const [statuses, setStatuses] = useState<AuthKeyStatus[] | null>(null);
 	const [providers, setProviders] = useState<ProviderKeyInfo[] | undefined>(undefined);
@@ -431,6 +436,7 @@ export function KeysSection({
 						testid={`key-${status.id.toLowerCase()}`}
 					/>
 				))}
+				<CustomEndpointSection isAdmin={isAdmin} />
 				{providers !== undefined && (
 					<AddProviderRow
 						addable={addable}
