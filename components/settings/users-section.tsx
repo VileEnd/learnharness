@@ -187,7 +187,7 @@ export function toPolicy(slots: UserPolicy["slots"], allowed: Iterable<string>, 
 }
 
 /** The shared editor: three slot pickers, "Also allowed", monthly limit. */
-function PolicyFields({
+export function PolicyFields({
 	value,
 	catalog,
 	busy,
@@ -222,6 +222,10 @@ function PolicyFields({
 	const unpricedKeys = new Set(models.filter(unpriced).map(modelKey));
 	const heldUnpriced = draft === null ? [] : [...Object.values(draft.slots).map(modelKey), ...draft.allowedModels].filter((k) => unpricedKeys.has(k));
 	const blocked = capped && heldUnpriced.length > 0;
+	// Held allowed keys the catalog no longer lists (endpoint down, model removed)
+	// stay visible and removable; otherwise the save would keep failing on them.
+	const catalogKeys = new Set(models.map(modelKey));
+	const unknownAllowed = catalog === undefined ? [] : value.allowedModels.filter((k) => !catalogKeys.has(k));
 	const q = search.trim().toLowerCase();
 	const shown = models.filter((m) => q === "" || `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q));
 	const optionLabel = (m: ModelCatalogEntry) =>
@@ -247,7 +251,8 @@ function PolicyFields({
 							}}
 						>
 							<option value="">— none —</option>
-							{cur && !known && <option value={curKey}>{curKey}</option>}
+							{cur && !known && catalog !== undefined && <option value={curKey}>{curKey} (unavailable)</option>}
+							{cur && !known && catalog === undefined && <option value={curKey}>{curKey}</option>}
 							{models.map((m) => (
 								<option key={modelKey(m)} value={modelKey(m)} disabled={capped && unpriced(m) && modelKey(m) !== curKey}>
 									{optionLabel(m)}
@@ -261,6 +266,23 @@ function PolicyFields({
 				<span className="text-muted-foreground">Also allowed</span>
 				<input className={inputCls} placeholder="search models" aria-label="search models" value={search} onChange={(e) => setSearch(e.target.value)} />
 				<div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto rounded-sm border border-border/60 p-1">
+					{unknownAllowed
+						.filter((k) => q === "" || k.toLowerCase().includes(q))
+						.map((k) => (
+							<label key={k} data-testid={`${idPrefix}-unavailable-${k}`} className="flex items-center gap-1">
+								<input
+									type="checkbox"
+									checked={allowed.has(k)}
+									onChange={(e) => {
+										const next = new Set(allowed);
+										if (e.target.checked) next.add(k);
+										else next.delete(k);
+										setAllowed(next);
+									}}
+								/>
+								{k} (unavailable)
+							</label>
+						))}
 					{shown.map((m) => (
 						<label key={modelKey(m)} className="flex items-center gap-1">
 							<input

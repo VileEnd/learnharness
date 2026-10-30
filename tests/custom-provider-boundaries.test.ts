@@ -135,19 +135,17 @@ test("GET /api/keys fully redacts the custom key at every length and hides the b
 		for (const value of ["1", "12", "123", "1234", "synthetic-custom-secret-longer-than-four"]) {
 			assert.equal((await h.post({ baseUrl: NEW, mode: "key", pricing: "free", key: value })).status, 200);
 			const all = await rows();
-			const custom = all.find((r) => r.id === CUSTOM_PROVIDER.envVar)!;
-			assert.equal(custom.masked, "••••");
-			assert.equal(custom.present, true);
-			assert.equal(custom.source, "file");
-			assert.ok(!JSON.stringify(custom).includes(value));
+			// The custom key has its own editor: no row in the generic key list.
+			assert.ok(!all.some((r) => r.id === CUSTOM_PROVIDER.envVar));
+			assert.ok(!JSON.stringify(all).includes(value));
 			assert.ok(!all.some((r) => r.id === CUSTOM_AUTH_BINDING));
 			assert.deepEqual(all.find((r) => r.id === "OPENAI_API_KEY"), plain);
 		}
 		// The custom key is file-only: an environment variable never shows up as (or becomes) the custom key.
 		process.env.CUSTOM_OPENAI_API_KEY = "765";
-		const custom = (await rows()).find((r) => r.id === CUSTOM_PROVIDER.envVar)!;
-		assert.equal(custom.source, "file");
-		assert.ok(!JSON.stringify(custom).includes("765"));
+		const after = await rows();
+		assert.ok(!after.some((r) => r.id === CUSTOM_PROVIDER.envVar));
+		assert.ok(!JSON.stringify(after).includes("765"));
 	} finally {
 		delete process.env.CUSTOM_OPENAI_API_KEY;
 		keys.deleteKey("OPENAI_API_KEY");

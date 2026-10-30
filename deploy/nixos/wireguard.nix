@@ -122,7 +122,7 @@ let
     if m != null && lib.toInt (lib.last m) <= 65535
     then { ip = lib.concatStringsSep "." (lib.take 4 m); port = lib.last m; }
     else null;
-  validAllow = lib.filter (a: a != null) (map parseAllow cfg.lanAllow);
+  validAllow = lib.unique (lib.filter (a: a != null) (map parseAllow cfg.lanAllow));
   # One TCP RETURN per entry, placed before the LAN rejects of the chain.
   lanAllowRules = chain: map (a:
     rule chain ([ "-d" "${a.ip}/32" "-p" "tcp" "--dport" a.port ] ++ cmt "lan allow ${a.ip}:${a.port}" ++ [ "-j" "RETURN" ])

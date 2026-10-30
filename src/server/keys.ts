@@ -162,6 +162,7 @@ export function resolveKeyStatuses(
 ): AuthKeyStatus[] {
 	const ids = new Set<string>([...AUTH_KEYS.map((k) => k.id), ...Object.keys(fileVars)]);
 	ids.delete(CUSTOM_AUTH_BINDING);
+	ids.delete(CUSTOM_PROVIDER.envVar);
 	for (const envVar of providerEnvVars) {
 		if (env[envVar] !== undefined || fileVars[envVar] !== undefined) ids.add(envVar);
 	}

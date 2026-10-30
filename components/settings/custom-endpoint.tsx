@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import {
+	COMPACTION_RESERVE_TOKENS,
 	CUSTOM_MODEL_DEFAULT_CONTEXT,
 	CUSTOM_MODEL_DEFAULT_MAX_OUTPUT,
 	type CustomModel,
@@ -38,6 +39,9 @@ export interface CustomStatus {
 	};
 }
 
+/** A context at or below this compacts the conversation on almost every turn (the teacher prompt alone is ~14k tokens). */
+export const LOW_CONTEXT_TOKENS = COMPACTION_RESERVE_TOKENS + 16_384;
+
 const MESSAGES: Record<string, string> = {
 	admin_only: "Only an administrator can change the custom endpoint.",
 	same_origin_required: "The browser request was refused (it must come from this app's own page). Reload the page and try again.",
@@ -51,7 +55,7 @@ const MESSAGES: Record<string, string> = {
 	key_required: "Enter the API key for this address. A saved key is only kept for the same address.",
 	invalid_models: "A model setting is invalid.",
 	invalid_patch: "The model settings could not be saved. Reload and try again.",
-	stale: "The endpoint was changed somewhere else since this page loaded.",
+	stale: "The endpoint was changed somewhere else since this page loaded. Reloading discards your unsaved edits.",
 	not_configured: "No custom endpoint is connected. Connect one first.",
 	probe_failed: "Could not reach the endpoint's model list.",
 	custom_provider_corrupt: "The custom endpoint file on the server is damaged. Nothing was changed. Check the global custom-provider.json.",
@@ -86,6 +90,9 @@ export interface PinDraft {
 	inRate: string;
 	outRate: string;
 }
+
+/** A draft's context as a number, or undefined when blank or invalid. */
+const pinnedContext = (raw: string): number | undefined => (/^\d+$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : undefined);
 
 export const pinDraft = (s: CustomModelSettings | undefined): PinDraft => ({
 	context: s?.context === undefined ? "" : String(s.context),
@@ -176,6 +183,9 @@ export function CustomEndpointEditor({
 		}
 	}
 
+	const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+	// The saved key only carries over for the same URL and mode.
+	const sameTarget = cfg !== null && baseUrl.trim() === cfg.baseUrl && mode === cfg.mode;
 	const connect = () =>
 		void send("POST", {
 			baseUrl: baseUrl.trim(),
@@ -244,7 +254,7 @@ export function CustomEndpointEditor({
 					type="password"
 					value={key}
 					onChange={(e) => setKey(e.target.value)}
-					placeholder={status.keyBound ? "Leave blank to keep the saved key" : "API key"}
+					placeholder={status.keyBound && sameTarget ? "Leave blank to keep the saved key" : status.keyBound ? "Enter the key for this endpoint" : "API key"}
 					aria-label="Custom endpoint API key"
 					data-testid="custom-key-input"
 					autoComplete="off"
@@ -271,16 +281,36 @@ export function CustomEndpointEditor({
 				<button type="button" onClick={connect} disabled={busy || !baseUrl.trim() || status.corrupt === true} data-testid="custom-save" className={linkBtn}>
 					{busy ? "Working…" : cfg ? "Save connection" : "Connect"}
 				</button>
-				{cfg && (
+				{cfg && !confirmDisconnect && (
 					<button
 						type="button"
-						onClick={() => void send("DELETE", {})}
+						onClick={() => setConfirmDisconnect(true)}
 						disabled={busy}
 						data-testid="custom-disconnect"
 						className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-red-500 hover:underline"
 					>
 						Disconnect
 					</button>
+				)}
+				{cfg && confirmDisconnect && (
+					<span data-testid="custom-disconnect-confirm" className="flex items-center gap-2 text-xs text-red-500">
+						Disconnect and delete the key and all model settings?
+						<button
+							type="button"
+							onClick={() => {
+								setConfirmDisconnect(false);
+								void send("DELETE", {});
+							}}
+							disabled={busy}
+							data-testid="custom-disconnect-yes"
+							className="underline underline-offset-2"
+						>
+							Confirm
+						</button>
+						<button type="button" onClick={() => setConfirmDisconnect(false)} data-testid="custom-disconnect-no" className="text-muted-foreground underline underline-offset-2">
+							Cancel
+						</button>
+					</span>
 				)}
 			</div>
 			{error && (
@@ -299,6 +329,7 @@ export function CustomEndpointEditor({
 					{models.map((m) => {
 						const d = drafts[m.id] ?? pinDraft(undefined);
 						const unpriced = pricing === "paid" && !hasRates(m.id);
+						const ctx = pinnedContext(d.context) ?? m.context ?? CUSTOM_MODEL_DEFAULT_CONTEXT;
 						return (
 							<div key={m.id} data-testid={`custom-model-${m.id}`} className="flex flex-col gap-1">
 								<div className="flex flex-wrap items-center gap-1.5">
@@ -355,6 +386,11 @@ export function CustomEndpointEditor({
 										</>
 									)}
 								</div>
+								{ctx <= LOW_CONTEXT_TOKENS && (
+									<p data-testid={`custom-lowcontext-${m.id}`} className="text-[11px] text-amber-500">
+										Context {ctx} is so small that the conversation would be compressed on almost every turn. Raise the context in the backend and pin the same value here.
+									</p>
+								)}
 								{unpriced && (
 									<p data-testid={`custom-unpriced-${m.id}`} className="text-[11px] text-amber-500">
 										No rates: set rates to offer this to users with a spending limit.
