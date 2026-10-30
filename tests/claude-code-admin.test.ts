@@ -34,6 +34,7 @@ after(() => {
 });
 
 const { runAsTenant } = await import("../src/core/tenant-context.ts");
+const { piEngineForSpec } = await import("../src/agent/models.ts");
 const { stores } = await import("../src/server/stores.ts");
 const policy = await import("../src/server/policy.ts");
 const { modelGate } = await import("../src/server/model-gate.ts");
@@ -84,6 +85,39 @@ test("gate refuses non-admins even when allow-listed", () => {
 	assert.equal(policy.validatePolicy(allowed).ok, false);
 	assert.equal(policy.validatePolicy({ slots: { strong: SONNET }, allowedModels: [], monthlyCapUsd: null }).ok, false);
 });
+
+/** Hand-write a user's policy into admin.json: the admin editor refuses claude-code. */
+function handWritePolicy(userId: string, userPolicy: unknown): void {
+	const file = path.join(dir, "global", "admin.json");
+	const stored = JSON.parse(fs.readFileSync(file, "utf-8"));
+	stored.users[userId] = userPolicy;
+	fs.writeFileSync(file, JSON.stringify(stored));
+}
+
+const DISALLOWED = { provider: "openrouter", id: "openai/gpt-5" };
+
+for (const slot of ["strong", "cheap"] as const) {
+	test(`a hand-written claude-code ${slot} slot is never a non-admin's fallback`, () => {
+		policy.setClaudeCodeEnabled(true);
+		const user = { id: `user-slot-${slot}`, name: slot, isAdmin: false };
+		handWritePolicy(user.id, { slots: { [slot]: SONNET }, allowedModels: [], monthlyCapUsd: null });
+		const cases = slot === "strong"
+			? [{ purpose: "teacher", chatId: "c" }, { purpose: "compaction", chatId: "c" }]
+			: [{ purpose: "extractor", role: "extractor" as const }, { purpose: "topicist", role: "describer" as const, chatId: "c" }];
+		runAsTenant(user, () => {
+			for (const opts of cases) {
+				assert.throws(() => modelGate(DISALLOWED, opts), (err: unknown) => {
+					assert(err instanceof ModelNotAllowedError, JSON.stringify(opts));
+					assert.equal(err.envelope.model, `openrouter:${DISALLOWED.id}`, "the refusal names the requested model");
+					return true;
+				});
+				let engine: PiEngine | undefined;
+				assert.throws(() => { engine = piEngineForSpec(DISALLOWED, opts); }, ModelNotAllowedError, JSON.stringify(opts));
+				assert.notEqual(engine?.model.provider, "claude-code");
+			}
+		});
+	});
+}
 
 test("gate refuses background purposes for admins", () => {
 	policy.setClaudeCodeEnabled(true);

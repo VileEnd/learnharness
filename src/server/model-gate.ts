@@ -147,7 +147,11 @@ export function modelGate(spec: ResolvedModelSpec, opts: EngineOptions): Resolve
 	const policy = restrictedPolicy();
 	if (!policy) return spec;
 	assertPolicyCap(policy);
-	return allowedSpec(policy, spec, tierOf(opts));
+	const allowed = allowedSpec(policy, spec, tierOf(opts));
+	// Every exit is checked: a policy slot can name claude-code (a hand-edited
+	// admin.json), and that fallback must refuse the request, never run it.
+	if (claudeCodeRefusal(allowed, opts)) throw new ModelNotAllowedError(modelKey(spec));
+	return allowed;
 }
 
 /** A settings record as a restricted user reads it. Each slot that is
