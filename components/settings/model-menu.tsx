@@ -27,6 +27,13 @@ import { SearchMenuList } from "./search-menu-list.tsx";
 import type { RecommendedModel } from "@/src/core";
 import { formatTokens } from "@/components/usage-format";
 
+/** The vision slot's picker rule: image-capable models, plus every custom
+ *  endpoint model (its reported capability may be absent; the engine always
+ *  permits images, and the server sorts image-capable ones first). Pure. */
+export function isVisionPickable(m: ModelCatalogEntry): boolean {
+	return m.input.includes("image") || m.provider === "custom";
+}
+
 function priceLabel(cost: ModelCatalogEntry["cost"]): string {
 	// Unpriced (a paid custom model without rates) renders absent, never $0.
 	if (!cost) return "—";
