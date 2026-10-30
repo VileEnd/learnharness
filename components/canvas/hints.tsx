@@ -74,7 +74,7 @@ export function HintsButton({ hints, open, onToggle }: { hints: readonly HintIte
 				</span>
 			</button>
 			{open && (
-				<div role="dialog" aria-label="Hints so far" data-testid="canvas-hints-panel" className="absolute right-0 top-full z-30 mt-1 max-h-72 w-[min(26rem,calc(100vw-2rem))] space-y-3 overflow-y-auto rounded-lg border bg-popover p-3 text-sm shadow-lg">
+				<div role="dialog" aria-label="Hints so far" data-testid="canvas-hints-panel" className="absolute right-0 top-full z-30 mt-1 max-h-[min(18rem,50dvh)] w-[min(26rem,calc(100vw-2rem))] space-y-3 overflow-y-auto rounded-lg border bg-popover p-3 text-sm shadow-lg">
 					{arrived.length === 0 && <div className="text-xs text-muted-foreground">No hint has arrived yet.</div>}
 					{arrived.map((h) => (
 						<div key={h.n}>

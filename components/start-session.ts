@@ -22,11 +22,13 @@ export class SessionStarter {
 		if (this.created?.identity !== identity) {
 			if (this.created) clearOpeningPrompt(this.created.id);
 			this.created = undefined;
+			// A network failure rejects with the browser's own text ("Failed to
+			// fetch"): say the approved copy instead.
 			const res = await fetchLike("/api/chats", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),
-			});
+			}).catch(() => { throw new Error(OPENING_PROMPT_FAILURE); });
 			if (!res.ok) throw new Error(await chatCreateFailure(res));
 			const result = await res.json() as { id?: unknown };
 			if (typeof result.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(result.id)) throw new Error(OPENING_PROMPT_FAILURE);

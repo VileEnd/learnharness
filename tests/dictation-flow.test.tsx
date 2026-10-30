@@ -1,10 +1,10 @@
 import React, { act } from "react";
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import { parseHTML } from "linkedom";
 import { useDictation, type Dictation } from "../components/dictation.tsx";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
-import { useDictationLanguage } from "../components/dictation-preference.ts";
+import { resetDictationLanguageStoreForTests, useDictationLanguage } from "../components/dictation-preference.ts";
 import { isDictationActive, useDictationActive } from "../components/dictation-state.ts";
 import type { UserSettings } from "../src/core/index.ts";
 
@@ -130,10 +130,10 @@ async function fixture(language: "pl" | "en" = "pl", delayedRead?: Promise<Respo
 	};
 }
 
+beforeEach(() => { resetDictationLanguageStoreForTests(); });
 afterEach(async () => { await dispose?.(); restore?.(); dispose = undefined; restore = undefined; });
 
-// FIRST on purpose: the preference store lives for the window, so a later test would
-// inherit an earlier confirmed choice. This one needs a never-confirmed store.
+// Needs a never-confirmed store: beforeEach resets the window-lifetime store.
 test("with no confirmed choice and a failing settings read, dictation still starts with no language param", async () => {
 	const f = await fixture();
 	f.state.readFails = true;

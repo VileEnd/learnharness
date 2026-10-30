@@ -116,8 +116,13 @@ export function createDictationLanguageStore(request: typeof fetch, saved: () =>
 		}
 	}
 
+	/** Test seam: back to a never-confirmed store. */
+	function reset() {
+		snapshot = INITIAL; reading = null; writing = null; revision++; needsRead = true;
+	}
+
 	return {
-		load, save, getLanguage, getLanguageForCapture,
+		reset, load, save, getLanguage, getLanguageForCapture,
 		getSnapshot: () => snapshot,
 		getServerSnapshot: () => INITIAL,
 		subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -146,6 +151,9 @@ function subscribe(listener: () => void) {
 	}
 	return () => { off(); if (--readers === 0) { stopSignals?.(); stopSignals = undefined; } };
 }
+
+/** Test seam: the store lives for the window, so tests reset it between cases. */
+export function resetDictationLanguageStoreForTests() { store.reset(); }
 
 export function useDictationLanguage() {
 	const snapshot = useSyncExternalStore(subscribe, store.getSnapshot, store.getServerSnapshot);

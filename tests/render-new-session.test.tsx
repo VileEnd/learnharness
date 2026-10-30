@@ -76,6 +76,11 @@ describe("startDraftSession — the create-on-send contract", () => {
 		assert.equal(storageData.size, 0, "no opening text left in storage for a chat that was never created");
 	});
 
+	it("a network failure (rejected fetch) surfaces the opening-failure copy, not the browser text", async () => {
+		const f = (async () => { throw new TypeError("Failed to fetch"); }) as unknown as typeof fetch;
+		await assert.rejects(startDraftSession("keep me", f), (err: Error) => err.message === OPENING_PROMPT_FAILURE);
+	});
+
 	it("unavailable storage refuses navigation with the approved copy instead of falling back to the URL", async () => {
 		Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: undefined });
 		const { f } = fakeFetch("c_nostore");
