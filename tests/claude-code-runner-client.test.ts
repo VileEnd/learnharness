@@ -139,6 +139,23 @@ test("unreachable runner fails readably", async () => {
 	assert.equal(errorOf(await turn(runClaude, [HI])), CLAUDE_CODE_UNREACHABLE_COPY);
 });
 
+/** A runner stand-in that reports the run started, sends `frames`, then hangs up with no exit frame. */
+async function lostRunner(t: TestContext, frames: object[]): Promise<string> {
+	const server = net.createServer((socket) => {
+		socket.once("data", () => socket.end(["{\"started\":true}", ...frames.map((frame) => JSON.stringify(frame))].join("\n") + "\n"));
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(() => { server.close(); });
+	return `127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+}
+
+test("a runner lost mid-run fails with the unreachable copy, or its refusal copy", async (t) => {
+	const lost = createRunnerClient({ addr: await lostRunner(t, []), token: TOKEN });
+	assert.equal(errorOf(await turn(lost, [HI])), CLAUDE_CODE_UNREACHABLE_COPY);
+	const refused = createRunnerClient({ addr: await lostRunner(t, [{ error: "invalid", message: "frame exceeds 32 MiB" }]), token: TOKEN });
+	assert.equal(errorOf(await turn(refused, [HI])), "Claude Code runner refused the request.");
+});
+
 test("a wrong token fails with the refusal copy", async (t) => {
 	const runClaude = createRunnerClient({ addr: await startRunner(t, fixtureLines("text.jsonl")), token: "wrong" });
 	assert.equal(errorOf(await turn(runClaude, [HI])), "Claude Code runner refused the request.");

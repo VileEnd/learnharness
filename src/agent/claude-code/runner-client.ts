@@ -13,7 +13,7 @@ import { finished } from "node:stream/promises";
 import { StringDecoder } from "node:string_decoder";
 
 import { CLAUDE_CODE_MINIMUM_VERSION, type ClaudeCodeStatus } from "../../core/contracts/claude-code.ts";
-import { ClaudeLaunchError } from "./constants.ts";
+import { ClaudeLaunchError, CLAUDE_CODE_UNREACHABLE_COPY } from "./constants.ts";
 import type { ClaudeChild, RunClaude } from "./stream.ts";
 
 export type RunnerAddress = { addr: string; token: string };
@@ -89,6 +89,8 @@ class RemoteChild extends EventEmitter implements ClaudeChild {
 	readonly stderr = new PassThrough();
 	readonly stdin: Writable;
 	private closed = false;
+	private killed = false;
+	private runnerError: Frame | null = null;
 
 	constructor(private readonly socket: net.Socket) {
 		super();
@@ -120,6 +122,7 @@ class RemoteChild extends EventEmitter implements ClaudeChild {
 
 	kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
 		if (this.closed || this.socket.destroyed) return false;
+		this.killed = true;
 		const sent = send(this.socket, { signal: signal === "SIGKILL" ? "SIGKILL" : "SIGTERM" });
 		// SIGKILL is the last word: also hang up, so the runner's disconnect path kills the
 		// process group even if the frame is lost, and "close" fires here regardless.
@@ -133,9 +136,24 @@ class RemoteChild extends EventEmitter implements ClaudeChild {
 		else if (typeof frame.stderr === "string") this.stderr.write(frame.stderr);
 		else if ("exit" in frame) this.finish(typeof frame.exit === "number" ? frame.exit : null);
 		else if (typeof frame.error === "string") {
+			this.runnerError = frame;
 			const message = typeof frame.message === "string" ? `: ${frame.message}` : "";
 			this.stderr.write(`claude runner error ${frame.error}${message}\n`);
 		}
+	}
+
+	/**
+	 * The connection closed without an exit frame. Unless the process was being killed,
+	 * the runner was lost mid-run: "error" carries readable copy (the runner's refusal,
+	 * when it sent one, else the unreachable copy) before "close", as a ChildProcess
+	 * emits "error" before "close".
+	 */
+	lost(): void {
+		if (this.closed) return;
+		if (!this.killed && this.listenerCount("error") > 0) {
+			this.emit("error", this.runnerError ? refusal(this.runnerError) : new ClaudeLaunchError(CLAUDE_CODE_UNREACHABLE_COPY));
+		}
+		this.finish(null);
 	}
 
 	/** Like a ChildProcess, "close" follows the end of both output streams. */
@@ -188,7 +206,7 @@ export function createRunnerClient({ addr, token }: RunnerAddress): RunClaude {
 			signal?.addEventListener("abort", onAbort, { once: true });
 
 			socket.on("close", () => {
-				if (child) child.finish(null);
+				if (child) child.lost();
 				else settle(() => resolve(null));
 			});
 			readFrames(socket, (frame) => {

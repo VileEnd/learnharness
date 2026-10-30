@@ -359,10 +359,13 @@ class ClaudeProcess implements LiveProcess {
 
 	start(stdinLine: string, signal: AbortSignal | undefined): void {
 		this.child.once("close", (code: number | null) => this.handleClose(`claude CLI exited with code ${code}`));
+		// A lost runner reports readable copy as a ClaudeLaunchError; "close" follows and
+		// finds the turn already failed.
 		this.child.once("error", (error) => {
 			console.error("claude CLI process failed:", error);
-			this.turn.fail(START_FAILED_MESSAGE, "error");
-			this.handleClose(START_FAILED_MESSAGE);
+			const message = error instanceof ClaudeLaunchError ? error.message : START_FAILED_MESSAGE;
+			this.turn.fail(message, "error");
+			this.handleClose(message);
 		});
 		this.child.stderr.setEncoding("utf8");
 		this.child.stderr.on("data", (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-65_536); });
