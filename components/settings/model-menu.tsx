@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ModelCatalogEntry } from "@/src/core";
-import { fuzzyScore, recommendedFor } from "@/src/core";
+import { CLAUDE_CODE_PROVIDER, fuzzyScore, recommendedFor } from "@/src/core";
 import { SearchMenuList } from "./search-menu-list.tsx";
 import type { RecommendedModel } from "@/src/core";
 import { formatTokens } from "@/components/usage-format";
@@ -34,7 +34,15 @@ export function isVisionPickable(m: ModelCatalogEntry): boolean {
 	return m.input.includes("image") || m.provider === "custom";
 }
 
-function priceLabel(cost: ModelCatalogEntry["cost"]): string {
+/** Slot pickers never offer Claude Code (admin-only, chat turns only; the gate refuses it elsewhere). */
+export function isSlotPickable(m: ModelCatalogEntry): boolean {
+	return m.provider !== CLAUDE_CODE_PROVIDER;
+}
+
+function priceLabel(m: ModelCatalogEntry): string {
+	// A subscription model is unpriced by design: say so instead of a price.
+	if (m.provider === CLAUDE_CODE_PROVIDER) return "subscription";
+	const cost = m.cost;
 	// Unpriced (a paid custom model without rates) renders absent, never $0.
 	if (!cost) return "—";
 	const fmt = (n: number) => `$${n < 1 ? n.toFixed(2).replace(/0$/, "") : n.toFixed(2)}`;
@@ -118,7 +126,7 @@ export function ModelMenuList({
 								</span>
 							</span>
 							<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
-								{priceLabel(m.cost)}
+								{priceLabel(m)}
 							</span>
 						</span>
 						<span className="truncate text-muted-foreground">{entry?.line}</span>
@@ -128,7 +136,7 @@ export function ModelMenuList({
 					<span className="flex items-center justify-between gap-2">
 						<span className="truncate text-card-foreground">{m.name}</span>
 						<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
-							{priceLabel(m.cost)}
+							{priceLabel(m)}
 						</span>
 					</span>
 					<span className="flex items-center justify-between gap-2 text-muted-foreground">

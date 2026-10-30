@@ -28,6 +28,7 @@ import { AUTH_KEYS, type AuthKeyStatus } from "@/src/core";
 import { SettingsGroup } from "./controls.tsx";
 import { ProviderMenuList } from "./model-menu.tsx";
 import { CustomEndpointSection } from "./custom-endpoint.tsx";
+import { ClaudeCodeSection } from "./claude-code-section.tsx";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
@@ -437,6 +438,7 @@ export function KeysSection({
 					/>
 				))}
 				<CustomEndpointSection isAdmin={isAdmin} />
+				<ClaudeCodeSection isAdmin={isAdmin} />
 				{providers !== undefined && (
 					<AddProviderRow
 						addable={addable}
