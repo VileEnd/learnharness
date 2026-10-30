@@ -71,3 +71,5 @@ export { createKeycloakAdmin, keycloakAdmin, KeycloakClientRejected, KeycloakErr
 export { currentTenant } from "../core/tenant-context.ts";
 // Admin policy and per-user usage API (multi-user design §10).
 export { adminPolicyView, putDefaultsPolicy, putUserPolicy, adminUsage } from "./admin-policy.ts";
+// The admin-managed custom endpoint (upstream port 6): the route handlers only; the key-bearing runtime view stays server-internal.
+export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";

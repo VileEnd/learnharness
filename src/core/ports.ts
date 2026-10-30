@@ -35,6 +35,8 @@ import type { AttributionRow } from "./contracts/learner.ts";
 import type { UserSettings } from "./settings.ts";
 import type { AdminPolicy } from "./contracts/admin.ts";
 import type { WgPeer, WgServerInfo, WgStatus } from "./contracts/wireguard.ts";
+import type { CustomProviderConfig } from "./contracts/custom-provider.ts";
+import type { CustomAuthBinding } from "./custom-provider-auth.ts";
 
 // ─── ChatStore — the session record's home (data/chats) ─────────────────────
 
@@ -237,8 +239,27 @@ export interface AuthStore {
 	authVars(): Record<string, string>;
 	/** Set one VAR (atomic write, mode 0600 always, other vars preserved). */
 	setAuthVar(name: string, value: string): void;
-	/** Remove one VAR if present (absent = no-op, still a silent success). */
+	/** Remove one VAR if present (absent = no-op, still a silent success).
+	 *  set/delete throw for the custom endpoint's two reserved names. */
 	deleteAuthVar(name: string): void;
+	/** The custom endpoint's key and binding from ONE strict read: absent
+	 *  file = both undefined; unreadable, non-object, malformed binding or a
+	 *  non-string key throws, so no writer turns a damaged file into {}. */
+	readCustomAuth(): { binding?: CustomAuthBinding; key?: string };
+	/** Replace the key + binding pair in one atomic write (undefined removes
+	 *  that entry). Other entries, string or not, survive. Throws like readCustomAuth. */
+	writeCustomAuth(binding: CustomAuthBinding | undefined, key: string | undefined): void;
+}
+
+// ─── CustomProviderStore — the admin's custom endpoint (<global>/custom-provider.json) ─
+
+/** Absent file (ENOENT) reads as null. A present but invalid file throws
+ *  `CustomProviderCorrupt`, so no writer can overwrite it. Writes are
+ *  atomic (temp + rename), mode 0600; delete of an absent file is a no-op. */
+export interface CustomProviderStore {
+	readConfig(): CustomProviderConfig | null;
+	writeConfig(config: CustomProviderConfig): void;
+	deleteConfig(): void;
 }
 
 

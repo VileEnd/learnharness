@@ -9,6 +9,7 @@
 import { adminPolicyStore } from "../store/admin-policy.ts";
 import { chatStore } from "../store/chats.ts";
 import { conceptVectorStore } from "../store/concept-vectors.ts";
+import { customProviderStore } from "../store/custom-provider.ts";
 import { documentStore } from "../store/documents.ts";
 import { drawingStore } from "../store/drawings.ts";
 import { graphStore } from "../store/graph.ts";
@@ -29,6 +30,7 @@ export const stores = {
 	adminPolicyStore,
 	chatStore,
 	conceptVectorStore,
+	customProviderStore,
 	documentStore,
 	drawingStore,
 	graphStore,
