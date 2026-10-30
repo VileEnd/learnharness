@@ -53,7 +53,7 @@ export function HintStrip({ hints, turnBusy }: { hints: readonly HintItem[]; tur
 				)}
 			</button>
 			{open && newest && !pending && (
-				<div data-testid="canvas-hint-text" className="max-h-28 overflow-y-auto px-2.5 pb-2 text-sm">
+				<div data-testid="canvas-hint-text" className="max-h-[min(7rem,16dvh)] overflow-y-auto px-2.5 pb-2 text-sm">
 					<ToolContentResponse>{newest.text}</ToolContentResponse>
 				</div>
 			)}

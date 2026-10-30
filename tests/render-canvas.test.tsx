@@ -96,6 +96,12 @@ describe("CanvasPill", () => {
 
 describe("startDraftSession", () => {
 	it("sends canvas when the draft pill is on, and nothing when off", async () => {
+		const mem = new Map<string, string>();
+		Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: {
+			getItem: (k: string) => mem.get(k) ?? null,
+			setItem: (k: string, v: string) => { mem.set(k, v); },
+			removeItem: (k: string) => { mem.delete(k); },
+		} });
 		const bodies: Array<Record<string, unknown>> = [];
 		const fakeFetch = (async (_url: unknown, init?: RequestInit) => {
 			bodies.push(JSON.parse(String(init?.body)));

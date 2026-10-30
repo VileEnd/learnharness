@@ -26,6 +26,8 @@ import { Composer } from "@/components/composer";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
 import { dockStateKey } from "@/components/dock-state-key";
+import { dockCanScroll, forwardDockWheel, useDockHeight } from "@/components/dock-height";
+import { clearOpeningPrompt, readOpeningPromptEntry, stashOpeningPrompt, OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-steers";
 import { DictationBar, finishDictation, joinDictation, useDictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
@@ -278,7 +280,6 @@ export function Chat({
 	title,
 	initialMessages,
 	initialError,
-	initialPrompt,
 	initiallyInFlight,
 	initiallyCompacting = false,
 	initialConfigured = false,
@@ -293,7 +294,6 @@ export function Chat({
 	 *  renders no phase chip (no probe→teach arc applies) and a Practice
 	 *  tag rides the header instead. */
 	kind?: "teach" | "practice";
-	initialPrompt?: string;
 	/** A teacher turn is running server-side but attached to no client
 	 * (navigated away mid-turn, returned while in flight). */
 	initiallyInFlight?: boolean;
@@ -321,7 +321,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { messages, nativeMessages, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, submitWork, requestHint, dismissWork, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, submitWork, requestHint, dismissWork, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight, canvasCapable });
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
@@ -330,16 +330,6 @@ export function Chat({
 
 	// The reattach settled terminal → the sync-and-continue seam (below).
 	setReattachSettled(() => reattachSettledRef.current());
-
-	// New chat with a topic: send the first message exactly once
-	// (initialPromptOwed — the pure gate, pinned in the test suite).
-	const sentInitial = useRef(false);
-	useEffect(() => {
-		if (!sentInitial.current && initialPromptOwed(initialMessages, initialPrompt)) {
-			sentInitial.current = true;
-			void send({ type: "text", text: initialPrompt! });
-		}
-	}, [initialPrompt, initialMessages, send]);
 
 	// A turn running server-side, attached to no live view of ours (navigate
 	// away mid-turn, or a wake turn discovered mid-session): the reattach
@@ -701,6 +691,73 @@ export function Chat({
 	 *  Auto-continuations (probe answers) never set it — their refusal
 	 *  opens the dialog with no replay. */
 	const draftRef = useRef<string | null>(null);
+	// THE OPENING MESSAGE (never in the URL): the new-session surfaces stash
+	// it in per-tab sessionStorage under this chat's id and navigate to the
+	// bare /chat/<id>. We deliver it once, mark the stash "attempted" BEFORE
+	// the POST (a reload mid-handoff restores it as a draft, never reposts),
+	// and clear it on the server's acknowledgment.
+	const openingDraftRef = useRef<string | null>(null);
+	const [openingError, setOpeningError] = useState(false);
+	const openingMountedRef = useRef(false);
+	useEffect(() => {
+		openingMountedRef.current = true;
+		return () => { openingMountedRef.current = false; };
+	}, []);
+
+	const deliverOpeningPrompt = useCallback((prompt: string) => {
+		openingDraftRef.current = prompt;
+		// Persist uncertainty BEFORE the POST: another mount must restore,
+		// not race the still-arriving request. No storage means no auto-send.
+		if (!stashOpeningPrompt(chatId, prompt, true)) {
+			applyText(prompt);
+			setOpeningError(true);
+			return;
+		}
+		setOpeningError(false);
+		draftRef.current = prompt; // The refusal flow (setup, key, cap) restores it too.
+		applyText("");
+		void send({ type: "text", text: prompt }, () => {
+			clearOpeningPrompt(chatId);
+			openingDraftRef.current = null;
+			if (draftRef.current === prompt) draftRef.current = null;
+		}).then((accepted) => {
+			if (!accepted && openingMountedRef.current && openingDraftRef.current === prompt && !textRef.current) {
+				applyText(prompt);
+			}
+		});
+	}, [chatId, send, applyText]);
+
+	// New chat with a topic: deliver the first message exactly once
+	// (initialPromptOwed — the pure gate, pinned in the test suite).
+	const sentInitial = useRef(false);
+	useEffect(() => {
+		if (sentInitial.current) return;
+		sentInitial.current = true;
+		const entry = readOpeningPromptEntry(chatId);
+		const prompt = entry?.text;
+		if (!initialPromptOwed(initialMessages, prompt)) {
+			if (initialMessages.some((m) => m.role === "user" || m.role === "assistant")) clearOpeningPrompt(chatId);
+			return;
+		}
+		openingDraftRef.current = prompt!;
+		if (entry?.attempted || initiallyInFlight) {
+			applyText(prompt!); // Interrupted start: the learner explicitly resends.
+			return;
+		}
+		deliverOpeningPrompt(prompt!);
+	}, [chatId, initialMessages, initiallyInFlight, deliverOpeningPrompt, applyText]);
+
+	useEffect(() => {
+		if (!hasConfirmedConversation) return;
+		clearOpeningPrompt(chatId);
+		// A later canonical read may confirm a lost acknowledgment. Clear
+		// only the unchanged recovered draft, never the learner's newer work.
+		const opening = openingDraftRef.current;
+		if (opening !== null && textRef.current === opening) applyText("");
+		if (draftRef.current === opening) draftRef.current = null;
+		openingDraftRef.current = null;
+		setOpeningError(false);
+	}, [chatId, hasConfirmedConversation, applyText]);
 
 	// THE BYOK REFUSAL (owner, 2026-09-22): a send that lands the server's
 	// 503 models_not_configured envelope renders as the SETUP FLOW, never
@@ -1282,6 +1339,11 @@ export function Chat({
 		if (busy || pending || compacting) return;
 		const t = textRef.current.trim();
 		if (!t) return;
+		if (openingDraftRef.current !== null) {
+			// Still the opening message (recovered or refused): same handover.
+			deliverOpeningPrompt(t);
+			return;
+		}
 		draftRef.current = t; // the refusal flow's preserve-and-replay seam
 		applyText("");
 		void send({ type: "text", text: t });
@@ -1730,6 +1792,7 @@ export function Chat({
 									</Shimmer>
 								</span>
 							)}
+							{openingError && <p role="alert" className="text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
 							{error && <TurnErrorBanner message={error.message} plain={error.plain} onRetry={retryable ? retryFailedTurn : undefined} />}
 						</div>
 
@@ -1947,7 +2010,7 @@ export function Chat({
  *  2026-10-02 abort chain proper (question before turn). */
 export type EscAbortTarget = "mermaid" | "plan" | "setup" | "canvas" | "question" | "work" | "problem" | "turn" | null;
 	/**
- * Does the ?prompt topic still owe its first send? The gate is "no real
+ * Does the opening topic (the sessionStorage stash) still owe its first send? The gate is "no real
  * conversation yet" (no user/assistant message) — NOT emptiness: a
  * session started with map picks carries a graph-context MARKER as
  * message[0], and that scaffolding must never swallow the first send
@@ -2236,6 +2299,46 @@ function DockOverlay({
 	const revealedRef = useRef(revealed);
 	revealedRef.current = revealed;
 
+	// The refs the measured dock height (useDockHeight below) reads: the block
+	// (everything solid), its viewport (the short-window scroller), the body
+	// (queued steers + reading draft + shell), the shell and its keyed content.
+	const blockRef = useRef<HTMLDivElement>(null);
+	const viewportRef = useRef<HTMLDivElement>(null);
+	const bodyRef = useRef<HTMLDivElement>(null);
+	const shellRef = useRef<HTMLDivElement>(null);
+	const contentRef = useRef<HTMLDivElement>(null);
+	const gradientRef = useRef<HTMLDivElement>(null);
+	const mode =
+		dockKind === "question"
+			? `question:${pending!.key}`
+			: dockKind === "work"
+				? `work:${work!.toolCallId}`
+				: dockKind === "practice"
+					? `practice:${practice!.toolCallId}`
+					: "chat";
+
+	// The reserve: the spacer's height, reported upward. It grows
+	// immediately (typing, new variants) but NEVER drops while a dock owns the
+	// band — a shrinking reserved tail is scroll geometry and the browser clamp
+	// would pin a nearby learner to the bottom (the old oscillation). In
+	// composer mode drops apply (nothing auto-expands there).
+	const reserveRef = useRef(0);
+	const offer = useCallback((blockH: number) => {
+		const next = blockH + (gradientRef.current?.offsetHeight ?? GRADIENT_H);
+		if (next <= reserveRef.current + 0.5 && pendingRef.current) return; // fold immunity
+		// Reserve GROWTH is the phantom-scroll SOURCE (flicker round,
+		// 2026-09-26): the spacer's height lands in this commit, the smooth
+		// catch-up lags it by the growth amount, and the position machine
+		// used to read that lag as the learner leaving — form → bar → form
+		// (the dictation flush, reproduced d≈152 > COLLAPSE_DIST). Stamp the
+		// mute right where the spacer grows, including child-only field
+		// resizes. Shrinks never stamp (the fold's own give-back must not
+		// self-mute the re-expand).
+		if (shouldStampGeometryMute(next, reserveRef.current, pendingRef.current)) geometryAtRef.current = Date.now();
+		reserveRef.current = next;
+		onReserve(next);
+	}, [onReserve]);
+
 	// The plan marginalia's flank width (owner, plan-placement round): from
 	// the DOCK container's right edge to the block's right edge — the bare
 	// diagram's canvas. Tracked LIVE by a ResizeObserver on the block
@@ -2278,33 +2381,20 @@ function DockOverlay({
 	// round 2): the scroller reserves symmetric gutters (scrollbar-gutter:
 	// stable both-edges), so inset the overlay's right edge by the gutter —
 	// zero on macOS overlay scrollbars, the real width on classic platforms.
-	// The same measure owns the QUESTION/PROBLEM HEIGHT CAP (owner round,
-	// 2026-10-05): the old fixed fractions (55dvh / 40vh) cut long problems
-	// off absurdly short — the cap is now the AVAILABLE COLUMN (the
-	// scroller already starts below the top bar) minus a 2rem breathing
-	// gap, carried as --dock-max-h for the docks' scroll areas.
+	// The height budget belongs to the WHOLE solid dock (owner round
+	// 2026-10-05, finished by the measured sizing): the hook measures the
+	// available column minus everything outside the dock's flexible scroll
+	// area (answer controls, reading draft, stats/model toolbar, padding) and
+	// carries the rest as --dock-max-h. When even that leaves no room (a short
+	// window) the whole content scrolls inside the viewport instead, so no
+	// dock kind loses its controls; the stats/model toolbar is a sibling of
+	// that overflow box and never scrolls away. It runs before the morph /
+	// reserve layout effect below, and also tracks the scrollbar inset.
 	const [sbInset, setSbInset] = useState(0);
-	const [dockMaxH, setDockMaxH] = useState<number | null>(null);
-	useEffect(() => {
-		const el = scrollRef.current;
-		if (!el) return;
-		const measure = () => {
-			setSbInset(Math.round((el.offsetWidth - el.clientWidth) / 2));
-			// Below md the cap also feeds the WHOLE question dock, so leave room
-			// for the stats row and padding under the shell.
-			const narrow = !window.matchMedia("(min-width: 768px)").matches;
-			setDockMaxH(Math.max(el.clientHeight - (narrow ? 96 : 32), 160));
-		};
-		measure();
-		// The keyboard resizes only the visual viewport (no window resize on iOS).
-		const vv = window.visualViewport;
-		window.addEventListener("resize", measure);
-		vv?.addEventListener("resize", measure);
-		return () => {
-			window.removeEventListener("resize", measure);
-			vv?.removeEventListener("resize", measure);
-		};
-	}, [scrollRef]);
+	useDockHeight({
+		scrollRef, blockRef, viewportRef, bodyRef, shellRef, contentRef,
+		expanded, enabled: dockKind !== "composer", mode, onScrollbarInset: setSbInset, onHeight: offer,
+	});
 
 	// GROWTH MUTE (owner round, 2026-10-05 — the generation churn): during a
 	// live turn the transcript content grows and stick-to-bottom chases it;
@@ -2340,18 +2430,7 @@ function DockOverlay({
 		const root = blockRef.current;
 		const el = scrollRef.current;
 		if (!root || !el) return;
-		const canScroll = (n: HTMLElement, dir: number) => {
-			if (n.scrollHeight - n.clientHeight < 2) return false; // not scrollable
-			return dir < 0 ? n.scrollTop > 0 : n.scrollTop < n.scrollHeight - n.clientHeight - 0.5;
-		};
-		const onWheel = (e: WheelEvent) => {
-			if (e.deltaY === 0) return;
-			for (let n = e.target as HTMLElement | null; n && n !== root; n = n.parentElement) {
-				if (n instanceof HTMLElement && canScroll(n, e.deltaY)) return; // native
-			}
-			e.preventDefault();
-			el.scrollTop += e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1);
-		};
+		const onWheel = (e: WheelEvent) => forwardDockWheel(e, root, el);
 		root.addEventListener("wheel", onWheel, { passive: false });
 		// Touch drags that start on the dock scroll the transcript the same
 		// way: when nothing under the finger can scroll, the move is forwarded
@@ -2370,7 +2449,7 @@ function DockOverlay({
 			lastY = y;
 			if (dy === 0 || native) return;
 			for (let n = e.target as HTMLElement | null; n && n !== root; n = n.parentElement) {
-				if (n instanceof HTMLElement && canScroll(n, dy)) {
+				if (n instanceof HTMLElement && dockCanScroll(n, dy)) {
 					native = true; // an inner scroller owns this whole gesture
 					return;
 				}
@@ -2386,33 +2465,6 @@ function DockOverlay({
 			root.removeEventListener("touchmove", onTouchMove);
 		};
 	}, [scrollRef]);
-
-	// ── The reserve: the spacer's height, reported upward ──
-	// Grows immediately (typing, new variants). NEVER drops while a question
-	// is open — a shrinking reserved tail is scroll geometry and the browser
-	// clamp would pin a nearby learner to the bottom (the old oscillation).
-	// In chat mode drops apply (the composer's typing shrink is today's
-	// harmless in-flow behavior; nothing auto-expands there).
-	const reserveRef = useRef(0);
-	const blockRef = useRef<HTMLDivElement>(null);
-	const gradientRef = useRef<HTMLDivElement>(null);
-	const offer = (blockH: number) => {
-		const next = blockH + (gradientRef.current?.offsetHeight ?? GRADIENT_H);
-		if (next <= reserveRef.current + 0.5 && pendingRef.current) return; // fold immunity
-		// Reserve GROWTH is the phantom-scroll SOURCE (flicker round,
-		// 2026-09-26): the spacer's height lands in this commit, the smooth
-		// catch-up lags it by the growth amount, and the position machine
-		// used to read that lag as the learner leaving — form → bar → form
-		// (the dictation flush, reproduced d≈152 > COLLAPSE_DIST). Stamp the
-		// mute right where the spacer grows: it covers the scroll events of
-		// THIS growth no matter how long after the field stretched (the
-		// field grows on its own render; the offer lands on the NEXT
-		// DockOverlay render — ~1s apart live). Shrinks never stamp (the
-		// fold's own give-back must not self-mute the re-expand).
-		if (shouldStampGeometryMute(next, reserveRef.current, pendingRef.current)) geometryAtRef.current = Date.now();
-		reserveRef.current = next;
-		onReserve(next);
-	};
 
 	// Explicit expand (bar click): the smooth scroll to the bottom takes
 	// hundreds of ms, during which the position is still legitimately inside
@@ -2515,14 +2567,6 @@ function DockOverlay({
 		if (b) offer(b.getBoundingClientRect().height);
 	};
 
-	const mode =
-		dockKind === "question"
-			? `question:${pending!.key}`
-			: dockKind === "work"
-				? `work:${work!.toolCallId}`
-				: dockKind === "practice"
-					? `practice:${practice!.toolCallId}`
-					: "chat";
 	// The opening variant of a session appears instantly — the fade/rise is
 	// reserved for mid-session transitions.
 	const initialModeRef = useRef(mode);
@@ -2530,11 +2574,9 @@ function DockOverlay({
 	// Height morph: animate the shell from its previous height to its new one
 	// whenever the variant (chat ↔ question ↔ collapsed bar) changes. Typing
 	// growth keeps the same stateKey and is NOT animated.
-	const shellRef = useRef<HTMLDivElement>(null);
 	// The fold's CONTENT fade (owner round, 2026-10-05): the shell height
 	// morphs, but the bar↔form content used to hard-swap. A WAAPI fade/rise
 	// on the toggle — no remount, so the question form's state survives.
-	const contentRef = useRef<HTMLDivElement>(null);
 	const prevExpandedForFadeRef = useRef(expanded);
 	useIsoLayoutEffect(() => {
 		if (prevExpandedForFadeRef.current === expanded) return;
@@ -2582,8 +2624,10 @@ function DockOverlay({
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
 			<div ref={gradientRef} className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent max-sm:h-8" />
-			<div ref={blockRef} className="relative bg-background pb-5 max-sm:pb-[max(0.5rem,env(safe-area-inset-bottom))]" style={{ "--dock-max-h": dockMaxH ? `${dockMaxH}px` : undefined } as React.CSSProperties}>
+			<div ref={blockRef} className="relative bg-background pb-5 max-sm:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
 				<div className={DOCK}>
+					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
+					<div ref={bodyRef}>
 					{setupCta}
 					{/* The queued-steer indicator (owner spec 2026-10-03): quiet
 					    one-liners above the shell - right-aligned to where its corner
@@ -2612,10 +2656,12 @@ function DockOverlay({
 						/>
 					)}
 					<div ref={shellRef} className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+						{/* flow-root: descendant margins (practice thinking's bottom
+						    margin) count in the natural content measurement. */}
 						<div
 						ref={contentRef}
 						key={mode}
-						className={mode === initialModeRef.current ? undefined : "dock-variant"}
+						className={mode === initialModeRef.current ? "flow-root" : "flow-root dock-variant"}
 					>
 							{pending ? (
 								<QuestionDock
@@ -2670,6 +2716,8 @@ function DockOverlay({
 								composer
 							)}
 						</div>
+					</div>
+					</div>
 					</div>
 					{/* The stats row: beneath the composer/question shell, not
 					    flush to the screen bottom — static height, outside the

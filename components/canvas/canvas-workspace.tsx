@@ -423,10 +423,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			role="dialog"
 			aria-modal="true"
 			aria-label="Canvas"
-			className="absolute inset-0 z-40 flex flex-col bg-background/95 p-3 backdrop-blur-sm"
+			className="absolute inset-0 z-40 flex flex-col overflow-y-auto bg-background/95 p-3 backdrop-blur-sm"
 		>
 			{/* The question strip */}
-			<div data-testid="canvas-question" className="mb-2 max-h-28 shrink-0 overflow-y-auto rounded-lg border bg-card px-3 py-2">
+			<div data-testid="canvas-question" className="mb-2 max-h-[min(7rem,18dvh)] shrink-0 overflow-y-auto rounded-lg border bg-card px-3 py-2">
 				<div className="lh-prose text-sm">
 					<ToolContentResponse>{question}</ToolContentResponse>
 					{details ? <ToolContentResponse>{details}</ToolContentResponse> : null}
@@ -434,7 +434,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			</div>
 
 			{/* The toolbar */}
-			<div data-testid="canvas-toolbar" className="mb-2 flex shrink-0 flex-wrap items-center gap-1 rounded-lg border bg-card p-1">
+			<div data-testid="canvas-toolbar" className="sticky top-0 z-10 mb-2 flex shrink-0 flex-wrap items-center gap-1 rounded-lg border bg-card p-1">
 				{TOOLS.map(({ tool: t, label, Icon }) => (
 					<button key={t} type="button" title={label} aria-label={label} aria-pressed={tool === t} data-testid={`canvas-tool-${t}`} onClick={() => setTool(t)} className={cn("rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground", tool === t && "bg-accent text-foreground")}>
 						<Icon className="size-4" />
@@ -478,7 +478,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			</div>
 
 			{/* The surface */}
-			<div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
+			<div className="relative min-h-24 flex-1 overflow-hidden rounded-xl border bg-card">
 				<div ref={rootRef} data-testid="canvas-surface" className="absolute inset-0" />
 				<CanvasObjectsLayer chatId={chatId} scene={scene} view={view} interactive={interactive} selectedId={selected} onSelect={setSelected} onCommit={commit} />
 				{showInk && inkDrawing && (
@@ -529,7 +529,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					placeholder="Work on the canvas, think out loud."
 					enterKeyHint={coarse ? "enter" : "send"}
 					rows={2}
-					className="field-sizing-content lh-input max-h-40 min-h-12 w-full resize-none bg-transparent px-2.5 pb-1 outline-none placeholder:text-muted-foreground"
+					className="field-sizing-content lh-input max-h-[min(10rem,22dvh)] min-h-12 w-full resize-none bg-transparent px-2.5 pb-1 outline-none placeholder:text-muted-foreground"
 				/>
 				<div className="flex items-center justify-between gap-2 p-1">
 					<span className="pl-1.5 text-xs text-destructive" role={error ? "alert" : undefined} data-testid="canvas-error">
