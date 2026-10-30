@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { createCanvas } from "@napi-rs/canvas";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { DrawingStore } from "../src/core/ports.ts";
 import { drawingIdOf, type DrawingScene } from "../src/core/canvas-core.ts";
@@ -27,12 +28,19 @@ const sceneOf = (n: number): DrawingScene =>
 const SCENES = [sceneOf(1), sceneOf(2)];
 const IDS = SCENES.map(drawingIdOf);
 
+/** A real 1x1 PNG: the model-facing image is decoded and processed. */
+const PNG = (() => {
+	const canvas = createCanvas(1, 1);
+	canvas.getContext("2d").fillRect(0, 0, 1, 1);
+	return new Uint8Array(canvas.toBuffer("image/png"));
+})();
+
 /** A stubbed store: both drawings have a png; transcripts live in a map. */
 function store() {
 	const transcripts = new Map<string, { model: string; text: string }>();
 	const s = {
 		getScene: (_c: string, id: string) => SCENES[IDS.indexOf(id)] ?? null,
-		getPng: (_c: string, id: string) => (IDS.includes(id) ? new Uint8Array([1, 2, 3]) : null),
+		getPng: (_c: string, id: string) => (IDS.includes(id) ? PNG : null),
 		readTranscript: (_c: string, id: string) => transcripts.get(id) ?? null,
 		writeTranscript: (_c: string, id: string, t: { model: string; text: string }) => void transcripts.set(id, t),
 	} as unknown as DrawingStore;
@@ -226,7 +234,7 @@ describe("drawings in the model context", () => {
 					},
 				}),
 			});
-			await transcriber.transcribe(new Uint8Array([1]), "", { chatId: "chat_r" });
+			await transcriber.transcribe(PNG, "", { chatId: "chat_r" });
 			assert.equal(typeof observer, "function");
 			observer!({ type: "x" }, { provider: "p", id: "m" });
 			assert.match(readFileSync(path.join(dir, "chat_r.jsonl"), "utf-8"), /"ctx":"job:transcriber"/);
@@ -243,7 +251,7 @@ describe("drawings in the model context", () => {
 		const f = createFauxCore({});
 		f.setResponses([fauxAssistantMessage("[C4] y")]);
 		const transcriber = createDrawingTranscriber({ engineFor: (_role, opts) => (asked.push(opts), { model: f.getModel(), streamFn: f.streamSimple }) });
-		await transcriber.transcribe(new Uint8Array([1]), "");
+		await transcriber.transcribe(PNG, "");
 		assert.deepEqual(asked, [{ thinking: "lowest" }]);
 	});
 

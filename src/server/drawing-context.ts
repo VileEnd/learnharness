@@ -7,6 +7,12 @@
  * transcription is contained: a multimodal model keeps the image, a text-only
  * one gets the "transcription unavailable" line.
  *
+ * The image a multimodal model gets is the stored PNG PROCESSED for that
+ * model (Pi image processing, its inputLimits.images.resize; upstream
+ * 84f9399): the store keeps the original, only the model-facing copy is
+ * resized. A PNG that cannot be processed is never sent raw: the model gets
+ * the "[Image omitted: …]" note and the transcript still flows.
+ *
  * TIME-BOUNDED (final fix wave, 2026-10-28): the reader runs before the turn
  * streams, so a hung provider would hang the turn. After READER_TIMEOUT_MS the
  * request is aborted and the turn proceeds as on a failure (side-channel law).
@@ -26,6 +32,7 @@ import type { LhMessage } from "../core/native-messages.ts";
 import type { ChatRecord } from "../core/contracts/chat.ts";
 import type { PiEngine } from "../agent/models.ts";
 import type { DrawingTranscriber } from "../agent/subagents/drawing-transcriber.ts";
+import { processImage } from "../agent/image-processing/index.ts";
 
 /** How long the turn waits for the reader before going on without it. */
 export const READER_TIMEOUT_MS = 45_000;
@@ -75,6 +82,23 @@ async function withReaderTimeout<T>(ms: number, run: (signal: AbortSignal) => Pr
 	}
 }
 
+type ModelImage = Pick<NonNullable<ReturnType<DrawingContext["resolve"]>>, "png" | "imageNote">;
+
+/** The canvas PNG as the session model will see it. Never throws: a failed
+ *  conversion is the omitted note (side-channel containment). */
+async function imageForModel(png: Uint8Array, model: PiEngine["model"]): Promise<ModelImage> {
+	try {
+		const image = await processImage(png, "image/png", { resizeOptions: model.inputLimits?.images?.resize });
+		if (!image.ok) return { imageNote: image.message };
+		return {
+			png: { data: image.data, mimeType: image.mimeType },
+			...(image.hints.length > 0 ? { imageNote: image.hints.join("\n") } : {}),
+		};
+	} catch {
+		return { imageNote: "[Image omitted: could not be converted to a supported inline image format.]" };
+	}
+}
+
 export async function prepareDrawingContext(
 	record: Pick<ChatRecord, "id" | "messages">,
 	engine: PiEngine,
@@ -87,6 +111,15 @@ export async function prepareDrawingContext(
 
 	// Only the NEWEST active drawing is ever sent; earlier ones are stubs.
 	const newest = activeDrawingIds(record.messages as readonly LhMessage[]).at(-1);
+	let newestImage: ModelImage | undefined;
+	if (modelReadsImages && newest !== undefined) {
+		try {
+			const png = drawingStore.getPng(chatId, newest);
+			if (png) newestImage = await imageForModel(png, engine.model);
+		} catch (err) {
+			console.error(`[chat ${chatId}] drawing image unavailable:`, err);
+		}
+	}
 	if (newest !== undefined) {
 		try {
 			const cached = drawingStore.readTranscript(chatId, newest);
@@ -116,10 +149,12 @@ export async function prepareDrawingContext(
 			const box = sceneBoundingBox(scene);
 			const structured = box ? serializeSceneStructuredText(scene, box) : "";
 			if (modelReadsImages) {
-				const png = drawingStore.getPng(chatId, drawingId);
+				// Only the newest drawing's image is ever shown (drawingMessage
+				// stubs the rest), so only it was processed.
+				const image = drawingId === newest ? newestImage : undefined;
 				const transcript = transcripts.get(drawingId);
 				return {
-					...(png ? { png: { data: Buffer.from(png).toString("base64"), mimeType: "image/png" as const } } : {}),
+					...image,
 					...(transcript !== undefined ? { transcript } : {}),
 					structured,
 				};
