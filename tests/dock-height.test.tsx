@@ -8,7 +8,6 @@ import { parseHTML } from "linkedom";
 import { QuestionDock } from "../components/question-dock.tsx";
 import { PracticeDock } from "../components/practice-dock.tsx";
 import { WorkDock } from "../components/work-dock.tsx";
-import { shouldRevealFocus } from "../components/dock-height.ts";
 
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, {
@@ -36,7 +35,7 @@ Object.assign(globalThis, {
 	}),
 });
 // Import after installing window so the hook uses its browser layout effect.
-const { dockHeightBudget, syncDockHeight, useDockHeight, forwardDockWheel } = await import("../components/dock-height.ts");
+const { dockHeightBudget, shouldRevealFocus, syncDockHeight, useDockHeight, forwardDockWheel } = await import("../components/dock-height.ts");
 
 const normal = {
 	columnHeight: 700, outsideHeight: 60, beforeShellHeight: 0,
