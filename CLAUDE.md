@@ -27,7 +27,7 @@ NODE_ENV=test npx tsx --test --test-name-pattern="<regex>" tests/chat-flow.test.
 python3 -B -m unittest discover -s tests/skills -v
 
 # standalone packaging checks (CI order, after npm run build; the Dockerfile runs them too)
-node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs
+node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs && node scripts/smoke-image-runtime.mjs
 
 # the image and the full stack
 docker build -t learnharness:local .

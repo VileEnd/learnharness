@@ -15,11 +15,13 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 # The standalone gates, in CI order: build → offline provider runtime →
-# payload curation (refuses leaked data/keys) → boot + GET-only API smoke.
+# payload curation (refuses leaked data/keys) → boot + GET-only API smoke → image
+# processing (photon WASM) resize inside the standalone tree.
 RUN npm run build \
 	&& node scripts/smoke-provider-runtime.mjs \
 	&& node scripts/build-server.mjs \
-	&& node scripts/smoke-server.mjs
+	&& node scripts/smoke-server.mjs \
+	&& node scripts/smoke-image-runtime.mjs
 
 FROM node:26-trixie-slim AS runtime
 # Chromium: demo verification (puppeteer-core, CHROME_PATH). Fonts: SVG text
