@@ -31,8 +31,19 @@ services:
       CLAUDE_RUNNER_ADDR: 172.30.66.3:8790
       CLAUDE_RUNNER_TOKEN: ${CLAUDE_RUNNER_TOKEN:?set CLAUDE_RUNNER_TOKEN in .env}
       CLAUDE_BRIDGE_HOST: 172.30.66.2
+      # Next's server.js binds the address HOSTNAME resolves to. "lh-app" is an alias on
+      # the internal network only, so the app's port is NOT open on claude-bridge and the
+      # claude container cannot reach the app's trust-all API (only the MCP bridge port).
+      HOSTNAME: lh-app
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://lh-app:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     networks:
       internal:
+        aliases: [lh-app]
       claude-bridge:
         ipv4_address: 172.30.66.2
 
@@ -48,7 +59,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    tmpfs: [/tmp]
+    tmpfs: [/tmp, /home/node]
     mem_limit: 2g
     environment:
       CLAUDE_RUNNER_TOKEN: ${CLAUDE_RUNNER_TOKEN:?set CLAUDE_RUNNER_TOKEN in .env}

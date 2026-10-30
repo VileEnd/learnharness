@@ -3,7 +3,7 @@
  * process plumbing and cleanup, driven over real TCP against fake-claude.mjs.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +43,7 @@ function fakeBin(t: TestContext, scenario: string): string {
 	writeFileSync(bin, [
 		"#!/bin/sh",
 		`if [ "$1" = "--version" ]; then echo "2.1.301 (Claude Code)"; exit 0; fi`,
+		`echo launched >> ${bin}.launches`,
 		`FAKE_CLAUDE_SCENARIO=${scenarioFile} FAKE_CLAUDE_REPORT=1 exec ${process.execPath} ${FAKE_CLAUDE} "$@"`,
 		"",
 	].join("\n"));
@@ -50,8 +51,13 @@ function fakeBin(t: TestContext, scenario: string): string {
 	return bin;
 }
 
+const launched = (bin: string) => existsSync(`${bin}.launches`);
+
+let lastBin = "";
+
 async function startRunner(t: TestContext, scenario = "text.jsonl", options: { maxConcurrent?: number } = {}): Promise<number> {
-	const server = createRunner({ claudeBin: fakeBin(t, scenario), token: TOKEN, appHost: APP_HOST, killGraceMs: 300, ...options });
+	lastBin = fakeBin(t, scenario);
+	const server = createRunner({ claudeBin: lastBin, token: TOKEN, appHost: APP_HOST, killGraceMs: 300, ...options });
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => { server.close(); });
 	return (server.address() as net.AddressInfo).port;
@@ -190,6 +196,49 @@ test("passes a 5 MB stdin line intact", async (t) => {
 	const stderr = client.frames.map((frame) => (typeof frame.stderr === "string" ? frame.stderr : "")).join("");
 	assert.ok(stderr.includes(`fake-stdin ${line.length}\n`), stderr);
 	assert.deepEqual(client.frames.at(-1), { exit: 0, signal: null });
+});
+
+async function waitGone(pid: number): Promise<void> {
+	const deadline = Date.now() + 1500;
+	for (;;) {
+		try {
+			process.kill(pid, 0);
+		} catch (error) {
+			assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+			return;
+		}
+		assert.ok(Date.now() < deadline, "the CLI outlived its connection");
+		await sleep(20);
+	}
+}
+
+test("a frame after a refusal does not spawn the CLI", async (t) => {
+	const second = connect(t, await startRunner(t));
+	second.socket.write("not json\n");
+	second.socket.write(`${JSON.stringify({ token: TOKEN, op: "run", run: validRun() })}\n`);
+	await second.until(() => second.closed());
+	await sleep(300);
+	assert.equal(second.frames[0]?.error, "invalid");
+	assert.equal(launched(lastBin), false);
+});
+
+test("a frame over 32 MiB is refused", async (t) => {
+	const client = connect(t, await startRunner(t));
+	client.socket.write(`${JSON.stringify({ token: TOKEN, op: "status", pad: "x".repeat(33 * 1024 * 1024) })}\n`);
+	await client.until(() => client.closed(), 15000);
+	assert.equal(client.frames[0]?.error, "invalid");
+});
+
+test("an oversized frame during a run kills the CLI", async (t) => {
+	const client = connect(t, await startRunner(t, "hold"));
+	client.send({ token: TOKEN, op: "run", run: validRun() });
+	client.send({ stdin: userLine("hi") });
+	await client.until(() => client.frames.some((frame) => typeof frame.stderr === "string" && frame.stderr.includes("fake-stdin")));
+	const pid = fakePid(client.frames);
+	client.socket.write(`${JSON.stringify({ stdin: "x".repeat(33 * 1024 * 1024) })}\n`);
+	await client.until(() => client.closed(), 15000);
+	assert.ok(client.frames.some((frame) => frame.error === "invalid"));
+	await waitGone(pid);
 });
 
 test("toClaudeArgs matches upstream", () => {

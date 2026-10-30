@@ -4,7 +4,7 @@
 // never takes flags from the caller: argv comes only from toClaudeArgs.
 import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +17,7 @@ const MODELS = ["opus", "sonnet", "haiku"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const RUN_KEYS = ["model", "effort", "systemPrompt", "mcp", "allowedTools"];
 const AUTHORIZATION = /^Bearer [0-9a-f]{64}$/;
+const EMPTY_CWD = "/tmp/claude-code-empty";
 const TOOL = /^mcp__learnharness__[A-Za-z0-9_-]{1,64}$/;
 
 export function toClaudeArgs(input) {
@@ -139,8 +140,13 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 			if (socket.destroyed || !socket.writable) return true;
 			return socket.write(`${JSON.stringify(frame)}\n`);
 		};
+		let stopped = false;
 		const refuse = (error, message) => {
-			socket.end(`${JSON.stringify(error === "unauthorized" ? { error } : { error, message })}\n`);
+			if (stopped) return;
+			stopped = true;
+			if (child) killWithGrace();
+			const frame = `${JSON.stringify(error === "unauthorized" ? { error } : { error, message })}\n`;
+			socket.end(frame, () => socket.destroy());
 		};
 
 		let child = null;
@@ -196,13 +202,14 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 				writeFileSync(mcpConfigFile, JSON.stringify({
 					mcpServers: { learnharness: { type: "http", url: run.mcp.url, headers: { Authorization: run.mcp.authorization } } },
 				}), { mode: 0o600 });
+				mkdirSync(EMPTY_CWD, { recursive: true });
 				child = spawn(claudeBin, toClaudeArgs({
 					model: run.model,
 					effort: run.effort,
 					systemPromptFile,
 					mcpConfigFile,
 					allowedTools: run.allowedTools,
-				}), { cwd: dir, env: baseEnv, stdio: ["pipe", "pipe", "pipe"], detached: true });
+				}), { cwd: EMPTY_CWD, env: baseEnv, stdio: ["pipe", "pipe", "pipe"], detached: true });
 			} catch (error) {
 				if (dir) rmSync(dir, { recursive: true, force: true });
 				return refuse("spawn_failed", error instanceof Error ? error.message : String(error));
@@ -257,15 +264,16 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 
 		function handleFrame(text) {
 			let frame;
+			const wasFirst = first;
+			first = false;
+			clearTimeout(firstTimer);
 			try {
 				frame = JSON.parse(text);
 			} catch {
 				return refuse("invalid", "frame is not JSON");
 			}
 			if (!isRecord(frame)) return refuse("invalid", "frame must be an object");
-			if (first) {
-				first = false;
-				clearTimeout(firstTimer);
+			if (wasFirst) {
 				if (!tokenMatches(frame.token, token)) return refuse("unauthorized");
 				if (frame.op === "status") {
 					return void status.then((info) => {
@@ -282,6 +290,7 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 		}
 
 		socket.on("data", (data) => {
+			if (stopped) return;
 			let start = 0;
 			let newline;
 			while ((newline = data.indexOf(10, start)) !== -1) {
@@ -294,6 +303,7 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 				pending = 0;
 				if (oversized) return refuse("invalid", "frame exceeds 32 MiB");
 				if (text.length > 0) handleFrame(text);
+				if (stopped) return;
 			}
 			if (start < data.length) {
 				chunks.push(data.subarray(start));

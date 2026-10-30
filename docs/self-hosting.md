@@ -147,6 +147,8 @@ The stack includes `ocr` (`services/ocr`), which turns uploaded PDFs into markdo
 
 The stack includes `claude`, a locked-down container (`deploy/claude`) that runs the Claude Code CLI for admins. It has no `/data`, no app secrets, no published port, and runs as a non-root user with a read-only filesystem. The app reaches it over the private `claude-bridge` network with the shared secret `CLAUDE_RUNNER_TOKEN` (generated into `secrets.env` on the NixOS VM, also for installs that predate it; on a manual host put the output of `openssl rand -hex 32` into `deploy/.env` and create `deploy/volumes/claude` owned by uid 1000, mode 0700).
 
+The claude container must not reach the app's port (the API trusts every caller): the app listens on the `internal` network only (`HOSTNAME=lh-app` in `compose.yaml`), and only the MCP bridge port is open on `claude-bridge`.
+
 Off by default: an admin turns it on with the toggle in Settings. Log in once, after the stack is up:
 
 ```bash
@@ -234,7 +236,7 @@ With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 5
 6. **Check health** from inside the network; it should print `{"ok":true}`, not a `legacy_layout` error:
 
    ```bash
-   docker exec learnharness-learnharness-1 node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>r.text()).then(console.log)"
+   docker exec learnharness-learnharness-1 node -e "fetch('http://lh-app:3000/api/health').then(r=>r.text()).then(console.log)"
    ```
 
    No restart is needed: the legacy check runs on every request.
@@ -246,7 +248,7 @@ Docker is the supported runtime (the NixOS module is Docker-based). If you move 
 
 ## Backups
 
-Back up the volumes (app data and keys, Caddy CA, Keycloak database; **not** `volumes/claude`, which holds the Claude Code login) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything.
+Back up the volumes (app data and keys, Caddy CA, Keycloak database; **not** `volumes/claude`, which holds the Claude Code login) and the secrets. On the NixOS VM that's `/var/lib/learnharness/volumes/` and `/var/lib/learnharness/secrets.env`; on a manual host, `deploy/volumes/` and `deploy/.env`. A Proxmox backup job (vzdump) of VM 104 covers everything, but a VM-level backup contains the Claude Code login, so treat those backups as being as sensitive as the login itself, or use file-level backups that skip `volumes/claude`.
 
 ## Move-day switch
 
