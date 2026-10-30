@@ -79,6 +79,7 @@ import {
 	activeWorkOf,
 	dismissedAnswer,
 	findPendingToolCall,
+	pendingQuestionOf,
 	phaseAt3,
 	phaseTimeline,
 	teachStepIndex,
@@ -495,6 +496,7 @@ export function Chat({
 				void dismissQuestion(
 					p.toolCallId,
 					reading ? { ...answer, readingThinking: reading } : answer,
+					p.key,
 				);
 				if (busyRef.current) abortInFlightTurn();
 				return;
@@ -536,7 +538,7 @@ export function Chat({
 		// mount-only by design (turnInFlight read at initial value)
 	}, []);
 
-	const pending = findPendingToolCall(messages);
+	const pending = findPendingToolCall(messages, pendingQuestionOf(nativeMessages));
 	// The abort handler reads the pending question from a ref (the window
 	// listener is mount-scoped; the value it needs is render-scoped).
 	const pendingRef = useRef(pending);
@@ -648,7 +650,7 @@ export function Chat({
 		readingThinkingRef.current = "";
 		setReadingThinking("");
 	}, []);
-	const pendingQuestionId = pending?.toolCallId ?? null;
+	const pendingQuestionId = pending?.key ?? null;
 	useEffect(() => {
 		// Different calls never share a draft; a failed submission of THIS
 		// call restores the reading channel alongside the form's snapshot.
@@ -1746,8 +1748,8 @@ export function Chat({
 				    fold) and NEVER overlaps the composer. */}
 				<DockOverlay
 					pending={pending}
-					initialQuestionDraft={pending ? questionDraft(pending.toolCallId)?.form : undefined}
-					onSaveQuestionDraft={(form) => { if (pending) saveQuestionDraft(pending.toolCallId, { form }); }}
+					initialQuestionDraft={pending ? questionDraft(pending.key)?.form : undefined}
+					onSaveQuestionDraft={(form) => { if (pending) saveQuestionDraft(pending.key, { form }); }}
 					practice={activeProblem}
 					work={activeWork}
 					workRequiresReveal={workRequiresReveal}
@@ -1831,11 +1833,11 @@ export function Chat({
 						// ride the same callback (QuestionAnswerData.dismissed). The
 						// reading-thinking draft rides along (owner 2026-10-03) — the
 						// check answer is its only carrier.
-						saveQuestionDraft(pending.toolCallId, { readingThinking: readingThinkingRef.current });
+						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current });
 						const reading = readingThinkingRef.current.trim() || undefined;
 						// The pending-id effect clears this only when the question
 						// actually leaves. An offline preflight keeps the draft visible.
-						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output);
+						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
 					}}
 				/>
 				</Conversation>
@@ -2097,7 +2099,7 @@ function DockOverlay({
 	setupCta,
 	queuedSteers,
 }: {
-	pending: ReturnType<typeof findPendingToolCall>;
+	pending: ReturnType<typeof pendingQuestionOf>;
 	initialQuestionDraft?: QuestionFormDraft;
 	onSaveQuestionDraft: (draft: QuestionFormDraft) => void;
 	/** Compaction running for this chat (round 14) — the docks' submit
@@ -2176,7 +2178,7 @@ function DockOverlay({
 	const [revealed, setRevealed] = useState(false);
 	const revealPending = requiresReveal && !revealed;
 
-	const pendingId = pending?.toolCallId ?? null;
+	const pendingId = pending?.key ?? null;
 	const initialPendingRef = useRef(pendingId);
 
 	// Teach-question ARRIVAL state, applied during render — BEFORE the
@@ -2515,7 +2517,7 @@ function DockOverlay({
 
 	const mode =
 		dockKind === "question"
-			? `question:${pending!.toolCallId}`
+			? `question:${pending!.key}`
 			: dockKind === "work"
 				? `work:${work!.toolCallId}`
 				: dockKind === "practice"
