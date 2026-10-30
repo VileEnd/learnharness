@@ -22,6 +22,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
 import { CLAUDE_CODE_MODELS } from "../agent/claude-code/provider.ts";
 import { claudeCodeEnabled } from "./policy.ts";
+import { runnerAddress } from "./claude-code.ts";
 import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import { multiUser, requireTenant } from "../core/tenant-context.ts";
 import { settingsStore } from "../store/settings.ts";
@@ -171,8 +172,9 @@ export function toModelDto(model: Model<Api>, customCost: (id: string) => Custom
 			cacheRead: cost.cacheRead,
 			cacheWrite: cost.cacheWrite,
 		},
-		contextWindow: model.contextWindow,
-		maxTokens: model.maxTokens,
+		// The CLI aliases' effective limits are session-specific: absent, not pi's placeholders.
+		contextWindow: model.provider === CLAUDE_CODE_PROVIDER ? null : model.contextWindow,
+		maxTokens: model.provider === CLAUDE_CODE_PROVIDER ? null : model.maxTokens,
 	};
 }
 
@@ -241,9 +243,10 @@ export function modelCatalog(): ModelCatalogResponse {
 	};
 }
 
-/** The ambient tenant may see and pick Claude Code models: an admin (single-user mode counts as admin) with the toggle on. */
+/** The ambient tenant may see and pick Claude Code models: an admin (single-user mode counts as admin)
+ *  with the toggle on and a runner configured (else the provider isn't registered and nothing resolves). */
 function claudeCodeListed(): boolean {
-	return (!multiUser() || requireTenant().isAdmin) && claudeCodeEnabled();
+	return (!multiUser() || requireTenant().isAdmin) && claudeCodeEnabled() && runnerAddress() !== null;
 }
 
 /** One validated outcome for a settings write. */

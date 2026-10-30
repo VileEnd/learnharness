@@ -206,11 +206,15 @@ test("catalog lists claude-code only for an enabled admin", () => {
 	runAsTenant(ADMIN, () => {
 		const listed = claudeIds();
 		assert.deepEqual(listed.map((m) => m.id).sort(), ["haiku", "opus", "sonnet"]);
-		assert(listed.every((m) => m.cost === null));
+		assert(listed.every((m) => m.cost === null && m.contextWindow === null && m.maxTokens === null));
 		assert(!catalogModels().some((m) => m.provider === "claude-code"));
 		assert(!catalogProviders().some((p) => p.id === "claude-code"));
 	});
 	runAsTenant(USER, () => assert.deepEqual(claudeIds(), []));
+	const token = process.env.CLAUDE_RUNNER_TOKEN;
+	delete process.env.CLAUDE_RUNNER_TOKEN;
+	runAsTenant(ADMIN, () => assert.deepEqual(claudeIds(), [], "no runner configured"));
+	process.env.CLAUDE_RUNNER_TOKEN = token;
 	policy.setClaudeCodeEnabled(false);
 	runAsTenant(ADMIN, () => assert.deepEqual(claudeIds(), []));
 });

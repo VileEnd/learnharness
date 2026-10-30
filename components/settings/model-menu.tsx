@@ -141,7 +141,7 @@ export function ModelMenuList({
 					</span>
 					<span className="flex items-center justify-between gap-2 text-muted-foreground">
 						<span className="truncate">{m.provider} · {m.id}</span>
-						<span className="shrink-0 tabular-nums">{formatTokens(m.contextWindow)}</span>
+						<span className="shrink-0 tabular-nums">{m.contextWindow === null ? "—" : formatTokens(m.contextWindow)}</span>
 					</span>
 				</>}
 			/>
