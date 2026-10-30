@@ -80,6 +80,14 @@ jobs:
           curl -fsS http://127.0.0.1:8000/healthz
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/runs)" = 401
           curl -fsS -H 'X-OCR-Token: ci' http://127.0.0.1:8000/api/runs
+      - name: Build the Claude Code runner image
+        run: docker build -f deploy/claude/Dockerfile deploy/claude
+      - name: Validate the compose file
+        run: |
+          set -euo pipefail
+          # Throwaway env: a dummy for every empty (and so :?-required) variable.
+          sed -E 's/^([A-Z0-9_]+)=$/\1=ci-dummy/' deploy/.env.example > "$RUNNER_TEMP/compose.env"
+          docker compose --env-file "$RUNNER_TEMP/compose.env" -f deploy/compose.yaml config -q
       - if: failure()
         run: |
           docker logs lh || true

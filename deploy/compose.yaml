@@ -56,11 +56,17 @@ services:
     image: learnharness-claude:local
     restart: unless-stopped
     user: node
+    # tini as PID 1: reaps whatever the CLI leaves behind.
+    init: true
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    tmpfs: [/tmp, /home/node]
+    # /tmp allows exec: the CLI is a native binary that may extract into it.
+    tmpfs:
+      - /tmp:exec,mode=1777
+      - /home/node
     mem_limit: 2g
+    pids_limit: 256
     environment:
       CLAUDE_RUNNER_TOKEN: ${CLAUDE_RUNNER_TOKEN:?set CLAUDE_RUNNER_TOKEN in .env}
       CLAUDE_RUNNER_LISTEN: 172.30.66.3:8790
