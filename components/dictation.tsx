@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
+import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
+import { useDictationLanguage } from "@/components/dictation-preference";
+import { setDictationActive } from "@/components/dictation-state";
+export { isDictationActive } from "@/components/dictation-state";
 
 /**
  * Voice dictation — the cloud engine (STT wave 1, 2026-09-17).
@@ -86,15 +90,8 @@ import { Hint } from "@/components/ui/hint";
  * endpointing=300, no interims. Silence streams too (the worklet never
  * pauses), so the socket never idles — no KeepAlive needed.
  */
-const DG_URL =
-	"wss://api.deepgram.com/v1/listen" +
-	"?model=nova-3" +
-	"&encoding=linear16" +
-	"&sample_rate=16000" +
-	"&channels=1" +
-	"&smart_format=true" +
-	"&punctuate=true" +
-	"&endpointing=300";
+// URL construction lives in the browser-safe core (deepgramListenUrl): only
+// the optional language varies; an unset language sends no `language` param.
 
 /** Meter tuning — the owner's tested values, see the file header. */
 const METER_FLOOR_DB = -50;
@@ -113,6 +110,47 @@ export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
  * instead. Exported for pins; the errored idle button's click recognizes
  * it and deep-links Settings → Keys → the Deepgram row. */
 export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
+
+/** What the errored button says. Keys are admin-managed (0.32.0): only a
+ *  viewer KNOWN to be able to manage keys (an admin, or the single-user
+ *  owner) is told to add the key; everyone else, including while the account
+ *  is still loading, is told an admin adds it. */
+export function dictationErrorLabel(error: string, canManageKeys: boolean | null): string {
+	return error === DICTATION_KEYLESS && canManageKeys !== true
+		? `${DICTATION_KEYLESS}. Ask your admin to add it`
+		: error;
+}
+
+/** Can this viewer add provider keys? `/api/me` → `{account: null}` is the
+ *  single-user owner (true); `{account: {isAdmin}}` is isAdmin; anything else
+ *  (non-ok, rejected, malformed) fails closed to false. */
+export async function loadCanManageKeys(request: typeof fetch = fetch): Promise<boolean> {
+	try {
+		const res = await request("/api/me");
+		if (!res.ok) return false;
+		const body = (await res.json()) as { account?: unknown } | null;
+		if (body === null || typeof body !== "object" || !("account" in body)) return false;
+		if (body.account === null) return true;
+		if (typeof body.account !== "object" || Array.isArray(body.account)) return false;
+		return (body.account as { isAdmin?: unknown }).isAdmin === true;
+	} catch {
+		return false;
+	}
+}
+
+/** Cached for the page (the account does not change under a mounted composer).
+ *  null = still loading: treated as non-admin by every consumer. */
+let accountAdmin: Promise<boolean> | undefined;
+function useCanManageKeys(): boolean | null {
+	const [can, setCan] = useState<boolean | null>(null);
+	useEffect(() => {
+		accountAdmin ??= loadCanManageKeys();
+		let live = true;
+		void accountAdmin.then((v) => { if (live) setCan(v); });
+		return () => { live = false; };
+	}, []);
+	return can;
+}
 
 /** Mint a fresh short-lived token (the route holds the real key
  *  server-side). Module-level: the start path's warm cache and the
@@ -216,16 +254,6 @@ export function rmsToMeter(rms: number): number {
  */
 let questionTarget: ((text: string) => void) | null = null;
 
-/* Is a dictation run live on this page? The Esc chain (keyboard wave A,
- * components/keyboard-shortcuts.tsx) needs a SYNCHRONOUS answer — the
- * stop handler can't report back through a CustomEvent. Set at start(),
- * cleared in cleanup() (every terminal path runs through cleanup). */
-let dictationActiveFlag = false;
-
-export function isDictationActive(): boolean {
-	return dictationActiveFlag;
-}
-
 /* The finisher registry: submit paths FAR from the hook's owner (the
  * pending question's dock) need finish() without a prop bridge. Same
  * module-level pattern as questionTarget — one window, one instance,
@@ -297,6 +325,7 @@ export type Dictation = {
  * question waits.
  */
 export function useDictation({ append }: { append: (text: string) => void }): Dictation {
+	const { getLanguageForCapture: getLanguage } = useDictationLanguage();
 	const [phase, setPhase] = useState<DictationPhase>("idle");
 	const [error, setError] = useState<string | null>(null);
 	/** Latest RMS from the worklet — the meter samples this (dictate pattern). */
@@ -339,9 +368,9 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	}, []);
 
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
-	const cleanup = useCallback(() => {
+	const cleanup = useCallback((warmNext = true) => {
 		genRef.current++;
-		dictationActiveFlag = false;
+		setDictationActive(false);
 		flush(); // the deferred transcript appears when the run ends (owner round 2)
 		if (safetyRef.current) {
 			clearTimeout(safetyRef.current);
@@ -369,16 +398,16 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		for (const w of waitersRef.current.splice(0)) w();
 		// Pre-mint for the next run (mitigation D) — best-effort; a keyless
 		// page just doesn't warm.
-		warmTokens.refresh();
+		if (warmNext) warmTokens.refresh();
 	}, []);
 
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
 	const openSocket = useCallback(
-		(gen: number, token: string) => {
+		(gen: number, token: string, language: DictationLanguage | undefined) => {
 			// Minted JWTs authenticate via the "bearer" subprotocol — ["token",
 			// jwt] is rejected at the handshake (verified live; "token" is for
 			// raw API keys only, as in the owner's pi dictate extension).
-			const ws = new WebSocket(DG_URL, ["bearer", token]);
+			const ws = new WebSocket(deepgramListenUrl(language), ["bearer", token]);
 			wsRef.current = ws;
 
 			ws.addEventListener("open", () => {
@@ -420,7 +449,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 					reconnectsRef.current++;
 					mintFreshToken() // always FRESH — a stale warm token is the likely culprit
 						.then((t) => {
-							if (gen === genRef.current) openSocket(gen, t);
+							if (gen === genRef.current) openSocket(gen, t, language);
 						})
 						.catch(() => {
 							if (gen === genRef.current) {
@@ -438,7 +467,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	);
 
 	const start = useCallback(async () => {
-		dictationActiveFlag = true;
+		setDictationActive(true);
 		setError(null);
 		setPhase("connecting");
 		reconnectsRef.current = 0;
@@ -453,6 +482,10 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		// context: localhost in dev, HTTPS (Caddy) when served on the LAN.
 		const tokenPromise = warmTokens.mint();
 		tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
+		// The per-user language rides along concurrently (cached after the
+		// first read); it must NOT be awaited before the audio graph resumes —
+		// iOS only starts an AudioContext inside the tap's own task.
+		const languagePromise = getLanguage();
 		let stream: MediaStream;
 		try {
 			// iOS only lets an AudioContext start inside the tap's own task: create
@@ -533,10 +566,14 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			return;
 		}
 		if (gen !== genRef.current) return;
+		// Never rejects: a failed settings read falls back to the last confirmed
+		// choice, else the Deepgram default (the picker alone shows the error).
+		const language = await languagePromise;
+		if (gen !== genRef.current) return;
 		// Mitigation B: the handshake fires the moment the graph is live,
 		// overlapping any remaining token wait — mic-gated, never before it.
-		openSocket(gen, token);
-	}, [openSocket, cleanup]);
+		openSocket(gen, token, language);
+	}, [openSocket, cleanup, getLanguage]);
 
 	const stop = useCallback(() => {
 		const gen = genRef.current;
@@ -612,7 +649,13 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	// attached.
 	useEffect(() => {
 		warmTokens.refresh(); // pre-mint at mount (mitigation D) — silent if keyless
-	}, []);
+		return () => {
+			// Navigation cancels capture: invalidate every pending await before
+			// releasing resources, and never append into a different page's input.
+			bufferRef.current = [];
+			cleanup(false);
+		};
+	}, [cleanup]);
 	// A backgrounded tab or a closing page must not keep the mic open (iOS
 	// suspends the context under us, leaving a dead "recording").
 	useEffect(() => {
@@ -671,6 +714,9 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 	 *  the error — the surface is clean when the user returns. Any other
 	 *  error keeps the old behavior (click = retry, which clears). */
 	const keyless = error === DICTATION_KEYLESS;
+	const canManageKeys = useCanManageKeys();
+	/** Only a viewer known to manage keys gets the Keys deep link; otherwise the click just clears. */
+	const shown = error === null ? null : dictationErrorLabel(error, canManageKeys);
 	const [levels, setLevels] = useState<number[]>(() => new Array(METER_CELLS).fill(0));
 	const recording = phase === "recording" || phase === "stopping";
 	/** Adaptive cell count (owner round 2): derived from the meter's
@@ -720,7 +766,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 				// full reveal (the keyless line KEEPS "Deepgram" — owner overrule:
 				// it's the Keys row label, the truth the user needs). Otherwise the
 				// quiet label + the live ⌘D binding.
-				label={error ?? "Dictate"}
+				label={shown ?? "Dictate"}
 				action={error ? undefined : "toggle-dictation"}
 				side="top"
 			>
@@ -729,19 +775,19 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 					onClick={() => {
 						if (keyless) {
 							clearError();
-							openSettings("keys", DEEPGRAM_KEY_ID);
+							if (canManageKeys === true) openSettings("keys", DEEPGRAM_KEY_ID);
 						} else {
 							toggle();
 						}
 					}}
-					aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
+					aria-label={shown ? `Dictation failed: ${shown}` : "Start dictation"}
 					data-testid="dictation-toggle"
 				// Same blurring as the floating chrome (owner, fix wave round 3),
 			// but lower opacity — the mic stays quieter than the model pills.
 			className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md pointer-coarse:h-10 border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
 			>
 					<MicIcon className="size-3.5" />
-					<span className="max-w-full truncate">{error ?? "Dictate"}</span>
+					<span className="max-w-full truncate">{shown ?? "Dictate"}</span>
 				</button>
 			</Hint>
 		);
