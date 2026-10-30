@@ -105,7 +105,7 @@ export function WorkDock({
 
 	return (
 		<div data-testid="work-dock" data-work={callId} data-chat={chatId}>
-			<div className="max-h-[var(--dock-max-h,40vh)] overflow-y-auto px-4 pt-3 pb-2">
+			<div data-dock-scroll-area="" className="max-h-[var(--dock-max-h,40vh)] overflow-y-auto px-4 pt-3 pb-2">
 				<div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					Canvas task
 					<button
