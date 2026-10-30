@@ -15,6 +15,7 @@ Object.assign(globalThis, {
 	window: dom.window, document: dom.document, HTMLElement: dom.window.HTMLElement,
 	IS_REACT_ACT_ENVIRONMENT: true,
 });
+// Typed reasoning is not asserted: React's onChange never fires for textarea input events under linkedom (tried the prototype value setter, tracker reset, input+change).
 // The fork's dock reads (pointer: coarse); linkedom has no matchMedia.
 Object.assign(dom.window, { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 Object.assign(globalThis, { CSS: { supports: () => true } });

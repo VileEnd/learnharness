@@ -1177,8 +1177,9 @@ export function pendingQuestionOf(messages: readonly LhMessage[]): PendingQuesti
 /** Only the transient c_ result with the questionResult contract qualifies.
  * Real answers have details; errors/aborts remain resolving results. A saved
  * null result is not reinterpreted by this client-only compatibility seam.
- * QUESTION_TOOLS covers every dock kind (quiz/probe carry numeric, blanks,
- * table and multipart; explain/recall; exercise/assess; ask). The canvas
+ * QUESTION_TOOLS covers every dock kind (quiz/probe; explain/recall;
+ * exercise/assess, which carry numeric, blanks, table and multipart as
+ * `format` + `spec`; ask). The canvas
  * work/sketch tasks are not dock questions: activeWorkOf owns them. */
 function isLiveQuestionPlaceholder(message: LhMessage): boolean {
 	return message.role === "toolResult" && message.id.startsWith("c_") &&

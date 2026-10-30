@@ -126,37 +126,38 @@ test("native occurrence checks preserve every question tool and its own live val
 	}
 });
 
-// ─── fork cases: numeric/blanks/table/multipart quiz kinds, canvas tasks ──────
+// ─── fork cases: numeric/blanks/table/multipart exercise formats, canvas tasks ──────
 
-function call(id: string, name: string, args: Record<string, string | boolean | never[]>, callId: string): LhMessage {
+function call(id: string, name: string, args: Record<string, unknown>, callId: string): LhMessage {
 	const m = assistant(id);
-	if (m.role === "assistant") m.content = [{ type: "toolCall", id: callId, name, arguments: args }];
+	if (m.role === "assistant") m.content = [{ type: "toolCall", id: callId, name, arguments: args as never }];
 	return m;
 }
 
 test("a numeric question with a call id reused across two turns keeps a distinct draft key", () => {
-	const first = call("turn-1", "quiz", { question: "How many?", type: "numeric" }, "call_0");
-	const second = call("turn-2", "quiz", { question: "How much?", type: "numeric" }, "call_0");
+	const numeric = (question: string) => ({ question, format: "numeric", spec: { answer: "4", mode: "number" } });
+	const first = call("turn-1", "exercise", numeric("How many?"), "call_0");
+	const second = call("turn-2", "exercise", numeric("How much?"), "call_0");
 	const firstKey = pendingQuestionOf([first])!.key;
 	assert.equal(firstKey, "call_0", "a unique id keys by id alone");
-	const answered = [first, { ...newAnswerResult("call_0", "quiz", {} as never), id: "answer-1" }, second];
+	const answered = [first, { ...newAnswerResult("call_0", "exercise", {} as never), id: "answer-1" }, second];
 	const secondKey = pendingQuestionOf(answered)!.key;
 	assert.notEqual(secondKey, firstKey, "the reused id is occurrence-qualified");
 	assert.equal(pendingQuestionOf(answered)!.messageId, "turn-2");
-	assert.equal(pendingQuestionOf(answered)!.tool, "quiz");
+	assert.equal(pendingQuestionOf(answered)!.tool, "exercise");
 });
 
 test("a placeholder result for a multipart question keeps it pending until the real answer", () => {
-	const message = call("m", "quiz", { question: "Parts", type: "multipart", parts: [] }, "mp");
-	const placeholder = { ...newAnswerResult("mp", "quiz", {} as never), id: "c_ph", details: null };
+	const message = call("m", "exercise", { question: "Parts", format: "multipart", spec: { parts: [] } }, "mp");
+	const placeholder = { ...newAnswerResult("mp", "exercise", {} as never), id: "c_ph", details: null };
 	assert.equal(pendingQuestionOf([message, placeholder])?.toolCallId, "mp");
-	const real = { ...newAnswerResult("mp", "quiz", { kind: "quiz", answers: [] } as never), id: "c_real" };
+	const real = { ...newAnswerResult("mp", "exercise", { kind: "exercise" } as never), id: "c_real" };
 	assert.equal(pendingQuestionOf([message, real]), null);
 });
 
-test("blanks and table questions, and the probe twins, pend through a placeholder", () => {
-	for (const [tool, type] of [["quiz", "blanks"], ["probe", "table"], ["exercise", "table"], ["assess", "blanks"]] as const) {
-		const message = call("m", tool, { question: "Q", type }, "q");
+test("blanks and table exercises, and the assess twin, pend through a placeholder", () => {
+	for (const [tool, format] of [["exercise", "blanks"], ["assess", "table"], ["exercise", "table"], ["assess", "blanks"]] as const) {
+		const message = call("m", tool, { question: "Q", format, spec: {} }, "q");
 		const placeholder = { ...newAnswerResult("q", tool, {} as never), id: "c_ph", details: null };
 		assert.equal(pendingQuestionOf([message, placeholder])?.tool, tool);
 	}
