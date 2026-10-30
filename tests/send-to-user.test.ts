@@ -88,6 +88,7 @@ describe("send_to_user model gate", () => {
 		["openrouter", "anthropic/claude-opus-5.5", true],
 		["openrouter", "anthropic/claude-sonnet-5.5", true],
 		["amazon-bedrock", "us.anthropic.claude-opus-5-5-v1:0", true],
+		["claude-code", "sonnet", true],
 		["openrouter", "z-ai/glm-5.3-flash", false],
 		["openai", "gpt-4o-mini", false],
 	] as const) {
