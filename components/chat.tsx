@@ -201,11 +201,11 @@ export function retryFailedResponse(
 /** The turn's error banner: a policy refusal in its own words (never with a
  *  Retry: it would only be refused again), anything else as the honest
  *  generic failure, with Retry when the last model call failed. */
-export function TurnErrorBanner({ message, onRetry }: { message: string; onRetry?: (() => void) | undefined }) {
+export function TurnErrorBanner({ message, plain, onRetry }: { message: string; plain?: boolean | undefined; onRetry?: (() => void) | undefined }) {
 	const refusal = parsePolicyRefusal(message);
 	return (
 		<div data-testid="turn-error" className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
-			<span>{refusal ?? `Something went wrong: ${message}`}</span>
+			<span className={plain ? "whitespace-pre-line" : undefined}>{refusal ?? (plain ? message : `Something went wrong: ${message}`)}</span>
 			{refusal === null && onRetry && (
 				<Button data-testid="turn-retry" size="sm" variant="outline" onClick={onRetry}>
 					Retry
@@ -214,6 +214,31 @@ export function TurnErrorBanner({ message, onRetry }: { message: string; onRetry
 		</div>
 	);
 }
+
+/** A failed generation a later answer replaced: a collapsed, muted row,
+ *  expandable to the attempt's text and tool names (read-only, greyed). */
+export function FailedAttempt({ parts }: { parts: LhViewPartLike[] }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div data-testid="failed-attempt" className="my-2 text-xs text-muted-foreground">
+			<button type="button" className="underline-offset-2 hover:underline" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+				{open ? "Attempt failed \u2014 hide" : "Attempt failed \u2014 show"}
+			</button>
+			{open && (
+				<div data-testid="failed-attempt-body" className="mt-1 space-y-1 border-l-2 pl-3 opacity-60">
+					{parts.map((part, i) =>
+						part.type === "text" || part.type === "reasoning" ? (
+							<p key={part.id || i} className="whitespace-pre-wrap">{part.text}</p>
+						) : part.type.startsWith("tool-") ? (
+							<p key={part.id || part.toolCallId || i} className="italic">{`Tool call: ${part.type.slice("tool-".length)}`}</p>
+						) : null,
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+type LhViewPartLike = { type: string; id?: string | undefined; text?: string | undefined; toolCallId?: string | undefined };
 
 /** useLayoutEffect that is silent during SSR (client components still render on the server in Next). */
 const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -1595,6 +1620,8 @@ export function Chat({
 													);
 												}
 												switch (part.type) {
+													case "failed-attempt":
+														return <FailedAttempt key={part.id || pi} parts={(part.parts as LhViewPartLike[] | undefined) ?? []} />;
 													case "text": {
 														const sourceId = textPartMessageId(part.id);
 														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
@@ -1701,7 +1728,7 @@ export function Chat({
 									</Shimmer>
 								</span>
 							)}
-							{error && <TurnErrorBanner message={error.message} onRetry={retryable ? retryFailedTurn : undefined} />}
+							{error && <TurnErrorBanner message={error.message} plain={error.plain} onRetry={retryable ? retryFailedTurn : undefined} />}
 						</div>
 
 						{/* The dock's reserved tail (DockOverlay reports its height):

@@ -169,6 +169,22 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 	// user (full history is never hidden); only the MODEL's context jumps.
 	const compaction = activeCompactionOf(messages);
 
+	// A failed/aborted generation that a LATER assistant message replaces
+	// (owner ruling, 2026-10-30): projected as one "failed-attempt" part so
+	// the renderer collapses it above the new answer. A trailing failure
+	// keeps the plain rendering plus the error banner and Retry.
+	const replacedFailures = new Set<string>();
+	{
+		let laterAssistant = false;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const mm = messages[i]!;
+			if ((mm as { role?: string }).role !== "assistant") continue;
+			const stop = (mm as AssistantMessage).stopReason;
+			if (laterAssistant && (stop === "error" || stop === "aborted")) replacedFailures.add(mm.id);
+			laterAssistant = true;
+		}
+	}
+
 	for (const m of messages) {
 		const role = (m as { role?: string }).role;
 
@@ -273,7 +289,11 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 					rest.push(part);
 				}
 			}
-			const parts: LhViewPart[] = [...reasoning, ...rest];
+			let parts: LhViewPart[] = [...reasoning, ...rest];
+			if (replacedFailures.has(m.id) && parts.length > 0) {
+				// Nested, so no scanner or dock ever sees its question calls.
+				parts = [{ type: "failed-attempt", id: `${m.id}-failed`, parts }];
+			}
 			if (parts.length === 0) {
 				// An arrived-but-silent STREAMING message (owner, optimistic
 				// round 3, 2026-10-02): the turn's first applied event can

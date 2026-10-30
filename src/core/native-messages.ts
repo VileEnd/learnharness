@@ -1148,6 +1148,10 @@ export function danglingQuestionOf(
 		const m = messages[mi]!;
 		if ((m as { role?: string }).role !== "assistant") continue;
 		const assistant = m as AssistantMessage & { id: string };
+		// A failed or aborted generation never executes its calls (pi drops
+		// the message): its questions are not open, and an answer to one
+		// would be an orphan result the provider rejects on every turn.
+		if (assistant.stopReason === "error" || assistant.stopReason === "aborted") return null;
 		const answered = resultIdsFrom(messages.slice(mi + 1));
 		for (const block of assistant.content) {
 			if (block.type !== "toolCall") continue;
