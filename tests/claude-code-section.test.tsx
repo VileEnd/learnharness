@@ -10,7 +10,7 @@ import type { ClaudeCodeStatus, ModelCatalogEntry } from "../src/core/index.ts";
 
 const st = (state: ClaudeCodeStatus["state"], version: string | null = null): ClaudeCodeStatus => ({ state, version, minimumVersion: "2.1.259" });
 const view = (status: ClaudeCodeStatus | null, enabled = false) =>
-	renderToStaticMarkup(<ClaudeCodeSectionView enabled={enabled} status={status} busy={false} error={null} onToggle={() => {}} />);
+	renderToStaticMarkup(<ClaudeCodeSectionView enabled={enabled} status={status} loaded busy={false} error={null} onToggle={() => {}} />);
 
 describe("Claude Code settings section", () => {
 	it("renders each status line", () => {
@@ -26,6 +26,17 @@ describe("Claude Code settings section", () => {
 		assert.match(html, /Use Claude Code \(experimental\)/);
 		assert.match(html, /aria-checked="true"/);
 		assert.match(html, /Runs on the account logged into the claude container\. Only you can use it; usage isn&#x27;t priced\./);
+	});
+	it("after a failed load shows the error and no Checking line", () => {
+		const html = renderToStaticMarkup(<ClaudeCodeSectionView enabled={false} status={null} loaded busy={false} error="Could not load the Claude Code settings." onToggle={() => {}} />);
+		assert.match(html, /Could not load the Claude Code settings\./);
+		assert.doesNotMatch(html, /Checking…/);
+	});
+	it("keeps the toggle disabled until the first load has finished", () => {
+		const html = (loaded: boolean) => renderToStaticMarkup(<ClaudeCodeSectionView enabled={false} status={null} loaded={loaded} busy={false} error={null} onToggle={() => {}} />);
+		assert.match(html(false), /Checking…/);
+		assert.match(html(false), /<button[^>]*disabled/);
+		assert.doesNotMatch(html(true), /<button[^>]*disabled/);
 	});
 	it("is absent for a non-admin", () => {
 		assert.equal(renderToStaticMarkup(<ClaudeCodeSection isAdmin={false} />), "");
