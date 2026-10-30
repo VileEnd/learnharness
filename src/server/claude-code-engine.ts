@@ -9,6 +9,7 @@
 
 import { addProviderSource } from "../agent/models.ts";
 import { createClaudeCodeProvider } from "../agent/claude-code/provider.ts";
+import { killAllLiveProcesses } from "../agent/claude-code/live-processes.ts";
 import { createRunnerClient } from "../agent/claude-code/runner-client.ts";
 import { createClaudeCodeStreamFunction } from "../agent/claude-code/stream.ts";
 import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
@@ -30,7 +31,11 @@ export function installClaudeCodeSource(): void {
 			const next = runner ? JSON.stringify(runner) : ""; // private, in memory only
 			if (next === fingerprint) return;
 			if (runner) models.setProvider(createClaudeCodeProvider(createClaudeCodeStreamFunction(createRunnerClient(runner))));
-			else models.deleteProvider(CLAUDE_CODE_PROVIDER);
+			else {
+				models.deleteProvider(CLAUDE_CODE_PROVIDER);
+				// Held processes (a question tool awaiting its answer) would keep their runner slots.
+				killAllLiveProcesses();
+			}
 			fingerprint = next;
 		},
 	});

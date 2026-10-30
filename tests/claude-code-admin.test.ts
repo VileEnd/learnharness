@@ -34,7 +34,8 @@ after(() => {
 });
 
 const { runAsTenant } = await import("../src/core/tenant-context.ts");
-const { piEngineForSpec } = await import("../src/agent/models.ts");
+const { piEngineForSpec, piModels } = await import("../src/agent/models.ts");
+const { addLiveProcess } = await import("../src/agent/claude-code/live-processes.ts");
 const { stores } = await import("../src/server/stores.ts");
 const policy = await import("../src/server/policy.ts");
 const { modelGate } = await import("../src/server/model-gate.ts");
@@ -217,6 +218,16 @@ test("catalog lists claude-code only for an enabled admin", () => {
 	process.env.CLAUDE_RUNNER_TOKEN = token;
 	policy.setClaudeCodeEnabled(false);
 	runAsTenant(ADMIN, () => assert.deepEqual(claudeIds(), []));
+});
+
+test("turning the toggle off kills held claude-code processes", () => {
+	policy.setClaudeCodeEnabled(true);
+	piModels();
+	let kills = 0;
+	addLiveProcess({ owner: Symbol("test"), sessionId: "c", toolCallIds: ["t1"], kill: () => { kills++; } });
+	policy.setClaudeCodeEnabled(false);
+	piModels();
+	assert.equal(kills, 1);
 });
 
 test("pricer leaves claude-code unpriced", () => {

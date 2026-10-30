@@ -41,3 +41,11 @@ export function removeLiveProcess(process: LiveProcess): void {
 	clearTimeout(liveProcesses.get(process));
 	liveProcesses.delete(process);
 }
+
+/** Kills every held process, freeing its runner slot: the provider was de-registered. */
+export function killAllLiveProcesses(): void {
+	for (const process of [...liveProcesses.keys()]) {
+		removeLiveProcess(process);
+		process.kill();
+	}
+}
