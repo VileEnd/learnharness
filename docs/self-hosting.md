@@ -164,6 +164,19 @@ Each non-admin user runs under a policy: which models they may use, which model 
 - **When it is checked.** Before every turn and every paid background job (extraction, document import, embeddings). A user at or over the cap is refused with "You've reached this month's spending limit", and no chat is created or saved. A running turn is also clamped to what is left of the month, so a user at $4.99 of $5 cannot start a turn that spends $20.
 - **Where it lives.** The policy is `data/global/admin.json` (under the data directory, mode 0600, back it up with the rest of `data/`). If the file is damaged, restricted users are refused (their account shows "Your account settings can't be read right now. Ask your admin.") and Settings → Users refuses every change until the file is fixed or removed. Nothing overwrites a damaged file.
 
+## Custom model provider
+
+The admin can add one OpenAI-compatible endpoint (a local Ollama or LM Studio, vLLM, a hosted gateway) in Settings → Providers. It is global: one URL for the whole install, stored in `data/global/custom-provider.json` (mode 0600), and only admins can change it. Its models are probed from `GET <base URL>/models` and appear in the model pickers as `custom:<model id>`; each user sees them only if their allow-list (Settings → Users) includes them. Admins are unrestricted. An optional key is bound to the URL it was entered for; change the URL and the key must be entered again.
+
+- **Free vs paid.** Mark the endpoint **free** (local compute) and every call is priced at $0 and logged as priced. Mark it **paid** and set per-model rates (USD per million input/output tokens). A paid model without rates is unpriced and is hidden from users who have a monthly spending limit; set rates, or remove the limit, to offer it to them.
+- **Local model on the LAN (Ollama / LM Studio).** LAN isolation (see Remote access (WireGuard)) blocks new connections into private ranges, so allow the one address and port first. In `deploy/nixos/configuration.nix`:
+
+  ```nix
+  services.learnharness.wireguard.lanAllow = [ "<lan-ip>:11434" ];
+  ```
+
+  Then run `nixos-rebuild switch`, and enter the base URL `http://<lan-ip>:11434/v1` in Settings → Providers. Entries are `"<ipv4>:<port>"` only (strict IPv4, port 1-65535; no hostnames, ranges or wildcards; anything else fails the build) and open TCP to that one address and port for the VM and its containers. WireGuard devices still can't reach the LAN. The server must listen on the LAN (Ollama: `OLLAMA_HOST=0.0.0.0`).
+
 ## Remote access (WireGuard)
 
 Away from home, devices reach LearnHarness through a WireGuard tunnel that ends **on the VM**, not on the router. A tunnel can reach only the app: Caddy on 80/443, through which Keycloak's login still applies. It can't reach SSH, the VM's other ports, or anything else on the LAN. The client config sends only the VM's LAN address (`AllowedIPs = <VM LAN IP>/32`) through the tunnel. The usual names (`learnharness.home.moyjak.com`, `auth.home.moyjak.com`) already point there, so links, logins and certificates are the same as at home.
@@ -232,7 +245,7 @@ When the UniFi gateway takes over the LAN (`/home/test/network/fritzbox-to-unifi
 
 With WireGuard enabled there are two more steps:
 - Set `services.learnharness.wireguard.lanGateway` in `deploy/nixos/configuration.nix` to the new gateway, then `nixos-rebuild switch`. Until you do, the VM's DNS queries to the new gateway are refused, because isolation only lets the configured gateway through.
-- Re-create the WireGuard devices marked **outdated** (see Remote access).
+- Re-create the WireGuard devices marked **outdated** (see Remote access (WireGuard)).
 
 With `CADDY_TLS=internal` and local names instead, change the hostnames (NixOS options or `deploy/.env`), update the Keycloak client's redirect URI, web origin and post-logout URI to the new app host, and restart the stack.
 

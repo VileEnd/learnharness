@@ -114,6 +114,20 @@ let
     (rule chain ([ "-d" gw "-p" "udp" "--dport" "123" ] ++ cmt "gateway NTP" ++ [ "-j" "RETURN" ]))
   ];
 
+  # lanAllow: "<ipv4>:<port>" entries, strictly validated (assertion below).
+  octet = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+  parseAllow = e: let
+    m = builtins.match "${octet}\\.${octet}\\.${octet}\\.${octet}:([1-9][0-9]{0,4})" e;
+  in
+    if m != null && lib.toInt (lib.last m) <= 65535
+    then { ip = lib.concatStringsSep "." (lib.take 4 m); port = lib.last m; }
+    else null;
+  validAllow = lib.filter (a: a != null) (map parseAllow cfg.lanAllow);
+  # One TCP RETURN per entry, placed before the LAN rejects of the chain.
+  lanAllowRules = chain: map (a:
+    rule chain ([ "-d" "${a.ip}/32" "-p" "tcp" "--dport" a.port ] ++ cmt "lan allow ${a.ip}:${a.port}" ++ [ "-j" "RETURN" ])
+  ) validAllow;
+
   startCommands = lib.concatLines (
     [ "# --- LearnHarness WireGuard + LAN isolation (deploy/nixos/wireguard.nix) ---" ]
     ++ map (c: "${ipt} -N ${c} 2>/dev/null || true; ${ipt} -F ${c}") chains
@@ -142,6 +156,7 @@ let
       (rule "lh-egress-ctr" ([ "-o" "docker0" ] ++ cmt "container to container" ++ [ "-j" "RETURN" ]))
     ]
     ++ gatewayServices "lh-egress-ctr"
+    ++ lanAllowRules "lh-egress-ctr"
     ++ [
       (rule "lh-egress-ctr" ([ "-d" "10.66.0.0/24" ] ++ cmt "wireguard peers" ++ [ "-j" "RETURN" ]))
       (rule "lh-egress-ctr" ([ "-d" "192.168.0.0/16" ] ++ newConn ++ cmt "no new connections into the LAN" ++ reject))
@@ -161,6 +176,7 @@ let
       (rule "lh-egress-host" ([ "-p" "udp" "--sport" "68" "--dport" "67" ] ++ cmt "DHCP renewals" ++ [ "-j" "RETURN" ]))
     ]
     ++ gatewayServices "lh-egress-host"
+    ++ lanAllowRules "lh-egress-host"
     ++ [
       (rule "lh-egress-host" ([ "-d" "10.66.0.0/24" ] ++ cmt "wireguard peers" ++ [ "-j" "RETURN" ]))
       (rule "lh-egress-host" ([ "-d" "192.168.0.0/16" ] ++ newConn ++ cmt "no new connections into the LAN" ++ reject))
@@ -208,9 +224,26 @@ in
       default = "192.168.178.1";
       description = "The LAN router: the one LAN address the VM may query for DNS and NTP.";
     };
+    lanAllow = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "192.0.2.10:11434" ];
+      description = ''
+        LAN exceptions for the egress isolation: each "<ipv4>:<port>" lets the
+        host and the containers open new TCP connections to that one address and
+        port (e.g. a local Ollama for the custom model provider). Strict IPv4
+        and a port from 1 to 65535; no hostnames, ranges or wildcards. WireGuard
+        peers are unaffected.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = map (e: {
+      assertion = parseAllow e != null;
+      message = "services.learnharness.wireguard.lanAllow: invalid entry \"${e}\" (expected \"<ipv4>:<port>\", octets 0-255, port 1-65535)";
+    }) cfg.lanAllow;
+
     networking.wireguard.interfaces.wg0 = {
       ips = [ "10.66.0.1/24" ];
       listenPort = cfg.port;

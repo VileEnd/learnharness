@@ -35,6 +35,8 @@ Hold the architecture along two orthogonal axes:
 
 **Policy seams (multi-user, design §10).** `setModelGate` (`src/agent/models.ts`), installed by `src/server/stores.ts` with `modelGate` from `src/server/model-gate.ts`, is the one gate every engine passes (per-user model allowlist and monthly cap; the agent layer never imports policy). Per-user policy lives in `<globalDataRoot()>/admin.json`, behind the `AdminPolicyStore` port (`src/store/admin-policy.ts`); a corrupt file fails closed for enforcement and refuses every write.
 
+**Custom provider seam.** The admin's one OpenAI-compatible endpoint is global config in `<globalDataRoot()>/custom-provider.json` (`src/server/custom-provider.ts`, key bound to URL/mode/nonce). `src/server/custom-provider-engine.ts` installs it into the agent layer through `configureProviderSource` (`src/agent/models.ts`), so models resolve as `custom:<id>` (split on the first colon only) and the agent layer never reads the file; free/paid pricing flows through `src/server/pricing.ts`, and paid models without rates are excluded for capped users by the model gate. On NixOS the LAN exception for a local server is `services.learnharness.wireguard.lanAllow`.
+
 **The unifying law** (generates everything else): **imports point inward, writes point to append-only evidence, and everything else is derived.** Dependency flows toward purity; data flows toward evidence; no state is stored where it can be recomputed.
 
 ---
