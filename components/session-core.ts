@@ -198,6 +198,8 @@ function sameDetails(a: unknown, b: unknown): boolean {
 export interface SessionState {
 	messages: LhViewMessage[];
 	nativeMessages: LhMessage[];
+	/** Server-read history only; optimistic bubbles are not delivery proof. */
+	hasConfirmedConversation: boolean;
 	/** Completed conversation usage; null after compaction or before first usage. */
 	contextTokens: number | null;
 	status: SessionStatus;
@@ -280,6 +282,9 @@ export class SessionModel {
 	// The single live consume (POST response or reattach stream): a newer
 	// consume cancels the older — one reader at a time.
 	private consumeAbort: AbortController | null = null;
+	/** Retain the latest request across stop(): an opening POST still owns
+	 * its refusal after view detachment, but never after a newer request. */
+	private latestRequest: AbortController | null = null;
 	/** Synchronous ready check for the gate (send/read mount logic). */
 	readyRef = true;
 
@@ -323,6 +328,7 @@ export class SessionModel {
 		return {
 			messages: projectView(messages, live),
 			nativeMessages: messages,
+			hasConfirmedConversation: this.base.some(m => m.role === "user" || m.role === "assistant"),
 			contextTokens: measuredContextTokens(messages, this.incompleteUsageIds),
 			status: this.statusValue,
 			error: this.errorValue ?? providerError,
@@ -595,6 +601,7 @@ export class SessionModel {
 		this.consumeAbort?.abort();
 		const controller = new AbortController();
 		this.consumeAbort = controller;
+		this.latestRequest = controller;
 		// REPLAY ONTO A CLEAN SLATE (owner, optimistic round 3, 2026-10-02):
 		// the reattach stream replays the turn from its FIRST event — an
 		// aborted earlier attempt (React StrictMode's simulated remount)
@@ -680,47 +687,48 @@ export class SessionModel {
 	 * POST + consume. Ready-gated: one turn per client at a time (the
 	 * server's 409 + identity retry covers the wake-race window).
 	 */
-	async send(input: ChatInput, questionKey?: string): Promise<void> {
+	async send(input: ChatInput, questionKey?: string, onAccepted?: () => void): Promise<boolean> {
 		const recovering = this.statusValue === "error";
-		if (!this.readyRef && !recovering) return;
+		if (!this.readyRef && !recovering) return false;
 		const subject = input.type === "answer" ? pendingQuestionOf([...this.base, ...this.tail]) : null;
 		// A render-scoped answer must not move to another occurrence sharing
 		// its id. This identity is local only; the server's wire is unchanged.
 		if (input.type === "answer" && questionKey !== undefined &&
-			(subject?.key !== questionKey || subject.toolCallId !== input.toolCallId)) return;
+			(subject?.key !== questionKey || subject.toolCallId !== input.toolCallId)) return false;
 		const expectedKey = questionKey ?? (input.type === "answer" && subject?.toolCallId === input.toolCallId ? subject.key : undefined);
 		this.consumeAbort?.abort();
 		const controller = new AbortController();
 		this.consumeAbort = controller;
+		this.latestRequest = controller;
 		this.setError(null);
 		this.setStatus("submitted");
 		if (recovering && input.type === "answer") {
 			try {
 				const res = await this.fetch(`/api/chats/${encodeURIComponent(this.chatId)}`, { signal: controller.signal });
-				if (this.consumeAbort !== controller) return;
+				if (this.consumeAbort !== controller) return false;
 				if (!res.ok) throw new Error((await res.text()) || "An error occurred.");
 				const record = await res.json() as { messages?: LhMessage[]; turnInFlight?: boolean; turnError?: string };
-				if (this.consumeAbort !== controller) return;
+				if (this.consumeAbort !== controller) return false;
 				// No verified record/liveness: retain the draft and never guess
 				// whether a lost acknowledgement meant the input was accepted.
 				if (!Array.isArray(record.messages) || typeof record.turnInFlight !== "boolean") throw new Error("An error occurred.");
 				this.setMessages(record.messages, record.turnError);
 				if (record.turnInFlight) {
 					await this.resumeStream(false);
-					return;
+					return false;
 				}
 				const current = pendingQuestionOf(record.messages);
 				if (current?.toolCallId !== input.toolCallId || (expectedKey !== undefined && current.key !== expectedKey)) {
 					// The call already resolved, or no longer owns the dock. Adopt
 					// truth, never POST that answer a second time.
 					this.setStatus("ready");
-					return;
+					return false;
 				}
 			} catch (err) {
-				if (this.consumeAbort !== controller || controller.signal.aborted) return;
+				if (this.consumeAbort !== controller || controller.signal.aborted) return false;
 				this.setError((err as Error).message);
 				this.setStatus("error");
-				return;
+				return false;
 			}
 		}
 		if (input.type !== "continue") this.automaticContinuationBlocked = false;
@@ -761,6 +769,7 @@ export class SessionModel {
 		if (optimistic.length > 0) this.mutate(() => {
 			this.tail = [...this.tail, ...optimistic];
 		});
+		let accepted = false;
 		try {
 			// SUBMITS ARE NOT ABORTABLE BY VIEW TEARDOWN (owner, 2026-10-10 —
 			// the dead-session-start postmortem): the POST must NOT ride
@@ -792,6 +801,9 @@ export class SessionModel {
 				}
 				throw retryRefusal ? new RetryRefusalError(message) : new Error(message);
 			}
+			accepted = true;
+			// Opening-message handover ends at acceptance, not stream completion.
+			onAccepted?.();
 			// CONNECTION DIET B (owner, 2026-10-10 — parallel-session freeze
 			// postmortem): the POST acknowledges and closes; there is no stream
 			// on this response to consume. Attach through the SAME reattach wire
@@ -803,10 +815,23 @@ export class SessionModel {
 			// A stop() or a newer send/consume won while the ack was in
 			// flight: the turn is live server-side either way — do not attach
 			// a stream from a view that is gone or superseded.
-			if (this.consumeAbort !== controller) return;
+			if (this.consumeAbort !== controller) return true;
 			await this.resumeStream(true);
+			return true;
 		} catch (err) {
-			if (this.consumeAbort !== controller || controller.signal.aborted) return;
+			const failedOpening = input.type === "text" && onAccepted !== undefined && !accepted;
+			if (failedOpening) {
+				// The POST outlives stop(), including StrictMode's cleanup. Remove
+				// only its own failed optimistic bubble even if a newer request
+				// won; never touch canonical messages or another attempt's tail.
+				const ids = new Set(optimistic.map(m => m.id));
+				this.mutate(() => { this.tail = this.tail.filter(m => !ids.has(m.id)); });
+			}
+			const detachedOpening = failedOpening && this.consumeAbort === null && this.latestRequest === controller;
+			if ((this.consumeAbort !== controller || controller.signal.aborted) && !detachedOpening) return accepted;
+			// A detached opening refusal must still reach the replayed mount's
+			// recovery effect. A newer send/reattach ALWAYS owns errors and
+			// status instead, even if that request has since been stopped.
 			// Restore the question when acceptance failed or is unknown. Remove
 			// only THIS optimistic answer, never saved copies/newer live content.
 			// Other input kinds retain their existing optimistic presentation.
@@ -819,6 +844,10 @@ export class SessionModel {
 			}
 			this.setError((err as Error).message, err instanceof RetryRefusalError);
 			this.setStatus("error");
+			// true means this POST's acknowledgment was observed. false does
+			// NOT prove non-delivery: opening callers restore a draft, never
+			// automatically retry.
+			return accepted;
 		}
 	}
 
@@ -866,7 +895,7 @@ export class SessionModel {
 
 	/** The answer path (the dock): the answer IS the question call's tool
 	 *  result (fork 1), riding as its input event. */
-	submitAnswer(tool: string, toolCallId: string, output: QuestionAnswerData, questionKey?: string): Promise<void> {
+	submitAnswer(tool: string, toolCallId: string, output: QuestionAnswerData, questionKey?: string): Promise<boolean> {
 		void tool;
 		return this.send({ type: "answer", toolCallId, answer: output }, questionKey);
 	}
@@ -920,13 +949,13 @@ export class SessionModel {
 
 	/** A submission on the open canvas task: text and/or a drawing, ONE lane.
 	 *  The submission card lands optimistically; the agent coaches. */
-	submitWork(workCallId: string, text: string, drawingId?: string): Promise<void> {
+	submitWork(workCallId: string, text: string, drawingId?: string): Promise<boolean> {
 		return this.send({ type: "work-submit", workCallId, text, ...(drawingId ? { drawingId } : {}) });
 	}
 
 	/** The Hint button on the active canvas task or practice problem. From
 	 *  the open canvas it carries the canvas snapshot and the thinking draft. */
-	requestHint(callId: string, drawingId?: string, text?: string): Promise<void> {
+	requestHint(callId: string, drawingId?: string, text?: string): Promise<boolean> {
 		return this.send({ type: "hint", callId, ...(drawingId ? { drawingId } : {}), ...(text ? { text } : {}) });
 	}
 

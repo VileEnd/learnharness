@@ -14,7 +14,9 @@ import { enterSends } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
-import { chatCreateFailure, type TurnUsage } from "@/src/core";
+import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
+import { SessionStarter } from "@/components/start-session";
+import type { TurnUsage } from "@/src/core";
 
 /**
  * Home — the knowledge graph is the main view, full-bleed edge to edge
@@ -39,6 +41,8 @@ export function Home({
 	 * dictation flush lands via setState, invisible to a closure that
 	 * waited through `await finish()`. Kept current at every write. */
 	const topicRef = useRef("");
+	// One starter per home view: an unchanged retry reuses its created chat.
+	const starterRef = useRef(new SessionStarter());
 	// First-run gate (model-slots wave, owner 2026-09-20): chats cannot
 	// start until the user has picked all three slots — no defaults for
 	// 33 providers. The dock shows the CTA while unconfigured; submitting
@@ -146,29 +150,22 @@ export function Home({
 			// graph-context marker as message[0] (a separate custom message
 			// before the learner's first user message, propositions + the
 			// chains among them); the prompt stays the learner's own words.
-			const res = await fetch("/api/chats", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: t,
-					...(mode === "practice" ? { kind: "practice" } : {}),
-					...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
-					// The Canvas pill's draft choice (default off).
-					...(canvas ? { canvas: true } : {}),
-				}),
-			});
-			// A refused create (the spending cap) keeps the draft and says why.
-			if (!res.ok) {
-				setSendError(await chatCreateFailure(res));
-				setBusy(false);
-				return;
-			}
-			const { id } = (await res.json()) as { id: string };
+			// A refused create (the spending cap) throws its own copy: no chat
+			// exists, nothing is stashed, and the draft stays. The opening text
+			// travels via per-tab sessionStorage, never the URL.
+			const target = await starterRef.current.start({
+				title: t,
+				...(mode === "practice" ? { kind: "practice" as const } : {}),
+				...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
+				// The Canvas pill's draft choice (default off).
+				...(canvas ? { canvas: true as const } : {}),
+			}, fetch);
 			// No settings PUT on create (per-session models, owner
 			// 2026-09-28): the SERVER stamps the newborn from the strong
 			// slot — the same default this surface's model control edits.
-			router.push(`/chat/${id}?prompt=${encodeURIComponent(t)}`);
-		} catch {
+			router.push(target);
+		} catch (err) {
+			setSendError(err instanceof Error ? err.message : OPENING_PROMPT_FAILURE);
 			setBusy(false);
 		}
 	};

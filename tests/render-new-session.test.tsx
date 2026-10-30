@@ -2,9 +2,25 @@ import React from "react";
 (globalThis as Record<string, unknown>).React = React;
 
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DraftShell, startDraftSession } from "../components/new-session.tsx";
+import { clearOpeningPrompt, readOpeningPrompt, OPENING_PROMPT_FAILURE } from "../components/opening-prompt.ts";
+
+const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
+let storageData: Map<string, string>;
+beforeEach(() => {
+	storageData = new Map<string, string>();
+	Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: {
+		getItem: (key: string) => storageData.get(key) ?? null,
+		setItem: (key: string, value: string) => { storageData.set(key, value); },
+		removeItem: (key: string) => { storageData.delete(key); },
+	} });
+});
+afterEach(() => {
+	if (originalStorage) Object.defineProperty(globalThis, "sessionStorage", originalStorage);
+	else Reflect.deleteProperty(globalThis, "sessionStorage");
+});
 
 /**
  * The sessionless draft view (/chat/new, owner 2026-09-13): "+ New session"
@@ -25,10 +41,10 @@ function fakeFetch(id: string) {
 }
 
 describe("startDraftSession — the create-on-send contract", () => {
-	it("creates the session titled with the first message, returns the prompt redirect", async () => {
+	it("creates the session titled with the first message and returns a short path", async () => {
 		const { f, calls } = fakeFetch("c_new");
 		const target = await startDraftSession("teach me orbital mechanics", f);
-		assert.equal(target, "/chat/c_new?prompt=teach%20me%20orbital%20mechanics");
+		assert.equal(target, "/chat/c_new");
 		assert.equal(calls.length, 1);
 		assert.equal(calls[0]!.url, "/api/chats");
 		assert.equal(calls[0]!.method, "POST");
@@ -47,6 +63,36 @@ describe("startDraftSession — the create-on-send contract", () => {
 		await assert.rejects(startDraftSession("hello", f), /spending limit \(\$5\)\. Ask your admin to raise it\./);
 	});
 
+	it("an over-cap opening creates no chat, stashes nothing and has no URL to navigate to", async () => {
+		const calls: string[] = [];
+		const f = (async (url: string) => {
+			calls.push(String(url));
+			return new Response(JSON.stringify({ code: "monthly_cap_reached", capUsd: 5, spentUsd: 5.1, error: "x" }), { status: 403 });
+		}) as unknown as typeof fetch;
+		let target: string | null | undefined;
+		await assert.rejects(async () => { target = await startDraftSession("keep this draft", f); }, /spending limit/);
+		assert.equal(target, undefined, "no navigation target at all");
+		assert.deepEqual(calls, ["/api/chats"], "a single refused create, nothing else");
+		assert.equal(storageData.size, 0, "no opening text left in storage for a chat that was never created");
+	});
+
+	it("unavailable storage refuses navigation with the approved copy instead of falling back to the URL", async () => {
+		Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: undefined });
+		const { f } = fakeFetch("c_nostore");
+		await assert.rejects(startDraftSession("keep me", f), new RegExp(OPENING_PROMPT_FAILURE.slice(0, 20)));
+	});
+
+	it("a long opening text stays out of the URL and is stashed for the chat page", async () => {
+		const { f } = fakeFetch("c_long");
+		const text = `${"B2 First grammar item. ".repeat(1500)}end`;
+		const target = await startDraftSession(text, f);
+		assert.equal(target, "/chat/c_long");
+		assert.equal(target!.includes("?"), false);
+		assert.equal(readOpeningPrompt("c_long"), text);
+		clearOpeningPrompt("c_long");
+		assert.equal(readOpeningPrompt("c_long"), undefined);
+	});
+
 	it("empty or whitespace text never creates anything", async () => {
 		const { f, calls } = fakeFetch("never");
 		assert.equal(await startDraftSession("", f), null);
@@ -56,6 +102,12 @@ describe("startDraftSession — the create-on-send contract", () => {
 });
 
 describe("DraftShell — the sessionless surface", () => {
+	it("storage failure leaves the full draft editable beside the approved error", () => {
+		const html = renderToStaticMarkup(<DraftShell busy={false} sendError={OPENING_PROMPT_FAILURE} text="keep all my text" onChange={() => {}} onSend={() => {}} />);
+		assert.ok(html.includes('role="alert"'));
+		assert.ok(html.includes(OPENING_PROMPT_FAILURE));
+		assert.match(html, /<textarea[^>]*>keep all my text<\/textarea>/);
+	});
 	it("shows a send error above the composer", () => {
 		const html = renderToStaticMarkup(<DraftShell busy={false} sendError="Over the limit." text="draft" onChange={() => {}} onSend={() => {}} />);
 		assert.match(html, /data-testid="send-error"[^>]*>Over the limit\./);
@@ -199,7 +251,7 @@ describe("the practice draft (?mode=practice, 2026-10-04)", () => {
 			return new Response(JSON.stringify({ id: "c9" }), { status: 201 });
 		}) as unknown as typeof fetch;
 		const target = await startDraftSession("the parity chain", f, "practice");
-		assert.equal(target, "/chat/c9?prompt=the%20parity%20chain");
+		assert.equal(target, "/chat/c9");
 		assert.deepEqual(body, { title: "the parity chain", kind: "practice" });
 	});
 

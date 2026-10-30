@@ -13,7 +13,8 @@ import { StatsBar } from "@/components/stats-bar";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
-import { chatCreateFailure, type ChatSettings, type GraphSnapshot } from "@/src/core";
+import { SessionStarter } from "@/components/start-session";
+import { type ChatSettings, type GraphSnapshot } from "@/src/core";
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
  *  bar lifts — resolved nodes as the learner SAW them at pick time. */
@@ -36,7 +37,8 @@ const DOCK = "mx-auto w-full max-w-[46rem] px-4";
 /**
  * The draft's whole behavior as one pure seam: create the session (title =
  * the first message), persist the lifted pre-chat settings, return the push
- * target — /chat/<id>?prompt=<msg> — whose initialPrompt path delivers the
+ * target — /chat/<id> — after stashing the message in per-tab sessionStorage
+ * (never the URL; see opening-prompt.ts), whose chat page delivers the
  * message as turn 1. Injected fetch/router so tests pin the contract.
  * Returns null on empty text; rethrows on transport failure (the caller's
  * busy flag resets).
@@ -47,6 +49,7 @@ export async function startDraftSession(
 	mode?: "practice",
 	picks?: readonly DraftPick[],
 	canvas?: boolean,
+	starter: SessionStarter = new SessionStarter(),
 ): Promise<string | null> {
 	const t = text.trim();
 	if (!t) return null;
@@ -54,22 +57,16 @@ export async function startDraftSession(
 	// from the pick bar creates its session WITH the graph context — the
 	// same contract as the home screen's practice send (the marker with
 	// [id] name: statement lines, target validation's truth set).
-	const res = await fetchLike("/api/chats", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			...(mode === "practice"
-				? { title: t, kind: "practice", ...(picks && picks.length > 0 ? { graphContext: { propositions: picks } } : {}) }
-				: { title: t }),
-			// The Canvas pill's draft choice (default off): stamped on the new chat's settings.
-			...(canvas === true ? { canvas: true } : {}),
-		}),
-	});
-	if (!res.ok) throw new Error(await chatCreateFailure(res));
-	const { id } = (await res.json()) as { id: string };
 	// No settings PUT on create (per-session models, owner 2026-09-28):
-	// the SERVER stamps the newborn from the strong slot.
-	return `/chat/${id}?prompt=${encodeURIComponent(t)}`;
+	// the SERVER stamps the newborn from the strong slot. A refused create
+	// (the spending cap) throws the cap copy: no chat, nothing stashed.
+	return starter.start({
+		...(mode === "practice"
+			? { title: t, kind: "practice" as const, ...(picks && picks.length > 0 ? { graphContext: { propositions: picks } } : {}) }
+			: { title: t }),
+		// The Canvas pill's draft choice (default off): stamped on the new chat's settings.
+		...(canvas === true ? { canvas: true as const } : {}),
+	}, fetchLike);
 }
 
 /** The pure shell (no router) — the render-test seam: the draft view's
@@ -309,6 +306,9 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const strongKeyless = useStrongKeyless();
 	const [setupOpen, setSetupOpen] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	// One starter per draft view: an unchanged retry after a storage failure
+	// reuses the chat it already created instead of creating another.
+	const starterRef = useRef(new SessionStarter());
 
 	const send = useCallback(() => {
 		const draft = textRef.current.trim();
@@ -328,7 +328,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		}
 		setBusy(true);
 		setSendError(null);
-		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined, canvasRef.current)
+		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined, canvasRef.current, starterRef.current)
 			.then((target) => {
 				if (target) router.push(target);
 				else setBusy(false);
