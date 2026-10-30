@@ -19,6 +19,7 @@ import {
 	needsContinuation,
 	danglingQuestionOf,
 	answeredCallIds,
+	failedResponseAtEnd,
 	measuredContextTokens,
 	newAnswerResult,
 	newHintRequest,
@@ -83,6 +84,15 @@ async function turnInFlight(model: SessionModel): Promise<boolean | null> {
 	} catch {
 		return null; // network hiccup: keep waiting, the deadline bounds us
 	}
+}
+
+/** The server's terse "nothing to retry" refusal, in the learner's words.
+ *  Every other Retry 400 (no input to continue from, compaction) is already
+ *  readable and passes through. */
+export function readableRetryRefusal(text: string): string {
+	return text === "retry input requires a failed turn to retry"
+		? "There's nothing to retry \u2014 the last answer didn't fail."
+		: text;
 }
 
 const STREAM_DROPPED = "The connection dropped before the turn completed.";
@@ -296,12 +306,12 @@ export class SessionModel {
 				? { executions: this.executions, inFlight: true, streamingIds: this.streamingIds }
 				: undefined;
 		const messages = [...this.base, ...this.tail];
-		const latest = messages.at(-1);
-		// One rule for live and restored failures: only the final completed
-		// assistant can own the banner. While trying again, hide the old
-		// failure from the first Thinking frame, but show a new failure at end.
+		const latest = failedResponseAtEnd(messages);
+		// Presentation/compaction markers do not resolve a failure. While
+		// trying again, hide the old banner from the first Thinking frame,
+		// but show a new completed failure from this consume immediately.
 		const providerError =
-			latest?.role === "assistant" && latest.stopReason === "error" &&
+			latest !== undefined &&
 			!this.incompleteUsageIds.has(latest.id) && (!live || latest.id === this.liveFailureId)
 				? { message: latest.errorMessage ?? "An error occurred." }
 				: null;
@@ -757,10 +767,17 @@ export class SessionModel {
 				throw new Error("A turn is already running — try again in a moment.");
 			}
 			if (!res.ok) {
-				// Refusal envelopes (503 BYOK/key gates) and 400s: the RAW body
-				// text rides the error message — the banner shows it, and the
-				// page's refusal flow JSON-parses the envelope out of it.
-				throw new Error((await res.text()) || `The send failed (${res.status}).`);
+				// Keep model/key/policy refusal envelopes verbatim: the page's
+				// refusal flow parses them. Retry's 400s are ordinary user-facing
+				// guidance, so show their error text without JSON syntax.
+				let message = (await res.text()) || `The send failed (${res.status}).`;
+				if (input.type === "retry" && res.status === 400) {
+					try {
+						const refusal = JSON.parse(message) as { error?: unknown } | null;
+						if (typeof refusal?.error === "string" && refusal.error.length > 0) message = readableRetryRefusal(refusal.error);
+					} catch { /* Non-envelope failures keep their original text. */ }
+				}
+				throw new Error(message);
 			}
 			// CONNECTION DIET B (owner, 2026-10-10 — parallel-session freeze
 			// postmortem): the POST acknowledges and closes; there is no stream

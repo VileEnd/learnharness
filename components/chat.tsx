@@ -30,9 +30,11 @@ import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-stee
 import { DictationBar, finishDictation, joinDictation, useDictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
 import { JobsContext } from "@/components/jobs-context";
+import { Button } from "@/components/ui/button";
 import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
+	endsInFailedTurn,
 	isProviderKeyRefusal,
 	policyRefusalCopy,
 	firstSourceTextParts,
@@ -184,13 +186,31 @@ export function parsePolicyRefusal(message: string | undefined): string | null {
 	}
 }
 
-/** The turn's error banner: a policy refusal in its own words, anything
- *  else as the honest generic failure. */
-export function TurnErrorBanner({ message }: { message: string }) {
+/** Retry sends no composer text. Its refusal must not resurrect the draft
+ * from an earlier, already-durable text send over today's unsent composer.
+ * Retire that fallback synchronously, never when the async Retry settles:
+ * a later ordinary send may own a new recovery draft by then. */
+export function retryFailedResponse(
+	send: (input: ChatInput) => void,
+	submittedDraft: { current: string | null },
+): void {
+	submittedDraft.current = null;
+	void send({ type: "retry" });
+}
+
+/** The turn's error banner: a policy refusal in its own words (never with a
+ *  Retry: it would only be refused again), anything else as the honest
+ *  generic failure, with Retry when the last model call failed. */
+export function TurnErrorBanner({ message, onRetry }: { message: string; onRetry?: (() => void) | undefined }) {
 	const refusal = parsePolicyRefusal(message);
 	return (
-		<div data-testid="turn-error" className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
-			{refusal ?? `Something went wrong: ${message}`}
+		<div data-testid="turn-error" className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
+			<span>{refusal ?? `Something went wrong: ${message}`}</span>
+			{refusal === null && onRetry && (
+				<Button data-testid="turn-retry" size="sm" variant="outline" onClick={onRetry}>
+					Retry
+				</Button>
+			)}
 		</div>
 	);
 }
@@ -763,6 +783,12 @@ export function Chat({
 	// server's registry mutex is the structural gate; this is the
 	// affordance).
 	const [compacting, setCompacting] = useState(initiallyCompacting);
+	// A failed model response (issue #110): Retry keeps the saved input
+	// and completed work, without another learner message. Offered from
+	// "error" too: a dropped stream leaves the model there, and send()
+	// recovers from it. Later compaction requires new input instead.
+	const retryable = (status === "ready" || status === "error") && !busy && !compacting && endsInFailedTurn(nativeMessages);
+	const retryFailedTurn = () => retryFailedResponse(send, draftRef);
 	const canSend =
 		(text.trim().length > 0 || dictation.active) && !pending && !activeProblem && !activeWork && !compacting;
 
@@ -1675,7 +1701,7 @@ export function Chat({
 									</Shimmer>
 								</span>
 							)}
-							{error && <TurnErrorBanner message={error.message} />}
+							{error && <TurnErrorBanner message={error.message} onRetry={retryable ? retryFailedTurn : undefined} />}
 						</div>
 
 						{/* The dock's reserved tail (DockOverlay reports its height):

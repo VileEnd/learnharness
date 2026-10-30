@@ -44,7 +44,7 @@ import {
 } from "../core/settings-resolution.ts";
 import { isPolicyRefusal, modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
 import { assertWithinCap, modelGate, readSettingsView, turnSpendCapFor, unconfiguredTierRefusal } from "./model-gate.ts";
-import { beginTurn, endTurn } from "./turn-liveness.ts";
+import { beginTurn, endTurn, isTurnRunning } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { notify } from "./push.ts";
 import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
@@ -259,6 +259,11 @@ export async function handleChatInput(
 	// any write. It is revalidated after the awaited gates below too. (The
 	// cap stays first: a capped user's Retry gets the cap refusal.)
 	if (input.type === "retry") {
+		// A retry racing a running turn is the same 409 as any send, not a
+		// 400 (the running turn's write-ahead has already moved the tail).
+		if (isTurnRunning(chatId)) {
+			return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
+		}
 		try {
 			retryDrops(record.messages);
 		} catch (err) {

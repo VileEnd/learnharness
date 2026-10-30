@@ -486,6 +486,32 @@ describe("Retry refusal and revalidation", () => {
 		assert.equal(chatStore.getChat(chat.id)!.messages.length, before.length + 1);
 	});
 
+	it("(fork c) a Retry while a TEXT turn is running is a 409, not a 400", { timeout: 5_000 }, async () => {
+		const chat = createConfiguredChat("Test: retry during a running text turn");
+		chatStore.saveMessages(chat.id, [newUserMessage("hello"), failed("failed-response")]);
+		let release!: () => void;
+		let started!: () => void;
+		const waiting = new Promise<void>((resolve) => { release = resolve; });
+		const entered = new Promise<void>((resolve) => { started = resolve; });
+		const { engine } = scripted([async () => {
+			started();
+			await waiting;
+			return fauxAssistantMessage("The text turn's reply.");
+		}]);
+		const first = turn(engine, chat.id, { type: "text", text: "again" });
+		await entered;
+		try {
+			// The write-ahead already moved the tail: retry eligibility is gone,
+			// but the honest answer is still "busy".
+			const second = await handleChatRequest(post(chat.id, { type: "retry" }), () => { throw new Error("must not construct an agent"); });
+			assert.equal(second.status, 409);
+			assert.match(((await second.json()) as { error: string }).error, /already running/);
+		} finally {
+			release();
+			await first;
+		}
+	});
+
 	it("rejects Retry after later compaction without removing the error or its boundary", async () => {
 		const { engine, contexts } = scripted([]);
 		const chat = createConfiguredChat("Test: compacted failure");
