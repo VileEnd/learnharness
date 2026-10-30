@@ -176,7 +176,7 @@ The admin can add one OpenAI-compatible endpoint (a local Ollama or LM Studio, v
   ```
 
   Then deploy with `nix run github:NixOS/nixpkgs/nixos-26.05#nixos-rebuild -- switch --flake ./deploy/nixos#learnharness --target-host root@<vm-host>`, and enter the base URL `http://<lan-ip>:11434/v1` in Settings → Providers. Entries are `"<ipv4>:<port>"` only (strict IPv4, port 1-65535; no hostnames, ranges or wildcards; anything else fails the build) and open TCP to that one address and port for the VM and its containers. WireGuard devices still can't reach the LAN. The server must listen on the LAN (Ollama: `OLLAMA_HOST=0.0.0.0`).
-- **Give the model a large context.** An unpinned model is assumed to have an 8192-token window, and conversations are compacted when they come within 16384 tokens of the window, so such a model would compress on every turn (the teacher prompt alone is about 14k tokens). Start Ollama with a larger context, e.g. `OLLAMA_CONTEXT_LENGTH=32768` or more, and pin the same context for each model in the editor (Settings → Providers → Models). The editor warns on any model whose context is too small.
+- **Give the model a large context.** An unpinned model is assumed to have an 8192-token window, and conversations are compacted when they come within 16384 tokens of the window, so such a model would compress on every turn (the teacher prompt alone is about 14k tokens). Start Ollama with a larger context, above 32768, e.g. `OLLAMA_CONTEXT_LENGTH=65536`, and pin the same context for each model in the editor (Settings → Providers → Models). The editor warns on any model whose context is too small.
 
 ## Remote access (WireGuard)
 
