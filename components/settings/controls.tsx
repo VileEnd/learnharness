@@ -9,7 +9,7 @@
  * control together) and the control itself locks — the row owns the dim.
  */
 
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /** A section block: pronounced mono heading + content. */
@@ -79,6 +79,26 @@ export function SettingsRow({
 			{children}
 		</div>
 	);
+}
+
+/** A collapsed-menu trigger (value + caret) for pickers that open a MenuShell.
+ * `disabled` keeps native button semantics. */
+export function SettingsMenuTrigger({
+	value, disabled, className, ...props
+}: Omit<ComponentPropsWithRef<"button">, "value" | "children"> & { value: string }) {
+	return <button
+		type="button"
+		{...props}
+		disabled={disabled}
+		className={cn(
+			"flex h-7 items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors",
+			disabled ? "cursor-not-allowed" : "hover:border-muted-foreground/50",
+			className,
+		)}
+	>
+		<span className="min-w-0 flex-1 truncate">{value}</span>
+		<span aria-hidden className="text-muted-foreground">▾</span>
+	</button>;
 }
 
 /** The on/off switch — a plain button in the switch role. */

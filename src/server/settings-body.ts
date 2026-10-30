@@ -20,6 +20,7 @@ import type {
 	BackgroundModelRole,
 	CompactionSettings,
 	DocumentsSettings,
+	DictationSettings,
 	GeneralSettings,
 	GraphSettings,
 	ModelsSettings,
@@ -27,6 +28,7 @@ import type {
 } from "../core/settings.ts";
 import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
+import { isDictationLanguage } from "../core/dictation.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import type { ModelNotAllowed } from "../core/settings.ts";
 import { disallowedModel } from "./model-gate.ts";
@@ -453,6 +455,16 @@ export function parseDocumentsSettingsBody(body: unknown): SettingsBodyResult<Do
 	return { ok: true, settings };
 }
 
+/** dictation: { language?: one of Nova-3's supported language codes }
+ *  ({} clears it: no `language` param). Not a model, so no policy gate. */
+export function parseDictationSettingsBody(body: unknown): SettingsBodyResult<DictationSettings> {
+	const raw = asRecord(body);
+	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	if (raw.language === undefined) return { ok: true, settings: {} };
+	if (!isDictationLanguage(raw.language)) return { ok: false, error: "Unsupported dictation language" };
+	return { ok: true, settings: { language: raw.language } };
+}
+
 /** The section→parser map for PUT /api/settings/[section] (the route also
  *  carries the special prompts sub-resource). */
 export const SETTINGS_SECTIONS = {
@@ -464,6 +476,7 @@ export const SETTINGS_SECTIONS = {
 	compaction: parseCompactionSettingsBody,
 	documents: parseDocumentsSettingsBody,
 	models: parseModelsSettingsBody,
+	dictation: parseDictationSettingsBody,
 } as const;
 
 export type SettingsSectionName = keyof typeof SETTINGS_SECTIONS;

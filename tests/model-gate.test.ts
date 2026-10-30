@@ -272,3 +272,16 @@ test("(m) a turn refused at the engine build leaves the chat file unchanged and 
 		assert.equal(isTurnRunning(chatId), false);
 	});
 });
+
+test("(dictation) a restricted user can set their dictation language: it is not a model, so the policy does not apply", async () => {
+	const put = (body: unknown) =>
+		sectionRoute.PUT(
+			new Request("http://x/api/settings/dictation", { method: "PUT", headers: headers(USER), body: JSON.stringify(body) }),
+			{ params: Promise.resolve({ section: "dictation" }) },
+		);
+	assert.equal((await put({ language: "pl" })).status, 200);
+	assert.equal(runAsTenant(USER, () => readSettingsRecord())?.dictation?.language, "pl");
+	assert.equal((await put({})).status, 200);
+	assert.equal(runAsTenant(USER, () => readSettingsRecord())?.dictation?.language, undefined);
+	assert.equal((await put({ language: "xx" })).status, 400);
+});

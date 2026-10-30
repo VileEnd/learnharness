@@ -63,3 +63,29 @@ describe("modelMenuRows index alignment", () => {
 		assert.equal(walk.length, group.length + list.length);
 	});
 });
+
+describe("ModelMenuList after the SearchMenuList extraction", () => {
+	const models = [m("openrouter", "xiaomi/mimo-v2.6-flash"), m("openrouter", "z-ai/glm-5")] as never;
+	it("renders the search box, the Recommended group above the list, and every catalog row", () => {
+		const html = renderToStaticMarkup(
+			<ModelMenuList models={models} effectiveId={undefined} onPick={() => {}} recommended />,
+		);
+		assert.match(html, /data-testid="model-search"/);
+		assert.match(html, /data-testid="model-list"/);
+		assert.ok(html.indexOf("model-group-recommended") < html.indexOf("model-option-z-ai_glm-5"));
+		assert.match(html, /model-option-rec-mimo-flash/);
+		assert.match(html, /model-option-z-ai_glm-5/);
+	});
+	it("shows only the catalog it is given (a policy-filtered catalog stays filtered)", () => {
+		const html = renderToStaticMarkup(
+			<ModelMenuList models={[m("openrouter", "z-ai/glm-5")] as never} effectiveId={undefined} onPick={() => {}} recommended />,
+		);
+		assert.doesNotMatch(html, /model-group-recommended/);
+		assert.doesNotMatch(html, /mimo/);
+		assert.match(html, /model-option-z-ai_glm-5/);
+	});
+	it("has no Recommended group unless asked, and shows the loading state while the catalog loads", () => {
+		assert.doesNotMatch(renderToStaticMarkup(<ModelMenuList models={models} effectiveId={undefined} onPick={() => {}} />), /Recommended/);
+		assert.match(renderToStaticMarkup(<ModelMenuList models={undefined} effectiveId={undefined} onPick={() => {}} />), /Loading models/);
+	});
+});

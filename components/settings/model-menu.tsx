@@ -22,6 +22,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ModelCatalogEntry } from "@/src/core";
 import { fuzzyScore, recommendedFor } from "@/src/core";
+import { SearchMenuList } from "./search-menu-list.tsx";
 import type { RecommendedModel } from "@/src/core";
 import { formatTokens } from "@/components/usage-format";
 
@@ -73,124 +74,59 @@ export function ModelMenuList({
 	/** Quiet footer note under the list (context-specific). */
 	footer?: string;
 }) {
-	const [query, setQuery] = useState("");
-	const [menuIdx, setMenuIdx] = useState<number | null>(null);
-	const searchRef = useRef<HTMLInputElement>(null);
-	const listRef = useRef<HTMLUListElement>(null);
-
-	useEffect(() => {
-		searchRef.current?.focus();
-	}, []);
-
-	// Keep the arrow-walked result visible in the scrolling list.
-	useEffect(() => {
-		if (menuIdx === null) return;
-		listRef.current?.querySelector(`[data-idx="${menuIdx}"]`)?.scrollIntoView({ block: "nearest" });
-	}, [menuIdx]);
-
-	// One linear walkable array: group rows first, then list rows.
-	const { group, list } = modelMenuRows(models, query, recommended);
-	const results = [...group.map((g) => g.model), ...list];
-	const rowClass = (m: ModelCatalogEntry, i: number) =>
-		`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-			i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-		}${m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider) && i !== menuIdx ? " bg-muted/60" : ""}`;
-
+	// The Recommended group (empty query only) over the policy-filtered catalog.
+	const rec = modelMenuRows(models, "", recommended).group;
+	const recBy = new Map(rec.map((r) => [`${r.model.provider}/${r.model.id}`, r.entry]));
+	const modelKey = (m: ModelCatalogEntry) => `${m.provider}/${m.id}`;
 	return (
 		<>
-			<input
-				ref={searchRef}
-				data-testid="model-search"
-				value={query}
-				onChange={(e) => {
-					setQuery(e.target.value);
-					setMenuIdx(null); // new query → the walk restarts on Enter/↓
-				}}
-				onKeyDown={(e) => {
-					if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-						e.preventDefault();
-						e.stopPropagation();
-						if (results.length === 0) return;
-						setMenuIdx((i) =>
-							e.key === "ArrowDown"
-								? Math.min((i ?? -1) + 1, results.length - 1)
-								: Math.max((i ?? results.length) - 1, 0),
-						);
-					} else if (e.key === "Enter") {
-						const chosen = results[menuIdx ?? 0];
-						if (chosen) {
-							e.preventDefault();
-							e.stopPropagation();
-							onPick(chosen);
-						}
-					}
-				}}
+			<SearchMenuList
+				items={models}
+				itemKey={modelKey}
+				searchTerms={(m) => [m.provider, m.id, m.name]}
+				compare={(a, b) => a.id.localeCompare(b.id)}
+				isSelected={(m) => m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider)}
+				onPick={onPick}
+				searchTestid="model-search"
+				listTestid="model-list"
+				optionTestid={(m) => `model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
 				placeholder="Search models…"
-				className="lh-input mb-1.5 w-full rounded-lg border bg-background px-2 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-ring"
+				loading="Loading models…"
+				empty="No models match."
+				pinned={(query) => query.trim() === "" ? rec.map((r) => r.model) : []}
+				pinnedLabel="Recommended"
+				pinnedLabelTestid="model-group-recommended"
+				pinnedOptionTestid={(m) => `model-option-rec-${recBy.get(modelKey(m))?.key ?? m.id}`}
+				renderPinned={(m) => {
+					const entry = recBy.get(modelKey(m));
+					return <>
+						<span className="flex items-center justify-between gap-2">
+							<span className="flex min-w-0 items-center gap-1.5">
+								<span className="truncate text-card-foreground">{m.name}</span>
+								<span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+									{entry?.badge}
+								</span>
+							</span>
+							<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
+								{priceLabel(m.cost)}
+							</span>
+						</span>
+						<span className="truncate text-muted-foreground">{entry?.line}</span>
+					</>;
+				}}
+				renderItem={(m) => <>
+					<span className="flex items-center justify-between gap-2">
+						<span className="truncate text-card-foreground">{m.name}</span>
+						<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
+							{priceLabel(m.cost)}
+						</span>
+					</span>
+					<span className="flex items-center justify-between gap-2 text-muted-foreground">
+						<span className="truncate">{m.provider} · {m.id}</span>
+						<span className="shrink-0 tabular-nums">{formatTokens(m.contextWindow)}</span>
+					</span>
+				</>}
 			/>
-			{!models && <div className="px-2 py-3 text-center text-muted-foreground">Loading models…</div>}
-			{models && results.length === 0 && (
-				<div className="px-2 py-3 text-center text-muted-foreground">No models match.</div>
-			)}
-			<ul ref={listRef} data-testid="model-list" className="flex max-h-72 flex-col overflow-y-auto px-1">
-				{group.length > 0 && (
-					<>
-						<li data-testid="model-group-recommended" className="px-2 pb-0.5 pt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-							Recommended
-						</li>
-						{group.map(({ entry, model: m }, i) => (
-							<li key={`rec-${entry.key}`}>
-								<button
-									type="button"
-									data-testid={`model-option-rec-${entry.key}`}
-									data-idx={i}
-									onClick={() => onPick(m)}
-									className={rowClass(m, i)}
-								>
-									<span className="flex items-center justify-between gap-2">
-										<span className="flex min-w-0 items-center gap-1.5">
-											<span className="truncate text-card-foreground">{m.name}</span>
-											<span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
-												{entry.badge}
-											</span>
-										</span>
-										<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
-											{priceLabel(m.cost)}
-										</span>
-									</span>
-									<span className="truncate text-muted-foreground">{entry.line}</span>
-								</button>
-							</li>
-						))}
-						<li aria-hidden className="mx-2 my-1 border-t" />
-					</>
-				)}
-				{list.map((m, j) => {
-					const i = group.length + j;
-					return (
-						<li key={`${m.provider}/${m.id}`}>
-							<button
-								type="button"
-								data-testid={`model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
-								data-idx={i}
-								onClick={() => onPick(m)}
-								className={rowClass(m, i)}
-							>
-								<span className="flex items-center justify-between gap-2">
-									<span className="truncate text-card-foreground">{m.name}</span>
-									<span className="shrink-0 tabular-nums text-muted-foreground" title="USD per 1M tokens in/out">
-										{priceLabel(m.cost)}
-									</span>
-								</span>
-								<span className="flex items-center justify-between gap-2 text-muted-foreground">
-									<span className="truncate">{m.provider} · {m.id}</span>
-									<span className="shrink-0 tabular-nums">{formatTokens(m.contextWindow)}</span>
-								</span>
-							</button>
-						</li>
-					);
-				})}
-			</ul>
 			{footer && (
 				<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">{footer}</div>
 			)}
