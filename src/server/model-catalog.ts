@@ -277,8 +277,9 @@ function validateSlotSpec(name: ModelSlotName, slot: { model?: { provider: strin
 // server is the truth: the record shows the clamped level after write.
 
 /** Clamp one level against one model (identity when the model is unknown
- *  or the level already supported — the existence gate rejects unknown
- *  models separately, so this only ever sees real ones in practice). */
+ *  or the level already supported). When catalog metadata is unavailable
+ *  for an unchanged saved pin, the preference is preserved; the runtime
+ *  clamps after the provider reconnects. */
 function clampLevelFor(provider: string, id: string, level: ThinkingLevel): ThinkingLevel {
 	const model = piModels().getModel(provider, id);
 	return model ? clampThinkingLevel(model, level) : level;

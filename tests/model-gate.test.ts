@@ -171,7 +171,10 @@ test("(g2) an unchanged stored pin whose provider left the catalog does not bloc
 	const refused = await put({ strong: { model: GONE }, cheap: { model: OTHER } });
 	assert.equal(refused.status, 403);
 	assert.equal(((await refused.json()) as { code: string }).code, "model_not_allowed");
-	// Swapping the gone slot to a different unknown model is a new selection: refused, not bypassed.
+	// Re-saving the unchanged gone slot with a thinking level preserves the preference (runtime clamps after reconnect).
+	assert.equal((await put({ strong: { model: GONE, thinkingLevel: "high" }, cheap: { model: EXTRA } })).status, 200);
+	assert.equal(runAsTenant(USER, () => stores.settingsStore.readSettings())?.models?.strong?.thinkingLevel, "high");
+	// Swapping the gone slot to another unknown model is refused by the allow-list for a restricted user, not by the catalog check.
 	assert.equal((await put({ strong: { model: { ...GONE, id: "other-fixture" } }, cheap: { model: EXTRA } })).status, 403);
 });
 

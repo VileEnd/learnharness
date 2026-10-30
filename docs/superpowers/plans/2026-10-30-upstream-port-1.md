@@ -21,20 +21,20 @@
 - Version `0.34.0`.
 
 ## Review Focus
-1. **The Next 16.4.3 bump.** `next` and `@next/eslint-plugin-next` must be on the same version, and the standalone build and Docker trace must still work. Owner: Task 1 (full gate including the smoke scripts).
+1. **The Next 16.4.3 bump (DEFERRED to on or after 2026-11-06 under the two-week supply-chain rule; not in this branch, Next stays on 16.4.1).** `next` and `@next/eslint-plugin-next` must be on the same version, and the standalone build and Docker trace must still work. Owner: Task 1 (full gate including the smoke scripts).
 2. **Math repair.** `htmlTags:false` must not let real partial HTML tags through. The streaming render test should include a non-math `<` case. Owner: Task 1.
 3. **Policy after D.** A restricted user re-saving an unchanged but now-disallowed pin must still be overlaid and gated at runtime; the D bypass only affects catalog validation. Owner: Task 2 test.
 
 ---
 
-### Task 1: Next 16.4.3 + compression smoke (A), streaming math (B), trivial fixes (P)
+### Task 1: Compression smoke (A; the Next 16.4.3 bump is deferred to on or after 2026-11-06), streaming math (B), streaming math (B), trivial fixes (P)
 **Files:**
-- `package.json` / `package-lock.json`: `next` and `@next/eslint-plugin-next` to the same 16.4.3 or later stable release, at least two weeks old.
+- `package.json` / `package-lock.json`: DEFERRED (on or after 2026-11-06, two-week supply-chain rule; not in this branch). `next` and `@next/eslint-plugin-next` to the same 16.4.3 or later stable release, at least two weeks old.
 - From upstream 59f389d, adapted: `scripts/smoke-compression-runtime.mjs`, its call in `scripts/smoke-server.mjs`, and `tests/next-compression-drain.test.ts`.
 - From upstream 3c76930: `components/ai-elements/message.tsx` and `components/ai-elements/reasoning.tsx` (`remend={{ htmlTags: false }}`), plus `tests/render-streaming-math.test.tsx`.
 - P (upstream cb7e719/31ea0c9, 8ad17a4/27abb31): `tests/schema-stamps.test.ts` (`import.meta.dirname`) and the relative doc links in `docs/development.md`, if the fork still has those defects.
 
-- [ ] **Step 1:** Port the tests first and run them to see RED. For the compression smoke, RED may only show against the old Next version; note that in the report.
+- [ ] **Step 1:** Port the tests first and run them to see RED. The compression smoke is a regression guard: it passes on 16.4.1 and does not detect a leak there.
 - [ ] **Step 2:** Apply the changes. **Step 3:** Run the full gate line. **Step 4:** Commit `chore(upstream): next 16.4.3 gzip fix, streaming math, small fixes`.
 
 ### Task 2: compaction leftovers (C), slot repair (D), `:free` label (E)
@@ -59,4 +59,4 @@
 - [ ] Steps: RED → implement → GREEN → bump the version to 0.34.0 → full gate line → commit `fix(upstream): compaction leftovers, slot repair after a provider disappears, :free labels`.
 
 ### Task 3: Deploy (controller)
-Merge, then `systemctl restart learnharness-stack`. Check that health is OK and that the container's Next version is 16.4.3. Tag v0.34.0 and publish the release.
+Merge, then `systemctl restart learnharness-stack`. Check that health is OK and that the container's Next version is still 16.4.1 (bump deferred). Tag v0.34.0 and publish the release.
