@@ -48,6 +48,7 @@ export function memoryGraphStore(): GraphStore {
 				source.extractions = [...(source.extractions ?? []), entry];
 			}
 		},
+		removeSource: (id: string) => void sources.delete(id),
 		readPositions: () => ({ ...positions }),
 		writePositions: (next) => void (positions = { ...next }),
 		rewriteLedgers: (next) => {

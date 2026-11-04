@@ -217,6 +217,12 @@ export const graphStore: GraphStore = {
 			: [...(source.extractions ?? []), entry];
 		writeSourceMap(all);
 	},
+	removeSource(id: string): void {
+		const all = readSourceMap();
+		if (!all[id]) return;
+		delete all[id];
+		writeSourceMap(all);
+	},
 
 	// ── the layout ledger (config.positionsFile() — a JSON map) ──
 	readPositions(): Record<string, Position> {

@@ -15,7 +15,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AddDocumentsBody, choicesFor, statusLabel, willImport, type Entry } from "../components/add-documents-dialog.tsx";
 import { DocumentsLibraryBody, matchesQuery } from "../components/documents-library.tsx";
-import { DocumentReaderBody, withoutPageImages } from "../components/document-reader.tsx";
+import { DocumentReaderBody, RebuildPanel, withoutPageImages, type RebuildPhase } from "../components/document-reader.tsx";
 import type { DocumentSummary } from "../src/core/index.ts";
 
 const of = { id: "doc_aaaaaaaaaaaa", title: "Mutex basics", importedAt: "2026-10-01T10:00:00.000Z" };
@@ -108,6 +108,33 @@ describe("Documents library", () => {
 		assert.ok(empty.includes("documents-empty"));
 		assert.ok(matchesQuery(doc(), "semaphor") && matchesQuery(doc(), "FINAL") && matchesQuery(doc(), "lock"));
 		assert.ok(!matchesQuery(doc(), "unrelated"));
+	});
+});
+
+describe("Rebuilding from the reader", () => {
+	const panel = (phase: RebuildPhase, error?: string) =>
+		renderToStaticMarkup(createElement(RebuildPanel, { chunks: 118, phase, error, onAsk: () => {}, onConfirm: () => {}, onCancel: () => {} }));
+
+	it("only a document that can be rebuilt shows the panel", () => {
+		const reader = (rebuild?: { chunks: number }) =>
+			renderToStaticMarkup(createElement(DocumentReaderBody, { meta: doc(), markdown: "# x", rebuild }));
+		assert.ok(!reader().includes("Rebuild index"));
+		assert.ok(reader({ chunks: 3 }).includes("Rebuild index"));
+	});
+
+	it("asks first, naming the model calls and that old concepts stay until it succeeds", () => {
+		assert.ok(!panel("idle").includes("236"));
+		const asking = panel("confirm");
+		assert.ok(asking.includes("about 118 chunks"));
+		assert.ok(asking.includes("at least 236 model calls"));
+		assert.ok(asking.includes("current concepts stay"));
+		assert.ok(asking.includes("Start rebuild"));
+	});
+
+	it("says where to follow it once started, and shows a refusal", () => {
+		assert.ok(panel("started").includes("activity"));
+		assert.ok(!panel("started").includes("Start rebuild"));
+		assert.ok(panel("idle", "Already running.").includes("Already running."));
 	});
 });
 

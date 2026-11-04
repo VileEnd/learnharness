@@ -6,7 +6,9 @@
  */
 
 import { createDescriber } from "../agent/subagents/describe.ts";
-import { extraction, resolveEngine, topicist } from "./chat-handler.ts";
+import { extractionStatuses } from "../agent/subagents/extraction.ts";
+import { attribution, extraction, resolveEngine, topicist } from "./chat-handler.ts";
+import { retireSource } from "../core/graph-deletion.ts";
 import type { DocumentStore } from "../core/ports.ts";
 import { docIndex } from "./doc-index.ts";
 import { createDocumentService, withActivityRow } from "./documents.ts";
@@ -51,6 +53,10 @@ export const documents = createDocumentService({
 	applyTopicRows: (input) => extraction.applyTopicRows(input),
 	ocr,
 	notify: (event) => notify(event),
+	retireSource: (oldId, replacementId) => void retireSource(stores.graphStore, oldId, replacementId),
+	sourceBusy: (sourceId) => extractionStatuses().some((run) => run.chatId === sourceId),
+	// Answers linked to concepts the rebuild removed get linked to the new ones.
+	onRebuilt: () => withActivityRow("learner-attribution", "Linking answers to concepts", () => attribution.attributePending()).then(() => {}),
 });
 
 /** The one-off topic backfill for session concepts (POST /api/graph/topics/backfill). */

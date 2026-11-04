@@ -429,10 +429,13 @@ export function deriveEvidence(
 /** The graded items of a teaching chat that still need attribution: untagged
  *  (the call carried no `concepts`) and with no ledger row yet (an explicit
  *  empty row counts as attributed). Practice sessions are tagged by `target`
- *  and never attributed. */
-export function unattributedItems(chat: ChatRecord, attributions: readonly AttributionRow[]): GradedItem[] {
+ *  and never attributed. With `liveNodes`, a row whose concepts have all left
+ *  the graph no longer counts, so the answer gets linked again; the ledger stays
+ *  append-only, and deriveEvidence already ignores concepts that are gone. */
+export function unattributedItems(chat: ChatRecord, attributions: readonly AttributionRow[], liveNodes?: ReadonlySet<string>): GradedItem[] {
 	if (chat.kind === "practice") return [];
-	const done = new Set(attributions.map((r) => attributionKey(r.chatId, r.toolCallId)));
+	const counts = (r: AttributionRow) => !liveNodes || r.conceptIds.length === 0 || r.conceptIds.some((id) => liveNodes.has(id));
+	const done = new Set(attributions.filter(counts).map((r) => attributionKey(r.chatId, r.toolCallId)));
 	return gradedItems(chat).filter(
 		(item) => item.kind !== "practice" && item.tags.length === 0 && !done.has(attributionKey(chat.id, item.toolCallId)),
 	);

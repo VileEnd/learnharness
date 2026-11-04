@@ -59,7 +59,7 @@ export interface AttributionService {
 	schedule(chatId: string): void;
 	/** Attribute every chat with pending graded items, one after another (the admin backfill). */
 	attributePending(): Promise<{ chats: number; rows: number }>;
-	/** Does the chat have graded items still waiting for attribution? (Record-only, cheap.) */
+	/** Does the chat have graded items still waiting for attribution? (No model call: the record and the ledgers.) */
 	hasPendingItems(chatId: string): boolean;
 }
 
@@ -69,6 +69,7 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 	// size, which grows with every merge) when tried. In memory: a restart retries.
 	const tried = new Map<string, number>();
 	const timers = new Map<string, ReturnType<typeof setTimeout>>();
+	const liveNodes = () => new Set(deps.graphStore.readNodes().map((n) => n.id));
 
 	async function run(chatId: string): Promise<number> {
 		try {
@@ -78,7 +79,7 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 			const mergeState = coverage.filter((c) => c.chatId === chatId).length;
 			const keyOf = (toolCallId: string) => `${chatId}\u0000${toolCallId}`;
 			// Skip items already tried at this merge state: only a new merge can change the answer.
-			const items = unattributedItems(record, deps.learnerStore.readAttributions()).filter((i) => tried.get(keyOf(i.toolCallId)) !== mergeState);
+			const items = unattributedItems(record, deps.learnerStore.readAttributions(), liveNodes()).filter((i) => tried.get(keyOf(i.toolCallId)) !== mergeState);
 			if (items.length === 0) return 0;
 			const nodes = new Map(getGraph(deps.graphStore).nodes.map((n) => [n.id, n]));
 			const own = [...nodes.values()].filter((n) => n.provenance.some((p) => p.chatId === chatId));
@@ -174,7 +175,7 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 		},
 		hasPendingItems(chatId) {
 			const record = deps.chatStore.getChat(chatId);
-			return !!record && unattributedItems(record, deps.learnerStore.readAttributions()).length > 0;
+			return !!record && unattributedItems(record, deps.learnerStore.readAttributions(), liveNodes()).length > 0;
 		},
 	};
 }

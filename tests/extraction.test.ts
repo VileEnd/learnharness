@@ -117,6 +117,7 @@ function memoryLedgers() {
 				source.extractions = [...(source.extractions ?? []), entry];
 			}
 		},
+		removeSource: (id: string) => void sources.delete(id),
 		// Cluster labelings — mirrors the real store: append dedupes by id.
 		// The layout ledger — settleGraphLayout writes it after each merge.
 		readPositions: () => Object.fromEntries([...positions].map(([id, p]) => [id, { ...p }])),

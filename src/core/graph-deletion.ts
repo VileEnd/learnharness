@@ -46,7 +46,8 @@
  * Not touched, by design:
  *   - imported-notes sources (src_…) — a different front door with its
  *     own lifecycle (re-import dedupes by path hash); this wave deletes
- *     CHATS.
+ *     CHATS. The exception is retireSource below, which gives one source
+ *     up deliberately, once another has replaced it.
  *
  * Resurrection safety: the deletion runs as ONE synchronous block (no
  * awaits — atomic vs the event loop, so no extraction append can
@@ -234,6 +235,23 @@ export function deleteChatTraces(graphStore: GraphStore, chatId: string, mode: C
 		graphStore.writePositions(prunedPositions);
 	}
 
+	return stats;
+}
+
+// ─── retiring a replaced source ───────────────────────────────────────────────
+
+/**
+ * A rebuilt document's old source gives way to the one that replaced it: every
+ * trace of it leaves the ledgers exactly as a deleted chat's does, so a concept
+ * the new extraction also found survives under its id (and with it the learner's
+ * evidence). Its record goes too, its usage moved first: what was spent still
+ * counts. Synchronous for the same reason as deleteChatTraces.
+ */
+export function retireSource(graphStore: GraphStore, oldId: string, replacementId: string): ChatDeletionStats {
+	const stats = deleteChatTraces(graphStore, oldId, "delete-nodes");
+	const old = graphStore.readSources().find((s) => s.id === oldId);
+	for (const entry of old?.extractions ?? []) graphStore.appendSourceUsage(replacementId, entry);
+	graphStore.removeSource(oldId);
 	return stats;
 }
 
