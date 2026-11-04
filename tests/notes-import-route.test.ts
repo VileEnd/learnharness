@@ -87,6 +87,7 @@ it("real route plus in-memory ledgers and faux stages extract identical text onc
 		upsertSource: (source) => { sources.set(source.id, { ...source, extractions: sources.get(source.id)?.extractions ?? [] }); },
 		readSources: () => [...sources.values()],
 		appendSourceUsage: (id, usage) => { sources.get(id)!.extractions!.push(usage); },
+		removeSource: (id) => { sources.delete(id); },
 		readPositions: () => ({}), writePositions: () => {}, rewriteLedgers: () => {},
 	};
 	let calls = 0;

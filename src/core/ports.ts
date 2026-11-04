@@ -124,6 +124,9 @@ export interface GraphStore {
 	/** Append one run's usage to a source record — idempotent per
 	 *  startedAt, mirroring ChatRecord.extractions. */
 	appendSourceUsage(id: string, entry: ExtractionRunUsage): void;
+	/** Drop one source record (a no-op when absent): a rebuilt document's old
+	 *  source, retired by core/graph-deletion.ts retireSource. */
+	removeSource(id: string): void;
 
 	/** The layout ledger (config.positionsFile()): nodeId → resting {x,y}.
 	 *  WRITTEN ONLY by the incremental settle after a merge (core/layout.ts

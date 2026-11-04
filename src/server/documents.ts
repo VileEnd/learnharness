@@ -31,6 +31,7 @@ import { canonicalizeAndStoreTopics } from "../core/topics.ts";
 import { emit } from "../core/events.ts";
 import {
 	classify,
+	contentHash,
 	describedByFrontMatter,
 	documentIdFor,
 	fingerprint,
@@ -40,9 +41,11 @@ import {
 	parseFrontMatter,
 	sha256Hex,
 } from "../core/documents.ts";
-import { isPolicyRefusal, ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
+import { isNowebFile, isRawNoweb, nowebToMarkdown } from "../core/noweb.ts";
+import { FACTORY_SETTINGS, isPolicyRefusal, ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 import type { NotesImportInput } from "../agent/subagents/extraction.ts";
 import { NotesImportError } from "../agent/subagents/extraction.ts";
+import { chunkDocument } from "../agent/subagents/section-chunks.ts";
 import type { DocumentDescription } from "../agent/subagents/describe.ts";
 import { OcrError, type OcrClient, type OcrKnown } from "./ocr-client.ts";
 import type { PushEvent } from "./push.ts";
@@ -132,10 +135,21 @@ export interface DocumentServiceDeps {
 		assignments: ReadonlyArray<{ nodeId: string; topics: readonly string[] }>;
 	}): Promise<number>;
 	notify(event: PushEvent): void | Promise<void>;
+	/** Give up a rebuilt document's old source, its replacement complete. */
+	retireSource?(oldId: string, replacementId: string): void;
+	/** Is an extraction running on this source right now? */
+	sourceBusy?(sourceId: string): boolean;
+	/** A rebuild finished: concepts may have gone (a side channel, contained). */
+	onRebuilt?(): void | Promise<void>;
 	now?: () => Date;
 	/** OCR job poll interval (default 2s; tests pass 0). */
 	pollMs?: number;
 }
+
+/** POST /api/documents/[id]/rebuild's answer. */
+export type RebuildTicket =
+	| { ok: true; docId: string; completion: Promise<ImportCompletion> }
+	| { ok: false; code: "not_found" | "not_rebuildable" | "busy"; error: string };
 
 // ─── the scan registry (the activity dock's "Scanning" rows) ────────────────
 
@@ -212,6 +226,17 @@ function decodeText(bytes: Uint8Array): string | null {
 	return new TextDecoder("utf-8").decode(bytes);
 }
 
+/** A text file as the library stores it: what identity and sections read. */
+function documentText(file: IncomingFile): string | null {
+	const text = decodeText(file.bytes);
+	return text !== null && isNowebFile(file.name) ? nowebToMarkdown(text) : text;
+}
+
+/** A rebuild that finds under this share of a document's concepts went wrong
+ *  somewhere, even though every chunk reported success: removing the old ones
+ *  cannot be undone, so they stay. */
+const MIN_REBUILD_SHARE = 0.25;
+
 const stem = (name: string) => name.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "") || name;
 
 const asSummary = ({ minhash: _sketch, ...rest }: DocumentMeta): DocumentSummary => rest;
@@ -270,7 +295,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			}
 			return { index, name: file.name, kind: "pdf", verdict: { status: "new" } };
 		}
-		const text = decodeText(file.bytes);
+		const text = documentText(file);
 		if (text === null) return { index, name: file.name, kind: "markdown", verdict: { status: "new" }, error: "Not a text or PDF file." };
 		if (normalizeText(text) === "") return { index, name: file.name, kind: "markdown", verdict: { status: "new" }, error: "The file is empty." };
 		return { index, name: file.name, kind: "markdown", verdict: classify(metas, candidateOf(text)) };
@@ -443,7 +468,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 	}
 
 	async function importMarkdown(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined, attachTo?: string): Promise<ImportTicket> {
-		const markdown = decodeText(file.bytes);
+		const markdown = documentText(file);
 		if (markdown === null || normalizeText(markdown) === "") {
 			return { index, name: file.name, outcome: "failed", error: markdown === null ? "Not a text or PDF file." : "The file is empty." };
 		}
@@ -628,15 +653,89 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		}, meta.title);
 	}
 
+	// ── rebuild ───────────────────────────────────────────────────────────────
+
+	/** What a .nw document still needs: its text converted (an old import holds
+	 *  the raw source) and a source of its own, named after that text. Derived,
+	 *  never tracked: a document imported or rebuilt since already sits on that
+	 *  source, so it has nothing to do (null). */
+	function rebuildPlan(meta: DocumentMeta, markdown: string): { markdown: string; sourceId: string } | null {
+		if (!meta.filenames.some(isNowebFile)) return null;
+		const converted = isRawNoweb(markdown) ? nowebToMarkdown(markdown) : markdown;
+		const sourceId = documentIdFor({ contentHash: contentHash(converted) });
+		return meta.sourceId === sourceId ? null : { markdown: converted, sourceId };
+	}
+
+	const rebuilding = new Set<string>();
+
+	/** The concepts a source feeds, those it matched to existing ones included. */
+	const conceptsOf = (sourceId: string): number =>
+		new Set<string>(deps.graph?.readNodes().filter((n) => n.provenance.some((pt) => pt.chatId === sourceId)).map((n) => n.id)).size;
+
+	/** REBUILD a .nw document: the text is converted at once, so search and the
+	 *  reader improve right away, and its concepts are extracted again under a
+	 *  source of their own. The old source is given up only after EVERY chunk has
+	 *  succeeded and the new one holds a fair share of what the old one had; until
+	 *  then both stand, and a failed or stopped run can simply be retried (it
+	 *  re-reads the whole document). The document moves to the new source before
+	 *  the old one goes: dying in between then costs a few leftover concepts,
+	 *  never the concepts themselves or the price of another run. */
+	function rebuild(id: string): RebuildTicket {
+		const meta = store.getMeta(id);
+		const markdown = store.readMarkdown(id);
+		if (!meta || markdown === null) return { ok: false, code: "not_found", error: "No such document" };
+		const plan = rebuildPlan(meta, markdown);
+		if (!plan) return { ok: false, code: "not_rebuildable", error: "This document has nothing to rebuild." };
+		const key = registryKey(id);
+		if (rebuilding.has(key) || deps.sourceBusy?.(meta.sourceId) || deps.sourceBusy?.(plan.sourceId)) {
+			return { ok: false, code: "busy", error: "This document is being extracted right now. Try again when that has finished." };
+		}
+		rebuilding.add(key);
+		const converted: DocumentMeta = plan.markdown === markdown ? meta : { ...meta, ...fingerprint(plan.markdown), updatedAt: now() };
+		const completion = settle(async () => {
+			if (converted !== meta) store.save(converted, plan.markdown);
+			const done = await extract({ ...converted, sourceId: plan.sourceId }, converted.title, plan.markdown);
+			const found = conceptsOf(plan.sourceId);
+			const had = conceptsOf(meta.sourceId);
+			if (found === 0) throw new Error("The rebuild found no concepts, so the existing ones were kept.");
+			if (found < had * MIN_REBUILD_SHARE) {
+				throw new Error(`The rebuild found only ${found} concepts where this document had ${had}, so the existing ones were kept.`);
+			}
+			const latest = store.getMeta(id);
+			if (latest?.contentHash !== converted.contentHash) {
+				throw new Error("The document changed during the rebuild, so the existing concepts were kept.");
+			}
+			store.save({ ...latest, sourceId: plan.sourceId, updatedAt: now() }, plan.markdown);
+			deps.retireSource?.(meta.sourceId, plan.sourceId);
+			void Promise.resolve()
+				.then(() => deps.onRebuilt?.())
+				.catch((err: unknown) => console.error(`[documents] after rebuilding ${id}:`, err));
+			return done;
+		}, meta.title).finally(() => rebuilding.delete(key));
+		return { ok: true, docId: id, completion };
+	}
+
+	/** What the reader offers: the rebuild's size in extraction chunks, each one
+	 *  an extract and an audit (null = nothing to rebuild). */
+	function rebuildOffer(meta: DocumentMeta, markdown: string): { chunks: number } | null {
+		const plan = rebuildPlan(meta, markdown);
+		if (!plan) return null;
+		const { sections } = fingerprint(plan.markdown);
+		return { chunks: chunkDocument(plan.markdown, sections, FACTORY_SETTINGS.graph.extractionChunkTokens).length };
+	}
+
 	return {
 		check,
 		importFiles,
 		redescribe,
+		rebuild,
 		list: (): DocumentSummary[] => store.listMetas().map(asSummary),
-		get: (id: string): { meta: DocumentSummary; markdown: string } | null => {
+		get: (id: string): { meta: DocumentSummary; markdown: string; rebuild?: { chunks: number } } | null => {
 			const meta = store.getMeta(id);
 			const markdown = store.readMarkdown(id);
-			return meta && markdown !== null ? { meta: asSummary(meta), markdown } : null;
+			if (!meta || markdown === null) return null;
+			const offer = rebuildOffer(meta, markdown);
+			return { meta: asSummary(meta), markdown, ...(offer ? { rebuild: offer } : {}) };
 		},
 		/** The sidecar's scan estimate for the PDFs among `files`; null when there are none. */
 		estimate: (files: IncomingFile[]) => {

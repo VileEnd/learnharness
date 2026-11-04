@@ -9,6 +9,6 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
 	return withPageTenant(() => {
 		const found = documents.get(id);
 		if (!found) notFound();
-		return <DocumentReader meta={found.meta} markdown={found.markdown} />;
+		return <DocumentReader meta={found.meta} markdown={found.markdown} rebuild={found.rebuild} />;
 	});
 }

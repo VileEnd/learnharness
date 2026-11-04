@@ -61,7 +61,7 @@ export interface Entry {
 	error?: string;
 }
 
-const ACCEPT = ".md,.markdown,.txt,.pdf,text/markdown,text/x-markdown,text/plain,application/pdf";
+const ACCEPT = ".md,.markdown,.txt,.nw,.pdf,text/markdown,text/x-markdown,text/plain,application/pdf";
 
 // ─── pure helpers (exported for the SSR pins) ────────────────────────────────
 

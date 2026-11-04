@@ -141,6 +141,18 @@ describe("unattributedItems", () => {
 		assert.deepEqual(unattributedItems(c, rows).map((i) => i.toolCallId), ["q1"]);
 		assert.deepEqual(unattributedItems(chat("p", [...problem("a"), ...conclude("b", "solved")], "practice"), []), []);
 	});
+
+	it("an item whose linked concepts all died needs linking again; a live link or an empty row stays final", () => {
+		const c = chat("c1", [...quiz("q1", { pick: 1 }), ...quiz("q2", { pick: 1 }), ...quiz("q3", { pick: 1 }), ...quiz("q4", { pick: 1 })]);
+		const rows = [
+			{ chatId: "c1", toolCallId: "q1", conceptIds: ["dead"], at: "t" },
+			{ chatId: "c1", toolCallId: "q2", conceptIds: ["dead", "alive"], at: "t" },
+			{ chatId: "c1", toolCallId: "q3", conceptIds: [], at: "t" },
+			{ chatId: "c1", toolCallId: "q4", conceptIds: ["dead"], at: "t" },
+			{ chatId: "c1", toolCallId: "q4", conceptIds: ["alive"], at: "t2" },
+		];
+		assert.deepEqual(unattributedItems(c, rows, new Set(["alive"])).map((i) => i.toolCallId), ["q1"]);
+	});
 });
 
 // ─── exercise / assess evidence (interactive exercises, PR 1) ───────────────

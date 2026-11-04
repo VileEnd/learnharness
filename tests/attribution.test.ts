@@ -49,6 +49,16 @@ function setup(steps: FauxResponseStep[], opts: { nodes?: GraphNode[] } = {}) {
 }
 
 describe("attribution", () => {
+	it("links an answer again when its concepts are gone, and the new row settles it", async () => {
+		const { service, rows } = setup([call("attribute_items", { links: [{ toolCallId: "q1", conceptIds: ["n3"] }] })]);
+		rows.push({ chatId: "c1", toolCallId: "q1", conceptIds: ["removed"], at: "t" });
+		rows.push({ chatId: "c1", toolCallId: "q2", conceptIds: ["n2"], at: "t" });
+		assert.equal(service.hasPendingItems("c1"), true);
+		assert.equal(await service.attributeChat("c1"), 1);
+		assert.deepEqual(rows.at(-1)!.conceptIds, ["n3"]);
+		assert.equal(service.hasPendingItems("c1"), false);
+	});
+
 	it("fills untagged items and stores empty results; a rerun sends no items", async () => {
 		let prompt = "";
 		const { service, rows } = setup([
