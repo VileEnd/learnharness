@@ -74,7 +74,7 @@ Headers: `X-OpenRouter-Key` on `POST /api/run` and `POST /api/jobs/{id}/retry` i
 Endpoints beyond the browser UI's:
 
 - `GET /healthz` returns `{"ok": true}`.
-- `POST /api/run` (multipart `files`, optional `strategy`) returns `{"job": id}` at once. PDFs over 50 MB get 413; PDFs over 300 pages or unreadable get 422.
+- `POST /api/run` (multipart `files`, optional `strategy`) returns `{"job": id}` at once. PDFs over 200 MB get 413; PDFs over 1000 pages or unreadable get 422.
 - `GET /api/jobs/{id}` returns `{id, status: running|done|failed, strategy, usd, files: [{name, sha256, status: queued|running|done|failed, pages, done_pages, failed_pages, markdown, title, summary, topics, cost_usd, error}]}`. `markdown` is a file name inside the job; fetch it from `GET /api/jobs/{id}/files/{markdown}`. It also works for jobs found only on disk after a restart: `done` if `job.json` exists, else `failed` (interrupted). The job is `failed` only when every file failed; look at the per-file status.
 - `GET /api/by-sha/{sha256}` returns `{job, markdown, title, summary, topics, pages, cost_usd}` for the newest complete conversion of that exact PDF, else 404.
 
