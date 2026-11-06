@@ -7,7 +7,7 @@
  *   drafts/<callId>.json     { rev, scene } the live work-dock draft
  * Implements core/ports.ts DrawingStore. Reads never throw; ids are
  * regex-checked so path-shaped ids read as absent. Writes are atomic
- * (tmp + rename). Construction touches nothing (fixture law): folders are
+ * (atomic-write.ts: fsynced temp + rename). Construction touches nothing (fixture law): folders are
  * created lazily on first write.
  */
 
@@ -16,6 +16,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import { drawingIdOf, sha256Hex, validateDrawingScene, type DrawingScene } from "../core/canvas-core.ts";
 import type { DrawingStore } from "../core/ports.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const DRAWING_ID = /^drw_[0-9a-f]{12}$/;
 const ASSET_ID = /^ast_[0-9a-f]{12}$/;
@@ -25,9 +26,7 @@ const chatDir = (chatId: string) => (SAFE.test(chatId) ? path.join(PATHS.drawing
 
 function writeAtomicBytes(file: string, data: Uint8Array | string): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	const tmp = `${file}.tmp-${process.pid}`;
-	fs.writeFileSync(tmp, data);
-	fs.renameSync(tmp, file);
+	writeFileAtomicSync(file, data);
 }
 
 function readJson(file: string): unknown {

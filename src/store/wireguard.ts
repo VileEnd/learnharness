@@ -10,6 +10,7 @@ import path from "node:path";
 import { globalDataRoot } from "../../config.ts";
 import type { WireGuardStore } from "../core/ports.ts";
 import { PeersFileCorrupt, type WgPeer, type WgServerInfo, type WgStatus } from "../core/contracts/wireguard.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const dir = () => path.join(globalDataRoot(), "wireguard");
 
@@ -48,10 +49,7 @@ export const wireGuardStore: WireGuardStore = {
 	writePeers(peers) {
 		const file = path.join(dir(), "peers.json");
 		fs.mkdirSync(dir(), { recursive: true });
-		const tmp = `${file}.tmp-${process.pid}`;
-		fs.writeFileSync(tmp, `${JSON.stringify({ version: 1, peers }, null, "\t")}\n`, { mode: 0o600 });
-		fs.chmodSync(tmp, 0o600);
-		fs.renameSync(tmp, file);
+		writeFileAtomicSync(file, `${JSON.stringify({ version: 1, peers }, null, "\t")}\n`, { mode: 0o600 });
 	},
 	readStatus() {
 		const s = readJson(path.join(dir(), "status.json")) as Partial<WgStatus> | null;

@@ -9,6 +9,7 @@ import path from "node:path";
 import { globalDataRoot } from "../../config.ts";
 import type { AdminPolicyStore } from "../core/ports.ts";
 import { AdminPolicyCorrupt, type AdminPolicy } from "../core/contracts/admin.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const file = () => path.join(globalDataRoot(), "admin.json");
 
@@ -51,9 +52,6 @@ export const adminPolicyStore: AdminPolicyStore = {
 	writePolicy(p) {
 		const f = file();
 		fs.mkdirSync(path.dirname(f), { recursive: true });
-		const tmp = `${f}.tmp-${process.pid}`;
-		fs.writeFileSync(tmp, `${JSON.stringify(p, null, "\t")}\n`, { mode: 0o600 });
-		fs.chmodSync(tmp, 0o600);
-		fs.renameSync(tmp, f);
+		writeFileAtomicSync(f, `${JSON.stringify(p, null, "\t")}\n`, { mode: 0o600 });
 	},
 };

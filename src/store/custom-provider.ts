@@ -10,6 +10,7 @@ import path from "node:path";
 import { globalDataRoot } from "../../config.ts";
 import type { CustomProviderStore } from "../core/ports.ts";
 import { CustomProviderCorrupt, isCustomProviderConfig } from "../core/contracts/custom-provider.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const file = () => path.join(globalDataRoot(), "custom-provider.json");
 
@@ -34,10 +35,7 @@ export const customProviderStore: CustomProviderStore = {
 	writeConfig(config) {
 		const f = file();
 		fs.mkdirSync(path.dirname(f), { recursive: true });
-		const tmp = `${f}.tmp-${process.pid}`;
-		fs.writeFileSync(tmp, `${JSON.stringify(config, null, "\t")}\n`, { mode: 0o600 });
-		fs.chmodSync(tmp, 0o600);
-		fs.renameSync(tmp, f);
+		writeFileAtomicSync(f, `${JSON.stringify(config, null, "\t")}\n`, { mode: 0o600 });
 	},
 	deleteConfig() {
 		fs.rmSync(file(), { force: true });
