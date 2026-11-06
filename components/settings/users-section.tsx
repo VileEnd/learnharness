@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ModelCatalogEntry, PolicyModel, UserPolicy } from "@/src/core";
 import { modelKey, recommendedFor } from "@/src/core";
-import { costLabel, formatUsd } from "@/components/usage-format";
+import { costLabel, formatHitRate, formatUsd } from "@/components/usage-format";
 import { SettingsGroup } from "./controls.tsx";
 import { isSlotPickable } from "./model-menu";
 
@@ -24,6 +24,8 @@ export interface AdminUsageRow {
 	unpricedCalls: number | null;
 	capUsd: number | null;
 	restricted: boolean;
+	/** Observed cache-hit rate this month; null/absent = no data (never 0%). */
+	cacheHitRate?: number | null;
 	error?: "usage_unreadable";
 }
 
@@ -529,6 +531,11 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 											{row.restricted ? spendLine(row) : "admin — unrestricted"}
 											{row.restricted && row.unpricedCalls !== null && row.unpricedCalls > 0 && ` (+${row.unpricedCalls} unpriced calls)`}
 											{row.error === "usage_unreadable" && " · Usage unavailable"}
+										</span>
+									)}
+									{row?.cacheHitRate != null && (
+										<span data-testid={`user-cache-${u.id}`} className="text-xs text-muted-foreground">
+											cache hit {formatHitRate(row.cacheHitRate)}
 										</span>
 									)}
 									{reached && (

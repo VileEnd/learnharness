@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { type SessionPricing, type TurnUsage } from "@/src/core";
-import { costLabel as formatCost, formatTokens, prettyModel } from "@/components/usage-format";
+import { sessionCacheHitRate, type SessionPricing, type TurnUsage } from "@/src/core";
+import { costLabel as formatCost, formatHitRate, formatTokens, prettyModel } from "@/components/usage-format";
 import { CanvasPill, ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
 
 export function formatContextMeasurement(tokens: number | null, limit: number | null): string {
@@ -91,6 +91,7 @@ export function StatsBar({
 	const limits = useMemo(() => (catalog ? catalogLimits(catalog) : undefined), [catalog]);
 	const limit = selectedModel ? limits?.get(selectedModel) ?? null : null;
 	const contextLabel = formatContextMeasurement(contextTokens, limit);
+	const cacheHitRate = useMemo(() => sessionCacheHitRate({ turns }), [turns]);
 	const { cost = 0, unpriced = turns.length } = pricing ?? {};
 	// Honest cost: show dollars only when at least one turn priced;
 	// otherwise "—" (never a fake $0.0000).
@@ -156,6 +157,12 @@ export function StatsBar({
 								<span>Total cost</span>
 								<span className="tabular-nums text-card-foreground">{costLabel}</span>
 							</div>
+							{cacheHitRate !== null && (
+								<div data-testid="stats-cache-hit-rate" className="flex justify-between gap-2">
+									<span>Cache hit rate</span>
+									<span className="tabular-nums text-card-foreground">{formatHitRate(cacheHitRate)}</span>
+								</div>
+							)}
 							{unpriced > 0 && (
 								<div className="flex justify-between gap-2">
 									<span>Unpriced turns</span>

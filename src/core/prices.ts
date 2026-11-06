@@ -26,6 +26,34 @@ export function sumSteps(steps: readonly CallUsage[]): CallUsage {
 	};
 }
 
+/** Reads over all prompt tokens (fresh + read + write), or null when there is
+ * nothing honest to show: no prompt tokens, or no positive reads. Absent is
+ * absent, never 0%. Shared by the session stats and the usage folds. */
+export function cacheHitRate(cacheReadTokens: number, promptTokens: number): number | null {
+	return cacheReadTokens > 0 && promptTokens > 0 && Number.isFinite(promptTokens) ? cacheReadTokens / promptTokens : null;
+}
+
+/** Observed session-wide token reuse, not a prediction of cache warmth.
+ * Fresh input excludes both cache buckets, so the prompt is input + read +
+ * write; writes count once (the 1h bucket is a subset). Missing cache counts
+ * mean no recorded reuse, not proven misses. Incomplete or invalid input
+ * (missing inputTokens, negative, NaN) yields no rate at all. */
+export function sessionCacheHitRate(record: Pick<ChatRecord, "turns">): number | null {
+	let promptTokens = 0;
+	let cacheReadTokens = 0;
+	for (const turn of record.turns ?? []) {
+		for (const step of turn.steps) {
+			const input = step.inputTokens;
+			const read = step.cacheReadTokens ?? 0;
+			const write = step.cacheWriteTokens ?? 0;
+			if (input === undefined || [input, read, write].some((v) => !Number.isFinite(v) || v < 0)) return null;
+			promptTokens += input + read + write;
+			cacheReadTokens += read;
+		}
+	}
+	return cacheHitRate(cacheReadTokens, promptTokens);
+}
+
 export function turnCost(turn: Pick<TurnUsage, "model" | "steps">, price: CallPricer): number | null {
 	if (turn.steps.length === 0) return null;
 	let total = 0;

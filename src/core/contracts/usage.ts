@@ -45,6 +45,10 @@ export interface CategoryTotal {
 	calls: number;
 	tokens: number;
 	unpriced: number;
+	/** Σ cache reads and Σ (fresh input + reads + writes) over the lines that
+	 *  recorded input tokens; the hit rate is their ratio (cacheHitRate). */
+	cacheReadTokens: number;
+	promptTokens: number;
 }
 
 export interface UsageMonth {

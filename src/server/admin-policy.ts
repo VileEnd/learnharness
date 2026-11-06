@@ -12,6 +12,7 @@ import { LOCAL_TENANT, TENANT_ID_RE, currentTenant, multiUser, runAsTenant } fro
 import { monthKey } from "../core/usage.ts";
 import { keycloakAdmin } from "./keycloak-admin.ts";
 import { spentThisMonth } from "./model-gate.ts";
+import { monthCacheHit } from "./usage.ts";
 import { currentPolicy, setDefaults, setUserPolicy, validatePolicy } from "./policy.ts";
 
 const corrupt = () => Response.json({ error: "admin_policy_corrupt" }, { status: 500 });
@@ -96,10 +97,13 @@ export function adminUsage(): Promise<Response> {
 			const tenant = id === LOCAL_TENANT.id ? LOCAL_TENANT : { id, name: id, isAdmin: false };
 			try {
 				const { usd, unpriced } = runAsTenant(tenant, () => spentThisMonth());
-				return { userId: id, spentUsd: usd as number | null, unpricedCalls: unpriced as number | null, capUsd, restricted };
+				// Side channel: a failed hit-rate fold leaves it absent, never the row.
+				let cacheHitRate: number | null = null;
+				try { cacheHitRate = runAsTenant(tenant, () => monthCacheHit()); } catch { /* absent */ }
+				return { userId: id, spentUsd: usd as number | null, unpricedCalls: unpriced as number | null, capUsd, restricted, cacheHitRate };
 			} catch (e) {
 				console.error(`[admin-usage] cannot read usage for ${id}:`, e);
-				return { userId: id, spentUsd: null, unpricedCalls: null, capUsd, restricted, error: "usage_unreadable" as const };
+				return { userId: id, spentUsd: null, unpricedCalls: null, capUsd, restricted, cacheHitRate: null, error: "usage_unreadable" as const };
 			}
 		});
 		return Response.json({ month: monthKey(new Date()), users });

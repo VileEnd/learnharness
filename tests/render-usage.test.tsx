@@ -12,14 +12,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { UsageMonthControl, UsageMonthPanel } from "../components/usage/month-pill.tsx";
 import type { CategoryTotal, UsageCategory, UsageMonthView } from "../src/core/index.ts";
 
-const ZERO: CategoryTotal = { usd: null, calls: 0, tokens: 0, unpriced: 0 };
+const ZERO: CategoryTotal = { usd: null, calls: 0, tokens: 0, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 };
 
 function view(over: Partial<UsageMonthView> = {}): UsageMonthView {
 	const categories = Object.fromEntries(
 		(["teaching", "practice", "canvas-reader", "graph", "jobs", "library", "learner", "search"] as UsageCategory[]).map((c) => [c, { ...ZERO }]),
 	) as Record<UsageCategory, CategoryTotal>;
-	categories.teaching = { usd: 0.3, calls: 12, tokens: 1000, unpriced: 0 };
-	categories.graph = { usd: 0.12, calls: 4, tokens: 500, unpriced: 0 };
+	categories.teaching = { usd: 0.3, calls: 12, tokens: 1000, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 };
+	categories.graph = { usd: 0.12, calls: 4, tokens: 500, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 };
 	return {
 		month: "2026-10",
 		totalUsd: 0.42,

@@ -13,6 +13,11 @@ export function costLabel(dollars: number | null, format = formatUsd): string {
 	return dollars === null ? "—" : format(dollars);
 }
 
+/** A cache-hit rate as "90.0%"; absent renders "—", never "0%". */
+export function formatHitRate(rate: number | null | undefined): string {
+	return rate === null || rate === undefined ? "—" : `${(rate * 100).toFixed(1)}%`;
+}
+
 /** 38000 → "38k", 1234567 → "1.2M" — trimmed, never "38.0k". */
 export function formatTokens(n: number): string {
 	if (n >= 1e6) return `${+(n / 1e6).toFixed(1)}M`;
