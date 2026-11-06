@@ -20,7 +20,7 @@ const { documentStore } = await import("../src/store/documents.ts");
 const { createOcrClient } = await import("../src/server/ocr-client.ts");
 const { NotesImportError } = await import("../src/agent/subagents/extraction.ts");
 const { fingerprint } = await import("../src/core/documents.ts");
-const { retireSource } = await import("../src/core/graph-deletion.ts");
+const { retireSource, deleteChatTraces } = await import("../src/core/graph-deletion.ts");
 const { extraction } = await import("../src/server/chat-handler.ts");
 const { stores } = await import("../src/server/stores.ts");
 const rebuildRoute = await import("../app/api/documents/[id]/rebuild/route.ts");
@@ -335,6 +335,34 @@ describe("retireSource", () => {
 		assert.deepEqual([...new Set(graph.readNodes().map((n) => n.id))].sort(), ["matched", "only_new"]);
 		assert.deepEqual(graph.readSources().map((s) => s.id), ["new"]);
 		assert.deepEqual(graph.readSources()[0]!.extractions, [usage], "what was spent still counts");
+	});
+});
+
+describe("provenance-free nodes survive a source deletion", () => {
+	const legacy = (id: string): GraphNode => ({ ...node(id, "x"), provenance: [] });
+	const seeded = () => {
+		const graph = memoryGraphStore();
+		graph.upsertSource({ id: "old", filePath: "t", importedAt: AT });
+		graph.upsertSource({ id: "new", filePath: "t", importedAt: AT });
+		graph.appendNode(node("only_old", "old"));
+		graph.appendNode(legacy("legacy"));
+		graph.writePositions({ only_old: { x: 1, y: 1 }, legacy: { x: 2, y: 2 } });
+		return graph;
+	};
+	const ids = (graph: ReturnType<typeof seeded>) => [...new Set(graph.readNodes().map((n) => n.id))];
+
+	it("retireSource (the rebuild path) keeps them and their positions", () => {
+		const graph = seeded();
+		retireSource(graph, "old", "new");
+		assert.deepEqual(ids(graph), ["legacy"]);
+		assert.deepEqual(Object.keys(graph.readPositions()), ["legacy"]);
+	});
+
+	it("chat delete-nodes keeps them too", () => {
+		const graph = seeded();
+		deleteChatTraces(graph, "old", "delete-nodes");
+		assert.deepEqual(ids(graph), ["legacy"]);
+		assert.deepEqual(Object.keys(graph.readPositions()), ["legacy"]);
 	});
 });
 
