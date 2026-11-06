@@ -53,6 +53,14 @@ in
 
   config = {
     virtualisation.docker.enable = true;
+    # Every deploy rebuilds the images on a small disk: prune weekly. Unused
+    # images and build cache older than a week go; recent cache stays so
+    # redeploys remain fast. No --volumes: the bind-mounted data is untouched.
+    virtualisation.docker.autoPrune = {
+      enable = true;
+      dates = "weekly";
+      flags = [ "--all" "--filter" "until=168h" ];
+    };
 
     systemd.services.learnharness-stack = {
       description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app, OCR, Claude runner)";

@@ -144,9 +144,17 @@ export function deleteChatTraces(graphStore: GraphStore, chatId: string, mode: C
 	//    drop, dangling the chain.)
 	const survives = (points: ReadonlyArray<{ chatId: string }>): boolean =>
 		points.some((pt) => pt.chatId !== chatId);
+	//    Only nodes the deleted source TOUCHED (at least one of its points on
+	//    some line) can die. A node it never touched — e.g. a provenance-free
+	//    legacy node — is outside this deletion's blast radius, not an orphan
+	//    created by removing the source, so it is always live.
+	const touchedNodes = new Set<string>();
+	for (const line of nodeLines) {
+		if (line.provenance.some((pt) => pt.chatId === chatId)) touchedNodes.add(line.id);
+	}
 	const live = new Set<string>();
 	for (const line of nodeLines) {
-		if (survives(line.provenance)) live.add(line.id);
+		if (!touchedNodes.has(line.id) || survives(line.provenance)) live.add(line.id);
 	}
 
 	// 2. Node lines. Per-line (each line is ONE extraction run's append, so

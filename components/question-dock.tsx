@@ -113,6 +113,9 @@ export interface QuestionDockProps {
 	/** Exercise calls only: the attempt-loop state to start from (recovery,
 	 *  and the seam the render tests drive). Fresh questions start empty. */
 	initialAttempt?: ExerciseAttemptState;
+	/** Malformed-question exit: opens the same confirm as Esc (silent
+	 *  dismissal). A button, so a touch device is never stuck. */
+	onDiscard?: () => void;
 }
 
 export function QuestionDock({
@@ -130,6 +133,7 @@ export function QuestionDock({
 	dictationClaim = true,
 	compactionRunning = false,
 	initialAttempt,
+	onDiscard,
 }: QuestionDockProps) {
 	// The probe-phase names (owner, 2026-10-09) canonicalize onto their
 	// teach twins for every dock concern — parse dispatch, labels, kinds:
@@ -167,7 +171,12 @@ export function QuestionDock({
 	if (!parsed) {
 		return (
 			<div data-testid="malformed-question" className="rounded-xl border border-dashed bg-card/60 p-3 text-sm text-muted-foreground">
-				This question arrived malformed — the transcript keeps the retry.
+				<p>This question could not be displayed.</p>
+				{onDiscard && (
+					<Button type="button" variant="outline" size="sm" className="mt-2" onClick={onDiscard}>
+						Discard question
+					</Button>
+				)}
 			</div>
 		);
 	}

@@ -15,7 +15,7 @@ import type { ChatStore } from "../core/ports.ts";
 import type { ChatRecord, ChatSettings, ChatSummary, ExtractionRunUsage, PlanTree, TurnUsage } from "../core/contracts.ts";
 import { CURRENT_CHAT_VERSION } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
-import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
+import { activeProblemOf, activeWorkOf, danglingQuestionOf } from "../core/native-messages.ts";
 import { phaseAt3Lh } from "../core/phases.ts";
 
 function chatFile(id: string): string {
@@ -106,14 +106,19 @@ function listChats(): ChatSummary[] {
 						// native-messages.ts danglingQuestionOf). Liveness (busy) is
 						// NOT record-derived — the API route merges it (ChatListItem).
 						phase: phaseAt3Lh(messages),
-						pendingQuestion: danglingQuestionOf(messages) !== null,
+						// An open canvas task (work/sketch) is not a dock question,
+						// but it waits on the learner all the same: the sidebar
+						// shows it as "Waiting for input" too.
+						pendingQuestion: danglingQuestionOf(messages) !== null || activeWorkOf(messages) !== null,
+						// Practice: a posed problem with no conclude ("Problem waiting").
+						pendingProblem: activeProblemOf(messages) !== null,
 					};
 				} catch (err) {
 					console.error(`[chat ${summary.id}] summary projection failed:`, err);
 					return null;
 				}
 			})
-			.filter((s): s is ChatSummary => s !== null)
+			.filter((s) => s !== null)
 			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	} catch {
 		return [];

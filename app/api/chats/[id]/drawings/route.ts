@@ -1,4 +1,4 @@
-import { validateDrawingScene } from "@/src/core";
+import { checkPngDimensions, validateDrawingScene } from "@/src/core";
 import { getChat, stores, withTenant } from "@/src/server";
 
 /** Learner sketch/work submission: multipart `scene` (JSON) + `png` (file).
@@ -26,6 +26,9 @@ export const POST = withTenant(async (req: Request, { params }: { params: Promis
 	if (png.size > MAX_PNG_BYTES) return Response.json({ error: "png too large (max 10 MB)" }, { status: 413 });
 	const bytes = new Uint8Array(await png.arrayBuffer());
 	if (!PNG_MAGIC.every((b, i) => bytes[i] === b)) return Response.json({ error: "png is not a PNG" }, { status: 400 });
+	// Judge the declared size from the header before anything decodes the pixels.
+	const dimensions = checkPngDimensions(bytes);
+	if (!dimensions.ok) return Response.json({ error: dimensions.error }, { status: 413 });
 	const { drawingId } = stores.drawingStore.saveSubmission(id, scene.scene, bytes);
 	return Response.json({ drawingId });
 });

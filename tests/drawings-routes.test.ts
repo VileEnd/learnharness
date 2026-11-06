@@ -19,7 +19,15 @@ after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 const chat = stores.chatStore.createChat("t");
 const scene = { version: 1, objects: [{ id: "s1", z: 0, type: "stroke", brush: "pen", color: "ink", size: 3, points: [[0, 0, 1], [4, 4, 1]] }] };
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+/** Signature + an IHDR header declaring width x height (no pixel data needed). */
+function png(width: number, height: number): Uint8Array {
+	const bytes = new Uint8Array(33);
+	bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+	new DataView(bytes.buffer).setUint32(16, width);
+	new DataView(bytes.buffer).setUint32(20, height);
+	return bytes;
+}
+const PNG = png(64, 64);
 const ctx = <T extends Record<string, string> = Record<never, string>>(extra?: T) => ({ params: Promise.resolve({ id: chat.id, ...extra } as { id: string } & T) });
 
 function submit(bytes: Uint8Array) {
@@ -32,6 +40,13 @@ function submit(bytes: Uint8Array) {
 it("POST rejects non-PNG bytes", async () => {
 	const res = await submit(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
 	assert.equal(res.status, 400);
+});
+
+it("POST rejects an oversize PNG from its header, before any decode", async () => {
+	const res = await submit(png(100_000, 100_000));
+	assert.equal(res.status, 413);
+	assert.match((await res.json()).error, /4096 pixels per side/);
+	assert.equal((await submit(png(4096, 2048))).status, 200, "at the limit still passes");
 });
 
 it("POST stores a drawing and GET png sets immutable cache", async () => {

@@ -54,7 +54,7 @@
  * Read-only toward the graph.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import {
 	ChevronDownIcon,
@@ -148,6 +148,17 @@ export function ChainTableBody({
 	selectMode?: boolean;
 	onSelect?: () => void;
 }) {
+	// Scoped Find: while the chains view is open (this body is mounted only
+	// then), Mod+F focuses THIS search; the graph's own listener stands down.
+	const searchRef = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		const onFind = () => {
+			searchRef.current?.focus();
+			searchRef.current?.select();
+		};
+		window.addEventListener("lh:kbd-find", onFind);
+		return () => window.removeEventListener("lh:kbd-find", onFind);
+	}, []);
 	const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 	const chains = useMemo(() => chainsForSelection(nodes, storedChains), [nodes, storedChains]);
 	const searching = query.trim() !== "";
@@ -423,6 +434,7 @@ export function ChainTableBody({
 				<div className="relative min-w-0 max-w-56 flex-1 sm:w-auto sm:flex-none sm:shrink-0">
 					<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 					<input
+						ref={searchRef}
 						value={query}
 						data-testid="chain-table-search"
 						onChange={(e) => onQuery(e.target.value)}
@@ -537,7 +549,7 @@ export function ChainTableBody({
 				<div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-2 pb-4">
 					<div
 						data-testid="chain-selection-bar"
-						className="pointer-events-auto mb-[env(safe-area-inset-bottom)] flex max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full border bg-card px-4 py-2 shadow-lg"
+						className="pointer-events-auto mb-[env(safe-area-inset-bottom)] flex max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full border bg-card py-2 pl-4 pr-2 shadow-lg"
 					>
 						<span data-testid="chain-selected-summary" className="text-xs font-medium">
 							{selection.size} {selection.size === 1 ? "node" : "nodes"} →{" "}

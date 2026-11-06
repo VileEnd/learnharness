@@ -69,6 +69,7 @@ function renderDock(props: {
 	toolCallId: string;
 	input: never;
 	onSubmit?: () => void;
+	onDiscard?: () => void;
 }) {
 	// expanded=true renders the full form (the collapsed bar is covered by the
 	// QuestionDockBar test below). No scroll context needed — the DockOverlay
@@ -233,7 +234,15 @@ describe("render smoke tests", () => {
 			input: { question: "q?", options: JSON.stringify([{ label: "a" }, { label: "b" }]) } as never,
 		});
 		assert.ok(html.includes('data-testid="malformed-question"'));
-		assert.match(html, /malformed/);
+		assert.match(html, /could not be displayed/);
+		assert.ok(!html.includes("Discard question"), "no button without a discard handler");
+		const withDiscard = renderDock({
+			toolName: "quiz",
+			toolCallId: "bad",
+			input: { question: "q?", options: "nope" } as never,
+			onDiscard: () => {},
+		});
+		assert.match(withDiscard, /Discard question/);
 	});
 
 	it("phase scales the thinking field: teaching invites depth, probing stays quick", () => {
