@@ -467,6 +467,48 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 		assert.deepEqual(await pipeline.runExtraction(chatId), { nodes: 2, chains: 1 });
 	});
 
+	it("bounded auditor review: preloaded ranked candidates, find_candidates tool, explicit tool-submission prompt, equivalence bias kept", async () => {
+		const { chatId } = fixtureChat();
+		const ledgers = memoryLedgers();
+		ledgers.appendNode({
+			id: "n_existing",
+			name: "Derivative",
+			statement: "Derivatives measure rates of change",
+			aliases: [],
+			createdAt: "2026-08-01T00:00:00.000Z",
+			provenance: [{ chatId: "older", messageId: "m1" }],
+		});
+		let seen: string | undefined;
+		const auditor = fauxEngine([
+			(context) => {
+				// System prompt, tool declarations and the user prompt all ride in the messages.
+				seen = JSON.stringify(context.messages);
+				return fauxAssistantMessage(
+					[fauxToolCall("submit_review", { links: [{ id: "p1", linkTo: "n_existing" }] }, { id: "r1" })],
+					{ stopReason: "toolUse" },
+				);
+			},
+		]);
+		const pipeline = createExtractionPipeline({
+			chatStore,
+			graphStore: ledgers,
+			extractor: submitModel("submit_findings", FINDINGS),
+			auditor,
+		});
+		await pipeline.runExtraction(chatId);
+
+		assert.ok(seen, "the auditor ran");
+		assert.match(seen, /CALLING the submit_review TOOL/);
+		assert.match(seen, /EQUIVALENCE BIAS/);
+		assert.match(seen, /paraphrases, rewordings, and compressions of the same claim MERGE/);
+		assert.doesNotMatch(seen, /SMALL and FINITE/);
+		assert.match(seen, /"name":"find_candidates"|find_candidates/);
+		// The candidate batch is in the prompt: matches + candidates with the full statement.
+		assert.match(seen, /candidateIds/);
+		assert.match(seen, /Derivatives measure rates of change/);
+		assert.ok(ledgers.readNodes().some((n) => n.id === "n_existing" && n.provenance.some((pt) => pt.chatId === chatId)), "the link still merges");
+	});
+
 	it("runs end to end: findings → audit verdict (identity) → deterministic merge + checkpoint", async () => {
 		const { chatId } = fixtureChat();
 		const ledgers = memoryLedgers();

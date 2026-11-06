@@ -209,7 +209,7 @@ export interface CoverageEntry {
  * follows/supports edges; the auditor NEVER sees
  * the source — its job is preparing the merge: identity verdicts
  * (link-or-create, merging equivalent forms of the same proposition) via
- * graph-exploration tools (find / list_sessions / list_propositions), and
+ * graph-exploration tools (find_candidates / list_sessions / list_propositions), and
  * it may draw BRIDGING edges from existing graph nodes to the new
  * propositions; the merger (core/graph.ts, deterministic) applies the
  * verdicts and appends. Quiz events and understanding observations are
