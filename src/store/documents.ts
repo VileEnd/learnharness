@@ -3,7 +3,7 @@
  * markdown) + meta.json. Implements core/ports.ts DocumentStore; the server
  * (src/server/documents.ts) is the only writer. Reads never throw: unknown
  * ids, corrupt metas and path-shaped ids read as absent. Writes are atomic
- * (tmp in the same dir + rename, the push store's idiom), document first and
+ * (atomic-write.ts: fsynced temp in the same dir + rename), document first and
  * meta last.
  */
 
@@ -12,16 +12,13 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { DocumentChunkRef, DocumentMeta, DocumentVectors, PendingBatch } from "../core/contracts/documents.ts";
 import type { DocumentStore } from "../core/ports.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const ID = /^doc_[0-9a-f]{12,64}$/;
 
 const dirOf = (id: string) => path.join(PATHS.documents, id);
 
-function writeAtomic(file: string, data: string): void {
-	const tmp = `${file}.tmp-${process.pid}`;
-	fs.writeFileSync(tmp, data);
-	fs.renameSync(tmp, file);
-}
+const writeAtomic = (file: string, data: string): void => writeFileAtomicSync(file, data);
 
 function isMeta(v: unknown): v is DocumentMeta {
 	const m = v as DocumentMeta | null;
@@ -48,11 +45,7 @@ function getMeta(id: string): DocumentMeta | null {
 	}
 }
 
-function writeAtomicBytes(file: string, data: Uint8Array): void {
-	const tmp = `${file}.tmp-${process.pid}`;
-	fs.writeFileSync(tmp, data);
-	fs.renameSync(tmp, file);
-}
+const writeAtomicBytes = (file: string, data: Uint8Array): void => writeFileAtomicSync(file, data);
 
 interface ChunksFile {
 	model: string;

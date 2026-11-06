@@ -51,6 +51,7 @@ import type {
 } from "../core/contracts.ts";
 import type { GraphStore } from "../core/ports.ts";
 import { multiUser } from "../core/tenant-context.ts";
+import { removeLeftoverTemps, writeFileAtomicSync } from "./atomic-write.ts";
 
 // ─── JSONL primitives ────────────────────────────────────────────────────────
 
@@ -190,9 +191,7 @@ export const graphStore: GraphStore = {
 	writeTopicAliases(aliases: Record<string, string>): void {
 		fs.mkdirSync(path.dirname(topicAliasesFile()), { recursive: true });
 		ensureGraphFormat();
-		const tmp = `${topicAliasesFile()}.tmp-${crypto.randomUUID().slice(0, 8)}`;
-		fs.writeFileSync(tmp, JSON.stringify(aliases, null, "	"), "utf-8");
-		fs.renameSync(tmp, topicAliasesFile());
+		writeFileAtomicSync(topicAliasesFile(), JSON.stringify(aliases, null, "	"));
 	},
 
 	// ── imported-notes bookkeeping (config.sourcesFile() — a JSON map) ──
@@ -222,6 +221,7 @@ export const graphStore: GraphStore = {
 		if (!all[id]) return;
 		delete all[id];
 		writeSourceMap(all);
+		removeLeftoverTemps(sourcesFile()); // a crash temp would keep the removed source's bytes
 	},
 
 	// ── the layout ledger (config.positionsFile() — a JSON map) ──
@@ -255,21 +255,11 @@ export const graphStore: GraphStore = {
 		for (const [key, records] of Object.entries(next) as [keyof typeof files, unknown[]][]) {
 			const file = files[key];
 			fs.mkdirSync(path.dirname(file), { recursive: true });
-			const tmp = `${file}.tmp-${crypto.randomUUID().slice(0, 8)}`;
-			try {
-				// JSONL: one record per line, trailing newline — a reader
-				// must see exactly what appendLine would have written.
-				const body = records.map((record) => JSON.stringify(record)).join("\n") + (records.length > 0 ? "\n" : "");
-				fs.writeFileSync(tmp, body, "utf-8");
-				fs.renameSync(tmp, file);
-			} catch (err) {
-				try {
-					fs.unlinkSync(tmp);
-				} catch {
-					/* the rename either already happened or the tmp never existed */
-				}
-				throw err;
-			}
+			// JSONL: one record per line, trailing newline — a reader
+			// must see exactly what appendLine would have written.
+			const body = records.map((record) => JSON.stringify(record)).join("\n") + (records.length > 0 ? "\n" : "");
+			writeFileAtomicSync(file, body);
+			removeLeftoverTemps(file); // a purged ledger must not survive in a crash temp
 		}
 	},
 };
@@ -301,21 +291,7 @@ function readPositionMap(): Record<string, Position> {
 
 function writePositionMap(positions: Record<string, Position>): void {
 	fs.mkdirSync(path.dirname(positionsFile()), { recursive: true });
-	// Tmp + rename — the same crash-safety rewriteLedgers uses two blocks
-	// up (a9339b3 UI flag): a torn write must never replace the ledger
-	// with a half-written file the reader parses as empty.
-	const tmp = `${positionsFile()}.tmp-${crypto.randomUUID().slice(0, 8)}`;
-	try {
-		fs.writeFileSync(tmp, JSON.stringify({ positions, updatedAt: new Date().toISOString() }, null, "\t"), "utf-8");
-		fs.renameSync(tmp, positionsFile());
-	} catch (err) {
-		try {
-			fs.unlinkSync(tmp);
-		} catch {
-			/* the rename either already happened or the tmp never existed */
-		}
-		throw err;
-	}
+	writeFileAtomicSync(positionsFile(), JSON.stringify({ positions, updatedAt: new Date().toISOString() }, null, "\t"));
 }
 
 const isPosition = (v: unknown): v is Position =>
@@ -347,7 +323,7 @@ function readSourceMap(): Record<string, NotesSource> {
 function writeSourceMap(map: Record<string, NotesSource>): void {
 	fs.mkdirSync(path.dirname(sourcesFile()), { recursive: true });
 	ensureGraphFormat(); // the lazy format stamp (graph-format.ts)
-	fs.writeFileSync(sourcesFile(), JSON.stringify(map, null, "\t"), "utf-8");
+	writeFileAtomicSync(sourcesFile(), JSON.stringify(map, null, "\t"));
 }
 
 // ─── one-way purges at adapter load: dead ledgers are exactly the confusion

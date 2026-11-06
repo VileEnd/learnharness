@@ -12,6 +12,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { OkfFile } from "../core/contracts/okf.ts";
 import type { OkfBundleStore } from "../core/ports.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 /** The stamp lives BESIDE the bundle (`<root>.stamp`), never inside it: the agents browse the root. */
 const stampFile = () => `${path.resolve(PATHS.okf)}.stamp`;
@@ -63,8 +64,6 @@ export const okfBundleStore: OkfBundleStore = {
 	},
 	writeStamp(stamp) {
 		const file = stampFile();
-		const tmp = `${file}.tmp-${process.pid}`;
-		fs.writeFileSync(tmp, stamp);
-		fs.renameSync(tmp, file);
+		writeFileAtomicSync(file, stamp);
 	},
 };

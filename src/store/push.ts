@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { PushStore, PushSubscriptionRecord, VapidKeys } from "../core/ports.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const subsFile = () => path.join(PATHS.push, "subscriptions.json");
 /** The VAPID pair is instance-wide (global), subscriptions are per user. */
@@ -28,10 +29,7 @@ function readJson(file: string): unknown {
 
 function writeJson(file: string, value: unknown, mode: number): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	const tmp = `${file}.tmp-${process.pid}`;
-	fs.writeFileSync(tmp, `${JSON.stringify(value, null, "\t")}\n`, { mode });
-	fs.chmodSync(tmp, mode); // umask may have relaxed the create mode
-	fs.renameSync(tmp, file);
+	writeFileAtomicSync(file, `${JSON.stringify(value, null, "\t")}\n`, { mode });
 }
 
 function isSub(v: unknown): v is PushSubscriptionRecord {

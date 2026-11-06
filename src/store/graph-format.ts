@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { graphFormatFile } from "../../config.ts";
 import { CURRENT_GRAPH_FORMAT_VERSION } from "../core/contracts/graph.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 function stampedVersion(): number | null {
 	let raw: string;
@@ -56,5 +57,5 @@ export function assertGraphFormat(): void {
 export function ensureGraphFormat(): void {
 	if (stampedVersion() !== null) return;
 	fs.mkdirSync(path.dirname(graphFormatFile()), { recursive: true });
-	fs.writeFileSync(graphFormatFile(), JSON.stringify({ version: CURRENT_GRAPH_FORMAT_VERSION }, null, "\t") + "\n", "utf-8");
+	writeFileAtomicSync(graphFormatFile(), JSON.stringify({ version: CURRENT_GRAPH_FORMAT_VERSION }, null, "\t") + "\n");
 }

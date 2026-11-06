@@ -13,15 +13,12 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { ConceptVectors } from "../core/ports.ts";
 import type { ConceptVectorStore } from "../core/ports.ts";
+import { writeFileAtomicSync } from "./atomic-write.ts";
 
 const jsonFile = () => path.join(PATHS.graph, "concept-vectors.json");
 const binFile = () => path.join(PATHS.graph, "concept-vectors.f32");
 
-function writeAtomic(file: string, data: string | Uint8Array): void {
-	const tmp = `${file}.tmp-${process.pid}`;
-	fs.writeFileSync(tmp, data);
-	fs.renameSync(tmp, file);
-}
+const writeAtomic = (file: string, data: string | Uint8Array): void => writeFileAtomicSync(file, data);
 
 interface Meta {
 	model: string;
