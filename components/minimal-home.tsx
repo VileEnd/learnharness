@@ -75,7 +75,7 @@ export function KnowledgeSummary({
 			</p>
 			{empty && (
 				<p className="pt-2 font-ui text-xs text-muted-foreground/70">
-					Nothing here yet — import notes to begin building the graph.
+					Nothing here yet — add documents to begin building the graph.
 				</p>
 			)}
 		</div>

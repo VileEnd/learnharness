@@ -65,7 +65,7 @@ describe("KnowledgeSummary — the quiet home summary (2026-10-06)", () => {
 	it("the empty knowledge base says so, quietly — import is the entry point", () => {
 		const html = render({ propositions: 0, chains: 0, teachSessions: 0, practiceSessions: 0, importedNotes: 0 });
 		assert.ok(html.includes("Nothing here yet"));
-		assert.ok(html.includes("import notes"), "the hint names the entry point");
+		assert.ok(html.includes("add documents"), "the hint names the entry point");
 	});
 
 	it("non-empty shows no empty-state hint", () => {

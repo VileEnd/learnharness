@@ -1303,7 +1303,7 @@ export function GraphView({
 						<WaypointsIcon className="size-10 opacity-40" strokeWidth={1.25} />
 						<div className="text-lg font-medium text-foreground">Knowledge graph</div>
 						<p className="max-w-sm text-sm">
-							Start a session or import notes to build your graph.
+							Start a session or add documents to build your graph.
 						</p>
 					</div>
 				</div>
