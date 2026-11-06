@@ -733,11 +733,10 @@ when none match, and never omit the field. Do not restate findings, invent relat
 output. The merger retains the existing record's name and statement and adds the incoming wording as an alias with
 its provenance.`;
 
-/** The auditor turn budget. The first page of candidates is preloaded, so a
- *  run is normally ONE turn (submit). 8 leaves room for a few targeted
- *  find_candidates / list_propositions lookups and a schema-error retry, and
- *  stays bounded so cost no longer scales with the library. */
-const AUDITOR_MAX_TURNS = 8;
+/** The auditor turn budget, unchanged from before (and upstream's). The first
+ *  page of candidates is preloaded, so a run is normally ONE turn (submit);
+ *  the ceiling only matters when the model keeps looking things up. */
+const AUDITOR_MAX_TURNS = 16;
 
 /** The auditor — one shape for both front doors now (the notes schema was
  *  identical once attribution died). An agentic loop: graph-exploration
