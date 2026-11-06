@@ -402,6 +402,8 @@ export interface ConceptVectors {
 export interface ConceptVectorStore {
 	read(): ConceptVectors | null;
 	write(vectors: ConceptVectors): void;
+	/** Remove the stored vectors (nothing stored = fine). */
+	clear(): void;
 }
 
 // ─── OkfBundleStore — the generated library bundle (data/okf) ───────────────

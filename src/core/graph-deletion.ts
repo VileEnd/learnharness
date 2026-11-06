@@ -263,6 +263,33 @@ export function retireSource(graphStore: GraphStore, oldId: string, replacementI
 	return stats;
 }
 
+/** What deleting a source would take: the concepts only it supports (they
+ *  die) and those other sources or chats also support (they stay, minus its
+ *  provenance). Same survival rule as deleteChatTraces. */
+export function sourceRemovalImpact(graphStore: Pick<GraphStore, "readNodes">, sourceId: string): { concepts: number; shared: number } {
+	const touched = new Set<string>();
+	const survivors = new Set<string>();
+	for (const line of graphStore.readNodes()) {
+		if (line.provenance.some((pt) => pt.chatId === sourceId)) touched.add(line.id);
+		if (line.provenance.some((pt) => pt.chatId !== sourceId)) survivors.add(line.id);
+	}
+	let shared = 0;
+	for (const id of touched) if (survivors.has(id)) shared++;
+	return { concepts: touched.size - shared, shared };
+}
+
+/**
+ * A deleted document's source: every trace of it leaves the ledgers as a
+ * deleted chat's does (concepts only it supports die, shared ones stay minus
+ * its provenance), then its record goes. Synchronous for the same reason as
+ * deleteChatTraces.
+ */
+export function deleteSource(graphStore: GraphStore, sourceId: string): ChatDeletionStats {
+	const stats = deleteChatTraces(graphStore, sourceId, "delete-nodes");
+	graphStore.removeSource(sourceId);
+	return stats;
+}
+
 // ─── single-node deletion (node interlude, owner-locked full-death) ───────────
 
 /**

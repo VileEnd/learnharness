@@ -112,7 +112,7 @@ describe("markdown: check and import", () => {
 		assert.equal(documentStore.readMarkdown(orig.docId!), edited);
 		assert.deepEqual(documentStore.getMeta(orig.docId!)!.filenames, ["one.md", "v2.md"]);
 		assert.equal(extracted.length, 2);
-		assert.equal(extracted[1]!.id, orig.docId, "same graph source");
+		assert.notEqual(extracted[1]!.id, orig.docId, "extracted under a fresh graph source (the swap is tested in documents-rebuild)");
 
 		const [second] = await service.importFiles([md("v3.md", text.replace("term10 ", "other "))], ["new"]);
 		await second!.completion;

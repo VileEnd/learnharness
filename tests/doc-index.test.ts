@@ -488,6 +488,36 @@ describe("ConceptVectorStore", () => {
 	});
 });
 
+describe("deleting a document", () => {
+	beforeEach(() => fs.rmSync(path.join(TMP_DATA, "graph"), { recursive: true, force: true }));
+
+	it("prunes the vectors of concepts that went, and clears the file when none are left", () => {
+		const vec = (rows: number[][]) => Float32Array.from(rows.flat());
+		conceptVectorStore.write({
+			model: "m",
+			dims: 2,
+			entries: { [`cpt_${NODE_A.id}`]: { contentHash: "h", offset: 0 }, [`cpt_${NODE_B.id}`]: { contentHash: "i", offset: 1 } },
+			vectors: vec([[1, 2], [3, 4]]),
+		});
+		const g = fakeGraph([NODE_B]);
+		const index = createDocIndex({ store: documentStore, embedder: () => null, graphStore: g, conceptVectors: conceptVectorStore });
+		index.pruneConcepts();
+		const kept = conceptVectorStore.read()!;
+		assert.deepEqual([Object.keys(kept.entries), kept.entries[`cpt_${NODE_B.id}`]!.offset, [...kept.vectors]], [[`cpt_${NODE_B.id}`], 0, [3, 4]]);
+
+		g.nodes = [];
+		index.pruneConcepts();
+		assert.equal(conceptVectorStore.read(), null);
+	});
+
+	it("forgets the document in batches still out, keeping the batch itself", () => {
+		const entry = { contentHash: "h", units: 1 };
+		documentStore.writePendingBatches([{ batchId: "b1", model: "m", submittedAt: 1, docs: { doc_aaaaaaaaaaaa: entry, doc_bbbbbbbbbbbb: entry } }]);
+		createDocIndex({ store: documentStore, embedder: () => null }).removeDocument("doc_aaaaaaaaaaaa");
+		assert.deepEqual(documentStore.readPendingBatches().map((p) => Object.keys(p.docs)), [["doc_bbbbbbbbbbbb"]]);
+	});
+});
+
 // ── a scripted teacher session ───────────────────────────────────────────────
 
 describe("a teacher session with the search tool", () => {

@@ -16,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AddDocumentsBody, choicesFor, statusLabel, willImport, type Entry } from "../components/add-documents-dialog.tsx";
 import { DocumentsLibraryBody, matchesQuery } from "../components/documents-library.tsx";
 import { DocumentReaderBody, RebuildPanel, withoutPageImages, type RebuildPhase } from "../components/document-reader.tsx";
+import { DeleteDocumentBody, removalLines } from "../components/delete-document-dialog.tsx";
 import type { DocumentSummary } from "../src/core/index.ts";
 
 const of = { id: "doc_aaaaaaaaaaaa", title: "Mutex basics", importedAt: "2026-10-01T10:00:00.000Z" };
@@ -147,5 +148,28 @@ describe("Document reader", () => {
 		assert.ok(!html.includes("p001.png"));
 		assert.ok(html.includes("Also known as 1.md"));
 		assert.equal(withoutPageImages("a\n![page 3](x.png)\nb"), "a\nb");
+	});
+});
+
+describe("Deleting and renaming from the reader", () => {
+	it("the reader offers Delete and Rename only when wired", () => {
+		const plain = renderToStaticMarkup(createElement(DocumentReaderBody, { meta: doc(), markdown: "# x" }));
+		assert.ok(!plain.includes("document-delete") && !plain.includes("document-rename"));
+		const wired = renderToStaticMarkup(createElement(DocumentReaderBody, { meta: doc(), markdown: "# x", onDelete: () => {}, onRename: async () => {} }));
+		assert.ok(wired.includes("document-delete") && wired.includes("document-rename"));
+	});
+
+	it("the confirm says how many concepts go and how many shared ones stay", () => {
+		assert.deepEqual(removalLines({ concepts: 1, shared: 0 }), ["1 concept is supported only by this document and will be deleted from the knowledge graph."]);
+		const html = renderToStaticMarkup(
+			createElement(DeleteDocumentBody, { title: "Mutex basics", removal: { concepts: 12, shared: 3 }, busy: false, failure: null, onClose: () => {}, onRun: () => {} }),
+		);
+		assert.ok(html.includes("Mutex basics") && html.includes("12 concepts are supported only by this document"));
+		assert.ok(html.includes("3 concepts are also supported by other documents or sessions and will stay"));
+		assert.ok(!html.includes("delete-document-failure"));
+		const failed = renderToStaticMarkup(
+			createElement(DeleteDocumentBody, { title: "t", removal: { concepts: 0, shared: 0 }, busy: false, failure: "An extraction is running.", onClose: () => {}, onRun: () => {} }),
+		);
+		assert.ok(failed.includes("An extraction is running.") && failed.includes("No concept depends on this document alone."));
 	});
 });
