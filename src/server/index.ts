@@ -55,6 +55,7 @@ export { TENANT_ID_RE } from "../core/tenant-context.ts";
 export { documents, topicBackfill } from "./library.ts";
 export { docIndex } from "./doc-index.ts";
 export { withActivityRow, scanStatuses, abortScan, incomingFiles, type CheckResult, type ImportTicket, type ImportCompletion, type IncomingFile } from "./documents.ts";
+export { readUploadForm } from "./uploads.ts";
 export { OcrError } from "./ocr-client.ts";
 // The OKF library (generated bundle + download): the freshness service, the zip writer.
 export { library } from "./okf-library.ts";

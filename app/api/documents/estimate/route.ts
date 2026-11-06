@@ -5,12 +5,14 @@
  * 200 {files:[{name,pages,usd}], usd, default_strategy}; 400 with no PDF;
  * 503 {error, code} when the sidecar is not configured or unreachable.
  */
-import { documents, incomingFiles, OcrError, withTenant } from "@/src/server";
+import { documents, incomingFiles, readUploadForm, OcrError, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export const POST = withTenant(async (request: Request) => {
-	const files = await incomingFiles(await request.formData());
+	const form = await readUploadForm(request);
+	if (form instanceof Response) return form;
+	const files = await incomingFiles(form);
 	try {
 		const estimate = await documents.estimate(files);
 		if (!estimate) return Response.json({ error: "no PDF files" }, { status: 400 });

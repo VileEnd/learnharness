@@ -13,7 +13,7 @@
  * PDFs are refused here; they go through Add documents.
  */
 import type { EmissionStats } from "@/src/core";
-import { documents, incomingFiles, withTenant } from "@/src/server";
+import { documents, incomingFiles, readUploadForm, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,9 @@ interface ImportResult {
 }
 
 export const POST = withTenant(async (request: Request) => {
-	const files = await incomingFiles(await request.formData());
+	const form = await readUploadForm(request);
+	if (form instanceof Response) return form;
+	const files = await incomingFiles(form);
 	if (files.length === 0) {
 		return Response.json({ results: [] as ImportResult[], error: "no files" }, { status: 400 });
 	}

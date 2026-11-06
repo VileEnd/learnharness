@@ -36,6 +36,13 @@
 	# redirect is useless to fetch()/EventSource, a 401 lets the app show its
 	# "signed out" screen (components/session-watch.tsx).
 	handle /api/* {
+		# Uploads: the app takes one file per request, at most 250 MiB plus a
+		# small multipart envelope (src/core/upload-limits.ts). 280 MB (decimal)
+		# is a little above that; anything bigger is refused here, before it
+		# reaches the app.
+		request_body {
+			max_size 280MB
+		}
 		forward_auth oauth2-proxy:4180 {
 			uri /oauth2/auth
 			copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups
