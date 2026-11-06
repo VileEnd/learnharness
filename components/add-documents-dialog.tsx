@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { FileTextIcon, UploadIcon, XIcon } from "lucide-react";
-import type { DocumentDecision, DuplicateVerdict } from "@/src/core";
+import { FileTextIcon, FolderIcon, UploadIcon, XIcon } from "lucide-react";
+import { filterFolderPick, skippedNotice, type DocumentDecision, type DuplicateVerdict } from "@/src/core";
+import { createTaskQueue, fileForm, jsonOf, tooLargeReason } from "@/components/add-documents-queue";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
 import { useActivity } from "@/components/activity-dock";
@@ -113,22 +114,33 @@ export function AddDocumentsBody({
 	phase,
 	results,
 	onPick,
+	onPickFolder,
+	notice,
+	progress,
 	onRemove,
 	onDecide,
 	onClose,
 	onImport,
 	fileInputRef,
+	folderInputRef,
 }: {
 	entries: Entry[];
 	decisions: Record<number, DocumentDecision>;
 	phase: "pick" | "importing" | "done";
 	results: ImportTicket[];
 	onPick: (files: FileList | null) => void;
+	/** Present only where the browser can pick a folder (hidden on phones). */
+	onPickFolder?: (files: FileList | null) => void;
+	/** A short line under the pickers, e.g. how many folder files were skipped. */
+	notice?: string;
+	/** Files handed over so far while importing. */
+	progress?: { done: number; total: number };
 	onRemove: (key: number) => void;
 	onDecide: (key: number, decision: DocumentDecision) => void;
 	onClose: () => void;
 	onImport: () => void;
 	fileInputRef?: React.RefObject<HTMLInputElement | null>;
+	folderInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
 	const toImport = entries.filter((e) => willImport(e, decisions));
 	const skipped = entries.filter((e) => e.state === "ready" && !willImport(e, decisions)).length;
@@ -189,17 +201,50 @@ export function AddDocumentsBody({
 								e.target.value = ""; // allow re-picking the same file
 							}}
 						/>
-						<button
-							type="button"
-							onClick={() => fileInputRef?.current?.click()}
-							disabled={phase === "importing"}
-							data-testid="add-documents-pick"
-							className="flex w-full flex-col items-center gap-1.5 rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50 pointer-coarse:min-h-11"
-						>
-							<UploadIcon className="size-5" />
-							<span>{entries.length === 0 ? "Choose files, or drop them here" : "Add more files"}</span>
-							<span className="text-xs text-muted-foreground/80">Markdown, text, or PDF</span>
-						</button>
+						{onPickFolder && (
+							<input
+								ref={folderInputRef}
+								type="file"
+								multiple
+								className="hidden"
+								data-testid="add-documents-folder-input"
+								{...{ webkitdirectory: "" }}
+								onChange={(e) => {
+									onPickFolder(e.target.files);
+									e.target.value = "";
+								}}
+							/>
+						)}
+						<div className="flex flex-col gap-2 sm:flex-row">
+							<button
+								type="button"
+								onClick={() => fileInputRef?.current?.click()}
+								disabled={phase === "importing"}
+								data-testid="add-documents-pick"
+								className="flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50 pointer-coarse:min-h-11"
+							>
+								<UploadIcon className="size-5" />
+								<span>{entries.length === 0 ? "Choose files, or drop them here" : "Add more files"}</span>
+								<span className="text-xs text-muted-foreground/80">Markdown, text, or PDF</span>
+							</button>
+							{onPickFolder && (
+								<button
+									type="button"
+									onClick={() => folderInputRef?.current?.click()}
+									disabled={phase === "importing"}
+									data-testid="add-documents-pick-folder"
+									className="flex flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50 sm:w-40"
+								>
+									<FolderIcon className="size-5" />
+									<span>Add folder</span>
+								</button>
+							)}
+						</div>
+						{notice && (
+							<p data-testid="add-documents-notice" className="mt-2 text-xs text-muted-foreground">
+								{notice}
+							</p>
+						)}
 
 						{entries.length > 0 && (
 							<ul className="mt-4 space-y-2" data-testid="add-documents-list">
@@ -242,7 +287,7 @@ export function AddDocumentsBody({
 							data-testid="add-documents-import"
 							className="rounded-sm border border-border bg-accent px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent/70 disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
 						>
-							{phase === "importing" ? "Adding…" : "Import"}
+							{phase === "importing" ? (progress ? `Adding ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…` : "Adding…") : "Import"}
 						</button>
 					)}
 				</div>
@@ -334,13 +379,6 @@ function EntryRow({
 
 // ─── the stateful dialog ─────────────────────────────────────────────────────
 
-async function postForm(url: string, files: File[], extra?: Record<string, string>): Promise<Response> {
-	const form = new FormData();
-	for (const file of files) form.append("files", file);
-	for (const [k, v] of Object.entries(extra ?? {})) form.append(k, v);
-	return fetch(url, { method: "POST", body: form });
-}
-
 function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
 	const [entries, setEntries] = useState<Entry[]>([]);
 	const [decisions, setDecisions] = useState<Record<number, DocumentDecision>>({});
@@ -349,10 +387,24 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 	const files = useRef(new Map<number, File>());
 	const nextKey = useRef(1);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const folderInputRef = useRef<HTMLInputElement>(null);
+	const [notice, setNotice] = useState("");
+	const [progress, setProgress] = useState<{ done: number; total: number }>();
+	const [canPickFolder, setCanPickFolder] = useState(false);
+	// One request per file, a few at a time; imports go one at a time so two
+	// identical files in a selection still resolve to one document.
+	const checks = useRef(createTaskQueue(3));
+	const imports = useRef(createTaskQueue(1));
 	const refreshActivity = useActivity().refresh;
 	const busy = phase === "importing";
 	const backdropDismiss = useBackdropDismiss(() => { if (!busy) onClose(); });
 	useBackDismiss(true, () => { if (!busy) onClose(); });
+
+	// Folder picking: desktop browsers only (phones fall back to the file picker).
+	useEffect(() => {
+		const phone = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+		setCanPickFolder("webkitdirectory" in HTMLInputElement.prototype && !phone);
+	}, []);
 
 	// Esc closes (claimed at the document level - the one-Esc law).
 	useEffect(() => {
@@ -370,62 +422,72 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 		setEntries((cur) => cur.map((e) => (keys.includes(e.key) ? update(e) : e)));
 	}, []);
 
-	const pick = useCallback(async (list: FileList | File[] | null) => {
-		const picked = list ? Array.from(list) : [];
-		if (picked.length === 0) return;
-		const added: Entry[] = picked.map((file) => {
-			const key = nextKey.current++;
-			files.current.set(key, file);
-			return { key, name: file.name, state: "checking" };
-		});
-		setEntries((cur) => [...cur, ...added]);
-		const keys = added.map((e) => e.key);
+	/** Check one file, then (new, unscanned PDF) estimate its scan: two small requests. */
+	const checkFile = useCallback(async (key: number, file: File) => {
 		try {
-			const res = await postForm("/api/documents/check", picked);
-			const body = (await res.json()) as { results?: CheckResult[]; error?: string };
-			if (!res.ok || !body.results) throw new Error(body.error ?? `Check failed (HTTP ${res.status})`);
-			const byIndex = new Map(body.results.map((r) => [r.index, r]));
-			patch(keys, (e) => {
-				const check = byIndex.get(keys.indexOf(e.key));
-				return check ? { ...e, state: "ready", check } : { ...e, state: "error", error: "No result for this file." };
-			});
-			// Scan estimates for the PDFs that would actually be scanned.
-			const scannable = added.filter((e, i) => byIndex.get(i)?.kind === "pdf" && byIndex.get(i)?.verdict.status === "new" && !byIndex.get(i)?.scanned);
-			if (scannable.length > 0) {
-				const est = await postForm("/api/documents/estimate", scannable.map((e) => files.current.get(e.key)!));
-				const estBody = (await est.json()) as Partial<Estimate> & { error?: string };
-				if (!est.ok || !estBody.files) {
-					// No sidecar (or unreachable): these PDFs cannot be imported here.
-					patch(scannable.map((e) => e.key), (e) => ({ ...e, state: "error", error: estBody.error ?? "PDF scanning is unavailable." }));
-				} else {
-					const strategy = estBody.default_strategy ?? "";
-					scannable.forEach((e, i) => {
-						const f = estBody.files![i];
-						patch([e.key], (cur) => ({ ...cur, usd: f?.usd?.[strategy], pages: f?.pages }));
-					});
-				}
+			const res = await fetch("/api/documents/check", { method: "POST", body: fileForm(file) });
+			const body = await jsonOf<{ results: CheckResult[] }>(res);
+			const check = body.results?.[0];
+			if (!res.ok || !check) throw new Error(body.error ?? `Check failed (HTTP ${res.status})`);
+			patch([key], (e) => ({ ...e, state: "ready", check }));
+			if (check.kind !== "pdf" || check.verdict.status !== "new" || check.scanned) return;
+			const est = await fetch("/api/documents/estimate", { method: "POST", body: fileForm(file) });
+			const estBody = await jsonOf<Estimate>(est);
+			const f = estBody.files?.[0];
+			if (!est.ok || !estBody.files) {
+				// No sidecar (or unreachable): this PDF cannot be imported here.
+				patch([key], (e) => ({ ...e, state: "error", error: estBody.error ?? "PDF scanning is unavailable." }));
+			} else {
+				patch([key], (e) => ({ ...e, usd: f?.usd?.[estBody.default_strategy ?? ""], pages: f?.pages }));
 			}
 		} catch (err) {
-			patch(keys, (e) => ({ ...e, state: "error", error: err instanceof Error ? err.message : String(err) }));
+			patch([key], (e) => ({ ...e, state: "error", error: err instanceof Error ? err.message : String(err) }));
 		}
 	}, [patch]);
+
+	const pick = useCallback((list: FileList | File[] | null) => {
+		const picked = list ? Array.from(list) : [];
+		if (picked.length === 0) return;
+		for (const file of picked) {
+			const key = nextKey.current++;
+			files.current.set(key, file);
+			const tooLarge = tooLargeReason(file);
+			setEntries((cur) => [...cur, tooLarge ? { key, name: file.name, state: "error", error: tooLarge } : { key, name: file.name, state: "checking" }]);
+			if (!tooLarge) void checks.current(() => checkFile(key, file));
+		}
+	}, [checkFile]);
+
+	const pickFolder = useCallback((list: FileList | null) => {
+		const { accepted, hidden, unsupported } = filterFolderPick(list ? Array.from(list) : []);
+		setNotice(skippedNotice({ hidden, unsupported }));
+		pick(accepted);
+	}, [pick]);
 
 	const run = async () => {
 		const send = entries.filter((e) => willImport(e, decisions));
 		if (send.length === 0 || busy) return;
 		setPhase("importing");
-		try {
-			const res = await postForm(
-				"/api/documents/import",
-				send.map((e) => files.current.get(e.key)!),
-				{ decisions: JSON.stringify(send.map((e) => (e.check?.verdict.status === "new" ? null : decisions[e.key] ?? defaultDecision(e.check!.verdict)))) },
-			);
-			const body = (await res.json()) as { results?: ImportTicket[]; error?: string };
-			if (!res.ok || !body.results) throw new Error(body.error ?? `Import failed (HTTP ${res.status})`);
-			setResults(body.results);
-		} catch (err) {
-			setResults(send.map((e, index) => ({ index, name: e.name, outcome: "failed" as const, error: err instanceof Error ? err.message : String(err) })));
-		}
+		setProgress({ done: 0, total: send.length });
+		const settled: ImportTicket[] = [];
+		await Promise.all(
+			send.map((e, index) =>
+				imports.current(async () => {
+					const file = files.current.get(e.key)!;
+					const decision = e.check?.verdict.status === "new" ? null : decisions[e.key] ?? defaultDecision(e.check!.verdict);
+					try {
+						const res = await fetch("/api/documents/import", { method: "POST", body: fileForm(file, { decisions: JSON.stringify([decision]) }) });
+						const body = await jsonOf<{ results: ImportTicket[] }>(res);
+						const ticket = body.results?.[0];
+						if (!res.ok || !ticket) throw new Error(body.error ?? `Import failed (HTTP ${res.status})`);
+						settled[index] = { ...ticket, index, name: e.name };
+					} catch (err) {
+						settled[index] = { index, name: e.name, outcome: "failed", error: err instanceof Error ? err.message : String(err) };
+					}
+					setProgress((cur) => cur && { ...cur, done: cur.done + 1 });
+				}),
+			),
+		);
+		setResults(settled);
 		setPhase("done");
 		// The dock's start-site nudge: the runs announce themselves from their first phase on.
 		refreshActivity();
@@ -441,7 +503,7 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 			onDragOver={(e) => e.preventDefault()}
 			onDrop={(e) => {
 				e.preventDefault();
-				if (!busy && phase === "pick") void pick(e.dataTransfer.files);
+				if (!busy && phase === "pick") pick(e.dataTransfer.files);
 			}}
 		>
 			<AddDocumentsBody
@@ -449,7 +511,10 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 				decisions={decisions}
 				phase={phase}
 				results={results}
-				onPick={(list) => void pick(list)}
+				onPick={(list) => pick(list)}
+				onPickFolder={canPickFolder ? pickFolder : undefined}
+				notice={notice}
+				progress={progress}
 				onRemove={(key) => {
 					files.current.delete(key);
 					setEntries((cur) => cur.filter((e) => e.key !== key));
@@ -458,6 +523,7 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 				onClose={onClose}
 				onImport={() => void run()}
 				fileInputRef={fileInputRef}
+				folderInputRef={folderInputRef}
 			/>
 		</div>,
 		document.body,

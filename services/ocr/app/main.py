@@ -35,8 +35,8 @@ except OSError:
 CFG = tomllib.loads(Path(os.environ.get("CONFIG_PATH") or ROOT / "config.toml").read_text())
 OUT = Path(os.environ.get("OUT_DIR") or ROOT / "out")
 cache = Cache(os.environ.get("CACHE_DIR") or ROOT / ".cache")
-MAX_BYTES = 50 * 1024 * 1024  # per PDF
-MAX_PAGES = 300               # per PDF
+MAX_BYTES = 200 * 1024 * 1024  # per PDF
+MAX_PAGES = 1000              # per PDF
 JOB_TTL = 3600                # seconds a finished job stays in memory; the disk stays the source of truth
 # Shared by every run on this server, so starting a second run does not double the load on the providers.
 POOL = ThreadPoolExecutor(CFG["pipeline"].get("workers", 16))

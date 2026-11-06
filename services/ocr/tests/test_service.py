@@ -100,6 +100,10 @@ def test_by_sha_finds_the_newest_conversion_else_404(client):
     assert client.get("/api/by-sha/" + "0" * 64).status_code == 404
 
 
+def test_caps_fit_real_textbooks():
+    assert main.MAX_BYTES == 200 * 1024 * 1024 and main.MAX_PAGES == 1000
+
+
 def test_too_big_or_too_long_pdfs_are_rejected(client, monkeypatch):
     post = lambda data: client.post("/api/run", files=[("files", ("a.pdf", data, "application/pdf"))])  # noqa: E731
     monkeypatch.setattr(main, "MAX_BYTES", 100)

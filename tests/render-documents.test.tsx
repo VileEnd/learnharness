@@ -84,6 +84,15 @@ describe("Add documents", () => {
 		assert.ok(html.includes("the old import of this file produced nothing"));
 	});
 
+	it("offers Add folder (and the skipped notice) only where the folder picker exists", () => {
+		const base = { entries: [], decisions: {}, phase: "pick" as const, results: [], onPick: () => {}, onRemove: () => {}, onDecide: () => {}, onClose: () => {}, onImport: () => {} };
+		const without = renderToStaticMarkup(createElement(AddDocumentsBody, base));
+		assert.ok(!without.includes("add-documents-pick-folder") && !without.includes("webkitdirectory"));
+		const withFolder = renderToStaticMarkup(createElement(AddDocumentsBody, { ...base, onPickFolder: () => {}, notice: "2 hidden files skipped." }));
+		assert.ok(withFolder.includes("add-documents-pick-folder") && withFolder.includes("Add folder") && withFolder.includes("webkitdirectory"));
+		assert.ok(withFolder.includes("2 hidden files skipped."));
+	});
+
 	it("is the full-screen-on-phones frame", () => {
 		const html = render();
 		assert.ok(html.includes('role="dialog"') && html.includes("h-dvh") && html.includes("max-sm:pt-safe"));
