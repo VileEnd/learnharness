@@ -1824,6 +1824,7 @@ export function Chat({
 					}}
 					onHint={(callId) => requestHint(callId)}
 					onDismissWork={() => setAbortAsk("work")}
+					onDiscardQuestion={() => setAbortAsk("question")}
 					compactionRunning={compacting}
 					onSubmitThinking={submitThinking}
 					chatId={chatId}
@@ -2142,6 +2143,7 @@ function DockOverlay({
 	onSubmitWork,
 	onHint,
 	onDismissWork,
+	onDiscardQuestion,
 	compactionRunning,
 	onSubmitThinking,
 	requiresReveal,
@@ -2185,6 +2187,7 @@ function DockOverlay({
 	/** The Hint button (work dock and practice dock): { type: "hint", callId }. */
 	onHint: (callId: string) => void;
 	onDismissWork: () => void;
+	onDiscardQuestion: () => void;
 	/** The practice dock's send: the thinking, plus the graded attempt when an
 	 *  interactive problem's Check carries one. */
 	onSubmitThinking: (text: string, attempt?: ThinkingAttempt, drawingId?: string) => void;
@@ -2678,6 +2681,7 @@ function DockOverlay({
 									onEscape={dictationCancel}
 									dictationClaim={!revealPending}
 									compactionRunning={compactionRunning}
+									onDiscard={onDiscardQuestion}
 								/>
 							) : work ? (
 								<WorkDock
