@@ -52,13 +52,14 @@ import type {
 import type { GraphStore } from "../core/ports.ts";
 import { multiUser } from "../core/tenant-context.ts";
 import { removeLeftoverTemps, writeFileAtomicSync } from "./atomic-write.ts";
+import { appendJsonlSync } from "./jsonl-append.ts";
 
 // ─── JSONL primitives ────────────────────────────────────────────────────────
 
 function appendLine<T>(file: string, record: T): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	ensureGraphFormat(); // the lazy format stamp (graph-format.ts)
-	fs.appendFileSync(file, `${JSON.stringify(record)}\n`, "utf-8");
+	appendJsonlSync(file, record);
 }
 
 function readRawLines(file: string): unknown[] {

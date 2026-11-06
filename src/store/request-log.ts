@@ -11,6 +11,7 @@ import { PATHS } from "../../config.ts";
 import type { RequestLogLine } from "../core/contracts/usage.ts";
 import type { RequestLogStore } from "../core/ports.ts";
 import { isUsageCategory, monthKey } from "../core/usage.ts";
+import { appendJsonlSync } from "./jsonl-append.ts";
 
 const file = (month: string) => path.join(PATHS.logs, `requests-${month}.jsonl`);
 const marker = () => path.join(PATHS.logs, "backfill.done");
@@ -32,7 +33,7 @@ function isLine(v: unknown): v is RequestLogLine {
 export const requestLogStore: RequestLogStore = {
 	append(line) {
 		fs.mkdirSync(PATHS.logs, { recursive: true });
-		fs.appendFileSync(file(monthKey(line.at)), `${JSON.stringify(line)}\n`, "utf-8");
+		appendJsonlSync(file(monthKey(line.at)), line);
 	},
 	readMonth(month) {
 		let text: string;

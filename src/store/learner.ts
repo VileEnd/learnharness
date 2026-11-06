@@ -10,6 +10,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { AttributionRow } from "../core/contracts/learner.ts";
 import type { LearnerStore } from "../core/ports.ts";
+import { appendJsonlSync } from "./jsonl-append.ts";
 
 const ledger = () => path.join(PATHS.learner, "attributions.jsonl");
 
@@ -28,7 +29,7 @@ function isRow(v: unknown): v is AttributionRow {
 export const learnerStore: LearnerStore = {
 	appendAttribution(row) {
 		fs.mkdirSync(PATHS.learner, { recursive: true });
-		fs.appendFileSync(ledger(), `${JSON.stringify(row)}\n`, "utf-8");
+		appendJsonlSync(ledger(), row);
 	},
 	readAttributions() {
 		let text: string;
