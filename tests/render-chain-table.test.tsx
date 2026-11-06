@@ -285,7 +285,7 @@ describe("ChainTableBody — the floating selection bar (never shifts layout)", 
 
 	it("the pill's right inset matches its vertical inset, so the action's corners sit concentric", () => {
 		for (const selectMode of [false, true]) {
-			const html = render({ selectMode, selectedSources: new Set(["chat1"]), selection: new Set(["a"]) });
+			const html = render({ selectMode, selection: new Set(["a"]) } as never);
 			const bar = html.match(/<div[^>]*data-testid="chain-selection-bar"[^>]*>/)?.[0] ?? "";
 			assert.match(bar, /py-2 pl-4 pr-2/);
 			assert.equal(bar.includes(" px-4 "), false);
