@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRightIcon, CornerDownLeftIcon, SquareIcon } from "lucide-react";
-import { useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Hint } from "@/components/ui/hint";
 import { enterSends } from "@/components/enter-submits";
@@ -37,6 +37,33 @@ export function enterAction(state: {
 	if (state.canSend) return "send";
 	if (state.nextProblem) return "next";
 	return "none";
+}
+
+/**
+ * Session composer with local keystroke state. The owning Chat keeps the
+ * current draft in a ref for send/dictation, so typing doesn't re-render the
+ * transcript; `revision` signals explicit parent-driven draft resets.
+ */
+export function ChatSessionComposer({
+	value,
+	revision,
+	onChange,
+	sendAllowed,
+	dictationActive,
+	...rest
+}: Omit<React.ComponentProps<typeof Composer>, "canSend"> & {
+	revision: number;
+	sendAllowed: boolean;
+	dictationActive: boolean;
+}) {
+	const [draft, setDraft] = useState(value);
+	useLayoutEffect(() => { setDraft(value); }, [revision, value]);
+	const canSend = sendAllowed && (draft.trim().length > 0 || dictationActive);
+	const applyDraft = useCallback((next: string) => {
+		setDraft(next);
+		onChange(next);
+	}, [onChange]);
+	return <Composer {...rest} value={draft} onChange={applyDraft} canSend={canSend} />;
 }
 
 export function Composer({
