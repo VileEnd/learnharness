@@ -55,7 +55,7 @@ second pillar of input).
 | New session | ⌘N | router.push in keyboard-shortcuts.tsx |
 | Rename session | F2 | `lh:kbd-rename-session` (chat.tsx) |
 | Cheat sheet | ? | keyboard-shortcuts.tsx |
-| Find (graph: node search) | ⌘F | `lh:kbd-find` (graph-view.tsx; chat transcript search rides the same event when that feature lands) |
+| Find (graph: node search; scoped to the chains view while it is open) | ⌘F | `lh:kbd-find` (graph-view.tsx, chain-table.tsx; chat transcript search rides the same event when that feature lands) |
 
 ## Model menu keyboard machine (owner polish, 2026-09-17)
 
