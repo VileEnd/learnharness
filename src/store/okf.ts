@@ -8,6 +8,7 @@
  */
 
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { OkfFile } from "../core/contracts/okf.ts";
@@ -16,7 +17,6 @@ import { writeFileAtomicSync } from "./atomic-write.ts";
 
 /** The stamp lives BESIDE the bundle (`<root>.stamp`), never inside it: the agents browse the root. */
 const stampFile = () => `${path.resolve(PATHS.okf)}.stamp`;
-let counter = 0;
 
 function safeJoin(root: string, rel: string): string {
 	const abs = path.resolve(root, rel);
@@ -27,11 +27,16 @@ function safeJoin(root: string, rel: string): string {
 export const okfBundleStore: OkfBundleStore = {
 	replaceAll(files) {
 		const root = path.resolve(PATHS.okf);
-		const id = `${process.pid}-${++counter}`;
+		const id = randomUUID();
 		const tmp = `${root}.tmp-${id}`;
 		const old = `${root}.old-${id}`;
 		fs.mkdirSync(path.dirname(root), { recursive: true });
-		fs.rmSync(tmp, { recursive: true, force: true });
+		// An interrupted rebuild leaves `<root>.tmp-*` (partial bundle) or `<root>.old-*`
+		// (the previous bundle, killed between the two renames). Both are dead copies.
+		const base = path.basename(root);
+		for (const name of fs.readdirSync(path.dirname(root))) {
+			if (name.startsWith(`${base}.tmp-`) || name.startsWith(`${base}.old-`)) fs.rmSync(path.join(path.dirname(root), name), { recursive: true, force: true });
+		}
 		try {
 			fs.mkdirSync(tmp, { recursive: true });
 			for (const f of files as OkfFile[]) {

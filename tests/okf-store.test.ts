@@ -53,6 +53,18 @@ describe("OkfBundleStore", () => {
 		assert.deepEqual(tmpDirs(), []);
 	});
 
+	it("leftovers of an interrupted rebuild do not break the next rebuild", () => {
+		okfBundleStore.replaceAll([{ path: "keep.md", content: "k\n" }]);
+		const sibling = (suffix: string) => `${path.resolve(PATHS.okf)}${suffix}`;
+		for (const dir of [sibling(".old-1-1"), sibling(".tmp-1-1"), sibling(".tmp-1-2")]) {
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "stale.md"), "stale\n");
+		}
+		okfBundleStore.replaceAll([{ path: "fresh.md", content: "f\n" }]);
+		assert.deepEqual(fs.readdirSync(PATHS.okf), ["fresh.md"]);
+		assert.deepEqual(tmpDirs(), []);
+	});
+
 	it("refuses a path that would leave the root, leaving the old bundle intact", () => {
 		okfBundleStore.replaceAll([{ path: "keep.md", content: "k\n" }]);
 		assert.throws(() => okfBundleStore.replaceAll([{ path: "../escape.md", content: "x" }]));
