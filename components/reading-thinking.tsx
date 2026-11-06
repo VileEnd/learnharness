@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { enterSends } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
@@ -22,12 +22,15 @@ import { joinDictation, useDictationTarget } from "@/components/dictation";
  */
 export function ReadingThinkingField({
 	value,
+	revision,
 	onChange,
 	onEscape,
 	onOpen,
 	claim,
 }: {
 	value: string;
+	/** Bumped by the parent to force-resync the local draft to `value`. */
+	revision: number;
 	onChange: (v: string) => void;
 	/** Esc in the field stops dictation (threaded from the page's hook). */
 	onEscape?: () => void;
@@ -41,14 +44,20 @@ export function ReadingThinkingField({
 }) {
 	const coarse = useCoarsePointer();
 	const fieldRef = useRef<HTMLTextAreaElement>(null);
-	useAutoGrow(fieldRef, value);
+	// The text lives here, so keystrokes don't re-render the Chat. The ref
+	// includes every edit synchronously: back-to-back dictation appends
+	// before a commit must not drop the first.
+	const [draft, setDraft] = useState(value);
+	const draftRef = useRef(value);
+	useLayoutEffect(() => { draftRef.current = value; setDraft(value); }, [revision, value]);
+	const applyDraft = useCallback((next: string) => {
+		draftRef.current = next;
+		setDraft(next);
+		onChange(next);
+	}, [onChange]);
+	useAutoGrow(fieldRef, draft);
 	useDictationTarget(
-		useCallback(
-			(t: string) => {
-				onChange(joinDictation(value, t));
-			},
-			[value, onChange],
-		),
+		useCallback((t: string) => applyDraft(joinDictation(draftRef.current, t)), [applyDraft]),
 		claim,
 	);
 	return (
@@ -61,8 +70,8 @@ export function ReadingThinkingField({
 			</div>
 			<textarea
 				ref={fieldRef}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
+				value={draft}
+				onChange={(e) => applyDraft(e.target.value)}
 				/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source
 				   Sans 3's font box is 22px at 16px; lh-input's 1.25 leading
 				   gives a 20px line box — the content area sticks 1px below the

@@ -299,6 +299,15 @@ export function useDictationTarget(append: (text: string) => void, claimed: bool
 	}, [append, claimed]);
 }
 
+/** Append to the claimed question target (what a dictation flush does when a
+ *  field holds the claim). False when nothing claims. Lets tests drive the
+ *  append path synchronously, without a socket. */
+export function appendToClaimedTarget(text: string): boolean {
+	if (!questionTarget) return false;
+	questionTarget(text);
+	return true;
+}
+
 export type DictationPhase = "idle" | "connecting" | "recording" | "stopping";
 
 export type Dictation = {
