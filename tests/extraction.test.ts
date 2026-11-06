@@ -899,14 +899,15 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 			// the extractor's fully accumulated live usage (2 steps × 10/5).
 			extractor: recordUsage("extractor", submitModel("submit_findings", FINDINGS)),
 			auditor: recordUsage("auditor", submitModel("submit_review", verdict, () =>
-				usageSeen.push(extractionStatuses().find((r) => r.chatId === chatId)?.usage.extractor?.steps.at(-1)?.inputTokens),
+				usageSeen.push(((step) => step && (step.inputTokens ?? 0) + (step.cacheWriteTokens ?? 0))(extractionStatuses().find((r) => r.chatId === chatId)?.usage.extractor?.steps.at(-1))),
 			)),
 		});
 		await pipeline.runExtraction(chatId);
 
 		// Live: mid-audit the extractor's usage was fully accumulated (faux
 		// estimates tokens from the prompt/response text — deterministic,
-		// positive, with native first-conversation cache writes in 1.4).
+		// positive; pi-ai 1.5's faux books the whole session prompt as cache writes,
+		// so billed input = fresh input + cache writes).
 		assert.equal(usageSeen.length, 1);
 		assert.ok(typeof usageSeen[0] === "number" && usageSeen[0]! > 0, "the extractor's step billed input tokens");
 
@@ -920,7 +921,7 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 		assert.equal(run.stages.extractor.model, "faux:faux-1");
 		assert.equal(run.stages.extractor.steps.length, 1); // the submit call — the run STOPS after a clean submit
 		const step = run.stages.extractor.steps[0]!;
-		assert.ok(step.inputTokens! > 0 && step.outputTokens! > 0, "estimated usage captured");
+		assert.ok(step.inputTokens! + step.cacheWriteTokens! > 0 && step.outputTokens! > 0, "estimated usage captured");
 		assert.equal(step.cacheReadTokens, 0);
 		assert.equal(nativeUsage.extractor.length, 1);
 		assert.ok(nativeUsage.extractor[0]!.cacheWrite > 0, "fresh native conversation writes its cached prefix");

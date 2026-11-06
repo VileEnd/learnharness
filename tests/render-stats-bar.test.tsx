@@ -58,9 +58,9 @@ describe("stats bar", () => {
 		// catalog join lands with the UI chunk), so the meter renders
 		// USAGE-ONLY (owner amendment: never a fallback window).
 		assert.match(html, /data-testid="stats-context">11k</);
-		// pi catalog price 0.15/0.5 per 1M (drifted in pi-ai 0.87.1):
-		// each turn 10k×0.15 + 1k×0.5 = $0.002 → two = $0.0040
-		assert.match(html, /data-testid="stats-cost">\$0\.0040</);
+		// pi catalog price 0.0285/0.0923 per 1M (pi-ai 1.5.0 refresh):
+		// each turn 10k×0.0285 + 1k×0.0923 = $0.0003773 → two = $0.0008
+		assert.match(html, /data-testid="stats-cost">\$0\.0008</);
 		// model button label: SSR (record fetch not run yet) reads "—" —
 		// the strong slot arrives client-side via GET /api/settings; the
 		// turn log below still folds the ACTUAL models billed
