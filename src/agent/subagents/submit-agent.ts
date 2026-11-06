@@ -63,7 +63,7 @@ export async function runSubmitAgent<T>(opts: {
 	 *  set, 2026-09-27): a small agentic loop instead of a bare retry. */
 	extraTools?: Record<string, AgentTool<any>>;
 	/** Turn budget for the loop (default 4 = retry-only; the auditor runs
-	 *  an exploration loop instead — 16). */
+	 *  a bounded review loop instead). */
 	maxTurns?: number;
 	/** Debug: raw provider-event recording key (LH_PROVIDER_EVENTS=1). */
 	chatId?: string;
