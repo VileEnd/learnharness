@@ -57,7 +57,7 @@ async function writeReply(text) {
 
 const mcpConfig = readFileSync(process.argv[process.argv.indexOf("--mcp-config") + 1], "utf8");
 
-if (process.env.FAKE_CLAUDE_REPORT) process.stderr.write(`fake-pid ${process.pid}\n`);
+if (process.env.FAKE_CLAUDE_REPORT) process.stderr.write(`fake-pid ${process.pid}\nfake-env ${process.env.MCP_TOOL_TIMEOUT} ${process.env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT} ${process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS}\n`);
 
 let input = "";
 let receiveUser;

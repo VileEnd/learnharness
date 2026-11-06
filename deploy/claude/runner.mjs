@@ -44,7 +44,7 @@ export function toClaudeArgs(input) {
 		"--setting-sources",
 		"user",
 		"--settings",
-		JSON.stringify({ disableAllHooks: true }),
+		JSON.stringify({ disableAllHooks: true, outputStyle: "default", env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" } }),
 		"--disable-slash-commands",
 		"--no-session-persistence",
 		"--permission-prompts",
@@ -132,6 +132,10 @@ export function createRunner({ claudeBin, token, appHost, maxConcurrent = 2, kil
 		CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? "",
 		DISABLE_AUTOUPDATER: "1",
 		MCP_TOOL_TIMEOUT: "1800000",
+		// A held question is an MCP call left open; the CLI's separate idle timeout (300 s over http) would drop it.
+		CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: "1800000",
+		// Keep the admin's /login session's CLAUDE.md files out of the tutor's prompt.
+		CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
 	};
 	let status = probeVersion(claudeBin, baseEnv);
 	let probedAt = Date.now();

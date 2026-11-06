@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 
+import { LIVE_PROCESS_IDLE_TIMEOUT_MS } from "../src/agent/claude-code/live-processes.ts";
 import { compareVersion, createRunner, toClaudeArgs } from "../deploy/claude/runner.mjs";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/claude-code/", import.meta.url));
@@ -274,6 +275,19 @@ test("an oversized frame during a run kills the CLI", async (t) => {
 	await waitGone(pid);
 });
 
+test("the CLI env outlasts the live-process idle timeout and isolates CLAUDE.md files", async (t) => {
+	const client = connect(t, await startRunner(t, "hold"));
+	client.send({ token: TOKEN, op: "run", run: validRun() });
+	client.send({ stdin: userLine("hi") });
+	await client.until(() => client.frames.some((frame) => typeof frame.stderr === "string" && frame.stderr.includes("fake-env")));
+	const text = client.frames.map((frame) => frame.stderr ?? "").join("");
+	const [toolTimeout, idleTimeout, disableMds] = /fake-env (\S+) (\S+) (\S+)/.exec(text)?.slice(1) ?? [];
+	assert.ok(Number(toolTimeout) >= LIVE_PROCESS_IDLE_TIMEOUT_MS);
+	assert.ok(Number(idleTimeout) >= LIVE_PROCESS_IDLE_TIMEOUT_MS);
+	assert.equal(disableMds, "1");
+	client.socket.destroy();
+});
+
 test("toClaudeArgs matches upstream", () => {
 	assert.deepEqual(
 		toClaudeArgs({ model: "sonnet", effort: "high", systemPromptFile: "/w/system.md", mcpConfigFile: "/w/mcp.json", allowedTools: ["mcp__learnharness__read", "mcp__learnharness__quiz"] }),
@@ -281,7 +295,7 @@ test("toClaudeArgs matches upstream", () => {
 			"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
 			"--model", "sonnet", "--effort", "high", "--system-prompt-file", "/w/system.md", "--tools", "",
 			"--strict-mcp-config", "--mcp-config", "/w/mcp.json", "--setting-sources", "user",
-			"--settings", '{"disableAllHooks":true}', "--disable-slash-commands", "--no-session-persistence",
+			"--settings", '{"disableAllHooks":true,"outputStyle":"default","env":{"CLAUDE_CODE_DISABLE_CLAUDE_MDS":"1"}}', "--disable-slash-commands", "--no-session-persistence",
 			"--permission-prompts", "none", "--allowedTools", "mcp__learnharness__read,mcp__learnharness__quiz",
 		],
 	);

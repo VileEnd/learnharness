@@ -157,6 +157,8 @@ ssh -t root@<vm-host> docker exec -it learnharness-claude-1 claude
 
 then type `/login` and follow the prompts. The login lives in `deploy/volumes/claude` (on the VM `/var/lib/learnharness/volumes/claude`) and must never be backed up or copied: it is a personal Claude subscription credential. Using a subscription this way may conflict with Anthropic's Consumer Terms, so check them before you enable it.
 
+The runner starts every CLI with `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and the default output style, so a `CLAUDE.md` or output style left in the login volume by your interactive `/login` session never reaches the tutor's prompt. It also raises the CLI's MCP idle timeout to 30 minutes, so a question the learner answers late is not dropped.
+
 **Updating the CLI.** The image pins the CLI version, and its auto-updater is off. To update, bump the pinned `@anthropic-ai/claude-code@<version>` in `deploy/claude/Dockerfile` and rebuild: `docker compose up -d --build` on a manual host, or `systemctl restart learnharness-stack` on the NixOS VM once the change is on `main` (it pulls and rebuilds). The login in `volumes/claude` survives the rebuild. When the installed CLI is below the minimum version the app needs, the Claude Code status in Settings shows "Needs an update" and turns are refused until you update.
 
 **Upgrading an older install.** `docker compose up` refuses to start unless `CLAUDE_RUNNER_TOKEN` is set, even while Claude Code is off. The NixOS stack generates it into `secrets.env`. On a manual host, add `CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)` to `deploy/.env` first (put the command's output in the file, not the command), and create `deploy/volumes/claude` as above.
