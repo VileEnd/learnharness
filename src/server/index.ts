@@ -74,6 +74,8 @@ export { currentTenant } from "../core/tenant-context.ts";
 export { adminPolicyView, putDefaultsPolicy, putUserPolicy, adminUsage } from "./admin-policy.ts";
 // Claude Code (admin-only experiment): the admin toggle route and the toggle read.
 export { claudeCodeAdminPut, claudeCodeAdminView } from "./claude-code.ts";
-export { claudeCodeEnabled } from "./policy.ts";
+export { claudeCodeEnabled, conversationCacheRetention } from "./policy.ts";
+// Admin-global prompt-cache retention for conversation turns.
+export { cacheRetentionAdminPut, cacheRetentionAdminView } from "./cache-retention.ts";
 // The admin-managed custom endpoint (upstream port 6): the route handlers only; the key-bearing runtime view stays server-internal.
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
