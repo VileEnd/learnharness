@@ -564,8 +564,60 @@ export function createDocIndex(deps: DocIndexDeps) {
 		kickBackfill();
 	}
 
+	/** Forget the entries of batches still out at OpenRouter whose key matches
+	 *  (a removed document or concept): they must not count as in flight. The
+	 *  batch itself is still read and deleted remotely when it finishes. */
+	function stripPending(gone: (key: string) => boolean): void {
+		const batches = built ? [...pending.values()] : store.readPendingBatches();
+		let changed = false;
+		const next = batches.map((p) => {
+			const keep = Object.entries(p.docs).filter(([key]) => !gone(key));
+			if (keep.length === Object.keys(p.docs).length) return p;
+			changed = true;
+			return { ...p, docs: Object.fromEntries(keep) };
+		});
+		if (!changed) return;
+		try {
+			store.writePendingBatches(next);
+		} catch (err) {
+			console.warn(`[doc-index] could not save pending batches: ${err instanceof Error ? err.message : err}`);
+			return;
+		}
+		if (built) for (const p of next) pending.set(p.batchId, p);
+	}
+
 	function removeDocument(id: string): void {
 		drop(id);
+		stripPending((key) => key === id);
+	}
+
+	/** The graph lost concepts (a deleted document): forget their vectors, on
+	 *  disk and in flight, and the in-memory units follow the next stamp. */
+	function pruneConcepts(): void {
+		const graph = deps.graphStore;
+		if (!graph) return;
+		if (built) {
+			conceptStamp = null;
+			refreshConcepts();
+		}
+		const alive = new Set([...graph.readNodes()].map((n) => `${CONCEPT_PREFIX}${n.id}`));
+		stripPending((key) => key.startsWith(CONCEPT_PREFIX) && !alive.has(key));
+		const stored = deps.conceptVectors?.read();
+		if (!stored) return;
+		const keep = Object.entries(stored.entries).filter(([id]) => alive.has(id));
+		if (keep.length === Object.keys(stored.entries).length) return;
+		if (keep.length === 0) return deps.conceptVectors?.clear();
+		const flat = new Float32Array(keep.length * stored.dims);
+		const entries: typeof stored.entries = {};
+		keep.forEach(([id, e], i) => {
+			flat.set(stored.vectors.subarray(e.offset * stored.dims, (e.offset + 1) * stored.dims), i * stored.dims);
+			entries[id] = { contentHash: e.contentHash, offset: i };
+		});
+		try {
+			deps.conceptVectors?.write({ model: stored.model, dims: stored.dims, entries, vectors: flat });
+		} catch (err) {
+			console.warn(`[doc-index] could not save concept vectors: ${err instanceof Error ? err.message : err}`);
+		}
 	}
 
 	// ── background embedding ──────────────────────────────────────────────────
@@ -1160,7 +1212,7 @@ export function createDocIndex(deps: DocIndexDeps) {
 		return { mode, query, hits, ...(note ? { note } : {}) };
 	}
 
-	return { search, indexDocument, removeDocument, reindex, kickBackfill, tick };
+	return { search, indexDocument, removeDocument, pruneConcepts, reindex, kickBackfill, tick };
 }
 
 export type DocIndex = ReturnType<typeof createDocIndex>;

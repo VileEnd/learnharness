@@ -27,6 +27,7 @@
 import type { EmissionStats } from "../core/graph.ts";
 import type { DocumentDecision, DocumentMeta, DocumentSummary, DuplicateVerdict, LegacyImport } from "../core/contracts/documents.ts";
 import type { DocumentStore, GraphStore } from "../core/ports.ts";
+import { sourceRemovalImpact } from "../core/graph-deletion.ts";
 import { canonicalizeAndStoreTopics } from "../core/topics.ts";
 import { emit } from "../core/events.ts";
 import {
@@ -139,12 +140,32 @@ export interface DocumentServiceDeps {
 	retireSource?(oldId: string, replacementId: string): void;
 	/** Is an extraction running on this source right now? */
 	sourceBusy?(sourceId: string): boolean;
-	/** A rebuild finished: concepts may have gone (a side channel, contained). */
+	/** Concepts may have gone (a rebuild, a replace or a delete finished): a side channel, contained. */
 	onRebuilt?(): void | Promise<void>;
+	/** Take a deleted document's source out of the graph (concepts only it
+	 *  supports go, shared ones stay) and everything derived from them. */
+	deleteSource?(sourceId: string): void;
+	/** Is ANY extraction running (this tenant)? A delete waits for it: a run
+	 *  reads the ledgers it would otherwise merge into after the purge. */
+	extractionBusy?(): boolean;
 	now?: () => Date;
 	/** OCR job poll interval (default 2s; tests pass 0). */
 	pollMs?: number;
 }
+
+/** DELETE /api/documents/[id]'s answer. */
+export type DeleteTicket =
+	| { ok: true; docId: string; concepts: number; shared: number }
+	| { ok: false; code: "not_found" | "busy"; error: string };
+
+/** PATCH /api/documents/[id]'s answer. */
+export type RenameResult =
+	| { ok: true; meta: DocumentSummary }
+	| { ok: false; code: "not_found" | "invalid"; error: string };
+
+export const MAX_TITLE_LENGTH = 200;
+
+const BUSY = "This document is being extracted right now. Try again when that has finished.";
 
 /** POST /api/documents/[id]/rebuild's answer. */
 export type RebuildTicket =
@@ -350,7 +371,9 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			contentHash: fp.contentHash,
 			...(args.pdfSha256 ? { pdfSha256: args.pdfSha256 } : {}),
 			minhash: fp.minhash,
-			title: args.description.title,
+			// A replaced document keeps the name its owner gave it.
+			title: prior?.titleSet ? prior.title : args.description.title,
+			...(prior?.titleSet ? { titleSet: true as const } : {}),
 			summary: args.description.summary,
 			topics: normalizeTopics(args.description.topics),
 			filenames: [...new Set([...(prior?.filenames ?? []), args.filename])],
@@ -409,6 +432,70 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			sections: meta.sections.map((s) => ({ ...s, start: s.start - shift, end: s.end - shift })),
 		});
 		return { ok: true, outcome: "completed", docId: meta.id, stats };
+	}
+
+	/** The concepts a source feeds, those it matched to existing ones included. */
+	const conceptsOf = (sourceId: string): number =>
+		new Set<string>(deps.graph?.readNodes().filter((n) => n.provenance.some((pt) => pt.chatId === sourceId)).map((n) => n.id)).size;
+
+	/** Documents being rebuilt or replaced right now (by registry key). */
+	const rebuilding = new Set<string>();
+
+	/** Is something running on this document that a second run, a replace or a delete must not meet? */
+	function busyWith(meta: DocumentMeta, ...otherSources: string[]): boolean {
+		const scanRow = meta.pdfSha256 ? `scan_${meta.pdfSha256.slice(0, 12)}` : undefined;
+		return (
+			rebuilding.has(registryKey(meta.id)) ||
+			[meta.sourceId, ...otherSources].some((sourceId) => deps.sourceBusy?.(sourceId)) ||
+			(scanRow !== undefined && scans().has(registryKey(scanRow)))
+		);
+	}
+
+	/** The source the next extraction of this content goes to: derived from the
+	 *  content (so a retry lands on the same one), and never one a document
+	 *  already feeds - identical content alternates between two ids. */
+	function nextSourceId(contentHash: string, current: string): string {
+		const taken = new Set([current, ...store.listMetas().map((m) => m.sourceId)]);
+		for (let n = 0; ; n++) {
+			const id = documentIdFor({ contentHash: n === 0 ? contentHash : sha256Hex(`${contentHash}:${n}`) });
+			if (!taken.has(id)) return id;
+		}
+	}
+
+	/** EXTRACT UNDER A NEW SOURCE, then give up the old one. Shared by rebuild
+	 *  and replace. The old source goes only after EVERY chunk has succeeded, the
+	 *  new one holds a fair share of what the old one had, and the text is still
+	 *  the one extracted; until then both stand, and a failed or stopped run can
+	 *  simply be retried (it reads the whole document again). The document moves
+	 *  to the new source before the old one goes: dying in between then costs a
+	 *  few leftover concepts, never the concepts themselves or another run. */
+	async function swapSource(oldSourceId: string, meta: DocumentMeta, markdown: string, newSourceId: string, name: string): Promise<ImportCompletion> {
+		const done = await extract({ ...meta, sourceId: newSourceId }, name, markdown);
+		const found = conceptsOf(newSourceId);
+		const had = conceptsOf(oldSourceId);
+		if (found === 0) throw new Error("The new extraction found no concepts, so the existing ones were kept.");
+		if (found < had * MIN_REBUILD_SHARE) {
+			throw new Error(`The new extraction found only ${found} concepts where this document had ${had}, so the existing ones were kept.`);
+		}
+		const latest = store.getMeta(meta.id);
+		if (latest?.contentHash !== meta.contentHash) {
+			throw new Error("The document changed during the extraction, so the existing concepts were kept.");
+		}
+		store.save({ ...latest, sourceId: newSourceId, updatedAt: now() }, markdown);
+		deps.retireSource?.(oldSourceId, newSourceId);
+		void Promise.resolve()
+			.then(() => deps.onRebuilt?.())
+			.catch((err: unknown) => console.error(`[documents] after extracting ${meta.id}:`, err));
+		return done;
+	}
+
+	/** Extract a stored document: a new one onto its own source, a replaced one
+	 *  (it had a source) under a fresh one that then takes over from the old. */
+	function extractStored(meta: DocumentMeta, name: string, markdown: string, prior: DocumentMeta | undefined): Promise<ImportCompletion> {
+		if (!prior) return extract(meta, name, markdown);
+		const key = registryKey(meta.id);
+		rebuilding.add(key);
+		return swapSource(prior.sourceId, meta, markdown, nextSourceId(meta.contentHash, prior.sourceId), name).finally(() => rebuilding.delete(key));
 	}
 
 	/** Map a new document's topics onto the library's existing ones (cheap
@@ -474,11 +561,13 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		}
 		const fp = fingerprint(markdown);
 		const id = targetOf(verdict, decision) ?? freshId({ contentHash: fp.contentHash });
+		const prior = attachTo ? undefined : store.getMeta(id) ?? undefined;
+		if (prior && busyWith(prior)) return { index, name: file.name, outcome: "failed", docId: id, error: BUSY };
 		const described = await describeText(markdown, file.name);
 		const description = { ...described, topics: await canonicalizeTopics(normalizeTopics(described.topics)) };
 		const meta = buildMeta({ id, markdown, description, filename: file.name, origin: "markdown", sourceId: attachTo });
 		store.save(meta, markdown);
-		const completion = settle(() => (attachTo ? adopt(meta) : extract(meta, file.name, markdown)), meta.title);
+		const completion = settle(() => (attachTo ? adopt(meta) : extractStored(meta, file.name, markdown, prior)), meta.title);
 		return { index, name: file.name, outcome: "started", docId: meta.id, title: meta.title, completion };
 	}
 
@@ -520,6 +609,8 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			const described = describedByFrontMatter(fm.data) ?? (await deps.describe(normalizeText(markdown, { keepCase: true })));
 			const description = { ...described, topics: await canonicalizeTopics(normalizeTopics(described.topics), controller.signal) };
 			const id = targetId ?? freshId({ pdfSha256, contentHash: fingerprint(markdown).contentHash });
+			const prior = attachTo ? undefined : store.getMeta(id) ?? undefined;
+			if (prior && busyWith(prior)) throw new Error(BUSY);
 			const meta = buildMeta({
 				id,
 				markdown,
@@ -532,7 +623,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 				sourceId: attachTo,
 			});
 			store.save(meta, markdown);
-			return attachTo ? adopt(meta) : extract(meta, file.name, markdown);
+			return attachTo ? adopt(meta) : extractStored(meta, file.name, markdown, prior);
 		}, stem(file.name));
 		return { index, name: file.name, outcome: "started", docId: targetId ?? documentIdFor({ pdfSha256 }), title: stem(file.name), completion };
 	}
@@ -641,7 +732,16 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		return settle(async () => {
 			const described = await deps.describe(normalizeText(markdown, { keepCase: true }));
 			const topics = await canonicalizeTopics(normalizeTopics(described.topics));
-			const next: DocumentMeta = { ...meta, title: described.title, summary: described.summary, topics, updatedAt: new Date().toISOString() };
+			// The model was slow: the document may be gone (deleted) or renamed meanwhile.
+			const current = store.getMeta(id);
+			if (!current) return { ok: false, outcome: "failed", error: "No such document" };
+			const next: DocumentMeta = {
+				...current,
+				title: current.titleSet ? current.title : described.title,
+				summary: described.summary,
+				topics,
+				updatedAt: new Date().toISOString(),
+			};
 			store.save(next, markdown);
 			const graph = deps.graph;
 			if (graph && !graph.readTopics().some((row) => row.sourceId === next.sourceId)) return adopt(next);
@@ -666,12 +766,6 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		return meta.sourceId === sourceId ? null : { markdown: converted, sourceId };
 	}
 
-	const rebuilding = new Set<string>();
-
-	/** The concepts a source feeds, those it matched to existing ones included. */
-	const conceptsOf = (sourceId: string): number =>
-		new Set<string>(deps.graph?.readNodes().filter((n) => n.provenance.some((pt) => pt.chatId === sourceId)).map((n) => n.id)).size;
-
 	/** REBUILD a .nw document: the text is converted at once, so search and the
 	 *  reader improve right away, and its concepts are extracted again under a
 	 *  source of their own. The old source is given up only after EVERY chunk has
@@ -687,30 +781,12 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		const plan = rebuildPlan(meta, markdown);
 		if (!plan) return { ok: false, code: "not_rebuildable", error: "This document has nothing to rebuild." };
 		const key = registryKey(id);
-		if (rebuilding.has(key) || deps.sourceBusy?.(meta.sourceId) || deps.sourceBusy?.(plan.sourceId)) {
-			return { ok: false, code: "busy", error: "This document is being extracted right now. Try again when that has finished." };
-		}
+		if (busyWith(meta, plan.sourceId)) return { ok: false, code: "busy", error: BUSY };
 		rebuilding.add(key);
 		const converted: DocumentMeta = plan.markdown === markdown ? meta : { ...meta, ...fingerprint(plan.markdown), updatedAt: now() };
 		const completion = settle(async () => {
 			if (converted !== meta) store.save(converted, plan.markdown);
-			const done = await extract({ ...converted, sourceId: plan.sourceId }, converted.title, plan.markdown);
-			const found = conceptsOf(plan.sourceId);
-			const had = conceptsOf(meta.sourceId);
-			if (found === 0) throw new Error("The rebuild found no concepts, so the existing ones were kept.");
-			if (found < had * MIN_REBUILD_SHARE) {
-				throw new Error(`The rebuild found only ${found} concepts where this document had ${had}, so the existing ones were kept.`);
-			}
-			const latest = store.getMeta(id);
-			if (latest?.contentHash !== converted.contentHash) {
-				throw new Error("The document changed during the rebuild, so the existing concepts were kept.");
-			}
-			store.save({ ...latest, sourceId: plan.sourceId, updatedAt: now() }, plan.markdown);
-			deps.retireSource?.(meta.sourceId, plan.sourceId);
-			void Promise.resolve()
-				.then(() => deps.onRebuilt?.())
-				.catch((err: unknown) => console.error(`[documents] after rebuilding ${id}:`, err));
-			return done;
+			return swapSource(meta.sourceId, converted, plan.markdown, plan.sourceId, converted.title);
 		}, meta.title).finally(() => rebuilding.delete(key));
 		return { ok: true, docId: id, completion };
 	}
@@ -724,18 +800,60 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		return { chunks: chunkDocument(plan.markdown, sections, FACTORY_SETTINGS.graph.extractionChunkTokens).length };
 	}
 
+	// ── delete and rename ─────────────────────────────────────────────────────
+
+	/** DELETE a document: its file, its search entries and vectors, and every
+	 *  concept only it supports (shared concepts stay, minus its provenance).
+	 *  Refused while anything is being extracted: the purge is one synchronous
+	 *  stretch, but a running extraction merges into ledgers it read before it. */
+	function remove(id: string): DeleteTicket {
+		const meta = store.getMeta(id);
+		if (!meta) return { ok: false, code: "not_found", error: "No such document" };
+		if (deps.extractionBusy?.() || busyWith(meta)) return { ok: false, code: "busy", error: "An extraction is running. Try again when it has finished." };
+		const impact = deps.graph ? sourceRemovalImpact(deps.graph, meta.sourceId) : { concepts: 0, shared: 0 };
+		// The graph first: a document without concepts is a fine place to retry from, concepts without a document are not.
+		deps.deleteSource?.(meta.sourceId);
+		store.remove(id);
+		emit("activity-changed", {});
+		void Promise.resolve()
+			.then(() => deps.onRebuilt?.())
+			.catch((err: unknown) => console.error(`[documents] after deleting ${id}:`, err));
+		return { ok: true, docId: id, ...impact };
+	}
+
+	/** RENAME: the owner's title is kept by describe, rebuild and replace. The
+	 *  filename never becomes a title; only this call sets one. */
+	function rename(id: string, raw: string): RenameResult {
+		const meta = store.getMeta(id);
+		const markdown = store.readMarkdown(id);
+		if (!meta || markdown === null) return { ok: false, code: "not_found", error: "No such document" };
+		const title = raw.replace(/\s+/g, " ").trim();
+		if (title === "") return { ok: false, code: "invalid", error: "A title cannot be empty." };
+		if (title.length > MAX_TITLE_LENGTH) return { ok: false, code: "invalid", error: `A title can be at most ${MAX_TITLE_LENGTH} characters.` };
+		const next: DocumentMeta = { ...meta, title, titleSet: true, updatedAt: now() };
+		store.save(next, markdown);
+		const source = deps.graph?.readSources().find((entry) => entry.id === meta.sourceId);
+		if (source) deps.graph?.upsertSource({ id: source.id, filePath: title, importedAt: source.importedAt });
+		emit("activity-changed", {});
+		return { ok: true, meta: asSummary(next) };
+	}
+
 	return {
 		check,
 		importFiles,
 		redescribe,
 		rebuild,
+		remove,
+		rename,
 		list: (): DocumentSummary[] => store.listMetas().map(asSummary),
-		get: (id: string): { meta: DocumentSummary; markdown: string; rebuild?: { chunks: number } } | null => {
+		get: (id: string): { meta: DocumentSummary; markdown: string; rebuild?: { chunks: number }; removal: { concepts: number; shared: number } } | null => {
 			const meta = store.getMeta(id);
 			const markdown = store.readMarkdown(id);
 			if (!meta || markdown === null) return null;
 			const offer = rebuildOffer(meta, markdown);
-			return { meta: asSummary(meta), markdown, ...(offer ? { rebuild: offer } : {}) };
+			// What deleting it would take: concepts only it supports, and those shared that stay.
+			const removal = deps.graph ? sourceRemovalImpact(deps.graph, meta.sourceId) : { concepts: 0, shared: 0 };
+			return { meta: asSummary(meta), markdown, ...(offer ? { rebuild: offer } : {}), removal };
 		},
 		/** The sidecar's scan estimate for the PDFs among `files`; null when there are none. */
 		estimate: (files: IncomingFile[]) => {

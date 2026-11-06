@@ -20,10 +20,11 @@ const { documentStore } = await import("../src/store/documents.ts");
 const { createOcrClient } = await import("../src/server/ocr-client.ts");
 const { NotesImportError } = await import("../src/agent/subagents/extraction.ts");
 const { fingerprint } = await import("../src/core/documents.ts");
-const { retireSource, deleteChatTraces } = await import("../src/core/graph-deletion.ts");
+const { retireSource, deleteChatTraces, deleteSource } = await import("../src/core/graph-deletion.ts");
 const { extraction } = await import("../src/server/chat-handler.ts");
 const { stores } = await import("../src/server/stores.ts");
 const rebuildRoute = await import("../app/api/documents/[id]/rebuild/route.ts");
+const idRoute = await import("../app/api/documents/[id]/route.ts");
 import type { EmissionStats } from "../src/core/graph.ts";
 import type { NotesImportInput } from "../src/agent/subagents/extraction.ts";
 import type { ExtractionRunUsage, GraphNode } from "../src/core/contracts.ts";
@@ -69,6 +70,7 @@ const node = (id: string, chatId: string): GraphNode => ({
 function harness(over: {
 	importNotes?: (input: NotesImportInput) => Promise<EmissionStats>;
 	sourceBusy?: (id: string) => boolean;
+	extractionBusy?: () => boolean;
 	/** Concepts the old source fed before the rebuild. */
 	oldConcepts?: number;
 	/** Concepts each default extraction finds. */
@@ -96,7 +98,10 @@ function harness(over: {
 		retireSource: (oldId, newId) => {
 			retired.push([oldId, newId]);
 			sourceWhenRetired.push(documentStore.getMeta(OLD_ID)?.sourceId);
+			retireSource(graph, oldId, newId);
 		},
+		deleteSource: (id) => void deleteSource(graph, id),
+		extractionBusy: over.extractionBusy,
 		sourceBusy: over.sourceBusy,
 		onRebuilt: () => void events.rebuilt++,
 		pollMs: 0,
@@ -393,5 +398,197 @@ describe("POST /api/documents/[id]/rebuild", () => {
 			await new Promise((resolve) => setTimeout(resolve, 5));
 		}
 		assert.notEqual(documentStore.getMeta(OLD_ID)!.sourceId, OLD_SOURCE);
+	});
+});
+
+// ─── replace, delete and rename ──────────────────────────────────────────────
+
+const file = (name: string, text: string) => ({ name, bytes: new TextEncoder().encode(text) });
+const note = (salt: string) => `# Notes\n\n${prose(salt)}`;
+/** A near-duplicate of `note`: offered as "similar", so Replace applies. */
+const edited = (text: string) => text.replace("word10", "edited");
+const ids = (graph: ReturnType<typeof memoryGraphStore>) => [...new Set(graph.readNodes().map((n) => n.id))].sort();
+
+/** A harness whose extraction finds the concepts `find(call)` names, under the source it is given. */
+function finding(find: (call: number) => string[], over: Parameters<typeof harness>[0] = {}) {
+	let call = 0;
+	const h = harness({
+		...over,
+		importNotes: async (input) => {
+			for (const id of find(call++)) h.graph.appendNode(node(id, input.id!));
+			h.graph.upsertSource({ id: input.id!, filePath: input.title ?? "", importedAt: AT });
+			return { nodes: 1, chains: 0 };
+		},
+	});
+	return h;
+}
+
+describe("replacing a document", () => {
+	it("extracts the new version under a new source, then retires the old one", async () => {
+		const h = finding((call) => (call === 0 ? ["kept", "only_old"] : ["kept", "only_new"]));
+		const [first] = await h.service.importFiles([file("a.md", note("a"))]);
+		await first!.completion;
+		const oldSource = documentStore.getMeta(first!.docId!)!.sourceId;
+
+		const [second] = await h.service.importFiles([file("b.md", edited(note("a")))], ["replace"]);
+		assert.equal((await second!.completion)!.ok, true);
+		const meta = documentStore.getMeta(first!.docId!)!;
+		assert.notEqual(meta.sourceId, oldSource);
+		assert.deepEqual(ids(h.graph), ["kept", "only_new"], "what only the old version had is gone");
+		assert.deepEqual(h.graph.readSources().map((s) => s.id), [meta.sourceId], "the old source record went with it");
+		assert.deepEqual(h.retired, [[oldSource, meta.sourceId]]);
+	});
+
+	it("replacing with identical content still gets a source of its own", async () => {
+		const h = finding(() => ["kept"]);
+		const [first] = await h.service.importFiles([file("a.md", note("a"))]);
+		await first!.completion;
+		const oldSource = documentStore.getMeta(first!.docId!)!.sourceId;
+		const [again] = await h.service.importFiles([file("a.md", note("a"))], ["replace"]);
+		await again!.completion;
+		assert.notEqual(documentStore.getMeta(first!.docId!)!.sourceId, oldSource);
+		assert.deepEqual(ids(h.graph), ["kept"]);
+	});
+
+	it("a failed run removes nothing", async () => {
+		let fail = false;
+		const h = harness({
+			importNotes: async (input) => {
+				if (fail) throw new NotesImportError("partial", { nodes: 1, chains: 0 }, "chunk 2 failed");
+				h.graph.appendNode(node("only_old", input.id!));
+				return { nodes: 1, chains: 0 };
+			},
+		});
+		const [first] = await h.service.importFiles([file("a.md", note("a"))]);
+		await first!.completion;
+		const oldSource = documentStore.getMeta(first!.docId!)!.sourceId;
+		fail = true;
+		const [second] = await h.service.importFiles([file("b.md", edited(note("a")))], ["replace"]);
+		assert.equal((await second!.completion)!.ok, false);
+		assert.deepEqual(ids(h.graph), ["only_old"]);
+		assert.equal(documentStore.getMeta(first!.docId!)!.sourceId, oldSource);
+		assert.equal(h.retired.length, 0);
+	});
+
+	it("is refused while the document is being extracted", async () => {
+		const h = finding(() => ["x"], { sourceBusy: () => false });
+		const [first] = await h.service.importFiles([file("a.md", note("a"))]);
+		await first!.completion;
+		const busy = finding(() => ["x"], { sourceBusy: () => true });
+		const [second] = await busy.service.importFiles([file("b.md", edited(note("a")))], ["replace"]);
+		assert.equal(second!.outcome, "failed");
+		assert.equal(documentStore.readMarkdown(first!.docId!), note("a"));
+	});
+});
+
+describe("deleting a document", () => {
+	const seed = (h: ReturnType<typeof harness>) => {
+		seedOldImport();
+		h.graph.appendNode(node("only_here", OLD_SOURCE));
+		h.graph.appendNode(node("shared", OLD_SOURCE));
+		h.graph.appendNode(node("shared", "chat_other"));
+		h.graph.appendTopic({ nodeId: "only_here", topic: "OS", sourceId: OLD_SOURCE, at: AT });
+		h.graph.appendTopic({ nodeId: "shared", topic: "OS", sourceId: OLD_SOURCE, at: AT });
+		h.graph.writePositions({ only_here: { x: 1, y: 1 }, shared: { x: 2, y: 2 } });
+		h.graph.upsertSource({ id: OLD_SOURCE, filePath: "The Book", importedAt: AT });
+	};
+
+	it("removes the concepts only it supports and keeps the shared ones", async () => {
+		const h = harness();
+		seed(h);
+		assert.deepEqual(h.service.get(OLD_ID)!.removal, { concepts: 1, shared: 1 });
+		const done = h.service.remove(OLD_ID);
+		assert.deepEqual(done, { ok: true, docId: OLD_ID, concepts: 1, shared: 1 });
+		assert.equal(documentStore.getMeta(OLD_ID), null);
+		assert.deepEqual(ids(h.graph), ["shared"]);
+		assert.deepEqual(h.graph.readNodes().flatMap((n) => n.provenance.map((p) => p.chatId)), ["chat_other"], "its provenance is stripped");
+		assert.deepEqual(h.graph.readTopics().map((t) => t.nodeId), ["shared"]);
+		assert.deepEqual(Object.keys(h.graph.readPositions()), ["shared"]);
+		assert.deepEqual(h.graph.readSources(), []);
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(h.events.rebuilt, 1, "answers get linked to the survivors");
+	});
+
+	it("waits for a running extraction and says which document is unknown", () => {
+		const h = harness({ extractionBusy: () => true });
+		seed(h);
+		const refused = h.service.remove(OLD_ID);
+		assert.ok(!refused.ok);
+		assert.equal(refused.code, "busy");
+		assert.ok(documentStore.getMeta(OLD_ID));
+		assert.deepEqual(ids(h.graph), ["only_here", "shared"]);
+		const unknown = harness().service.remove("doc_ffffffffffff");
+		assert.ok(!unknown.ok);
+		assert.equal(unknown.code, "not_found");
+	});
+
+	it("DELETE /api/documents/[id] answers with what went, then 404", async () => {
+		seedOldImport();
+		stores.graphStore.appendNode(node("route_only", OLD_SOURCE));
+		const del = () => idRoute.DELETE(new Request("http://localhost/x", { method: "DELETE" }), { params: Promise.resolve({ id: OLD_ID }) });
+		const res = await del();
+		assert.equal(res.status, 200);
+		assert.deepEqual(await res.json(), { ok: true, docId: OLD_ID, concepts: 1, shared: 0 });
+		assert.equal(documentStore.getMeta(OLD_ID), null);
+		assert.equal(stores.graphStore.readNodes().some((n) => n.id === "route_only"), false);
+		assert.equal((await del()).status, 404);
+	});
+});
+
+describe("renaming a document", () => {
+	it("keeps the owner's title through describe, rebuild and replace", async () => {
+		seedOldImport();
+		const h = harness();
+		const renamed = h.service.rename(OLD_ID, "  My   OS book ");
+		assert.ok(renamed.ok);
+		assert.equal(renamed.meta.title, "My OS book");
+		assert.equal(documentStore.getMeta(OLD_ID)!.titleSet, true);
+
+		await h.service.redescribe(OLD_ID);
+		assert.equal(documentStore.getMeta(OLD_ID)!.title, "My OS book");
+		assert.equal(documentStore.getMeta(OLD_ID)!.summary, "s");
+
+		await started(h.service.rebuild(OLD_ID)).completion;
+		assert.equal(documentStore.getMeta(OLD_ID)!.title, "My OS book");
+
+		const [replaced] = await h.service.importFiles([file("v2.md", edited(documentStore.readMarkdown(OLD_ID)!))], ["replace"]);
+		assert.equal(replaced!.docId, OLD_ID);
+		await replaced!.completion;
+		assert.equal(documentStore.getMeta(OLD_ID)!.title, "My OS book");
+	});
+
+	it("a generated title is not marked, and a filename never becomes one", async () => {
+		const h = harness();
+		const [t] = await h.service.importFiles([file("secret-name.md", note("x"))]);
+		await t!.completion;
+		const meta = documentStore.getMeta(t!.docId!)!;
+		assert.equal(meta.titleSet, undefined);
+		assert.equal(meta.title, "Described");
+	});
+
+	it("updates the graph source's label and refuses empty or overlong titles", () => {
+		seedOldImport();
+		const h = harness();
+		h.graph.upsertSource({ id: OLD_SOURCE, filePath: "The Book", importedAt: AT });
+		h.service.rename(OLD_ID, "Renamed");
+		assert.equal(h.graph.readSources()[0]!.filePath, "Renamed");
+		for (const bad of ["   ", "x".repeat(201)]) {
+			const r = h.service.rename(OLD_ID, bad);
+			assert.ok(!r.ok);
+			assert.equal(r.code, "invalid");
+		}
+		const missing = h.service.rename("doc_ffffffffffff", "x");
+		assert.ok(!missing.ok);
+		assert.equal(missing.code, "not_found");
+	});
+
+	it("PATCH /api/documents/[id] renames, 400 for a bad title", async () => {
+		seedOldImport();
+		const patch = (body: unknown) =>
+			idRoute.PATCH(new Request("http://localhost/x", { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ id: OLD_ID }) });
+		assert.equal((await patch({ title: "Via route" })).status, 200);
+		assert.equal(documentStore.getMeta(OLD_ID)!.title, "Via route");
+		assert.equal((await patch({ title: "" })).status, 400);
+		assert.equal((await patch({})).status, 400);
 	});
 });

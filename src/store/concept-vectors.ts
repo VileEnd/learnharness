@@ -68,4 +68,9 @@ export const conceptVectorStore: ConceptVectorStore = {
 		const meta: Meta = { model: v.model, dims: v.dims, entries: v.entries };
 		writeAtomic(jsonFile(), `${JSON.stringify(meta)}\n`);
 	},
+	clear() {
+		// json first: without it the vectors are unreachable, never torn.
+		fs.rmSync(jsonFile(), { force: true });
+		fs.rmSync(binFile(), { force: true });
+	},
 };

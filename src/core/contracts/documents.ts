@@ -32,6 +32,9 @@ export interface DocumentMeta {
 	/** 128 MinHash values over word 5-shingles - the near-duplicate sketch. */
 	minhash: number[];
 	title: string;
+	/** The learner renamed the document: describe, rebuild and replace keep
+	 *  `title`. Absent = the title was generated from the content. */
+	titleSet?: true;
 	summary: string;
 	topics: string[];
 	/** Every filename this content arrived under - aliases only. */
