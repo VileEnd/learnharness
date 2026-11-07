@@ -3,7 +3,7 @@
  *
  * Search engines are pluggable behind ONE seam: the settings record names a
  * preferred engine (agent.search.engine — optional), keys live in the auth
- * store (TAVILY_API_KEY / BRAVE_API_KEY — curated catalog), and the server
+ * store (TAVILY_API_KEY / BRAVE_API_KEY / EXA_API_KEY — curated catalog), and the server
  * composes the live adapter. The Google CSE engine retired with this wave
  * (closed to new customers; dies Jan 2027) — replaced by Tavily + Brave.
  *
@@ -30,8 +30,21 @@ export interface SearchHit {
 	snippet: string;
 }
 
-/** The engine ids this wave ships (the catalog: curated keys + adapters). */
-export type SearchEngineId = "tavily" | "brave";
+/** The engines in automatic preference order (both keyed, no pin: the first
+ *  live engine wins; an explicit pin always wins). Adding an engine appends a
+ *  row here, a curated key in auth-keys.ts and an adapter in server/search.ts. */
+export const SEARCH_ENGINES = [
+	{ id: "tavily", label: "Tavily", envVar: "TAVILY_API_KEY" },
+	{ id: "brave", label: "Brave", envVar: "BRAVE_API_KEY" },
+	{ id: "exa", label: "Exa", envVar: "EXA_API_KEY" },
+] as const;
+
+export type SearchEngineId = (typeof SEARCH_ENGINES)[number]["id"];
+
+/** The read/write guards' membership check (settings record + PUT body). */
+export function isSearchEngineId(value: unknown): value is SearchEngineId {
+	return SEARCH_ENGINES.some((engine) => engine.id === value);
+}
 
 /** A live search engine: an id (for status/labels) + one operation. The
  *  adapters own their wire protocol (fetch, timeouts, error mapping) —

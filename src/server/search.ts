@@ -1,6 +1,6 @@
 /**
  * The search engines' server composition (search port + model slots wave,
- * 2026-09-20): the Tavily + Brave adapters behind the core port
+ * 2026-09-20): the search adapters behind the core port
  * (core/search.ts) + the live-engine resolution the settings UI and the
  * agent-layer tool both read.
  *
@@ -8,9 +8,9 @@
  *  - NO default engine: an engine is live iff its key is present (auth
  *    store or env — env wins, keyed via server/keys.ts keyValue).
  *  - Setting a key is ALL the user does — auto-detection: explicit
- *    agent.search.engine pins the preference (when BOTH keys are present
- *    the preference order is Tavily → Brave); without a pin, whichever
- *    engine has a key is the engine.
+ *    agent.search.engine pins the preference (when several keys are
+ *    present the order is the SEARCH_ENGINES table's); without a pin, the
+ *    first keyed engine is the engine.
  *  - An explicit choice does NOT silently fall back to the other engine:
  *    engine pinned but its key missing = honestly unavailable (reason
  *    says so) — no guessing what the user meant.
@@ -19,13 +19,22 @@
  * tool depends on the PORT only and tests never touch the network.
  */
 
-import type { SearchEngineId, SearchHit, SearchProvider, SearchStatus } from "../core/search.ts";
+import { SEARCH_ENGINES, type SearchEngineId, type SearchHit, type SearchProvider, type SearchStatus } from "../core/search.ts";
 import { keyValue } from "./keys.ts";
 import { loggedFetch } from "./logged-fetch.ts";
 import { effectiveSettings } from "./stores.ts";
 
 /** The wire-callable shape the adapters close over (tests inject a stub). */
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+
+/** Invalid JSON must not echo provider response bodies into tool results. */
+async function searchJson(response: Response, label: string): Promise<unknown> {
+	try {
+		return await response.json();
+	} catch {
+		throw new Error(`${label} search API returned an invalid response`);
+	}
+}
 
 /** Tavily: POST https://api.tavily.com/search — Bearer auth in the
  *  Authorization header (the current documented scheme; the legacy
@@ -47,23 +56,13 @@ export function tavilyProvider(apiKey: string, rawFetch: FetchLike = fetch, chat
 				body: JSON.stringify({ query, max_results: Math.min(count, 20) }),
 				signal: AbortSignal.timeout(30_000),
 			});
-			if (!resp.ok) {
-				const body = await resp.text();
-				// Their error body is {detail: {error: "…"}} — surface the
-				// message when present, else the raw slice.
-				let detail = body.slice(0, 200);
-				try {
-					const parsed = JSON.parse(body) as { detail?: { error?: string } };
-					if (parsed.detail?.error) detail = parsed.detail.error.slice(0, 200);
-				} catch {
-					/* keep the raw slice */
-				}
-				throw new Error(`Tavily search API ${resp.status}: ${detail}`);
-			}
-			const data = (await resp.json()) as {
+			// Never echo the provider's error body: it reaches the model's tool
+			// result and such bodies can contain credentials.
+			if (!resp.ok) throw new Error(`Tavily search API ${resp.status}`);
+			const data = (await searchJson(resp, "Tavily")) as {
 				results?: Array<{ title?: string; url?: string; content?: string }>;
-			};
-			return (data.results ?? [])
+			} | null;
+			return (data?.results ?? [])
 				.filter((r) => typeof r.url === "string" && r.url)
 				.map((r) => ({
 					title: r.title ?? r.url ?? "",
@@ -93,14 +92,11 @@ export function braveProvider(apiKey: string, rawFetch: FetchLike = fetch, chatI
 				},
 				signal: AbortSignal.timeout(30_000),
 			});
-			if (!resp.ok) {
-				const body = await resp.text();
-				throw new Error(`Brave search API ${resp.status}: ${body.slice(0, 200)}`);
-			}
-			const data = (await resp.json()) as {
+			if (!resp.ok) throw new Error(`Brave search API ${resp.status}`);
+			const data = (await searchJson(resp, "Brave")) as {
 				web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
-			};
-			return (data.web?.results ?? [])
+			} | null;
+			return (data?.web?.results ?? [])
 				.filter((r) => typeof r.url === "string" && r.url)
 				.map((r) => ({
 					title: r.title ?? r.url ?? "",
@@ -111,20 +107,66 @@ export function braveProvider(apiKey: string, rawFetch: FetchLike = fetch, chatI
 	};
 }
 
-/** The engines this wave ships, in PREFERENCE order (both keys present,
- *  no explicit pin → the first live engine wins; owner decision
- *  2026-09-20: Tavily first — the AI-native search API the wave chose). */
-const ENGINE_ORDER: ReadonlyArray<{ id: SearchEngineId; envVar: string }> = [
-	{ id: "tavily", envVar: "TAVILY_API_KEY" },
-	{ id: "brave", envVar: "BRAVE_API_KEY" },
-];
+/** Exa: POST https://api.exa.ai/search, key in x-api-key, `type: "auto"` and
+ *  highlight contents (a bounded excerpt per result). Every response carries
+ *  `costDollars.total` (Exa's own estimate of what the request cost); it is
+ *  stamped on the request-log line so Exa searches are PRICED lines that count
+ *  toward the monthly total and caps. Tavily and Brave report no dollars and
+ *  stay unpriced. Only http(s) URLs pass; error bodies are never echoed. */
+export function exaProvider(apiKey: string, rawFetch: FetchLike = fetch, chatId?: string): SearchProvider {
+	const fetchFn = loggedFetch(
+		rawFetch,
+		{ purpose: "search", provider: "exa", model: "search", ...(chatId !== undefined && { chatId }) },
+		(body) => (body as { costDollars?: { total?: unknown } } | null)?.costDollars?.total as number | undefined,
+	);
+	return {
+		id: "exa",
+		async search(query: string, count: number): Promise<SearchHit[]> {
+			const resp = await fetchFn("https://api.exa.ai/search", {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-api-key": apiKey },
+				body: JSON.stringify({ query, type: "auto", numResults: Math.min(100, Math.max(1, Math.floor(count))), contents: { highlights: true } }),
+				signal: AbortSignal.timeout(30_000),
+			});
+			if (!resp.ok) throw new Error(`Exa search API ${resp.status}`);
+			const data = await searchJson(resp, "Exa");
+			if (!data || typeof data !== "object" || !Array.isArray((data as { results?: unknown }).results)) {
+				throw new Error("Exa search API returned an invalid response");
+			}
+			return (data as { results: unknown[] }).results.flatMap((result): SearchHit[] => {
+				if (!result || typeof result !== "object") return [];
+				const row = result as { title?: unknown; url?: unknown; highlights?: unknown; text?: unknown };
+				if (typeof row.url !== "string" || !row.url.trim()) return [];
+				try {
+					const protocol = new URL(row.url).protocol;
+					if (protocol !== "http:" && protocol !== "https:") return [];
+				} catch {
+					return [];
+				}
+				const highlights = Array.isArray(row.highlights) ? row.highlights.filter((v): v is string => typeof v === "string").join(" ") : "";
+				const snippet = highlights || (typeof row.text === "string" ? row.text : "");
+				return [{ title: typeof row.title === "string" && row.title ? row.title : row.url, url: row.url, snippet: snippet.replace(/\s+/g, " ").trim().slice(0, 500) }];
+			});
+		},
+	};
+}
 
 /** The engine's key (env-or-file; env wins) — null when the engine is
  *  not keyed, which by owner decision means NOT LIVE. */
 function engineKey(id: SearchEngineId): string | null {
-	const envVar = ENGINE_ORDER.find((e) => e.id === id)?.envVar;
+	const envVar = SEARCH_ENGINES.find((e) => e.id === id)?.envVar;
 	const value = envVar ? keyValue(envVar) : undefined;
 	return value ? value : null;
+}
+
+/** Every engine's live key, read fresh (the resolver's input). */
+function engineKeys(): Partial<Record<SearchEngineId, string>> {
+	const keys: Partial<Record<SearchEngineId, string>> = {};
+	for (const { id } of SEARCH_ENGINES) {
+		const key = engineKey(id);
+		if (key) keys[id] = key;
+	}
+	return keys;
 }
 
 /** Resolve the search state PURELY from the given pins (testable): the
@@ -141,20 +183,20 @@ export function resolveSearchEngineFor(
 			return {
 				available: false,
 				engine: null,
-				reason: `search engine is set to "${pinned}" but its API key is missing — set the ${pinned === "tavily" ? "TAVILY_API_KEY" : "BRAVE_API_KEY"} key`,
+				reason: `search engine is set to "${pinned}" but its API key is missing — an admin needs to set the ${SEARCH_ENGINES.find((e) => e.id === pinned)?.envVar} key`,
 				key: null,
 			};
 		}
 		return { available: true, engine: pinned, reason: `search engine: ${pinned} (chosen)`, key: pinnedKey };
 	}
-	for (const { id } of ENGINE_ORDER) {
+	for (const { id } of SEARCH_ENGINES) {
 		const key = keys[id] ?? null;
 		if (key) return { available: true, engine: id, reason: `search engine: ${id} (auto)`, key };
 	}
 	return {
 		available: false,
 		engine: null,
-		reason: "no search engine configured — set a Tavily or Brave search API key",
+		reason: "no search engine configured — an admin needs to add a Tavily, Brave or Exa search API key",
 		key: null,
 	};
 }
@@ -165,10 +207,7 @@ export function resolveSearchEngineFor(
 export function searchStatus(): SearchStatus {
 	const { available, engine, reason } = resolveSearchEngineFor(
 		effectiveSettings().agent.search?.engine,
-		{
-			tavily: engineKey("tavily") ?? undefined,
-			brave: engineKey("brave") ?? undefined,
-		},
+		engineKeys(),
 	);
 	return { available, engine, reason };
 }
@@ -184,10 +223,16 @@ export function searchAvailable(): boolean {
  *  rotations take effect immediately. `chatId` (the chat a research job
  *  runs for) tags the adapter's request-log lines. */
 export function searchProvider(chatId?: string): SearchProvider | null {
-	const resolved = resolveSearchEngineFor(effectiveSettings().agent.search?.engine, {
-		tavily: engineKey("tavily") ?? undefined,
-		brave: engineKey("brave") ?? undefined,
-	});
+	const resolved = resolveSearchEngineFor(effectiveSettings().agent.search?.engine, engineKeys());
 	if (!resolved.available || !resolved.key) return null;
-	return resolved.engine === "tavily" ? tavilyProvider(resolved.key, fetch, chatId) : braveProvider(resolved.key, fetch, chatId);
+	switch (resolved.engine) {
+		case "tavily":
+			return tavilyProvider(resolved.key, fetch, chatId);
+		case "brave":
+			return braveProvider(resolved.key, fetch, chatId);
+		case "exa":
+			return exaProvider(resolved.key, fetch, chatId);
+		default:
+			return null;
+	}
 }

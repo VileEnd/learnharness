@@ -152,8 +152,10 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 		const usd = lineCost(line, price);
 		if (usd === null) {
 			// Only billable lines count as unpriced; an error with no usage is not.
-			// Search has no price by design: counting it would keep "N calls
-			// unpriced" up for good and hide a real partial total.
+			// Tavily and Brave report no dollars: counting their search lines as
+			// unpriced would keep "N calls unpriced" up for good and hide a real
+			// partial total. A priced search line (Exa's reported cost) never
+			// reaches this branch; it counts like any other priced line.
 			if (category !== "search" && (line.outcome !== "error" || hasUsage(line))) {
 				unpricedCalls++;
 				cat.unpriced++;

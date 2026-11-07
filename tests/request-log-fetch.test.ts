@@ -5,7 +5,7 @@ import type { RequestLogLine } from "../src/core/contracts/usage.ts";
 import { setRequestSink } from "../src/agent/request-log.ts";
 import { openRouterEmbedder } from "../src/server/doc-index.ts";
 import { createOcrClient } from "../src/server/ocr-client.ts";
-import { tavilyProvider } from "../src/server/search.ts";
+import { exaProvider, tavilyProvider } from "../src/server/search.ts";
 import { createWebTools } from "../src/agent/tools/web.ts";
 
 let lines: RequestLogLine[] = [];
@@ -116,6 +116,18 @@ describe("search", () => {
 		assert.equal(lines[0]!.category, "search");
 		assert.equal(lines[0]!.provider, "tavily");
 		assert.equal(lines[0]!.outcome, "error");
+	});
+
+	it("an Exa search logs the cost Exa reports; a response without one stays unpriced", async () => {
+		collect();
+		await exaProvider("k", async () => json({ results: [], costDollars: { total: 0.007 } })).search("q", 3);
+		await exaProvider("k", async () => json({ results: [] })).search("q", 3);
+		await assert.rejects(exaProvider("k", async () => json({ error: "bad key" }, 401)).search("q", 3), /^Error: Exa search API 401$/);
+		assert.deepEqual(lines.map((l) => [l.provider, l.outcome, l.providerCostUsd]), [
+			["exa", "ok", 0.007],
+			["exa", "ok", undefined],
+			["exa", "error", undefined],
+		]);
 	});
 
 	it("search and reader lines carry the chat that asked", async () => {
