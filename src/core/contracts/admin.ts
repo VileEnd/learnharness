@@ -17,6 +17,14 @@ export interface UserPolicy {
 	monthlyCapUsd: number | null;
 }
 
+/** Prompt-cache retention for conversation turns: pi-ai's "short" (about 5
+ *  minutes, the default) or "long" (1 hour, written at 2x instead of 1.25x). */
+export type CacheRetentionPref = "short" | "long";
+
+export function isCacheRetentionPref(v: unknown): v is CacheRetentionPref {
+	return v === "short" || v === "long";
+}
+
 export interface AdminPolicy {
 	version: 1;
 	/** Persisted only by an explicit setDefaults; absent = built-in live-catalog defaults at read time. */
@@ -25,6 +33,10 @@ export interface AdminPolicy {
 	/** Claude Code as an admin-only provider. Absent (or anything but
 	 *  `enabled: true`) = off. Optional, so no version bump: older builds ignore it. */
 	claudeCode?: { enabled: boolean };
+	/** Admin-global prompt-cache retention, applied to conversation turns only
+	 *  (teacher, prober, practice). Absent (or anything unrecognised) = pi-ai's
+	 *  default. Optional, so no version bump. */
+	cacheRetention?: { conversation?: CacheRetentionPref };
 }
 
 export const DEFAULT_MONTHLY_CAP_USD = 5;

@@ -3,6 +3,7 @@ import {
 	createModels,
 	getSupportedThinkingLevels,
 	type Api,
+	type CacheRetention,
 	type Model,
 	type Models,
 	type MutableModels,
@@ -12,6 +13,7 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type ModelRole } from "../../config.ts";
+import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import { DEFAULT_THINKING_ORDER, isPolicyRefusal, modelNotAllowed } from "../core/settings.ts";
 import { observeStream } from "./request-log.ts";
 import packageMetadata from "../../package.json" with { type: "json" };
@@ -151,6 +153,12 @@ export interface EngineOptions {
 	 *  else (topicist and attribution ride the describer's role): the model
 	 *  gate maps it to its slot tier. */
 	role?: ModelRole;
+	/** Prompt-cache retention for THIS engine's calls (pi-ai `cacheRetention`;
+	 *  Anthropic, OpenRouter anthropic/*, Bedrock and OpenAI honor "long").
+	 *  Set only by the conversation turn engine from the admin policy. Absent =
+	 *  pi-ai's default; never forwarded to the custom endpoint (a local server
+	 *  may reject the parameters) or to Claude Code (the CLI owns caching). */
+	cacheRetention?: CacheRetention;
 }
 
 /** The per-user model and cap gate (multi-user design §10): returns the spec
@@ -218,7 +226,11 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 		streamFn: (requestModel, context, options) => {
 			if (!custom) {
 				return observeStream(
-					models.streamSimple(requestModel, context, { ...options, reasoning: level === "off" ? undefined : level }),
+					models.streamSimple(requestModel, context, {
+						...options,
+						reasoning: level === "off" ? undefined : level,
+						...(opts.cacheRetention && spec.provider !== CLAUDE_CODE_PROVIDER && { cacheRetention: opts.cacheRetention }),
+					}),
 					{ ...meta(requestModel.id), provider: requestModel.provider },
 				);
 			}

@@ -12,13 +12,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+	categoryCacheHitRate,
 	monthKey,
 	USAGE_TZ,
 	type UsageFailuresPage,
 	type UsageMonthTotal,
 	type UsageMonthView,
 } from "@/src/core";
-import { costLabel, formatTokens, prettyModel } from "@/components/usage-format";
+import { costLabel, formatHitRate, formatTokens, prettyModel } from "@/components/usage-format";
 import {
 	CATEGORY_COLORS,
 	CATEGORY_LABELS,
@@ -175,6 +176,7 @@ export function UsageView({
 									<th className={`${thClass} pl-3 text-right`}>Spend</th>
 									<th className={`${thClass} pl-3 text-right`}>Calls</th>
 									<th className={`${thClass} pl-3 text-right`}>Tokens</th>
+									<th className={`${thClass} pl-3 text-right`}>Cache hit</th>
 									<th className={`${thClass} pl-3 text-right`}>Unpriced</th>
 								</tr>
 							</thead>
@@ -192,6 +194,7 @@ export function UsageView({
 											<td className={numClass}>{costLabel(t.usd)}</td>
 											<td className={numClass}>{t.calls}</td>
 											<td className={numClass}>{formatTokens(t.tokens)}</td>
+											<td className={numClass} data-testid={`usage-cache-${c}`}>{formatHitRate(categoryCacheHitRate(t))}</td>
 											<td className={`${numClass} ${t.unpriced ? "" : "text-muted-foreground/60"}`}>{t.unpriced}</td>
 										</tr>
 									);

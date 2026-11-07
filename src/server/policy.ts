@@ -4,7 +4,7 @@
  * from the live catalog's "Cheapest" recommended models.
  */
 
-import { AdminPolicyCorrupt, DEFAULT_MONTHLY_CAP_USD, DENY_ALL_POLICY, modelKey, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
+import { AdminPolicyCorrupt, DEFAULT_MONTHLY_CAP_USD, DENY_ALL_POLICY, isCacheRetentionPref, modelKey, type CacheRetentionPref, type AdminPolicy, type PolicyModel, type UserPolicy } from "../core/contracts/admin.ts";
 import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import { recommendedFor } from "../core/recommended-models.ts";
 import { multiUser, requireTenant } from "../core/tenant-context.ts";
@@ -95,6 +95,24 @@ export function claudeCodeEnabled(): boolean {
 /** Refuses (throws AdminPolicyCorrupt) on a corrupt file; never persists newUserDefaults. */
 export function setClaudeCodeEnabled(on: boolean): void {
 	stores.adminPolicyStore.writePolicy({ ...stored(), claudeCode: { enabled: on } });
+}
+
+/** The conversation-turn cache retention the admin chose, read fresh on every
+ *  call. Undefined = pi-ai's default: nothing stored, an unrecognised value, or a
+ *  corrupt policy file (a cost knob must not fail a turn). */
+export function conversationCacheRetention(): CacheRetentionPref | undefined {
+	try {
+		const v = stored().cacheRetention?.conversation;
+		return isCacheRetentionPref(v) ? v : undefined;
+	} catch (e) {
+		if (!(e instanceof AdminPolicyCorrupt)) throw e;
+		return undefined;
+	}
+}
+
+/** Refuses (throws AdminPolicyCorrupt) on a corrupt file. */
+export function setConversationCacheRetention(v: CacheRetentionPref): void {
+	stores.adminPolicyStore.writePolicy({ ...stored(), cacheRetention: { conversation: v } });
 }
 
 export type PolicyValidation = { ok: true; policy: UserPolicy } | { ok: false; error: string };

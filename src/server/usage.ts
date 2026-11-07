@@ -14,7 +14,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { CallUsage, ChatRecord, ExtractionRunUsage, JobKind } from "../core/contracts.ts";
 import type { RequestLogLine, UsageFailuresPage, UsageMonthTotal, UsageMonthView } from "../core/contracts/usage.ts";
-import { categoryOf, monthKey, summarizeMonth } from "../core/usage.ts";
+import { categoryOf, monthCacheHitRate, monthKey, summarizeMonth } from "../core/usage.ts";
 import { createPricer } from "./pricing.ts";
 import { stores } from "./stores.ts";
 
@@ -42,6 +42,11 @@ export function monthSpend(month: string = monthKey(new Date())): { usd: number;
 	ensureBackfill();
 	const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), createPricer({ customFromConfig: false }));
 	return { usd: totalUsd ?? 0, unpriced: unpricedCalls };
+}
+
+/** This month's observed cache-hit rate for the ambient tenant (null when no data). */
+export function monthCacheHit(month: string = monthKey(new Date())): number | null {
+	return monthCacheHitRate(summarizeMonth(month, stores.requestLog.readMonth(month), () => null).categories);
 }
 
 /** The last 12 months that have a log file, oldest first. */

@@ -1,5 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import { callCost } from "./pricing.ts";
+import { conversationCacheRetention } from "./policy.ts";
 import {
 	createPracticeAgent,
 	createProberAgent,
@@ -438,6 +439,9 @@ export async function handleChatInput(
 			purpose: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
 			chatId,
 			chatKind,
+			// The admin's cache-retention choice applies to this conversation
+			// engine only: compaction, roles, jobs and extraction keep pi's default.
+			cacheRetention: conversationCacheRetention(),
 		});
 	} catch (err) {
 		// A model the compaction gate did not build (a Claude Code chat compacts

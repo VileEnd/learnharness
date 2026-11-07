@@ -4,6 +4,7 @@
  */
 
 import type { CallUsage } from "./contracts.ts";
+import { cacheHitRate } from "./prices.ts";
 import type { CategoryTotal, RequestLogLine, UsageCategory, UsageMonth } from "./contracts/usage.ts";
 
 export const USAGE_TZ = "Europe/Berlin";
@@ -117,7 +118,7 @@ const add = (a: number | null, b: number): number => (a ?? 0) + b;
 
 export function summarizeMonth(month: string, lines: readonly RequestLogLine[], price: Pricer): UsageMonth {
 	const categories = {} as Record<UsageCategory, CategoryTotal>;
-	for (const c of CATEGORIES) categories[c] = { usd: null, calls: 0, tokens: 0, unpriced: 0 };
+	for (const c of CATEGORIES) categories[c] = { usd: null, calls: 0, tokens: 0, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 };
 	let totalUsd: number | null = null;
 	let calls = 0;
 	let unpricedCalls = 0;
@@ -135,6 +136,11 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 		const cat = categories[category];
 		cat.calls++;
 		cat.tokens += (line.input ?? 0) + (line.output ?? 0) + (line.cacheRead ?? 0) + (line.cacheWrite ?? 0);
+		// Only lines that recorded input count: a line without it has no prompt size.
+		if (line.input !== undefined) {
+			cat.cacheReadTokens += line.cacheRead ?? 0;
+			cat.promptTokens += line.input + (line.cacheRead ?? 0) + (line.cacheWrite ?? 0);
+		}
 		if (line.outcome === "error") failures++;
 		const session = line.chatId
 			? (sessions.get(line.chatId) ?? { chatId: line.chatId, usd: null, calls: 0 })
@@ -180,4 +186,20 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 
 export function truncateError(text: string): string {
 	return text.length > 1000 ? text.slice(0, 1000) : text;
+}
+
+/** A category's observed cache-hit rate, or null (no reads / no data). */
+export function categoryCacheHitRate(t: Pick<CategoryTotal, "cacheReadTokens" | "promptTokens">): number | null {
+	return cacheHitRate(t.cacheReadTokens, t.promptTokens);
+}
+
+/** The whole month's rate across categories. */
+export function monthCacheHitRate(categories: Record<UsageCategory, Pick<CategoryTotal, "cacheReadTokens" | "promptTokens">>): number | null {
+	let read = 0;
+	let prompt = 0;
+	for (const c of Object.values(categories)) {
+		read += c.cacheReadTokens;
+		prompt += c.promptTokens;
+	}
+	return cacheHitRate(read, prompt);
 }

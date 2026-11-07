@@ -70,7 +70,7 @@ describe("MonthBars", () => {
 	});
 });
 
-const empty = (): CategoryTotal => ({ usd: null, calls: 0, tokens: 0, unpriced: 0 });
+const empty = (): CategoryTotal => ({ usd: null, calls: 0, tokens: 0, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 });
 const categories = Object.fromEntries(
 	(["teaching", "practice", "canvas-reader", "graph", "jobs", "library", "learner", "search"] as UsageCategory[]).map((c) => [c, empty()]),
 ) as Record<UsageCategory, CategoryTotal>;
@@ -81,7 +81,7 @@ const view: UsageMonthView = {
 	calls: 3,
 	unpricedCalls: 0,
 	failures: 1,
-	categories: { ...categories, teaching: { usd: 0.42, calls: 3, tokens: 12000, unpriced: 0 } },
+	categories: { ...categories, teaching: { usd: 0.42, calls: 3, tokens: 12000, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 } },
 	days: [{ day: "2026-10-05", byCategory: { teaching: 0.42 } }],
 	sessions: [{ chatId: "c1", usd: 0.42, calls: 3, title: "Fourier series", kind: "teach" }],
 };
