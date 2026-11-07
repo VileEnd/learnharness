@@ -72,6 +72,16 @@ test("unknown category folds via purpose; null-usd sessions sort last", () => {
 	assert.equal(m.sessions[1]?.usd, null);
 });
 
+test("a priced search line (Exa's reported cost) counts toward totals and the search category", () => {
+	const exa = line({ purpose: "search", category: "search", provider: "exa", model: "search", providerCostUsd: 0.007 });
+	const unpricedSearch = line({ purpose: "search", category: "search", provider: "tavily", model: "search" });
+	const m = summarizeMonth("2026-10", [exa, unpricedSearch], price);
+	assert.equal(m.categories.search.calls, 2);
+	assert.equal(m.categories.search.usd, 0.007);
+	assert.equal(m.totalUsd, 0.007);
+	assert.equal(m.unpricedCalls, 0, "the unpriced Tavily line is still not a warning");
+});
+
 test("search lines count as calls, never as unpriced; their failures still count", () => {
 	const search = (o: Partial<RequestLogLine> = {}) => line({ purpose: "search", category: "search", provider: "tavily", model: "search", ...o });
 	const m = summarizeMonth("2026-10", [line({ output: 1000 }), search(), search({ outcome: "error", error: "HTTP 401" })], price);

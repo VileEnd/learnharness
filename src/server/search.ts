@@ -107,6 +107,50 @@ export function braveProvider(apiKey: string, rawFetch: FetchLike = fetch, chatI
 	};
 }
 
+/** Exa: POST https://api.exa.ai/search, key in x-api-key, `type: "auto"` and
+ *  highlight contents (a bounded excerpt per result). Every response carries
+ *  `costDollars.total` (Exa's own estimate of what the request cost); it is
+ *  stamped on the request-log line so Exa searches are PRICED lines that count
+ *  toward the monthly total and caps. Tavily and Brave report no dollars and
+ *  stay unpriced. Only http(s) URLs pass; error bodies are never echoed. */
+export function exaProvider(apiKey: string, rawFetch: FetchLike = fetch, chatId?: string): SearchProvider {
+	const fetchFn = loggedFetch(
+		rawFetch,
+		{ purpose: "search", provider: "exa", model: "search", ...(chatId !== undefined && { chatId }) },
+		(body) => (body as { costDollars?: { total?: unknown } } | null)?.costDollars?.total as number | undefined,
+	);
+	return {
+		id: "exa",
+		async search(query: string, count: number): Promise<SearchHit[]> {
+			const resp = await fetchFn("https://api.exa.ai/search", {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-api-key": apiKey },
+				body: JSON.stringify({ query, type: "auto", numResults: Math.min(100, Math.max(1, Math.floor(count))), contents: { highlights: true } }),
+				signal: AbortSignal.timeout(30_000),
+			});
+			if (!resp.ok) throw new Error(`Exa search API ${resp.status}`);
+			const data = await searchJson(resp, "Exa");
+			if (!data || typeof data !== "object" || !Array.isArray((data as { results?: unknown }).results)) {
+				throw new Error("Exa search API returned an invalid response");
+			}
+			return (data as { results: unknown[] }).results.flatMap((result): SearchHit[] => {
+				if (!result || typeof result !== "object") return [];
+				const row = result as { title?: unknown; url?: unknown; highlights?: unknown; text?: unknown };
+				if (typeof row.url !== "string" || !row.url.trim()) return [];
+				try {
+					const protocol = new URL(row.url).protocol;
+					if (protocol !== "http:" && protocol !== "https:") return [];
+				} catch {
+					return [];
+				}
+				const highlights = Array.isArray(row.highlights) ? row.highlights.filter((v): v is string => typeof v === "string").join(" ") : "";
+				const snippet = highlights || (typeof row.text === "string" ? row.text : "");
+				return [{ title: typeof row.title === "string" && row.title ? row.title : row.url, url: row.url, snippet: snippet.replace(/\s+/g, " ").trim().slice(0, 500) }];
+			});
+		},
+	};
+}
+
 /** The engine's key (env-or-file; env wins) — null when the engine is
  *  not keyed, which by owner decision means NOT LIVE. */
 function engineKey(id: SearchEngineId): string | null {
@@ -139,7 +183,7 @@ export function resolveSearchEngineFor(
 			return {
 				available: false,
 				engine: null,
-				reason: `search engine is set to "${pinned}" but its API key is missing — set the ${SEARCH_ENGINES.find((e) => e.id === pinned)?.envVar} key`,
+				reason: `search engine is set to "${pinned}" but its API key is missing — an admin needs to set the ${SEARCH_ENGINES.find((e) => e.id === pinned)?.envVar} key`,
 				key: null,
 			};
 		}
@@ -152,7 +196,7 @@ export function resolveSearchEngineFor(
 	return {
 		available: false,
 		engine: null,
-		reason: "no search engine configured — set a Tavily or Brave search API key",
+		reason: "no search engine configured — an admin needs to add a Tavily, Brave or Exa search API key",
 		key: null,
 	};
 }
@@ -186,6 +230,8 @@ export function searchProvider(chatId?: string): SearchProvider | null {
 			return tavilyProvider(resolved.key, fetch, chatId);
 		case "brave":
 			return braveProvider(resolved.key, fetch, chatId);
+		case "exa":
+			return exaProvider(resolved.key, fetch, chatId);
 		default:
 			return null;
 	}
