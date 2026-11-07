@@ -30,6 +30,7 @@ import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGRO
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
+import { isSearchEngineId, SEARCH_ENGINES } from "../core/search.ts";
 import type { ModelNotAllowed } from "../core/settings.ts";
 import { disallowedModel } from "./model-gate.ts";
 
@@ -216,8 +217,8 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 		const search = asRecord(raw.search);
 		if (!search) return { ok: false, error: "search must be an object" };
 		if (search.engine !== undefined) {
-			if (search.engine !== "tavily" && search.engine !== "brave") {
-				return { ok: false, error: 'search.engine must be "tavily" or "brave"' };
+			if (!isSearchEngineId(search.engine)) {
+				return { ok: false, error: `search.engine must be one of ${SEARCH_ENGINES.map((engine) => `"${engine.id}"`).join(", ")}` };
 			}
 			settings.search = { engine: search.engine };
 		}

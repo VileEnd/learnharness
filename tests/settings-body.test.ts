@@ -73,7 +73,9 @@ describe("parseAgentSettingsBody", () => {
 		const clear = parseAgentSettingsBody({ search: {} });
 		assert.ok(clear.ok);
 		assert.equal(clear.settings.search, undefined, "absent engine = back to auto-detect");
-		assert.equal(parseAgentSettingsBody({ search: { engine: "google" } }).ok, false);
+		const bad = parseAgentSettingsBody({ search: { engine: "google" } });
+		assert.ok(!bad.ok);
+		assert.match(bad.error, /search\.engine must be one of "tavily", "brave"/);
 		assert.equal(parseAgentSettingsBody({ search: "tavily" }).ok, false, "search must be an object");
 		assert.equal(parseAgentSettingsBody({ search: { engine: 1 } }).ok, false);
 	});

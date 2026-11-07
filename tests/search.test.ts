@@ -11,7 +11,17 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { SEARCH_ENGINES } from "../src/core/search.ts";
 import { resolveSearchEngineFor, tavilyProvider, braveProvider } from "../src/server/search.ts";
+
+describe("SEARCH_ENGINES (the engine table)", () => {
+	it("is the automatic preference order, each row with its key env var", () => {
+		assert.deepEqual(SEARCH_ENGINES.map((e) => [e.id, e.envVar]), [
+			["tavily", "TAVILY_API_KEY"],
+			["brave", "BRAVE_API_KEY"],
+		]);
+	});
+});
 
 describe("resolveSearchEngineFor (the auto-detect decision)", () => {
 	it("no keys: honestly unavailable, no default", () => {
@@ -93,11 +103,16 @@ describe("tavilyProvider (wire shape per docs.tavily.com, verified 2026-09-20)",
 		assert.deepEqual(hits, [{ title: "Example", url: "https://example.com/a", snippet: "line1 line2" }]);
 	});
 
-	it("maps the {detail:{error}} error body into the message", async () => {
+	it("reports the status only: the error body never reaches the message", async () => {
 		const provider = tavilyProvider("tvly-throwaway-key-00001", async () =>
-			new Response(JSON.stringify({ detail: { error: "Unauthorized: missing or invalid API key." } }), { status: 401 }),
+			new Response(JSON.stringify({ detail: { error: "bad key tvly-throwaway-key-00001" } }), { status: 401 }),
 		);
-		await assert.rejects(provider.search("q", 5), /Tavily search API 401: Unauthorized/);
+		await assert.rejects(provider.search("q", 5), (err: Error) => err.message === "Tavily search API 401");
+	});
+
+	it("maps invalid JSON to a fixed message without the body", async () => {
+		const provider = tavilyProvider("tvly-throwaway-key-00001", async () => new Response("<html>secret-body</html>", { status: 200 }));
+		await assert.rejects(provider.search("q", 5), (err: Error) => err.message === "Tavily search API returned an invalid response");
 	});
 });
 
@@ -124,10 +139,15 @@ describe("braveProvider (wire shape per Brave's dashboard docs, verified 2026-09
 		assert.deepEqual(hits, [{ title: "Example", url: "https://example.com/b", snippet: "a description" }]);
 	});
 
-	it("surfaces the HTTP status on failure", async () => {
+	it("reports the status only: the error body never reaches the message", async () => {
 		const provider = braveProvider("brave-throwaway-key-00001", async () =>
-			new Response("rate limited", { status: 429 }),
+			new Response("rate limited for brave-throwaway-key-00001", { status: 429 }),
 		);
-		await assert.rejects(provider.search("q", 5), /Brave search API 429/);
+		await assert.rejects(provider.search("q", 5), (err: Error) => err.message === "Brave search API 429");
+	});
+
+	it("maps invalid JSON to a fixed message without the body", async () => {
+		const provider = braveProvider("brave-throwaway-key-00001", async () => new Response("<html>secret-body</html>", { status: 200 }));
+		await assert.rejects(provider.search("q", 5), (err: Error) => err.message === "Brave search API returned an invalid response");
 	});
 });
