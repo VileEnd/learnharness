@@ -35,11 +35,14 @@
  * Absent key = enabled in the schema; the UI writes explicit booleans for
  * all three (simpler to reason about, sanitize-equivalent).
  *
- * Prompts: GET /api/settings/prompts segments — THREE SECTIONS in the
- * owner's ruled order (2026-09-26 overhaul): Teacher first, Prober, then
- * Shared LAST. The server returns per-agent lists that each INCLUDE the
- * shared segments; sectionedSegments deduplicates them (shared chunks
- * once, in prompt-assembly order). The row rulings: only the TOGGLE
+ * Prompts: GET /api/settings/prompts segments — Teacher, Prober, Practice,
+ * then Shared LAST. The server returns each agent's actual segments,
+ * including its shared subset; sectionedSegments deduplicates shared
+ * chunks (once, in prompt-assembly order) and derives each shared
+ * fragment's "Used by …" hint from membership in those lists. Override
+ * TEXT is instance-global and its writes are admin-only, so a non-admin
+ * sees the editor read-only (Save and Delete off) but keeps their own
+ * per-user on/off switch (agent.prompts). The row rulings: only the TOGGLE
  * grays when there's no override file (the file name is always
  * full-contrast); NO description line when there's no override (the empty
  * state is clean — toggle + name); the indicator ("Your version is
@@ -113,6 +116,9 @@ interface SegmentInfo {
 	enabled: boolean;
 	shared: boolean;
 }
+
+type PromptView = Record<"teacher" | "prober" | "practice", SegmentInfo[]>;
+type PromptRow = SegmentInfo & { usageHint?: string };
 
 /** The GET /api/models response fields this section consumes. */
 interface ModelsBody {
@@ -214,37 +220,131 @@ export function composeSearchEngine(
  *  this line). Exported for the pin. */
 export const PROMPT_IN_USE_HINT = "Your version is in use";
 
-/** One section of the prompt view — the owner's ruled order: Teacher,
- *  Prober, then Shared last. */
+/** Prompt sections in display order; Shared is deduplicated and last. */
 export interface PromptSection {
-	id: "teacher" | "prober" | "shared";
+	id: keyof PromptView | "shared";
 	label: string;
-	/** The one header that earns a hint: "Shared" alone is not
-	 *  self-evident. Teacher/Prober are. */
-	hint?: string;
-	segments: SegmentInfo[];
+	segments: PromptRow[];
 }
 
-/** Split the server's per-agent segment lists into the owner's three
- *  sections. The server contract returns the shared segments in BOTH
- *  lists (same paths, same content) — the shared chunks are listed ONCE
- *  here (taken from the teacher list; identical by construction), in
- *  assembly order: the base file, then the shared fragments sorted. The
- *  agents' own chunks keep their lists' order — which IS the prompt
- *  assembly order (numeric-prefix filename sort). Pure — exported for
- *  tests. */
-export function sectionedSegments(view: { prober: SegmentInfo[]; teacher: SegmentInfo[] }): PromptSection[] {
-	const own = (who: "prober" | "teacher") => view[who].filter((s) => !s.shared);
+/** Keep each agent's own assembly order, then list shared chunks once.
+ *  Usage is derived from the API's actual per-agent membership, never a
+ *  second copy of the runtime's Practice shared-fragment allowlist.
+ *  Pure — exported for tests. */
+export function sectionedSegments(view: PromptView): PromptSection[] {
+	const agents = [
+		{ id: "teacher", label: "Teacher" },
+		{ id: "prober", label: "Prober" },
+		{ id: "practice", label: "Practice" },
+	] as const;
+	const shared = new Map<string, SegmentInfo>();
+	for (const { id } of agents) {
+		for (const segment of view[id]) {
+			if (segment.shared && !shared.has(segment.path)) shared.set(segment.path, segment);
+		}
+	}
 	return [
-		{ id: "teacher", label: "Teacher", segments: own("teacher") },
-		{ id: "prober", label: "Prober", segments: own("prober") },
+		...agents.map(({ id, label }) => ({ id, label, segments: view[id].filter((s) => !s.shared) })),
 		{
 			id: "shared",
 			label: "Shared",
-			hint: "Used by both agents",
-			segments: view.teacher.filter((s) => s.shared),
+			segments: [...shared.values()].map((segment) => {
+				const users = agents.filter(({ id }) => view[id].some((s) => s.path === segment.path)).map(({ label }) => label);
+				const usage = users.length > 1 ? `${users.slice(0, -1).join(", ")} and ${users.at(-1)}` : users[0];
+				return { ...segment, usageHint: `Used by ${usage}` };
+			}),
 		},
 	];
+}
+
+/** The open text editor of one prompt segment: the source, the override and
+ *  Save/Delete. Override text is instance-global and admin-only to write
+ *  (PUT/DELETE /api/settings/prompts/[...segment]), so for a non-admin it is
+ *  read-only: the text is shown, Save is off and Delete is gone (their own
+ *  on/off switch lives in the row above and is unaffected). Exported for the
+ *  markup pin. */
+export function PromptTextEditor({
+	info,
+	draft,
+	isAdmin,
+	status,
+	onDraft,
+	onSave,
+	onDelete,
+}: {
+	info: SegmentInfo;
+	draft: string;
+	isAdmin: boolean;
+	status: string | null;
+	onDraft: (text: string) => void;
+	onSave: () => void;
+	onDelete: () => void;
+}) {
+	const fileExists = info.overrideText !== null;
+	// The Save affordance (owner ruling, refined 2026-09-26): clickable only
+	// when there's something to save - the draft differs from what's on disk.
+	const dirty = draft !== (info.overrideText ?? "");
+	const canSave = isAdmin && dirty;
+	return (
+		<div className="mt-1 flex flex-col gap-2">
+			<div>
+				<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Source</p>
+				<textarea
+					readOnly
+					value={info.sourceText}
+					aria-label="The original instructions"
+					className="h-24 w-full resize-y rounded-sm border border-border bg-muted p-2 font-ui text-xs text-muted-foreground"
+				/>
+			</div>
+			<div>
+				<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Override</p>
+				<textarea
+					value={draft}
+					readOnly={!isAdmin}
+					onChange={(e) => onDraft(e.target.value)}
+					aria-label="Your version of the instructions"
+					placeholder={isAdmin ? "Add your own instructions…" : "No override set."}
+					className="h-24 w-full resize-y rounded-sm border border-border bg-background p-2 font-ui text-xs text-foreground outline-none"
+				/>
+			</div>
+			<div className="flex items-center gap-3">
+				<button
+					type="button"
+					disabled={!canSave}
+					onClick={onSave}
+					className={
+						canSave
+							? "text-xs text-foreground underline-offset-2 hover:underline"
+							: "cursor-not-allowed text-xs text-muted-foreground/40 underline-offset-2"
+					}
+				>
+					Save
+				</button>
+				{isAdmin && fileExists && (
+					<button
+						type="button"
+						onClick={onDelete}
+						className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-red-500 hover:underline"
+					>
+						Delete
+					</button>
+				)}
+				{!isAdmin && (
+					<p className="text-xs text-muted-foreground/70" data-testid="segment-readonly-note">
+						Only an administrator can edit prompt text. The switch above is yours.
+					</p>
+				)}
+				{/* The quiet inline confirmation - next to the action (production-copy:
+				    no file paths in user-facing status). One editor is open at a time
+				    (openSegment), so one shared status reads unambiguously. */}
+				{status && (
+					<p className="text-xs text-muted-foreground/70" data-testid="segment-status">
+						{status}
+					</p>
+				)}
+			</div>
+		</div>
+	);
 }
 
 /** Compose: one prompt switch. on = explicit true; off = key REMOVED
@@ -321,7 +421,11 @@ export function AgentSection({
 	onModelsChange,
 	onCompactionChange,
 	onDocumentsChange,
+	isAdmin = false,
 }: {
+	/** Prompt override TEXT is instance-global and admin-only to write; false
+	 *  (the fail-safe default) renders the editor read-only. */
+	isAdmin?: boolean;
 	agent: AgentSettings | undefined;
 	/** The `models` section (slot pins — engine-level, PUT /api/settings/models). */
 	models: ModelsSettings | undefined;
@@ -352,7 +456,7 @@ export function AgentSection({
 	/** Which search engines have a key (/api/keys) — the no-keys-anywhere
 	 *  state grays the row; per-engine marks ride the menu rows. */
 	const [engineKeys, setEngineKeys] = useState<Partial<Record<SearchEngineId, boolean>>>({});
-	const [prompts, setPrompts] = useState<{ prober: SegmentInfo[]; teacher: SegmentInfo[] } | null>(null);
+	const [prompts, setPrompts] = useState<PromptView | null>(null);
 	const [openSegment, setOpenSegment] = useState<string | null>(null);
 	const [segmentDraft, setSegmentDraft] = useState<Record<string, string>>({});
 	const [segmentStatus, setSegmentStatus] = useState<string | null>(null);
@@ -377,7 +481,7 @@ export function AgentSection({
 	const readPrompts = useCallback(() => {
 		fetch("/api/settings/prompts")
 			.then((r) => r.json())
-			.then((body: { prober: SegmentInfo[]; teacher: SegmentInfo[] }) => setPrompts(body))
+			.then((body: PromptView) => setPrompts(body))
 			.catch(() => {});
 	}, []);
 
@@ -415,7 +519,7 @@ export function AgentSection({
 		readModels();
 		fetch("/api/settings/prompts")
 			.then((r) => r.json())
-			.then((body: { prober: SegmentInfo[]; teacher: SegmentInfo[] }) => setPrompts(body))
+			.then((body: PromptView) => setPrompts(body))
 			.catch(() => setPrompts(null));
 		fetch("/api/keys")
 			.then((r) => r.json())
@@ -536,16 +640,10 @@ export function AgentSection({
 		</button>
 	);
 
-	const segmentRow = (info: SegmentInfo) => {
+	const segmentRow = (info: PromptRow) => {
 		const fileExists = info.overrideText !== null;
 		const open = openSegment === info.path;
-		// The Save affordance (owner ruling, refined 2026-09-26): clickable
-		// only when there's something to save — the draft differs from
-		// what's on disk. An unchanged editor shows a grayed, inert Save
-		// (the always-active button was the "doesn't feel like it does
-		// anything" half of the report).
 		const draft = segmentDraft[info.path] ?? info.overrideText ?? "";
-		const dirty = draft !== (info.overrideText ?? "");
 		return (
 			<div key={info.path} data-testid={`prompt-segment-${info.path}`}>
 				<SettingsRow
@@ -556,7 +654,7 @@ export function AgentSection({
 					// on disk unused), "Your version is in use" when the
 					// switch is on. The switch's meaning becomes legible
 					// through this line.
-					hint={info.enabled ? PROMPT_IN_USE_HINT : undefined}
+					hint={[info.usageHint, info.enabled ? PROMPT_IN_USE_HINT : undefined].filter(Boolean).join(" · ") || undefined}
 					testid={`prompt-row-${info.path}`}
 				>
 					{/* Graying ruling: ONLY the toggle dims without an
@@ -582,61 +680,15 @@ export function AgentSection({
 					{open ? "Hide text" : "Show text"}
 				</button>
 				{open && (
-					<div className="mt-1 flex flex-col gap-2">
-						<div>
-							<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Source</p>
-							<textarea
-								readOnly
-								value={info.sourceText}
-								aria-label="The original instructions"
-								className="h-24 w-full resize-y rounded-sm border border-border bg-muted p-2 font-ui text-xs text-muted-foreground"
-							/>
-						</div>
-						<div>
-							<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Override</p>
-							<textarea
-								value={segmentDraft[info.path] ?? info.overrideText ?? ""}
-								onChange={(e) => setSegmentDraft({ ...segmentDraft, [info.path]: e.target.value })}
-								aria-label="Your version of the instructions"
-								placeholder="Add your own instructions…"
-								className="h-24 w-full resize-y rounded-sm border border-border bg-background p-2 font-ui text-xs text-foreground outline-none"
-							/>
-						</div>
-						<div className="flex items-center gap-3">
-							<button
-								type="button"
-								disabled={!dirty}
-								onClick={() => void saveSegment(info.path, segmentDraft[info.path] ?? "")}
-								className={
-									dirty
-										? "text-xs text-foreground underline-offset-2 hover:underline"
-										: "cursor-not-allowed text-xs text-muted-foreground/40 underline-offset-2"
-								}
-							>
-								Save
-							</button>
-							{fileExists && (
-								<button
-									type="button"
-									onClick={() => void deleteSegment(info.path)}
-									className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-red-500 hover:underline"
-								>
-									Delete
-								</button>
-							)}
-							{/* The quiet inline confirmation — next to the
-							    action, not the old path-echoing line at the
-							    section's bottom (production-copy: no file
-							    paths in user-facing status). One editor is
-							    open at a time (openSegment), so one shared
-							    status reads unambiguously. */}
-							{segmentStatus && (
-								<p className="text-xs text-muted-foreground/70" data-testid="segment-status">
-									{segmentStatus}
-								</p>
-							)}
-						</div>
-					</div>
+					<PromptTextEditor
+						info={info}
+						draft={draft}
+						isAdmin={isAdmin}
+						status={segmentStatus}
+						onDraft={(text) => setSegmentDraft({ ...segmentDraft, [info.path]: text })}
+						onSave={() => void saveSegment(info.path, draft)}
+						onDelete={() => void deleteSegment(info.path)}
+					/>
 				)}
 			</div>
 		);
@@ -1016,18 +1068,13 @@ export function AgentSection({
 					<p className="text-xs text-muted-foreground/70">Loading prompt segments…</p>
 				) : (
 					<div className="flex flex-col gap-4">
-						{/* The owner's ruled order (2026-09-26): Teacher first,
-						    then Prober, then Shared LAST — shared chunks once
-						    (deduplicated), each section in prompt-assembly
-						    order. */}
+						{/* Teacher, Prober, Practice, Shared — shared chunks once,
+						    each agent's own section in prompt-assembly order. */}
 						{sectionedSegments(prompts).map((section) => (
 							<div key={section.id} data-testid={`prompt-section-${section.id}`}>
 								<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">
 									{section.label}
 								</p>
-								{section.hint && (
-									<p className="mb-1 text-xs text-muted-foreground/60">{section.hint}</p>
-								)}
 								<div className="flex flex-col gap-2">
 									{section.segments.map((info) => segmentRow(info))}
 								</div>

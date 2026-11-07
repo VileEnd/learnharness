@@ -12,7 +12,7 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TOGGLE_TOOLS, AgentSection, slotCatalogFor } from "../components/settings/agent-section.tsx";
+import { TOGGLE_TOOLS, AgentSection, PromptTextEditor, slotCatalogFor } from "../components/settings/agent-section.tsx";
 import { AppearanceSection, GraphSection } from "../components/settings/appearance-section.tsx";
 import { KeysSection } from "../components/settings/keys-section.tsx";
 import { KeyboardSection } from "../components/settings/keyboard-section.tsx";
@@ -292,3 +292,34 @@ describe("the slot pickers", () => {
 		assert.equal(slotCatalogFor("strong", null), undefined);
 	});
 });
+
+describe("PromptTextEditor: override text is admin-only to write", () => {
+	const info = { path: "practice/10-doctrine.md", sourceText: "SOURCE", overrideText: "SAVED", enabled: true, shared: false };
+	const render = (isAdmin: boolean, draft: string) =>
+		renderToStaticMarkup(
+			<PromptTextEditor info={info} draft={draft} isAdmin={isAdmin} status={null} onDraft={() => {}} onSave={() => {}} onDelete={() => {}} />,
+		);
+
+	it("a non-admin sees the text read-only: no edit, Save disabled, no Delete, a note", () => {
+		const html = render(false, "SAVED");
+		assert.ok(html.includes("SAVED"), "the override text is shown");
+		assert.ok(html_has(html, "segment-readonly-note"));
+		const overrideArea = html.match(/<textarea[^>]*aria-label="Your version of the instructions"[^>]*>/)?.[0] ?? "";
+		assert.ok(/readonly/i.test(overrideArea), "the override textarea is read-only");
+		assert.ok(/<button[^>]*disabled[^>]*>Save<\/button>/.test(render(false, "EDITED")), "Save disabled even with a changed draft");
+		assert.ok(!html.includes(">Delete<"), "no Delete");
+	});
+
+	it("an admin edits as before: Save enabled when dirty, Delete when an override exists", () => {
+		const dirty = render(true, "EDITED");
+		assert.ok(!html_has(dirty, "segment-readonly-note"));
+		assert.ok(!/readonly/i.test(dirty.match(/<textarea[^>]*aria-label="Your version of the instructions"[^>]*>/)?.[0] ?? ""));
+		assert.ok(!/<button[^>]*disabled[^>]*>Save<\/button>/.test(dirty), "Save enabled when dirty");
+		assert.ok(dirty.includes(">Delete<"));
+		assert.ok(/<button[^>]*disabled[^>]*>Save<\/button>/.test(render(true, "SAVED")), "Save inert when unchanged");
+	});
+});
+
+function html_has(html: string, testid: string): boolean {
+	return html.includes(`data-testid="${testid}"`);
+}

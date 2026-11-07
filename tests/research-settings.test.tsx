@@ -15,7 +15,7 @@ it("keyless settings keep Research interactive while search-engine setup retains
 		"/api/search": { available: false, engine: null, reason },
 		"/api/keys": { keys: [{ id: "TAVILY_API_KEY", present: false }, { id: "BRAVE_API_KEY", present: false }] },
 		"/api/models": { models: [], slots: { strong: null, cheap: null, vision: null } },
-		"/api/settings/prompts": { prober: [], teacher: [] },
+		"/api/settings/prompts": { prober: [], teacher: [], practice: [] },
 	};
 	for (const [key, value] of Object.entries({
 		window: dom.window,
