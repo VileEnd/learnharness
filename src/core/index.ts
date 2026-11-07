@@ -92,6 +92,8 @@ export * from "./math-expr.ts";
 export * from "./exercise-core.ts";
 // canvas-core.ts (canvas workspace, PR 2): drawing scene contract, region grid, content ids - pure, browser-safe (pure-JS sha256).
 export * from "./canvas-core.ts";
+// photo.ts: a phone photo submitted as an image-only drawing (EXIF orientation, size caps, the one-image scene) - pure, browser-safe.
+export * from "./photo.ts";
 export * from "./grade-heal.ts";
 export * from "./usage.ts";
 export * from "./recommended-models.ts";

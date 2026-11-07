@@ -532,38 +532,43 @@ export class CanvasEngine {
 		ctx.restore();
 	}
 
-	/** Faint region grid, column letters along the top, row numbers on the left, `oN` badges on typed objects. */
 	private paintGrid(ctx: CanvasRenderingContext2D, box: Box, scale: number): void {
-		const grid = regionGrid(box);
-		const px = 1 / scale;
-		ctx.save();
-		ctx.strokeStyle = "rgba(0,0,0,0.14)";
-		ctx.lineWidth = px;
-		ctx.beginPath();
-		for (let c = 0; c <= grid.cols; c++) { ctx.moveTo(box.x + c * grid.cellW, box.y); ctx.lineTo(box.x + c * grid.cellW, box.y + box.h); }
-		for (let r = 0; r <= grid.rows; r++) { ctx.moveTo(box.x, box.y + r * grid.cellH); ctx.lineTo(box.x + box.w, box.y + r * grid.cellH); }
-		ctx.stroke();
-		ctx.fillStyle = "rgba(0,0,0,0.55)";
-		ctx.font = `${12 * px}px sans-serif`;
-		ctx.textBaseline = "top";
-		for (let c = 0; c < grid.cols; c++) {
-			const rect = cellRect(grid, box, `${"ABCDEFGH"[c]}1`) as Box;
-			ctx.fillText("ABCDEFGH"[c] as string, rect.x + 3 * px, box.y + 2 * px);
-		}
-		for (let r = 0; r < grid.rows; r++) ctx.fillText(String(r + 1), box.x + 3 * px, box.y + r * grid.cellH + 14 * px);
-		for (const o of this.scene.objects) {
-			if (!isTypedObject(o)) continue;
-			const b = objectBox(o);
-			const label = o.id;
-			ctx.font = `bold ${11 * px}px sans-serif`;
-			const w = ctx.measureText(label).width + 8 * px;
-			ctx.fillStyle = "#1d4ed8";
-			ctx.fillRect(b.x, b.y, w, 15 * px);
-			ctx.fillStyle = "#ffffff";
-			ctx.fillText(label, b.x + 4 * px, b.y + 2 * px);
-		}
-		ctx.restore();
+		paintRegionGrid(ctx, this.scene, box, scale);
 	}
+}
+
+/** Faint region grid, column letters along the top, row numbers on the left, `oN` badges on typed objects. Shared
+ *  with the phone photo submission (photo-prepare.ts), so a photo's PNG carries the same labels as a canvas export. */
+export function paintRegionGrid(ctx: CanvasRenderingContext2D, scene: DrawingScene, box: Box, scale: number): void {
+	const grid = regionGrid(box);
+	const px = 1 / scale;
+	ctx.save();
+	ctx.strokeStyle = "rgba(0,0,0,0.14)";
+	ctx.lineWidth = px;
+	ctx.beginPath();
+	for (let c = 0; c <= grid.cols; c++) { ctx.moveTo(box.x + c * grid.cellW, box.y); ctx.lineTo(box.x + c * grid.cellW, box.y + box.h); }
+	for (let r = 0; r <= grid.rows; r++) { ctx.moveTo(box.x, box.y + r * grid.cellH); ctx.lineTo(box.x + box.w, box.y + r * grid.cellH); }
+	ctx.stroke();
+	ctx.fillStyle = "rgba(0,0,0,0.55)";
+	ctx.font = `${12 * px}px sans-serif`;
+	ctx.textBaseline = "top";
+	for (let c = 0; c < grid.cols; c++) {
+		const rect = cellRect(grid, box, `${"ABCDEFGH"[c]}1`) as Box;
+		ctx.fillText("ABCDEFGH"[c] as string, rect.x + 3 * px, box.y + 2 * px);
+	}
+	for (let r = 0; r < grid.rows; r++) ctx.fillText(String(r + 1), box.x + 3 * px, box.y + r * grid.cellH + 14 * px);
+	for (const o of scene.objects) {
+		if (!isTypedObject(o)) continue;
+		const b = objectBox(o);
+		const label = o.id;
+		ctx.font = `bold ${11 * px}px sans-serif`;
+		const w = ctx.measureText(label).width + 8 * px;
+		ctx.fillStyle = "#1d4ed8";
+		ctx.fillRect(b.x, b.y, w, 15 * px);
+		ctx.fillStyle = "#ffffff";
+		ctx.fillText(label, b.x + 4 * px, b.y + 2 * px);
+	}
+	ctx.restore();
 }
 
 function supportsDesynchronized(): boolean {

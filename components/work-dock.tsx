@@ -7,13 +7,15 @@ import { Button } from "@/components/ui/button";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
+import { PhotoControl, usePhotoAttachment } from "@/components/canvas/photo-attachment";
 
 /**
  * The work dock (canvas tasks, PR 2): while a canvas task (work/sketch) is open and its workspace is
  * minimised, this replaces the composer. It is a MINIMISED bar: the task, "Open canvas" (tablet and
  * computer only), and a text field, so a typed or dictated answer is a valid submission on its own
- * (decision 12: one lane while a task is open). On a phone "Open canvas" is gone and the field is the
- * whole answer surface. A teach-phase check arrives behind the reveal bar, like a quiz check.
+ * (decision 12: one lane while a task is open). On a phone "Open canvas" is gone: the field is the answer
+ * surface, plus "Add photo" (a photo of the learner's work, sent as a one-image drawing with the typed answer
+ * by Submit; canvas/photo-prepare.ts). A teach-phase check arrives behind the reveal bar, like a quiz check.
  *
  * `active` is the dictation claim: false while the workspace is open (its own field holds the claim).
  */
@@ -29,8 +31,9 @@ export interface WorkDockProps {
 	requiresReveal: boolean;
 	canvasCapable: boolean;
 	onOpenCanvas?: () => void;
-	/** Text-only submission (a drawing rides the workspace's Submit). */
-	onSubmit: (text: string) => void;
+	/** The answer: the typed text, plus the drawingId of a photo sent from the phone (a canvas drawing rides the
+	 *  workspace's own Submit). */
+	onSubmit: (text: string, drawingId?: string) => void;
 	onHint?: () => void;
 	/** Offer the dismissal (the host opens the confirm). */
 	onDismiss: () => void;
@@ -60,6 +63,9 @@ export function WorkDock({
 	const coarse = useCoarsePointer();
 	const fieldRef = useRef<HTMLTextAreaElement>(null);
 	useAutoGrow(fieldRef, thinking);
+	// A phone has no canvas: the photo stands in for the drawing (nothing is sent until Submit).
+	const photo = usePhotoAttachment(chatId);
+	const photoReady = !canvasCapable && photo.ready;
 
 	useDictationTarget(
 		useCallback((t: string) => {
@@ -70,13 +76,25 @@ export function WorkDock({
 		active && (!requiresReveal || revealed),
 	);
 
-	const canSubmit = !compactionRunning && thinking.trim().length > 0;
+	const canSubmit = !compactionRunning && !photo.busy && (thinking.trim().length > 0 || photoReady);
 	const submit = () => {
 		if (!active || !canSubmit) return;
 		const text = thinkingRef.current.trim();
-		thinkingRef.current = "";
-		setThinking("");
-		onSubmit(text);
+		if (!photoReady) {
+			thinkingRef.current = "";
+			setThinking("");
+			onSubmit(text);
+			return;
+		}
+		void photo.send().then((drawingId) => {
+			if (drawingId === null) return; // the error shows under the photo; the text and the photo stay
+			if (thinkingRef.current.trim() === text) {
+				thinkingRef.current = "";
+				setThinking("");
+			}
+			photo.clear();
+			onSubmit(text, drawingId);
+		});
 	};
 	// Enter submits from anywhere (typing surfaces excluded) - only while this dock owns the band.
 	useEnterSubmits(submit);
@@ -126,9 +144,12 @@ export function WorkDock({
 							<PenLineIcon className="size-4" /> Open canvas
 						</Button>
 					) : (
-						<span data-testid="canvas-phone-hint" className="text-xs text-muted-foreground">
-							{PHONE_CANVAS_HINT}
-						</span>
+						<div className="flex flex-col gap-2">
+							<span data-testid="canvas-phone-hint" className="text-xs text-muted-foreground">
+								{PHONE_CANVAS_HINT}
+							</span>
+							<PhotoControl photo={photo} disabled={compactionRunning} />
+						</div>
 					)}
 				</div>
 			</div>
