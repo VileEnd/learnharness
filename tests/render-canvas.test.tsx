@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { WorkDock } from "../components/work-dock.tsx";
+import { PracticeDock } from "../components/practice-dock.tsx";
 import { CanvasPill } from "../components/model-picker.tsx";
 import { StatsBar } from "../components/stats-bar.tsx";
 import { DrawingThumb, WorkSubmissionCard, drawingPngUrl } from "../components/work-cards.tsx";
@@ -59,10 +60,32 @@ describe("WorkDock", () => {
 		assert.match(html, /data-testid="work-thinking-field"/);
 	});
 
+	it("phone: Add photo (a file input for images) sits with the hint; the tablet has none", () => {
+		const html = dock({ canvasCapable: false });
+		assert.match(html, /data-testid="photo-add"/);
+		assert.match(html, /<input[^>]*type="file"[^>]*accept="image\/\*"|<input[^>]*accept="image\/\*"[^>]*type="file"/);
+		assert.ok(!html.includes("capture="), "the OS chooser offers camera and library");
+		assert.ok(!html.includes('data-testid="photo-preview"'), "nothing is previewed before a photo is picked");
+		assert.ok(!dock({ canvasCapable: true }).includes("photo-add"));
+		assert.ok(!dock({ canvasCapable: false, requiresReveal: true }).includes("photo-add"));
+	});
+
 	it("a teach check arrives behind the reveal bar", () => {
 		const html = dock({ requiresReveal: true });
 		assert.match(html, /data-testid="work-dock-reveal"/);
 		assert.ok(!html.includes('data-testid="open-canvas"'));
+	});
+});
+
+describe("PracticeDock photo", () => {
+	const practice = (props: Partial<React.ComponentProps<typeof PracticeDock>>, canvas = true) =>
+		renderToStaticMarkup(<PracticeDock problemCallId="p1" input={{ statement: "Sketch it", canvas }} expanded onExpand={noop} onSubmit={noop} {...props} />);
+
+	it("a canvas problem on a phone offers Add photo; a tablet, a plain problem or no chat does not", () => {
+		assert.match(practice({ chatId: "c1" }), /data-testid="photo-add"/);
+		assert.ok(!practice({ chatId: "c1", canvasCapable: true }).includes("photo-add"));
+		assert.ok(!practice({ chatId: "c1" }, false).includes("photo-add"));
+		assert.ok(!practice({}).includes("photo-add"));
 	});
 });
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
+import { PhotoControl, usePhotoAttachment } from "@/components/canvas/photo-attachment";
 import { cn } from "@/lib/utils";
 import { ExerciseWidget } from "@/components/exercise/exercise-widget";
 import { UnreadableNotice } from "@/components/exercise/widget-shared";
@@ -45,8 +46,10 @@ export interface PracticeDockProps {
 	/** Collapse state, owned by the DockOverlay. */
 	expanded: boolean;
 	onExpand: () => void;
-	/** text — POST {type:"thinking"} (one lane; the register is read from the text). */
-	onSubmit: (text: string, attempt?: ThinkingAttempt) => void;
+	/** text — POST {type:"thinking"} (one lane; the register is read from the text). A drawingId is a photo sent from a phone. */
+	onSubmit: (text: string, attempt?: ThinkingAttempt, drawingId?: string) => void;
+	/** The chat, for a phone photo of a canvas problem (no canvas there). Absent: no photo control. */
+	chatId?: string;
 	/** Escape in the thinking field stops dictation (threaded from the page). */
 	onEscape?: () => void;
 	/** Compaction is running for this chat (owner round 14): the thinking
@@ -67,7 +70,7 @@ export interface PracticeDockProps {
 	initialAttempt?: { response: unknown; verdict?: ExerciseVerdict };
 }
 
-export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onHint, canvasCapable = false, onOpenCanvas, active = true, onEscape, compactionRunning = false, initialAttempt }: PracticeDockProps) {
+export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onHint, canvasCapable = false, chatId, onOpenCanvas, active = true, onEscape, compactionRunning = false, initialAttempt }: PracticeDockProps) {
 	const [thinking, setThinking] = useState("");
 	// An interactive problem (`format` + `spec` on the pose): the widget sits
 	// under the statement; Check grades locally, shows ✓/✗ without the key and
@@ -97,13 +100,30 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	const fieldRef = useRef<HTMLTextAreaElement>(null);
 	useAutoGrow(fieldRef, thinking);
 
+	// A canvas problem on a phone (no canvas): a photo of the work stands in for the drawing.
+	const photo = usePhotoAttachment(chatId ?? "");
+	const photoOffered = input.canvas === true && !canvasCapable && chatId !== undefined;
+	const photoReady = photoOffered && photo.ready;
+
 	const submit = () => {
-		if (compactionRunning || !active) return;
+		if (compactionRunning || !active || photo.busy) return;
 		const text = thinkingRef.current.trim();
-		if (text.length === 0) return;
-		thinkingRef.current = "";
-		setThinking("");
-		onSubmit(text);
+		if (text.length === 0 && !photoReady) return;
+		if (!photoReady) {
+			thinkingRef.current = "";
+			setThinking("");
+			onSubmit(text);
+			return;
+		}
+		void photo.send().then((drawingId) => {
+			if (drawingId === null) return; // the error shows under the photo; the text and the photo stay
+			if (thinkingRef.current.trim() === text) {
+				thinkingRef.current = "";
+				setThinking("");
+			}
+			photo.clear();
+			onSubmit(text.length > 0 ? text : "Here is my drawing.", undefined, drawingId);
+		});
 	};
 
 	const canCheck = !!ex && !compactionRunning && hasAnyText(response);
@@ -168,9 +188,12 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 								<PenLineIcon className="size-4" /> Open canvas
 							</Button>
 						) : (
-							<span data-testid="canvas-phone-hint" className="text-xs text-muted-foreground">
-								Draw on a tablet or computer
-							</span>
+							<div className="flex flex-col gap-2">
+								<span data-testid="canvas-phone-hint" className="text-xs text-muted-foreground">
+									Draw on a tablet or computer
+								</span>
+								{photoOffered && <PhotoControl photo={photo} disabled={compactionRunning} />}
+							</div>
 						)}
 					</div>
 				)}
@@ -267,7 +290,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 						<Button
 							type="button"
 							data-testid="practice-send"
-							disabled={thinking.trim().length === 0 || compactionRunning}
+							disabled={(thinking.trim().length === 0 && !photoReady) || compactionRunning || photo.busy}
 							onClick={() => submit()}
 							className="h-9 rounded-[6px] px-3.5 text-sm font-medium"
 						>

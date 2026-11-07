@@ -1828,8 +1828,8 @@ export function Chat({
 					canvasCapable={canvasCapable}
 					canvasOpen={canvasOpen}
 					onOpenCanvas={() => setCanvasOpen(true)}
-					onSubmitWork={(text) => {
-						if (activeWork) submitWork(activeWork.toolCallId, text);
+					onSubmitWork={(text, drawingId) => {
+						if (activeWork) submitWork(activeWork.toolCallId, text, drawingId);
 					}}
 					onHint={(callId) => requestHint(callId)}
 					onDismissWork={() => setAbortAsk("work")}
@@ -2196,7 +2196,7 @@ function DockOverlay({
 	canvasOpen: boolean;
 	onOpenCanvas: () => void;
 	/** The work dock's text-only submission. */
-	onSubmitWork: (text: string) => void;
+	onSubmitWork: (text: string, drawingId?: string) => void;
 	/** The Hint button (work dock and practice dock): { type: "hint", callId }. */
 	onHint: (callId: string) => void;
 	onDismissWork: () => void;
@@ -2717,6 +2717,7 @@ function DockOverlay({
 							) : practice ? (
 								<PracticeDock
 									problemCallId={practice.toolCallId}
+									chatId={chatId}
 									input={practice.input as { statement: string; format?: unknown; spec?: unknown; canvas?: boolean }}
 									onHint={() => onHint(practice.toolCallId)}
 									canvasCapable={canvasCapable}

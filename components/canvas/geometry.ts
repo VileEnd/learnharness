@@ -4,6 +4,7 @@
  * Zoom and pinch are NOT here: the engine reuses zoomedGraphView / pinchView from ../pan-zoom.ts.
  */
 import { getStroke } from "perfect-freehand";
+import { fitLongSide } from "@/src/core";
 import type { Box, Brush, DrawingObject, DrawingScene, ShapeObject, StrokeObject } from "@/src/core";
 import type { Viewport } from "../pan-zoom.ts";
 
@@ -198,8 +199,5 @@ export const IMAGE_MAX_SIDE = 1600;
 
 /** Target size for an image whose long side may not exceed `max`; never upscales, keeps the aspect ratio. */
 export function fitImageSize(w: number, h: number, max: number = IMAGE_MAX_SIDE): { w: number; h: number } {
-	const long = Math.max(w, h);
-	if (!(long > max)) return { w, h };
-	const k = max / long;
-	return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+	return fitLongSide(w, h, max);
 }
