@@ -59,7 +59,7 @@ resource "proxmox_virtual_environment_vm" "learnharness" {
     datastore_id = "local-lvm"
     interface    = "virtio0"
     import_from  = proxmox_virtual_environment_file.nixos_image.id
-    size         = 32
+    size         = 64
     discard      = "on"
     iothread     = true
   }
