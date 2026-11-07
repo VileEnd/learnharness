@@ -43,7 +43,9 @@ const { promptOverrides } = await import("../src/store/prompt-overrides.ts");
 // Route-level pins drive the actual app/api handlers (framework-free
 // Request/Response), isolated under the same temp LH_DATA_DIR.
 const { PUT: putSettingsSection } = await import("../app/api/settings/[section]/route.ts");
-const { DELETE: deletePromptText } = await import("../app/api/settings/prompts/[...segment]/route.ts");
+const { PUT: putPromptText, DELETE: deletePromptText } = await import("../app/api/settings/prompts/[...segment]/route.ts");
+const { GET: getPromptSegments } = await import("../app/api/settings/prompts/route.ts");
+const { sectionedSegments } = await import("../components/settings/agent-section.tsx");
 const { readSettingsRecord } = await import("../src/server/index.ts");
 
 /** The REAL repo prompts dir this suite must never touch (read-only). */
@@ -408,6 +410,58 @@ describe("an orphaned ON heals to OFF on write — never a 400 (the invariant: a
 			assert.equal(record.settings.agent?.prompts?.[SEGMENT], true, "a real ON+file write keeps the switch on");
 		} finally {
 			promptOverrides.deleteOverride(SEGMENT);
+		}
+	});
+});
+
+describe("GET /api/settings/prompts: Practice rides along with Teacher and Prober", () => {
+	const getView = async () => (await getPromptSegments(new Request("http://test/api/settings/prompts"))).json();
+
+	it("returns the three source-discovered lists; Practice has its own fragments, a shared subset and no base", async () => {
+		const view = await getView();
+		for (const kind of ["teacher", "prober", "practice"] as const) {
+			assert.deepEqual(view[kind], effectivePromptSegments(kind, readSettingsRecord()?.agent?.prompts ?? {}));
+		}
+		const practice = view.practice.map((s: { path: string }) => s.path);
+		assert.deepEqual(practice, [
+			"practice/00-base.md", "practice/10-doctrine.md",
+			"shared/10-voice.md", "shared/15-accuracy.md", "shared/16-mental-model.md", "shared/40-formatting.md",
+		]);
+		assert.ok(!practice.includes("system-prompt.md"));
+	});
+
+	it("the editor's sections list each shared fragment once, labelled from actual membership", async () => {
+		const sections = sectionedSegments(await getView());
+		assert.deepEqual(sections.map((s) => s.id), ["teacher", "prober", "practice", "shared"]);
+		const shared = sections.at(-1)!.segments;
+		assert.equal(new Set(shared.map((s) => s.path)).size, shared.length, "deduplicated across all three lists");
+		const hint = (p: string) => shared.find((s) => s.path === p)?.usageHint;
+		assert.equal(hint("system-prompt.md"), "Used by Teacher and Prober");
+		assert.equal(hint("shared/10-voice.md"), "Used by Teacher, Prober and Practice");
+		assert.equal(hint("shared/20-question-tools.md"), "Used by Teacher and Prober");
+	});
+
+	it("a Practice override composes into Practice only, and only while its switch is on", async () => {
+		const segment = "practice/10-doctrine.md";
+		const text = "SYNTHETIC PRACTICE OVERRIDE";
+		const defaults = (["teacher", "prober", "practice"] as const).map((k) => teacherAgent.composeInstructions(k));
+		const saved = await putPromptText(
+			new Request("http://test/api/settings/prompts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
+			{ params: Promise.resolve({ segment: segment.split("/") }) },
+		);
+		assert.equal(saved.status, 200);
+		try {
+			const composed = (on: boolean) =>
+				(["teacher", "prober", "practice"] as const).map((k) => teacherAgent.composeInstructions(k, on ? { [segment]: true } : {}));
+			assert.deepEqual(composed(false), defaults, "saved text alone changes nothing");
+			const [teacher, prober, practice] = composed(true);
+			assert.equal(teacher, defaults[0]);
+			assert.equal(prober, defaults[1]);
+			assert.ok(practice!.includes(text));
+			const row = (await getView()).practice.find((s: { path: string }) => s.path === segment);
+			assert.equal(row.overrideText, text);
+		} finally {
+			promptOverrides.deleteOverride(segment);
 		}
 	});
 });

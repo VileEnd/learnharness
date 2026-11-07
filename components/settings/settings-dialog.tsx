@@ -420,6 +420,7 @@ export function SettingsDialogBody({
 									testid="section-agent"
 								>
 									<AgentSection
+										isAdmin={canManageInstance}
 										agent={record.agent}
 										models={record.models}
 										graph={record.graph}
