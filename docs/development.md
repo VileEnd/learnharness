@@ -2,7 +2,7 @@
 
 The developer README (split out of the storefront README, 2026-10-10). Everything below is for people working ON LearnHarness, not using it.
 
-A self-hosted, browser-only learning app (Docker; see [`self-hosting.md`](self-hosting.md)): a **teacher agent** (Next.js; the Vercel AI SDK's `UIMessage` protocol end-to-end, LLM engine [pi-ai](pi-engine-swap.md) via OpenRouter), probe→teach lessons with graded quiz/ask interactions, a formal **session plan tree** the teacher authors once (`plan_init`) and whose progress is derived from tagged quiz calls, and a persistent cross-session **knowledge graph** of what the learner knows — the graph is the app's home page.
+A self-hosted, browser-only learning app (Docker; see [`self-hosting.md`](self-hosting.md)): a **teacher agent** (Next.js; the Vercel AI SDK's `UIMessage` protocol end-to-end, LLM engine [pi-ai](pi-engine-swap.md), bring-your-own-key across 30+ providers), probe→teach lessons with graded quiz/ask interactions, a formal **session plan tree** the teacher authors once (`plan_init`) and whose progress is derived from tagged quiz calls, and a persistent cross-session **knowledge graph** of what the learner knows — the graph is the app's home page.
 
 Not a chat app with a graph bolted on: sessions are probe→teach lessons, the plan tree is a structured, schema-validated object, sessions accumulate into the graph through the extraction pipeline (propositions + reasoning chains — the stored truth; the canvas renders a derived image), and the teacher reaches back into the graph through read-only prober tools on its own judgment so probing compounds across sessions.
 
@@ -42,8 +42,8 @@ Secrets and machine-specific paths only. Model choice and thinking budgets are t
 
 | Variable | Purpose |
 |---|---|
-| `OPENROUTER_API_KEY` | required — all LLM calls go through OpenRouter |
-| `GOOGLE_SEARCH_API_KEY` + `GOOGLE_CSE_ID` | researcher's `web_search` (Google Custom Search) |
+| Provider API keys (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, …) | optional in the environment — LLM calls go to whichever provider the model slots name, with the user's own key; at least one provider key is needed to chat. Normally an admin enters them in Settings → Providers; an env var, when set, wins and its row is read-only. The OpenRouter key also serves document embeddings and the OCR sidecar |
+| web search key (see Settings → Providers for the supported engines) | optional — the researcher's `web_search`. Without one, `research` and `web_fetch` still work and `web_search` reports itself unavailable; an engine pinned in Settings → Agent needs its own key, with no silent fallback to another engine. Search keys are admin-set |
 | `DEEPGRAM_API_KEY` | optional — dictation (STT token minting; audio streams browser→Deepgram, never through the server) |
 | `CHROME_PATH` | Chrome/Chromium for demo verification (the Docker image sets `/usr/bin/chromium`; otherwise common install paths are probed — nothing is downloaded) |
 
@@ -110,13 +110,13 @@ components/                     session + home UI, question dock, plan panel, gr
 src/
   agent/
     system-prompt.md            base teaching behavior (the methodology)
-    prompts/{prober,teacher}/   composed numbered fragments per role
+    prompts/{prober,teacher,practice,shared}/   composed numbered fragments (see prompts/README.md)
     teacher-agent.ts            prober/teacher factories (engine injectable for tests)
     tools.ts                    tool composition; quiz / ask_user_question (client tools)
     tools/plan.ts               plan_init (author-once mermaid plan, deterministic parser)
     tools/probe.ts              probe_done (probe→teach handoff seam)
     tools/jobs.ts               research / demo / visual tool surfaces
-    tools/web.ts                web_search (Google CSE) + web_fetch (researcher only)
+    tools/web.ts                web_search (keyed search port) + web_fetch (researcher only)
     subagents/                  researcher · demo-builder · visual-maker
                                 · pdf-reader,
                                 extraction pipeline (extractor/auditor + merger handoff),

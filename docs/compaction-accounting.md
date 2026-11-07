@@ -46,6 +46,16 @@ The denominator follows the selected model's catalog limit, independently of the
 last numeric measurement. Changing models preserves that numerator. No catalog
 limit means no invented denominator; no percentage display is added.
 
+This displayed measurement is distinct from the **next-request compaction
+estimate**. [`src/server/compaction.ts`](../src/server/compaction.ts) anchors that
+estimate on the last response's reported usage and estimates only the messages
+after it, falling back to the active transcript heuristic plus the system prompt
+when no anchor exists (an anchor that predates a compaction marker is refused).
+Its trigger is the smaller of the configured threshold and the catalog window
+minus the reserve; an unknown catalog window uses the configured threshold alone.
+The meter's numerator and denominator never change that trigger. See
+[`src/core/context-usage.ts`](../src/core/context-usage.ts) for the meter.
+
 ## Spending
 
 `src/server/pricing.ts` uses Pi AI's full, key-independent catalog and public
@@ -61,7 +71,15 @@ and tier-priced multi-call jobs with only aggregate usage, remain unpriced when
 the lost detail can change the answer. They are not reconstructed from totals.
 Flat-rate historical jobs with sufficient counts remain priceable. Missing models
 or required usage stay unpriced (including turns from the removed desktop-era
-subscription connections). Summarizer costs continue to count toward session spending.
+subscription connections). Summarizer costs continue to count toward session
+spending under the same pricing rules, but never supply the conversation meter.
+
+Two routes are not priced from the catalog. The admin's custom endpoint is priced
+from its own configuration: free is a real $0, paid uses the admin's per-model
+rates, and paid without rates is unpriced rather than $0. Claude Code turns keep
+their tokens but are always unpriced, because the CLI's own login decides what is
+charged. An unpriced turn is never silently valued at $0. See
+[`src/server/pricing.ts`](../src/server/pricing.ts).
 
 ## Upstream attribution
 

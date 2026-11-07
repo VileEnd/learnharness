@@ -191,10 +191,10 @@ flowchart LR
 
     subgraph DRIVEN["DRIVEN ADAPTERS — outbound"]
         FS["fs stores — src/store (data/)"]
-        LLM["LLM engines — pi-ai/OpenRouter via piEngineFor"]
+        LLM["LLM engines — pi-ai, BYOK providers via piEngineFor"]
         HEAD["headless Chrome — demo verify · SVG render"]
         DEEP["Deepgram STT — token-minting route, browser-side WebSocket"]
-        WEB["web tools — Google CSE + Readability/Jina (researcher)"]
+        WEB["web tools — keyed web search + Readability/Jina (researcher)"]
     end
 
     BROWSER --> HTTP
@@ -493,7 +493,7 @@ flowchart LR
     subgraph OUTSIDE["outside"]
         OR["LLM providers (BYOK keys from auth.json, reflected into env)"]
         DG["Deepgram STT (browser-direct WebSocket)"]
-        GCSE["Google CSE / Jina (researcher tools)"]
+        WEBS["Keyed web search / Jina (researcher tools)"]
     end
     BROWSER -->|"HTTPS"| CADDY
     CADDY -->|"/oauth2/* · auth subrequest"| PROXY
@@ -503,7 +503,7 @@ flowchart LR
     NEXT --> OR
     NEXT -->|"PDFs + per-job OpenRouter key"| OCR
     OCR --> OR
-    NEXT --> GCSE
+    NEXT --> WEBS
     BROWSER --> DG
 ```
 
