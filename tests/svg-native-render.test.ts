@@ -10,7 +10,7 @@ import { syncBuiltinESMExports } from "node:module";
 import puppeteer from "puppeteer-core";
 import { Resvg } from "@resvg/resvg-js";
 import * as photon from "@silvia-odwyer/photon-node";
-import { realHeadless } from "../src/agent/subagents/headless.ts";
+import { isAcceptableReference, realHeadless } from "../src/agent/subagents/headless.ts";
 
 function pngFacts(buf: Buffer): { w: number; h: number; idats: number } {
 	assert.equal(buf.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "PNG signature");
@@ -258,42 +258,82 @@ describe("native renderSvg: reference guard holds for the parsed text", () => {
 		assert.ok((await red(doc("", `<image href="data:image/svg+xml,${inner}" width="16" height="16"/>`))) <= 0);
 	});
 
+	it("a real attribute that merely ends in href renders instead of breaking the figure", async () => {
+		for (const attr of ['data-href="x"', "x-href='y'", 'xlink:HREF="z"', 'data-href = "x"']) {
+			assert.equal(await red(doc("", `<rect width="16" height="16" fill="#f00" ${attr}/>`)), 256, attr);
+		}
+	});
+
+	it("when the parser rejects text the guard rewrote, the error is in the model's terms", async () => {
+		const svg = doc("", `<image/href="${file}" width="16" height="16"/>`);
+		await assert.rejects(realHeadless.renderSvg(svg), (error: Error) => /an href may only point to #id or an inline data:image\/ address; remove the other reference/.test(error.message) && /\(.+\)$/.test(error.message));
+		// A parse error the guard had no part in keeps its own message.
+		await assert.rejects(realHeadless.renderSvg("<svg><unclosed>"), (error: Error) => !/href/.test(error.message));
+	});
+
+	it("only a path-free fragment and an inline image with its comma are accepted references", () => {
+		for (const ok of ["#id", "", " #a ", "data:image/png;base64,AAAA", "data:image/svg+xml,%3Csvg%3E", "data:image/jpeg,x", "DATA:image/PNG;charset=x;base64,AA"]) assert.equal(isAcceptableReference(ok), true, ok);
+		for (const bad of ["#/../x.png", "#a/b", "#a\\b", "data:image/png;/x.png", "data:image/png", "data:image/png;base64", "data:image/../x.png", "data:text/plain,x", "/abs/x.png", "x.png", "file:///x.png"]) assert.equal(isAcceptableReference(bad), false, bad);
+	});
+
 	it("seeded fuzz: no combination of fragments draws the file", async (t) => {
 		const seed = Number(process.env.LH_FUZZ_SEED ?? 20261112);
 		let state = seed >>> 0;
 		const rnd = () => { state = (state + 0x6d2b79f5) >>> 0; let x = Math.imul(state ^ (state >>> 15), 1 | state); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
 		const pick = <T,>(items: readonly T[]) => items[Math.floor(rnd() * items.length)]!;
+		const SVGNS = "http://www.w3.org/2000/svg";
+		const XLINK = "http://www.w3.org/1999/xlink";
 		const images = [
 			IMAGE,
+			IMAGE,
 			`<image xlink:href='${file}' width="16" height="16"/>`,
-			`<image hre href="x"f="${file}" width="16" height="16"/>`,
-			`<image hre xlink:href="x"f="${file}" width="16" height="16"/>`,
-			`<image href = "${file}" width="16" height="16"/>`,
+			`<image href = "${file}" width="16" height="16"></image>`,
 			`<image data-x=">" href="${file}" width="16" height="16"/>`,
 			`<image href="x" href="${file}" width="16" height="16"/>`,
+			`<s:image xmlns:s="${SVGNS}" href="${file}" width="16" height="16"/>`,
+			`<image xmlns:q="${XLINK}" q:href="${file}" width="16" height="16"/>`,
+			`<g><image href="${file}" width="16" height="16"/></g>`,
+			`<a href="x"><image href='${file}' width="16" height="16"/></a>`,
+			`<filter id="f"><feImage href="${file}"/></filter><rect width="16" height="16" filter="url(#f)"/>`,
+			`<image hre href="x"f="${file}" width="16" height="16"/>`,
+			`<image hre xlink:href="x"f="${file}" width="16" height="16"/>`,
+			`<image/href="${file}" width="16" height="16"/>`,
 		];
 		const frags = ["<!--", "-->", "<![CDATA[", "]]>", "<?x", "?>", '"', "'", " ", "\n", "hre", "f=", 'href="x"', "xlink:", "<!---->", "<g>", "</g>", ">", "<", "&e;", "&#47;", "<!ENTITY e \"x\">", '<text x="1" y="8">', "</text>"];
-		// Balanced pieces, so that a good share of the inputs are well-formed and really render.
-		const balanced = ["<!-- c -->", "<![CDATA[y]]>", "<?x y?>", "<g/>", " ", "\n", 'href="x" ', '<!-- href="x" -->', '<text x="1" y="8">&lt;a href=&quot;p&quot;&gt;</text>'];
+		// Balanced pieces keep most inputs well-formed, so most really render.
+		const balanced = ["<!-- c -->", "<![CDATA[y]]>", "<?x y?>", "<g/>", " ", "\n", "<!-- href=\"x\" -->", '<g data-href="x"/>', '<g xlink:HREF="y"/>', '<a xlink:href="#z"/>',
+			'<text x="1" y="8">&lt;a href=&quot;p&quot;&gt;</text>', '<rect width="1" height="1" x-href="q"/>', "<![CDATA[ href=\"x\" ]]>", "<!--\n-->"];
 		const befores = [
-			"", '<?xml version="1.0"?>\n',
+			"", "", "", '<?xml version="1.0"?>\n', '<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "a" "b">\n', "<!DOCTYPE svg>", '<!DOCTYPE svg PUBLIC "a" "b">',
 			'<!DOCTYPE svg [<!ENTITY e "<!--">]>', "<!DOCTYPE svg [<!ENTITY e '<!--'>]>", '<!DOCTYPE svg [<!ENTITY e "<![CDATA[">]>',
 			'<!DOCTYPE svg [<!ENTITY e "<?">]>', '<!DOCTYPE svg [<!ENTITY e "a<!--b">]>', '<!DOCTYPE svg [<!ATTLIST g a CDATA "<!--">]>',
-			'<!DOCTYPE svg SYSTEM "<!--">', '<!DOCTYPE svg PUBLIC "<!--" "x">', '<!DOCTYPE svg PUBLIC "a" "b">', "<!DOCTYPE svg>", '<!DOCTYPE svg [<!ENTITY e "x">]>',
+			'<!DOCTYPE svg SYSTEM "<!--">', '<!DOCTYPE svg PUBLIC "<!--" "x">', '<!DOCTYPE svg [<!ENTITY e "x">]>',
 			`<!DOCTYPE svg [<!ENTITY p "${file}">]>`,
 		];
+		const rawRed = (svg: string) => {
+			try {
+				const px = new Resvg(svg, { background: "#ffffff" }).render().pixels;
+				let n = 0;
+				for (let i = 0; i < px.length; i += 4) if (px[i]! > 200 && px[i + 1]! < 50) n++;
+				return n;
+			} catch { return -1; }
+		};
 		const started = Date.now();
-		const N = 3000;
-		let rendered = 0;
+		const N = 1500;
+		let rendered = 0, leakedWithoutGuard = 0;
 		for (let i = 0; i < N; i++) {
-			const run = (n: number) => Array.from({ length: n }, () => pick(rnd() < 0.5 ? balanced : frags)).join("");
-			const svg = doc(pick(befores), run(Math.floor(rnd() * 3)) + pick(images) + run(Math.floor(rnd() * 3)) + (rnd() < 0.5 ? pick(["<!-- x -->", "<![CDATA[y]]>", "<?x y?>", "<!---->"]) : ""));
+			const run = (n: number) => Array.from({ length: n }, () => pick(rnd() < 0.85 ? balanced : frags)).join("");
+			const closer = rnd() < 0.5 ? pick(["<!-- x -->", "<![CDATA[y]]>", "<?x y?>", "<!---->"]) : "";
+			const svg = doc(pick(befores), run(Math.floor(rnd() * 3)) + pick(images) + run(Math.floor(rnd() * 3)) + closer);
+			// Unguarded control: the same input through raw resvg (no stripping, no guard).
+			if (rawRed(svg) > 0) leakedWithoutGuard++;
 			const drawn = await red(svg);
 			if (drawn >= 0) rendered++;
 			if (drawn > 0) assert.fail(`seed ${seed}, iteration ${i}: the file was drawn (${drawn} red pixels) for ${JSON.stringify(svg)}`);
 		}
-		assert.ok(rendered > N / 10, `the fuzz must mostly exercise renders that succeed, not only errors (${rendered}/${N}, seed ${seed})`);
-		t.diagnostic(`${N} inputs in ${Date.now() - started} ms, ${rendered} rendered, seed ${seed}`);
+		assert.ok(rendered > N / 5, `the fuzz must mostly exercise renders that succeed, not only errors (${rendered}/${N}, seed ${seed})`);
+		assert.ok(leakedWithoutGuard > N / 4, `the generator must keep producing inputs that leak when unguarded, or this test proves nothing (${leakedWithoutGuard}/${N}, seed ${seed})`);
+		t.diagnostic(`${N} inputs in ${Date.now() - started} ms, ${rendered} rendered guarded, ${leakedWithoutGuard} draw the file unguarded, seed ${seed}`);
 	});
 
 	after(() => { fs.rmSync(dir, { recursive: true, force: true }); });

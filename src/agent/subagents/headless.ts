@@ -515,6 +515,16 @@ function crc32(buf: Buffer): number {
 	return ~c >>> 0;
 }
 
+/** The one acceptance test for an href value, shared by the tokenizer pass and
+ *  the final scan so they cannot disagree. Accepted: empty; a same-document
+ *  fragment with no path separator (resvg would read "#a/b" as a relative file
+ *  path); an inline image of a known type with its comma (without it resvg
+ *  would read the value as a relative file path). Exported for the tests. */
+export function isAcceptableReference(value: string): boolean {
+	const v = value.trim();
+	return v === "" || /^#[^/\\]*$/.test(v) || /^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml)(?:;[^,]*)?,/i.test(v);
+}
+
 /** resvg resolves an <image>/<feImage> href from the local filesystem (absolute
  *  paths, and relative ones against the working directory) and exposes no
  *  option to stop it. The render goes back to the model as "what the figure
@@ -522,7 +532,9 @@ function crc32(buf: Buffer): number {
  *  and the learner's <img> view never loads one. Every href-named attribute
  *  (any element, any namespace prefix: the XML parser resolves prefixes, so
  *  the element name is not a safe filter) survives only as a same-document
- *  "#id" or an inline data:image/ source; anything else is removed. Entity
+ *  "#id" or an inline data:image/ source (isAcceptableReference); anything
+ *  else is removed. Names merely ending in href (data-href, xlink:HREF) are
+ *  treated alike, so the guard below never has to break them. Entity
  *  references and other spellings fail the allow-list and are dropped too.
  *  Applied to the render input only, after the display repairs. */
 function withoutExternalReferences(svg: string): string {
@@ -531,10 +543,9 @@ function withoutExternalReferences(svg: string): string {
 		(token) => {
 			if (!/^<[a-zA-Z]/.test(token)) return token;
 			return token.replace(/\s([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/g, (attr, name: string, raw: string) => {
-				if (name.split(":").pop() !== "href") return attr;
-				const value = raw.replace(/^["']|["']$/g, "").trim();
+				if (!/href$/i.test(name)) return attr;
 				// A space, not nothing: deleting must never glue the neighbours together.
-				return value.startsWith("#") || /^data:image\//i.test(value) ? attr : " ";
+				return isAcceptableReference(raw.replace(/^["']|["']$/g, "")) ? attr : " ";
 			});
 		},
 	);
@@ -543,16 +554,14 @@ function withoutExternalReferences(svg: string): string {
 /** The rule, applied to the exact text handed to resvg and tokenizing nothing:
  *  every occurrence of `href`, optional whitespace, `=` anywhere in the text
  *  (comments, CDATA and displayed text included) must be followed by a quoted
- *  value that, trimmed, is empty, starts with "#", or is an inline image of a
- *  known type (data:image/<type>; or data:image/<type>,). Returns the offset of
- *  the `=` of each occurrence that breaks the rule. */
+ *  value that passes isAcceptableReference. Returns the offset of the `=` of
+ *  each occurrence that breaks the rule. */
 function unacceptableHrefs(text: string): number[] {
 	const bad: number[] = [];
 	for (const match of text.matchAll(/href\s*=/gi)) {
 		const eq = match.index + match[0].length - 1;
-		const value = /^\s*(["'])([\s\S]*?)\1/.exec(text.slice(eq + 1))?.[2]?.trim();
-		const ok = value !== undefined && (value === "" || value.startsWith("#") || /^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml)[;,]/i.test(value));
-		if (!ok) bad.push(eq);
+		const value = /^\s*(["'])([\s\S]*?)\1/.exec(text.slice(eq + 1))?.[2];
+		if (value === undefined || !isAcceptableReference(value)) bad.push(eq);
 	}
 	return bad;
 }
@@ -571,7 +580,9 @@ const PLAIN_DOCTYPE = new RegExp(
  *  (identical in text content and in another attribute's value, not
  *  well-formed inside a tag, so the render fails there), and a final scan
  *  throws if anything unacceptable is left. */
-function guardedRenderSource(text: string): string {
+const HREF_RULE = "SVG not rendered: an href may only point to #id or an inline data:image/ address; remove the other reference";
+
+function guardedRenderSource(text: string): { text: string; rewrites: number } {
 	if (/<!(?:ENTITY|ATTLIST)/i.test(text)) throw new Error("SVG not rendered: remove the <!ENTITY …> / <!ATTLIST …> declarations; entities are not supported in figures");
 	const declared = /<!DOCTYPE/i.test(text);
 	let rest = text;
@@ -582,9 +593,10 @@ function guardedRenderSource(text: string): string {
 		if (/<!DOCTYPE/i.test(rest)) throw new Error("SVG not rendered: remove the extra DOCTYPE; only one plain declaration at the start is allowed");
 	}
 	let out = text;
-	for (const eq of unacceptableHrefs(text).reverse()) out = `${out.slice(0, eq)}&#61;${out.slice(eq + 1)}`;
-	if (unacceptableHrefs(out).length > 0) throw new Error("SVG not rendered: an href may only point to #id or an inline data:image/ address");
-	return out;
+	const found = unacceptableHrefs(text);
+	for (const eq of found.reverse()) out = `${out.slice(0, eq)}&#61;${out.slice(eq + 1)}`;
+	if (unacceptableHrefs(out).length > 0) throw new Error(HREF_RULE);
+	return { text: out, rewrites: found.length };
 }
 
 async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buffer> {
@@ -599,11 +611,20 @@ async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buff
 	// opts override).
 	const { width } = svgViewport(svg, opts);
 	const { Resvg } = await import("@resvg/resvg-js");
-	const resvg = new Resvg(guardedRenderSource(withoutExternalReferences(svgImageSource(svg))), {
-		fitTo: { mode: "width", value: width },
-		font: { loadSystemFonts: true },
-		background: "#ffffff",
-	});
+	const guarded = guardedRenderSource(withoutExternalReferences(svgImageSource(svg)));
+	let resvg: InstanceType<typeof Resvg>;
+	try {
+		resvg = new Resvg(guarded.text, {
+			fitTo: { mode: "width", value: width },
+			font: { loadSystemFonts: true },
+			background: "#ffffff",
+		});
+	} catch (error) {
+		// The guard breaks a reference the parser would have followed, so the parse
+		// error then points at text the model did not write: say why, in its terms.
+		if (guarded.rewrites === 0) throw error;
+		throw new Error(`${HREF_RULE}. (${error instanceof Error ? error.message : String(error)})`, { cause: error });
+	}
 	return providerSafePng(resvg.render().asPng());
 }
 
