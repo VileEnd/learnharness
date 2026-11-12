@@ -239,9 +239,11 @@ export function parseSections(markdown: string): DocumentSection[] {
 	// page instead of dragging the previous section's range forward.
 	let pending: number | undefined;
 	let offset = bodyStart;
-	for (const line of markdown.slice(bodyStart).split("\n")) {
+	for (const rawLine of markdown.slice(bodyStart).split("\n")) {
 		const lineStart = offset;
-		offset += line.length + 1;
+		offset += rawLine.length + 1;
+		// Offsets stay into `markdown` as given; only the matching ignores a CRLF's \r.
+		const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
 		const fenceMark = /^\s{0,3}(```+|~~~+)/.exec(line);
 		if (fenceMark) {
 			if (fence === null) fence = fenceMark[1]![0]!;

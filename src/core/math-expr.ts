@@ -300,8 +300,17 @@ export function parseNumberLike(src: string): number | null {
 
 const SAMPLE_POINTS = 12;
 const MIN_COMPARED = 4;
+/** Extra draws, over wider ranges, when the first SAMPLE_POINTS leave fewer
+ *  than MIN_COMPARED points where both sides are defined (sqrt(x-5) has no
+ *  real value anywhere in [-5, 5]). Bounded: an expression that is never
+ *  defined costs this many cheap evaluations and then compares false. */
+const EXTRA_ATTEMPTS = 400;
+const EXTRA_RANGES = [10, 40, 160, 640];
 
-/** Sampled equivalence over deterministic points in [-5, 5]; see Task 1 brief. */
+/** Sampled equivalence over deterministic points: 12 in [-5, 5], then, only
+ *  while too few points were comparable, deterministic draws over wider
+ *  ranges. The same expression is therefore equivalent to itself whenever it
+ *  has real values somewhere within about +-640. */
 export function exprEquivalent(
 	a: string,
 	b: string,
@@ -315,11 +324,12 @@ export function exprEquivalent(
 	const abs = opts?.abs ?? 1e-9;
 	const rands = variables.map((v) => seededRandom(`expr:${v}`));
 	let compared = 0;
-	for (let p = 0; p < SAMPLE_POINTS; p++) {
+	/** false = the two sides disagree at this point; otherwise the point counted or was skipped. */
+	const compareAt = (range: number): boolean => {
 		const vars: Record<string, number> = {};
 		variables.forEach((v, idx) => {
 			let x = 0;
-			do x = rands[idx]!() * 10 - 5;
+			do x = (rands[idx]!() * 2 - 1) * range;
 			while (Math.abs(x) < 0.05);
 			vars[v] = x;
 		});
@@ -327,10 +337,15 @@ export function exprEquivalent(
 		const y = evalExpr(pb.expr, vars);
 		const fx = Number.isFinite(x);
 		const fy = Number.isFinite(y);
-		if (!fx && !fy) continue;
+		if (!fx && !fy) return true;
 		if (fx !== fy) return false;
 		if (Math.abs(x - y) > abs + rel * Math.max(Math.abs(x), Math.abs(y))) return false;
 		compared++;
+		return true;
+	};
+	for (let p = 0; p < SAMPLE_POINTS; p++) if (!compareAt(5)) return false;
+	for (let p = 0; p < EXTRA_ATTEMPTS && compared < MIN_COMPARED; p++) {
+		if (!compareAt(EXTRA_RANGES[p % EXTRA_RANGES.length]!)) return false;
 	}
 	return compared >= MIN_COMPARED;
 }

@@ -22,11 +22,25 @@ import { normalizeTopics, topicKey } from "./documents.ts";
  *  submit seam refuses more). */
 export const MAX_TOPICS_PER_PROPOSITION = 3;
 
-/** The canonical display label of a raw topic under the alias table. */
+const MAX_ALIAS_HOPS = 8;
+
+/** The canonical display label of a raw topic under the alias table. THE
+ *  one canonicalisation every reader shares (the graph's topic grouping, the
+ *  knowledge overview, the OKF bundle, the library search). The table is kept
+ *  one hop deep (`addAliases`); following a chain anyway, cycle-safe and
+ *  bounded, heals a table written before that held. */
 export function canonicalTopic(raw: string, aliases: Readonly<Record<string, string>>): string {
-	const display = raw.replace(/\s+/g, " ").trim();
-	const target = aliases[topicKey(display)];
-	return target !== undefined && target.trim() !== "" ? target.replace(/\s+/g, " ").trim() : display;
+	let label = raw.replace(/\s+/g, " ").trim();
+	const seen = new Set<string>();
+	for (let hop = 0; hop < MAX_ALIAS_HOPS; hop++) {
+		const key = topicKey(label);
+		if (seen.has(key)) break;
+		seen.add(key);
+		const target = aliases[key];
+		if (target === undefined || target.trim() === "") break;
+		label = target.replace(/\s+/g, " ").trim();
+	}
+	return label;
 }
 
 /** Canonicalise a topic list: aliases applied, then deduped by key. */
@@ -45,19 +59,24 @@ export function addAliases(
 	const next: Record<string, string> = { ...table };
 	for (const [raw, canonical] of Object.entries(mapping)) {
 		const from = topicKey(raw);
-		const to = canonicalTopic(canonical, next); // follow an existing alias once
+		const to = canonicalTopic(canonical, next); // follow the target's own alias chain to its end
 		if (from === "" || topicKey(to) === "" || from === topicKey(to)) continue;
+		// Anything that pointed at `from` now points at its canonical label.
+		for (const [key, target] of Object.entries(next)) if (topicKey(target) === from) next[key] = to;
 		next[from] = to;
 	}
 	return next;
 }
 
-/** nodeId -> its canonical topics in ledger order, deduped by key. */
-export function topicsByNode(rows: readonly TopicRow[]): Map<string, string[]> {
+/** nodeId -> its topics in ledger order, deduped by key. With `aliases` each
+ *  row is read through the alias table, so a row written before an alias
+ *  existed joins its canonical topic. */
+export function topicsByNode(rows: readonly TopicRow[], aliases: Readonly<Record<string, string>> = {}): Map<string, string[]> {
 	const out = new Map<string, string[]>();
 	for (const row of rows) {
 		const list = out.get(row.nodeId) ?? [];
-		if (!list.some((t) => topicKey(t) === topicKey(row.topic))) list.push(row.topic);
+		const topic = canonicalTopic(row.topic, aliases);
+		if (!list.some((t) => topicKey(t) === topicKey(topic))) list.push(topic);
 		out.set(row.nodeId, list);
 	}
 	return out;

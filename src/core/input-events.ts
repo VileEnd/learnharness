@@ -182,14 +182,72 @@ export function dismissAppends(record: { messages: LhMessage[] }, input: Dismiss
 	if (!pending || pending.toolCallId !== input.toolCallId) {
 		throw new ChatInputError("dismiss input targets no pending question call");
 	}
-	if (input.answer.kind !== toolQuestionKind(pending.tool)) {
-		throw new ChatInputError("dismiss input's answer kind does not match the question");
-	}
-	return [newAnswerResult(input.toolCallId, pending.tool, input.answer)];
+	return [newAnswerResult(input.toolCallId, pending.tool, checkAnswer(input.answer, pending.tool, "dismiss input"))];
 }
 
 /** A malformed input event (the honest 400 — the orphan-trap discipline). */
 export class ChatInputError extends Error {}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Shape-check an exercise verdict (outcome, score, per-item marks). */
+function checkVerdict(v: unknown, where: string): void {
+	if (!isRecord(v) || !["correct", "partly", "wrong"].includes(v.outcome as string)) {
+		throw new ChatInputError(`${where} requires a verdict with a known outcome`);
+	}
+	if (typeof v.earned !== "number" || typeof v.total !== "number" || !Number.isFinite(v.earned) || !Number.isFinite(v.total)) {
+		throw new ChatInputError(`${where} verdict requires numeric earned and total`);
+	}
+	if (!Array.isArray(v.items) || !v.items.every((it) => isRecord(it) && typeof it.id === "string" && typeof it.correct === "boolean")) {
+		throw new ChatInputError(`${where} verdict requires items of {id, correct}`);
+	}
+}
+
+/** Validate an answer's SHAPE and kind against the pending tool before it is
+ *  stored (grading stays in the browser, so correctness is never judged
+ *  here). `kind`, `questionText` and `answers` are required; the other fields
+ *  are checked only when present, and must be what `QuestionAnswerData` says. */
+function checkAnswer(answer: unknown, tool: string, where: string): QuestionAnswerData {
+	if (!isRecord(answer)) throw new ChatInputError(`${where} requires the answer object`);
+	if (answer.kind !== toolQuestionKind(tool)) throw new ChatInputError(`${where}'s answer kind does not match the question`);
+	const a = answer as Record<string, unknown> & { answers: unknown[] };
+	const bad = (field: string, want: string) => new ChatInputError(`${where}'s answer ${field} must be ${want}`);
+	// Required by QuestionAnswerData, and read without a guard by the transcript
+	// render (the answered card maps `answers`), so a stored answer without them
+	// would crash it. Every client builder sets both.
+	if (typeof a.questionText !== "string") throw bad("questionText", "a string");
+	if (!Array.isArray(a.answers)) throw bad("answers", "a list of {label, index}");
+	for (const f of ["text", "other", "thinking", "readingThinking", "note"]) {
+		if (a[f] !== undefined && typeof a[f] !== "string") throw bad(f, "a string");
+	}
+	for (const f of ["dontKnow", "correct", "dismissed", "gaveUp"]) {
+		if (a[f] !== undefined && typeof a[f] !== "boolean") throw bad(f, "a boolean");
+	}
+	if (a.answeredAt !== undefined && (typeof a.answeredAt !== "string" || !Number.isFinite(Date.parse(a.answeredAt)))) {
+		throw bad("answeredAt", "an ISO date string");
+	}
+	if (a.confidence !== undefined && (typeof a.confidence !== "number" || !(a.confidence >= 0 && a.confidence <= 100))) {
+		throw bad("confidence", "a number from 0 to 100");
+	}
+	if (!a.answers.every((o) => isRecord(o) && typeof o.label === "string" && Number.isInteger(o.index) && (o.value === undefined || typeof o.value === "string"))) {
+		throw bad("answers", "a list of {label, index}");
+	}
+	if (a.correctIndices !== undefined && !(Array.isArray(a.correctIndices) && a.correctIndices.every((i) => Number.isInteger(i)))) {
+		throw bad("correctIndices", "a list of integers");
+	}
+	for (const f of ["attempts", "hintsUsed"]) {
+		if (a[f] !== undefined && !(Number.isInteger(a[f]) && (a[f] as number) >= 0)) throw bad(f, "a non-negative integer");
+	}
+	if (a.format !== undefined && !(typeof a.format === "string" && (INTERACTIVE_FORMATS as readonly string[]).includes(a.format))) {
+		throw bad("format", "a known format");
+	}
+	if (a.verdict !== undefined) checkVerdict(a.verdict, `${where}'s answer`);
+	if (a.firstAttempt !== undefined) {
+		if (!isRecord(a.firstAttempt)) throw bad("firstAttempt", "an object");
+		checkVerdict(a.firstAttempt.verdict, `${where}'s answer firstAttempt`);
+	}
+	return answer as unknown as QuestionAnswerData;
+}
 
 /** Parse and validate an input event off a request body. */
 export function parseChatInput(input: unknown): ChatInput {
@@ -329,7 +387,7 @@ export function inputAppends(
 			if (!pending || pending.toolCallId !== input.toolCallId) {
 				throw new ChatInputError("answer input targets no pending question call");
 			}
-			return [newAnswerResult(input.toolCallId, pending.tool, input.answer)];
+			return [newAnswerResult(input.toolCallId, pending.tool, checkAnswer(input.answer, pending.tool, "answer input"))];
 		}
 		case "continue":
 			return dismissalConclusion(record);

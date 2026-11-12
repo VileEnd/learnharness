@@ -108,6 +108,17 @@ describe("alias table and citation", () => {
 		assert.deepEqual(canonicalTopics(["SEMAPHOR", "semaphoren", "Mutex"], table), ["Semaphoren", "Mutex"]);
 	});
 
+	it("an alias added for a canonical label re-points the aliases that targeted it", () => {
+		const table = addAliases({}, { A: "T" });
+		assert.deepEqual(addAliases(table, { T: "C" }), { a: "C", t: "C" });
+		assert.deepEqual(canonicalTopics(["A", "T", "C"], addAliases(table, { T: "C" })), ["C"]);
+	});
+
+	it("a table already two hops deep still resolves to the final canonical", () => {
+		assert.deepEqual(canonicalTopics(["A"], { a: "T", t: "C" }), ["C"]);
+		assert.equal(canonicalTopics(["A"], { a: "B", b: "A" }).length, 1, "a cycle terminates");
+	});
+
 	it("documentCitation: title, section heading, page; absent parts simply drop", () => {
 		const doc = { id: "doc_1", title: "Blatt 8", sections: { s2: { headingPath: ["Skript", "2.1 Register"], pageFrom: 3 } } };
 		assert.deepEqual(documentCitation(doc, { section: "s2", pageFrom: 4 }), { label: "Blatt 8 · §2.1 Register · p.4", page: 4 });

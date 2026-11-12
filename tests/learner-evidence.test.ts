@@ -129,6 +129,27 @@ describe("deriveEvidence", () => {
 	});
 });
 
+describe("concept tags given by name", () => {
+	const NAMED = [{ id: "n1", name: "Chain rule" }, { id: "n2", name: "Product rule" }];
+
+	it("a quiz tagged by name produces evidence for the resolved id", () => {
+		const c = chat("c1", quiz("q1", { pick: 1, concepts: ["Chain rule"] }));
+		const events = deriveEvidence([c], [], new Set(["n1", "n2"]), NAMED);
+		assert.deepEqual(events.map((e) => [e.toolCallId, e.conceptId]), [["q1", "n1"]]);
+	});
+
+	it("a practice target given by name resolves the same way", () => {
+		const c = chat("p1", [...problem("pr1", ["product rule"]), ...conclude("co1", "solved")], "practice");
+		const events = deriveEvidence([c], [], new Set(["n1", "n2"]), NAMED);
+		assert.deepEqual(events.map((e) => [e.toolCallId, e.conceptId]), [["co1", "n2"]]);
+	});
+
+	it("tags that resolve to nothing count as untagged, so attribution picks the item up", () => {
+		const c = chat("c1", [...quiz("q1", { pick: 1, concepts: ["No such concept"] }), ...quiz("q2", { pick: 1, concepts: ["Chain rule"] })]);
+		assert.deepEqual(unattributedItems(c, [], undefined, NAMED).map((i) => i.toolCallId), ["q1"]);
+	});
+});
+
 describe("unattributedItems", () => {
 	it("lists graded, untagged items without a ledger row; practice and predictions never", () => {
 		const c = chat("c1", [

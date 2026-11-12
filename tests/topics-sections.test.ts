@@ -197,6 +197,19 @@ describe("topic rows", () => {
 		assert.deepEqual(byTopic.nodeTopics["src_a_1"], ["Semaphoren", "Mutex"]);
 	});
 
+	it("an alias added after rows exist merges the clusters in topic mode, as it does elsewhere", () => {
+		const { ledgers, deps } = groupedGraph();
+		// Rows written under the variant spelling BEFORE the alias existed.
+		for (let i = 1; i <= 3; i++) ledgers.appendTopic({ nodeId: `src_c_${i}`, topic: "Semaphor", sourceId: "src_c", at: "2026-10-03T00:00:00.000Z" });
+		assert.ok(graphSnapshot(deps, { groupBy: "topic" }).clusters.some((c) => c.label === "Semaphor"), "no alias yet: two clusters");
+		ledgers.writeTopicAliases(addAliases(ledgers.readTopicAliases(), { Semaphor: "Semaphoren" }));
+		const snap = graphSnapshot(deps, { groupBy: "topic" });
+		const labels = snap.clusters.map((c) => c.label);
+		assert.ok(!labels.includes("Semaphor"), "the variant label is gone");
+		assert.equal(snap.clusters.find((c) => c.label === "Semaphoren")!.members.length, 9);
+		assert.deepEqual(snap.nodeTopics["src_c_1"], ["Semaphoren"]);
+	});
+
 	it("source mode labels a stored document's cluster with its TITLE and the snapshot names the section", () => {
 		const { ledgers, deps } = groupedGraph();
 		ledgers.appendNode(node("n_sec", "src_a", { provenance: [{ chatId: "src_a", messageId: "", section: "s2", pageFrom: 3, pageTo: 4 }] }));

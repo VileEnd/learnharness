@@ -22,7 +22,7 @@ test("a later assistant question supersedes an unanswered question in the same p
 	assert.equal(projectView(messages).length, 1, "the view merges both assistant boundaries");
 	const question = pending(messages)!;
 	assert.equal(question.toolCallId, "new-question");
-	assert.doesNotThrow(() => inputAppends({ messages }, { type: "answer", toolCallId: question.toolCallId, answer: { kind: "quiz", answers: [], dontKnow: true } as never }));
+	assert.doesNotThrow(() => inputAppends({ messages }, { type: "answer", toolCallId: question.toolCallId, answer: { kind: "quiz", questionText: "Q?", answers: [], dontKnow: true } as never }));
 });
 
 test("the newest assistant's parallel questions retain call order and never revive older questions", () => {
@@ -56,7 +56,7 @@ test("reused ids select the newest native question's input, not an older availab
 	assert.deepEqual(question.input, { question: "NEW" });
 	assert.notEqual(question.key, pending([old])!.key);
 	assert.deepEqual(danglingQuestionOf(messages), { toolCallId: "call_0", tool: "quiz", input: { question: "NEW" } }, "server authority/shape unchanged");
-	const answered = inputAppends({ messages }, { type: "answer", toolCallId: question.toolCallId, answer: { kind: "quiz", answers: [] } as never });
+	const answered = inputAppends({ messages }, { type: "answer", toolCallId: question.toolCallId, answer: { kind: "quiz", questionText: "Q?", answers: [] } as never });
 	const parts = projectView([...messages, ...answered]).flatMap(m => m.parts).filter(p => p.type === "tool-quiz");
 	assert.equal(parts[0]!.state, "input-available", "old transcript card is untouched");
 	assert.equal(parts[1]!.state, "output-available", "result still pairs newest-first");

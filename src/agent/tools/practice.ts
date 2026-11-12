@@ -150,9 +150,11 @@ export function problemTool(
 		executionMode: "sequential",
 		prepareArguments: (args: unknown) => {
 			const healed = healEncodedArguments(args, problemInputObject);
-			// TARGET NORMALIZATION (owner round 9): names silently become ids —
-			// the RECORD carries canonical ids (the mastery trace groups on
-			// them); unresolvable strings pass through for execute to reject.
+			// TARGET NORMALIZATION (owner round 9): names silently become ids so
+			// the call validates; unresolvable strings pass through for execute
+			// to reject. This heals only the copy that is validated: the persisted
+			// call keeps what the model wrote, so the learner model resolves names
+			// again when it reads the record (`gradedItems` in core/learner.ts).
 			// UNTAGGED PROBLEMS (owner round 12): an explicit empty list is
 			// the model saying "no targets" — healed AWAY, so the record's
 			// canonical form is tagged-or-absent, never [].
