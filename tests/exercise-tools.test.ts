@@ -222,11 +222,11 @@ describe("the answer record", () => {
 });
 
 describe("practice problem format + spec", () => {
-	const gate = { problemActive: false };
+	const gate = { problemActive: false, concludedThisTurn: false };
 	const stmt = { statement: "s", mode: "recall", modelSolution: "m" };
 	it("validates a carried spec and requires the pair", async () => {
 		const { problemTool } = await import("../src/agent/tools/practice.ts");
-		const tool = () => problemTool({ problemActive: false }, undefined, ["numeric"]);
+		const tool = () => problemTool({ problemActive: false, concludedThisTurn: false }, undefined, ["numeric"]);
 		assert.equal((await run(tool(), { ...stmt, format: "numeric", spec: numericSpec })).ok, true);
 		assert.match((await run(tool(), { ...stmt, format: "numeric", spec: { answer: "x", mode: "number" } })).problems.join(), /not a number/);
 		assert.match((await run(tool(), { ...stmt, format: "numeric" })).problems.join(), /go together/);
