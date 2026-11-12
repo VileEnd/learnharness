@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
 import { svgImageSource } from "../../core/svg-image-source.ts";
 import { guardedFetch, OutboundRefusedError, readCapped, withTimeout } from "../outbound.ts";
 import { standardFontsDir } from "./pdf-ops";
@@ -22,14 +21,19 @@ import { standardFontsDir } from "./pdf-ops";
  * LOCKDOWN (2026-11-12 audit): the model writes the page and the demo
  * probe, and the probe's value goes back to the model, so the browser must
  * not read local files or reach the app's network. Every request is
- * intercepted (demoRequestDecision): the document itself, data: and blob:
- * pass; http(s) is fetched by this process through the outbound guard and
- * handed to the page; everything else (other files, other schemes, any
- * main-frame navigation away from the document) is aborted. Chromium
- * itself gets no route anywhere (dead proxy, no host resolution, no
- * unproxied UDP), which covers what interception cannot see: WebSockets,
- * popups, WebRTC. It launches with a minimal environment, and the probe
- * only runs while the page is still the demo document.
+ * intercepted (demoRequestDecision): data: and blob: pass; http(s) is
+ * fetched by this process through the outbound guard and handed to the page;
+ * everything else (files, other schemes, any main-frame navigation) is
+ * aborted. Chromium itself gets no route anywhere (dead proxy, no host
+ * resolution, no unproxied UDP), which covers what interception cannot see:
+ * WebSockets, popups, WebRTC. It launches with a minimal environment.
+ *
+ * The demo is written into a blank in-memory page (about:blank, page.setContent),
+ * never a file: the page then has the same opaque origin as the learner's
+ * sandboxed frame (no localStorage, IndexedDB, cookies), so a demo that needs
+ * them fails verification instead of failing later for the learner. Any
+ * main-frame navigation after that (a new document, even to about:blank)
+ * means the page is no longer the demo, and the probe does not run.
  */
 
 export interface DemoRunResult {
@@ -125,8 +129,8 @@ const NO_CHROME_MESSAGE =
 	"Install Chromium or set CHROME_PATH to a Chrome executable. " +
 	"(Verification is mandatory — demos are never delivered untested.)";
 
-/** What the page may load. `documentUrl` is the one local file it may
- *  read (the demo or figure page itself). */
+/** What the page may load. The page itself is in memory, so no request is
+ *  ever for "the document": every main-frame navigation is refused. */
 export type DemoRequestDecision = "continue" | "fetch" | "abort";
 
 function withoutHash(url: string): string {
@@ -134,8 +138,7 @@ function withoutHash(url: string): string {
 	return i < 0 ? url : url.slice(0, i);
 }
 
-export function demoRequestDecision(url: string, documentUrl: string, mainFrameNavigation: boolean): DemoRequestDecision {
-	if (withoutHash(url) === withoutHash(documentUrl)) return "continue";
+export function demoRequestDecision(url: string, mainFrameNavigation: boolean): DemoRequestDecision {
 	if (mainFrameNavigation) return "abort";
 	const scheme = url.slice(0, url.indexOf(":") + 1).toLowerCase();
 	if (scheme === "data:" || scheme === "blob:") return "continue";
@@ -316,10 +319,7 @@ export const CHROME_ARGS = [
 	"--webrtc-ip-handling-policy=disable_non_proxied_udp",
 ];
 
-async function withBrowserPage<T>(
-	documentUrl: string,
-	fn: (page: import("puppeteer-core").Page) => Promise<T>,
-): Promise<T> {
+async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => Promise<T>): Promise<T> {
 	// Per-job launch, close on the way out.
 	const puppeteer = (await import("puppeteer-core")).default;
 	const executablePath = resolveChromeExecutablePath();
@@ -346,7 +346,7 @@ async function withBrowserPage<T>(
 			page.on("request", (req) => {
 				const frame = req.frame();
 				const mainFrameNavigation = req.isNavigationRequest() && (frame === null || frame === page.mainFrame());
-				const decision = demoRequestDecision(req.url(), documentUrl, mainFrameNavigation);
+				const decision = demoRequestDecision(req.url(), mainFrameNavigation);
 				if (decision === "continue") void req.continue().catch(() => {});
 				else if (decision === "abort") void req.abort("blockedbyclient").catch(() => {});
 				else void fulfilThroughGuard(req, pageLife.signal, fetchLimits);
@@ -368,42 +368,92 @@ function tempDir(prefix: string): string {
 
 // ─── Demo execution ──────────────────────────────────────────────────────────
 
+/** What a sandboxed frame throws when a demo touches browser storage. */
+const STORAGE_DENIED = /denied for this document|denied in this context|allow-same-origin|operation is insecure|CacheStorage/i;
+const STORAGE_HINT =
+	"The demo runs in a sandboxed frame with an opaque origin, where localStorage, sessionStorage, IndexedDB and cookies " +
+	"are unavailable and throw: keep state in JavaScript variables instead (or wrap any storage use in try/catch and carry on without it).";
+
+/** What a page sees when a secure-context API is missing: the API itself is
+ *  undefined, so the error names the missing function or the member read off it. */
+const SECURE_CONTEXT_MISSING =
+	/randomUUID is not a function|\bcaches is not defined|navigator\.clipboard|reading '(?:digest|encrypt|decrypt|sign|verify|importKey|generateKey|deriveKey|deriveBits|readText|writeText)'/;
+const SECURE_CONTEXT_HINT =
+	"The demo is verified without secure-context APIs: do not use crypto.randomUUID, crypto.subtle, navigator.clipboard or caches; " +
+	"generate ids with Math.random or a counter.";
+
+function withHints(message: string): string {
+	let out = message;
+	if (STORAGE_DENIED.test(message)) out += `\n${STORAGE_HINT}`;
+	if (SECURE_CONTEXT_MISSING.test(message)) out += `\n${SECURE_CONTEXT_HINT}`;
+	return out;
+}
+
+/** Longest a demo may take to finish loading. setContent's own timeout only
+ *  covers the lifecycle wait after the document is set, and setting it blocks
+ *  on the page's main thread (an endless loop while parsing would hold the job
+ *  for the 180 s protocol timeout), so the whole call is raced against this. */
+const DEMO_LOAD_TIMEOUT_MS = 30_000;
+
+async function loadWithinLimit(page: import("puppeteer-core").Page, html: string): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<never>((_, reject) => {
+		timer = setTimeout(
+			() => reject(new Error(`the page did not finish loading within ${DEMO_LOAD_TIMEOUT_MS / 1000} s (an endless loop while loading?)`)),
+			DEMO_LOAD_TIMEOUT_MS,
+		);
+	});
+	const load = page.setContent(html, { waitUntil: "load", timeout: DEMO_LOAD_TIMEOUT_MS });
+	// The loser may still reject later (the browser closes under it); that is not news.
+	load.catch(() => {});
+	try {
+		await Promise.race([load, expired]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRunResult> {
 	const settleMs = opts.settleMs ?? 2000;
-	const dir = tempDir("lh-demo-");
-	const file = path.join(dir, "demo.html");
-	fs.writeFileSync(file, html, "utf-8");
-
 	const consoleErrors: string[] = [];
 	const pageErrors: string[] = [];
 	const failedRequests: string[] = [];
 	let probeResult: unknown;
 	let probed = false;
 
-	const demoUrl = pathToFileURL(file).href;
-	try {
-		await withBrowserPage(demoUrl, async (page) => {
+	await withBrowserPage(async (page) => {
 		page.on("console", (msg) => {
-			if (msg.type() === "error") consoleErrors.push(msg.text());
+			if (msg.type() === "error") consoleErrors.push(withHints(msg.text()));
 		});
-		page.on("pageerror", (err) => pageErrors.push(err instanceof Error ? err.message : String(err)));
+		page.on("pageerror", (err) => pageErrors.push(withHints(err instanceof Error ? err.message : String(err))));
 		page.on("requestfailed", (req) => failedRequests.push(`${req.url()} (${req.failure()?.errorText ?? "failed"})`));
-		// Interception aborts any navigation away; this is the second line:
-		// once the main frame has shown anything but the demo, no probe.
+		// Interception aborts a navigation to anything it can see; this is the
+		// second line, and it also sees what it cannot (a navigation to
+		// about:blank is no network request, and a reload is one to the same
+		// address). Every new main-frame document after the blank page means the
+		// page is no longer the demo; a hash change is not one (it is a
+		// navigatedWithinDocument, a different event).
+		const cdp = await page.createCDPSession();
 		let leftDemo = false;
-		page.on("framenavigated", (frame) => {
-			if (frame === page.mainFrame() && withoutHash(frame.url()) !== withoutHash(demoUrl)) leftDemo = true;
+		cdp.on("Page.frameNavigated", ({ frame }) => {
+			if (!frame.parentId) leftDemo = true;
 		});
+		await cdp.send("Page.enable");
 
 		try {
-			await page.goto(demoUrl, { waitUntil: "load", timeout: 30_000 });
+			// A new tab is on about:blank, which setContent keeps (its origin is
+			// opaque); the demo is written into it in memory, no file involved. That
+			// page is not a secure context (the learner's frame inherits one from the
+			// https app), so crypto.randomUUID, crypto.subtle, navigator.clipboard and
+			// caches are absent here: deliberate, and hinted when a demo trips on them.
+			await loadWithinLimit(page, html);
 			await new Promise((resolve) => setTimeout(resolve, settleMs));
 			if (opts.probe) {
-				if (leftDemo || withoutHash(page.url()) !== withoutHash(demoUrl)) {
+				if (leftDemo || withoutHash(page.url()) !== "about:blank") {
 					pageErrors.push(
 						"probe not run: the page navigated away from the demo document. Verification blocks every navigation " +
-							"away from the demo, so a form submit, a link or a download link that navigates the page breaks it: " +
-							"keep the demo on one page (handle forms and links in script, without navigating).",
+							"away from the demo, so a form submit, a link, a download link or a page that reloads itself (`location.reload()`, " +
+							"`history.go(0)`, a meta refresh) breaks it: keep the demo on one page (handle forms and links in script, without navigating).",
 					);
 				} else {
 					try {
@@ -417,14 +467,7 @@ async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRun
 		} catch (err) {
 			pageErrors.push(err instanceof Error ? err.message : String(err));
 		}
-		});
-	} finally {
-		try {
-			fs.rmSync(dir, { recursive: true, force: true });
-		} catch {
-			/* best-effort cleanup */
-		}
-	}
+	});
 
 	return {
 		consoleErrors,
