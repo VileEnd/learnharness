@@ -42,9 +42,21 @@ export interface ProviderKeyInfo {
 	label: string;
 }
 
+/** A non-admin's rows carry only {id, present} (the server withholds the masked details). */
 interface KeysResponse {
-	keys: AuthKeyStatus[];
+	keys: (Pick<AuthKeyStatus, "id" | "present"> & Partial<AuthKeyStatus>)[];
 	providers?: ProviderKeyInfo[];
+}
+
+/** Fill the fields a non-admin's reduced row lacks; an admin's full row passes through unchanged. */
+function toStatus(row: KeysResponse["keys"][number]): AuthKeyStatus {
+	return {
+		info: AUTH_KEYS.find((k) => k.id === row.id) ?? null,
+		masked: null,
+		source: "none",
+		shadowedByEnv: false,
+		...row,
+	};
 }
 
 /** The curated tools group, pinned by id (the catalog owns the copy;
@@ -100,9 +112,11 @@ export function classifyKeys(
 }
 
 /** The minimal status line, e.g. "…ab12 · 64 chars" (" · env" marks an
- *  environment-owned value — the row itself is read-only then). Pure. */
+ *  environment-owned value — the row itself is read-only then). A present
+ *  key without masked details (a non-admin's view) reads "set". Pure. */
 export function keyStatusLine(status: AuthKeyStatus): string {
-	if (!status.present || !status.masked) return "not set";
+	if (!status.present) return "not set";
+	if (!status.masked) return "set";
 	const tail = status.masked.replace(/ \((\d+) chars\)$/, "");
 	const chars = status.masked.match(/\((\d+) chars\)$/)?.[1] ?? "?";
 	return `${tail} · ${chars}${status.source === "env" ? " · env" : ""}`;
@@ -362,7 +376,7 @@ export function KeysSection({
 		fetch("/api/keys")
 			.then((r) => okJson<KeysResponse>(r))
 			.then((body) => {
-				setStatuses(body.keys ?? []);
+				setStatuses((body.keys ?? []).map(toStatus));
 				if (body.providers) setProviders(body.providers);
 			})
 			.catch(() => setStatuses([]))
