@@ -27,10 +27,9 @@ function firstFilename(chunks: Uint8Array[]): string | undefined {
 	return match?.[1] || undefined;
 }
 
-const tooLarge = (name?: string) =>
-	fail(413, `${name ? `${name} is` : "The upload is"} too large: the limit is ${MAX_FILE_BYTES / 2 ** 20} MiB per file.`);
-
-export async function readUploadForm(request: Request, maxBytes = MAX_REQUEST_BYTES): Promise<FormData | Response> {
+export async function readUploadForm(request: Request, maxBytes = MAX_REQUEST_BYTES, fileLimitBytes = MAX_FILE_BYTES): Promise<FormData | Response> {
+	const tooLarge = (name?: string) =>
+		fail(413, `${name ? `${name} is` : "The upload is"} too large: the limit is ${fileLimitBytes / 2 ** 20} MiB per file.`);
 	const body = request.body;
 	if (!body) return fail(400, "Missing upload body.");
 	const reader = body.getReader();

@@ -1,15 +1,20 @@
 import { checkPngDimensions, DRAWING_PNG_MAX_BYTES, validateDrawingScene } from "@/src/core";
-import { getChat, stores, withTenant } from "@/src/server";
+import { getChat, readUploadForm, stores, withTenant } from "@/src/server";
 
 /** Learner sketch/work submission: multipart `scene` (JSON) + `png` (file).
  *  Content-addressed - the same scene is the same drawingId. */
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
+/** Room beyond the PNG for the scene JSON (up to MAX_POINTS points) and the multipart envelope. */
+const SCENE_ALLOWANCE_BYTES = 8 * 1024 * 1024;
+
 export const POST = withTenant(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
 	const { id } = await params;
 	if (!getChat(id)) return Response.json({ error: "Not found" }, { status: 404 });
-	const form = await req.formData().catch(() => null);
-	if (!form) return Response.json({ error: "Expected multipart form data" }, { status: 400 });
+	// Bounded read: an oversized body is refused while it streams in, never buffered whole.
+	// The request cap is the PNG cap plus room for the scene JSON and the multipart envelope.
+	const form = await readUploadForm(req, DRAWING_PNG_MAX_BYTES + SCENE_ALLOWANCE_BYTES, DRAWING_PNG_MAX_BYTES);
+	if (form instanceof Response) return form;
 	const sceneRaw = form.get("scene");
 	const png = form.get("png");
 	if (typeof sceneRaw !== "string") return Response.json({ error: "scene is required" }, { status: 400 });

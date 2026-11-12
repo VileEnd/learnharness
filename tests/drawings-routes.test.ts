@@ -110,3 +110,38 @@ it("deleteChatSession removes drawings", async () => {
 	assert.equal(out.ok, true);
 	assert.equal(fs.existsSync(path.join(PATHS.drawings, chat.id)), false);
 });
+
+const live = stores.chatStore.createChat("oversize");
+const liveCtx = { params: Promise.resolve({ id: live.id }) };
+
+/** A chunked multipart-typed body of `total` MiB that counts how many chunks the server pulled. */
+function streamedBody(total: number) {
+	const state = { pulled: 0 };
+	let i = 0;
+	const body = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (i++ >= total) return controller.close();
+			state.pulled++;
+			controller.enqueue(new Uint8Array(1024 * 1024));
+		},
+	});
+	const req = (url: string) =>
+		new Request(url, { method: "POST", body, headers: { "content-type": "multipart/form-data; boundary=x" }, duplex: "half" } as RequestInit);
+	return { state, req };
+}
+
+it("an oversized drawing upload is refused with 413 while it is read, not after it is buffered", async () => {
+	const { state, req } = streamedBody(60);
+	const res = await drawings.POST(req("http://x/d"), liveCtx);
+	assert.equal(res.status, 413);
+	assert.match((await res.json()).error, /too large/);
+	assert.ok(state.pulled < 30, `pulled ${state.pulled} chunks`);
+});
+
+it("an oversized canvas image upload is refused with 413 while it is read", async () => {
+	const assets = await import("../app/api/chats/[id]/drawings/assets/route.ts");
+	const { state, req } = streamedBody(60);
+	const res = await assets.POST(req("http://x/a"), liveCtx);
+	assert.equal(res.status, 413);
+	assert.ok(state.pulled < 10, `pulled ${state.pulled} chunks`);
+});
