@@ -451,6 +451,13 @@ export interface LearnerStore {
 	readAttributions(): AttributionRow[];
 }
 
+/** A position in one month's request-log file: opaque to callers, handed back
+ *  to readMonthSince. */
+export interface RequestLogCursor {
+	identity: string;
+	offset: number;
+}
+
 /**
  * The request log (data/logs/requests-YYYY-MM.jsonl): append-only, one line per
  * paid call. Reads never throw and never create anything; the directory is
@@ -460,9 +467,13 @@ export interface LearnerStore {
 export interface RequestLogStore {
 	append(line: RequestLogLine): void;
 	readMonth(month: string): RequestLogLine[];
-	/** A cheap change stamp of one month's file (size and mtime), or null
-	 *  when it does not exist: the cap check's cache key. */
-	monthStamp(month: string): string | null;
+	/** The lines appended to one month's file since `cursor` (null = from the
+	 *  start), for folding a month incrementally (the cap check, which runs on
+	 *  every call). Reads only the new bytes, and only whole lines; an
+	 *  unchanged file costs one stat. `reset` is true when the lines are the
+	 *  month from its start: no cursor, or the file is not the one the cursor
+	 *  came from (replaced or shorter), so a running total must restart. */
+	readMonthSince(month: string, cursor: RequestLogCursor | null): { lines: RequestLogLine[]; cursor: RequestLogCursor; reset: boolean };
 	months(): string[];
 	backfillDone(): boolean;
 	markBackfilled(): void;

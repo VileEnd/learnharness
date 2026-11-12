@@ -29,33 +29,23 @@ import { claudeCodeRefusal } from "./claude-code.ts";
 import { isCustomKey, isUnpricedCustomKey, pricedCustomKeys } from "./custom-provider.ts";
 import { restrictedPolicy } from "./policy.ts";
 import { stores } from "./stores.ts";
-import { monthSpend } from "./usage.ts";
+import { advanceMonthSpend, type MonthSpendState } from "./usage.ts";
 
-interface SpendCacheEntry {
-	month: string;
-	stamp: string | null;
-	usd: number;
-	unpriced: number;
-}
-
-// Per tenant id, keyed on the month file's size and mtime: the cap check runs
-// on every LLM call, so an unchanged log is never folded twice. On globalThis
-// like the other registries (Next may load this module once per bundle).
-const g = globalThis as { __lhSpendCache?: Map<string, SpendCacheEntry> };
-const spendCache = (g.__lhSpendCache ??= new Map<string, SpendCacheEntry>());
+// Per tenant id: the month's spend folded so far and where in its file the fold
+// stopped (see advanceMonthSpend). The cap check runs on every LLM call and every
+// call appends a log line, so each check folds only the lines added since the last
+// one, never the whole month. On globalThis like the other registries (Next may
+// load this module once per bundle).
+const g = globalThis as { __lhSpendCache?: Map<string, MonthSpendState> };
+const spendCache = (g.__lhSpendCache ??= new Map<string, MonthSpendState>());
 
 /** This month's spend for the ambient tenant: the priced total (unpriced
  *  calls count 0 toward the cap) and how many calls had no price. */
 export function spentThisMonth(): { usd: number; unpriced: number } {
 	const tenant = requireTenant().id;
-	const month = monthKey(new Date());
-	// Stamp BEFORE the fold: a line appended meanwhile makes the next call miss.
-	const stamp = stores.requestLog.monthStamp(month);
-	const hit = spendCache.get(tenant);
-	if (hit && hit.month === month && hit.stamp === stamp) return { usd: hit.usd, unpriced: hit.unpriced };
-	const { usd, unpriced } = monthSpend(month);
-	spendCache.set(tenant, { month, stamp, usd, unpriced });
-	return { usd, unpriced };
+	const state = advanceMonthSpend(monthKey(new Date()), spendCache.get(tenant));
+	spendCache.set(tenant, state);
+	return { usd: state.usd, unpriced: state.unpriced };
 }
 
 function assertPolicyCap(policy: UserPolicy): void {

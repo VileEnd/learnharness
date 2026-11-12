@@ -30,6 +30,21 @@ function isLine(v: unknown): v is RequestLogLine {
 	);
 }
 
+/** The valid lines of a JSONL text; a torn or foreign line is skipped. */
+function parseLines(text: string): RequestLogLine[] {
+	const lines: RequestLogLine[] = [];
+	for (const raw of text.split("\n")) {
+		if (raw.trim() === "") continue;
+		try {
+			const parsed: unknown = JSON.parse(raw);
+			if (isLine(parsed)) lines.push(parsed);
+		} catch {
+			/* a torn line: skip it */
+		}
+	}
+	return lines;
+}
+
 export const requestLogStore: RequestLogStore = {
 	append(line) {
 		fs.mkdirSync(PATHS.logs, { recursive: true });
@@ -42,25 +57,48 @@ export const requestLogStore: RequestLogStore = {
 		} catch {
 			return [];
 		}
-		const lines: RequestLogLine[] = [];
-		for (const raw of text.split("\n")) {
-			if (raw.trim() === "") continue;
+		return parseLines(text);
+	},
+	readMonthSince(month, cursor) {
+		let st: fs.Stats;
+		try {
+			st = fs.statSync(file(month));
+		} catch {
+			return { lines: [], cursor: { identity: "", offset: 0 }, reset: true };
+		}
+		const identity = `${st.ino}:${st.birthtimeMs}`;
+		const same = cursor !== null && cursor.identity === identity && cursor.offset <= st.size;
+		const from = same ? cursor.offset : 0;
+		if (same && from === st.size) return { lines: [], cursor, reset: false };
+		let buf: Buffer;
+		try {
+			const fd = fs.openSync(file(month), "r");
 			try {
-				const parsed: unknown = JSON.parse(raw);
-				if (isLine(parsed)) lines.push(parsed);
+				buf = Buffer.alloc(st.size - from);
+				const n = fs.readSync(fd, buf, 0, buf.length, from);
+				buf = buf.subarray(0, n);
+			} finally {
+				fs.closeSync(fd);
+			}
+		} catch {
+			return { lines: [], cursor: { identity: "", offset: 0 }, reset: true };
+		}
+		// Whole lines only: a line another writer is still appending is left for
+		// the next read. An unterminated tail that already parses counts, as it
+		// does in readMonth (a crash can leave the newline off the last record).
+		const lastNewline = buf.lastIndexOf(0x0a);
+		let consumed = lastNewline + 1;
+		const tail = buf.subarray(consumed).toString("utf-8");
+		if (tail.trim() !== "") {
+			try {
+				JSON.parse(tail);
+				consumed = buf.length;
 			} catch {
-				/* a torn line: skip it */
+				/* still being written, or torn: not consumed */
 			}
 		}
-		return lines;
-	},
-	monthStamp(month) {
-		try {
-			const st = fs.statSync(file(month));
-			return `${st.size}:${st.mtimeMs}`;
-		} catch {
-			return null;
-		}
+		const lines = parseLines(buf.subarray(0, consumed).toString("utf-8"));
+		return { lines, cursor: { identity, offset: from + consumed }, reset: !same };
 	},
 	months() {
 		let names: string[];

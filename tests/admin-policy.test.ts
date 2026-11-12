@@ -148,10 +148,10 @@ test("one tenant's unreadable log leaves the others intact", async () => {
 	const BAD = "user-bad";
 	runAsTenant({ id: BAD, name: "bad", isAdmin: false }, () => stores.requestLog.append({ v: 1, at: new Date().toISOString(), purpose: "teacher", category: "teaching", provider: "openrouter", model: STRONG.id, outcome: "ok", providerCostUsd: 1 }));
 	// The store swallows file errors, so make the fold itself throw for this tenant.
-	const orig = stores.requestLog.readMonth.bind(stores.requestLog);
-	const spy = mock.method(stores.requestLog, "readMonth", (month: string) => {
+	const orig = stores.requestLog.readMonthSince.bind(stores.requestLog);
+	const spy = mock.method(stores.requestLog, "readMonthSince", (month: string, cursor: Parameters<typeof orig>[1]) => {
 		if (currentTenant()?.id === BAD) throw new Error("boom");
-		return orig(month);
+		return orig(month, cursor);
 	});
 	const res = await usageRoute.GET(req(true));
 	assert.equal(res.status, 200);
