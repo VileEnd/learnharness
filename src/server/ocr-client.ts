@@ -12,8 +12,7 @@
  *
  * Contract: POST /api/run (multipart "files", optional "strategy") -> {job};
  * GET /api/jobs/{id}; GET /api/jobs/{id}/files/{markdown};
- * GET /api/by-sha/{sha256} (200 | 404); POST /api/estimate;
- * DELETE /api/jobs/{id} (200 | 404 | 409 while running).
+ * GET /api/by-sha/{sha256} (200 | 404); POST /api/estimate.
  */
 
 import { recordRequest } from "../agent/request-log.ts";
@@ -89,9 +88,6 @@ export interface OcrClient {
 	markdown(job: string, name: string): Promise<string>;
 	/** The sidecar's earlier conversion of these exact PDF bytes, or null. */
 	bySha(sha256: string): Promise<OcrKnown | null>;
-	/** Ask the sidecar to drop a job's output (its document was deleted or
-	 *  replaced). An already-gone job is success; anything else throws. */
-	discard(job: string): Promise<void>;
 }
 
 export interface OcrClientOptions {
@@ -222,11 +218,6 @@ export function createOcrClient(opts: OcrClientOptions = {}): OcrClient {
 			const res = await call(`/api/by-sha/${encodeURIComponent(sha256)}`);
 			if (res.status === 404) return null;
 			return json<OcrKnown>(res, Date.now());
-		},
-		async discard(job) {
-			const res = await call(`/api/jobs/${encodeURIComponent(job)}`, { method: "DELETE" });
-			if (res.ok || res.status === 404) return;
-			throw new OcrError("ocr_failed", `The OCR service could not drop job ${job} (HTTP ${res.status}).`);
 		},
 	};
 }

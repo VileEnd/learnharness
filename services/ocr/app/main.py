@@ -40,6 +40,8 @@ MAX_BYTES = 200 * 1024 * 1024  # per PDF
 MAX_PAGES = 1000              # per PDF
 JOB_TTL = 3600                # seconds a finished job stays in memory; the disk stays the source of truth
 OUT_MAX_AGE = 7 * 86400       # seconds an unfinished run's output (no job.json: crashed or restarted mid-run) is kept
+OUT_MAX_IDLE = 30 * 86400     # seconds a finished run's output is kept without being read (see touch)
+ACCESSED = ".accessed"        # per-run file whose mtime is the last read; a directory's own mtime only moves when entries are added
 # Shared by every run on this server, so starting a second run does not double the load on the providers.
 POOL = ThreadPoolExecutor(CFG["pipeline"].get("workers", 16))
 OCR_GATE = threading.BoundedSemaphore(CFG["pipeline"].get("ocr_workers", 6))  # Mistral OCR rate-limits early
@@ -188,31 +190,57 @@ def prune_jobs():
             jobs.pop(job_id, None)
 
 
+def touch(job_dir):
+    """Record a read of a run's output. The output is shared by content across every user of the app (the by-sha
+    lookup serves one user's conversion to the next), so the sidecar decides by last use when it goes (prune_output)."""
+    if job_dir is None or not Path(job_dir).is_dir():
+        return
+    try:
+        (Path(job_dir) / ACCESSED).touch()
+    except OSError:
+        pass
+
+
 def prune_output():
-    """Remove the output of runs that never completed (no job.json) and were last touched more than OUT_MAX_AGE
-    ago. A run still going in this process is never touched; finished runs go only through DELETE /api/jobs/{id}."""
-    cutoff = time.time() - OUT_MAX_AGE
+    """Remove old output: runs that never completed (no job.json) untouched for OUT_MAX_AGE, and finished runs not
+    read for OUT_MAX_IDLE (their job.json or last read, whichever is later). A run going in this process is never
+    touched."""
+    now = time.time()
     try:
         dirs = [p for p in OUT.iterdir() if p.is_dir()]
     except OSError:
         return
+    removed = False
     for d in dirs:
         try:
-            if (d / "job.json").exists() or jobs.get(d.name, {}).get("running"):
+            if jobs.get(d.name, {}).get("running"):
                 continue
-            newest = max([d.stat().st_mtime, *(p.stat().st_mtime for p in d.rglob("*"))])
-            if newest < cutoff:
+            marker = d / "job.json"
+            if marker.exists():
+                last = max(marker.stat().st_mtime, (d / ACCESSED).stat().st_mtime if (d / ACCESSED).exists() else 0)
+                limit = OUT_MAX_IDLE
+            else:
+                last = max([d.stat().st_mtime, *(p.stat().st_mtime for p in d.rglob("*"))])
+                limit = OUT_MAX_AGE
+            if now - last > limit:
                 shutil.rmtree(d, ignore_errors=True)
+                jobs.pop(d.name, None)
+                removed = True
         except OSError:
             continue  # vanished under us, or unreadable: the next sweep decides
+    if removed:
+        _index["root"] = None  # the by-sha index is rebuilt from what is left
 
 
 def get_job(job_id):
     """A job from this server's memory, or a finished run still on disk (e.g. from before a restart)."""
     prune_jobs()
     if job_id in jobs:
+        if not jobs[job_id].get("running"):
+            touch(jobs[job_id].get("dir"))
         return jobs[job_id]
     if re.fullmatch(r"[\w-]+", job_id) and (OUT / job_id).is_dir():
+        touch(OUT / job_id)
         return {"dir": OUT / job_id, "running": False,
                 "events": [{"type": "gone", **run_summary(OUT / job_id)}]}
     raise HTTPException(404, "unknown job")
@@ -361,6 +389,7 @@ def by_sha(sha256: str):
     hit = by_sha_index().get(sha256.lower())
     if not hit:
         raise HTTPException(404, "no finished conversion of this PDF")
+    touch(OUT / hit["job"])
     return hit
 
 
@@ -368,19 +397,6 @@ def by_sha(sha256: str):
 def job_status(job_id: str):
     job = get_job(job_id)
     return live_view(job_id, job) if "files" in job else disk_view(job_id, job["dir"])
-
-
-@app.delete("/api/jobs/{job_id}")
-def delete_job(job_id: str):
-    """Remove a run's output (its document was deleted or replaced). 404 for an unknown run, 409 while it is running."""
-    if not re.fullmatch(r"[\w-]+", job_id) or not (OUT / job_id).is_dir():
-        raise HTTPException(404, "unknown job")
-    if jobs.get(job_id, {}).get("running"):
-        raise HTTPException(409, "This run is still going; delete it when it has finished.")
-    jobs.pop(job_id, None)
-    shutil.rmtree(OUT / job_id, ignore_errors=True)
-    _index["root"] = None  # the by-sha index is rebuilt from what is left on disk
-    return {"deleted": job_id}
 
 
 @app.get("/api/jobs/{job_id}/events")
@@ -426,7 +442,7 @@ def zip_job(job_id: str, only: str = "all"):
                 z.write(p, name)
         else:
             for p in sorted(job["dir"].rglob("*")):
-                if p.is_file():  # PNGs are already compressed; deflating them again only costs time
+                if p.is_file() and p.name != ACCESSED:  # PNGs are already compressed; deflating them again only costs time
                     z.write(p, p.relative_to(job["dir"]),
                             zipfile.ZIP_STORED if p.suffix == ".png" else zipfile.ZIP_DEFLATED)
     suffix = "-markdown" if only == "markdown" else ""

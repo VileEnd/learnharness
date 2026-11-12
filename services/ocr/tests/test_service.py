@@ -120,41 +120,57 @@ def test_naming_prompt_does_not_contain_the_file_name():
     assert "{source}" not in NAME_PROMPT and ".pdf" not in NAME_PROMPT
 
 
-def test_deleting_a_job_removes_its_output_and_its_by_sha_entry(client):
+def age(path, seconds):
+    then = time.time() - seconds
+    for p in [*path.rglob("*"), path]:
+        os.utime(p, (then, then))
+
+
+def test_reading_a_finished_job_touches_it(client):
     pdf = make_pdf([{"text": "x" * 80}])
-    job, _ = run_job(client, pdf)
-    sha = hashlib.sha256(pdf).hexdigest()
-    assert client.get(f"/api/by-sha/{sha}").status_code == 200
-    assert (main.OUT / job).is_dir()
-    assert client.delete(f"/api/jobs/{job}").status_code == 200
-    assert not (main.OUT / job).exists()
-    assert client.get(f"/api/jobs/{job}").status_code == 404
-    assert client.get(f"/api/by-sha/{sha}").status_code == 404
-    assert client.delete(f"/api/jobs/{job}").status_code == 404  # already gone
-    assert client.delete("/api/jobs/..").status_code in (404, 405)  # never a path outside out/
+    job, body = run_job(client, pdf)
+    marker = main.OUT / job / main.ACCESSED
+    marker.unlink(missing_ok=True)
+    client.get(f"/api/jobs/{job}/files/{body['files'][0]['markdown']}")
+    assert marker.exists()
+    marker.unlink()
+    assert client.get(f"/api/by-sha/{body['files'][0]['sha256']}").status_code == 200
+    assert marker.exists()
 
 
-def test_a_running_job_is_not_deleted(client):
-    (main.OUT / "20260101-000000-abcd").mkdir(parents=True)
-    main.jobs["20260101-000000-abcd"] = {"dir": main.OUT / "20260101-000000-abcd", "running": True, "events": []}
-    assert client.delete("/api/jobs/20260101-000000-abcd").status_code == 409
-    assert (main.OUT / "20260101-000000-abcd").is_dir()
+def test_finished_output_is_pruned_after_thirty_days_without_use(client):
+    day = 86400
+    for name, idle, running in [("unused", 31, False), ("read-lately", 31, False), ("recent", 5, False), ("busy", 31, True)]:
+        d = main.OUT / name
+        d.mkdir(parents=True)
+        (d / "job.json").write_text("{}")
+        age(d, idle * day)
+        if running:
+            main.jobs[name] = {"dir": d, "running": True, "events": []}
+    (main.OUT / "read-lately" / main.ACCESSED).touch()  # a read now: newer than the job's own marker
+    main.prune_output()
+    assert sorted(p.name for p in main.OUT.iterdir()) == ["busy", "read-lately", "recent"]
 
 
-def test_output_of_jobs_that_never_completed_is_pruned_after_the_bound(client):
+def test_output_of_jobs_that_never_completed_is_pruned_after_seven_days(client):
     now = time.time()
-    old = now - main.OUT_MAX_AGE - 60
     made = {}
-    for name, marker, mtime in [("stale-unfinished", False, old), ("stale-finished", True, old),
-                                ("fresh-unfinished", False, now), ("stale-running", False, old)]:
+    for name, mtime in [("stale-unfinished", now - main.OUT_MAX_AGE - 60), ("fresh-unfinished", now), ("stale-running", now - main.OUT_MAX_AGE - 60)]:
         d = main.OUT / name
         (d / "pdf").mkdir(parents=True)
         (d / "pdf" / "page.png").write_bytes(b"x")
-        if marker:
-            (d / "job.json").write_text("{}")
-        for p in [*d.rglob("*"), d]:
-            os.utime(p, (mtime, mtime))
+        age(d, now - mtime)
         made[name] = d
     main.jobs["stale-running"] = {"dir": made["stale-running"], "running": True, "events": []}
     main.prune_output()
-    assert sorted(p.name for p in main.OUT.iterdir()) == ["fresh-unfinished", "stale-finished", "stale-running"]
+    assert sorted(p.name for p in main.OUT.iterdir()) == ["fresh-unfinished", "stale-running"]
+
+
+def test_a_pruned_conversion_is_gone_from_the_by_sha_index(client):
+    pdf = make_pdf([{"text": "x" * 80}])
+    job, body = run_job(client, pdf)
+    sha = body["files"][0]["sha256"]
+    age(main.OUT / job, 31 * 86400)
+    (main.OUT / job / main.ACCESSED).unlink(missing_ok=True)
+    main.prune_output()
+    assert client.get(f"/api/by-sha/{sha}").status_code == 404
