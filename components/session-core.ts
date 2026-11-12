@@ -369,11 +369,19 @@ export class SessionModel {
 		if (status === "submitted") this.liveFailureId = null;
 		this.statusValue = status;
 		this.readyRef = status === "ready";
-		if (status === "ready" || status === "streaming") this.recoveryAttempts = 0;
+		if (status === "ready" || status === "streaming") {
+			this.recoveryAttempts = 0;
+			if (this.bannerHeld) {
+				this.bannerHeld = false;
+				this.errorValue = null;
+				this.streamLost = false;
+			}
+		}
 		this.onChange?.();
 	}
 
 	private setError(message: string | null, plain = false): void {
+		this.bannerHeld = false;
 		this.errorValue = message === null ? null : plain ? { message, plain } : { message };
 		if (message === null) this.streamLost = false;
 		if (message !== null) this.automaticContinuationBlocked = true;
@@ -406,10 +414,16 @@ export class SessionModel {
 		}, wait);
 	}
 
+	/** The approved banner stays up while a reattach is attempted (cleared
+	 *  once the stream is back), so a failed attempt never swaps it for the
+	 *  browser's own fetch text and the banner does not flicker per attempt. */
+	private bannerHeld = false;
+
 	private reattachLostStream(): void {
 		if (this.statusValue !== "error" || !this.streamLost) return;
-		this.setError(null);
-		void this.resumeStream(true);
+		this.bannerHeld = true;
+		// allowRecovery=false: transport failures map to STREAM_DROPPED.
+		void this.resumeStream(true, false);
 	}
 
 	/** RESUME (installed app on a phone, 2026-10-25): back in the foreground

@@ -891,15 +891,18 @@ describe("lost-stream recovery (recoverLostStream and the bounded retry)", () =>
 		const net = { down: false };
 		let streams = 0;
 		const base = dietFetch({ stream: () => { if (++streams === 1) { net.down = true; return truncated(); } return completed(); } });
+		/** The banner text at every state change (undefined = no banner). */
+		const banners: (string | undefined)[] = [];
 		const m = model({
 			schedule: timer.schedule,
 			recoveryBackoffMs: [10, 20],
+			onChange: () => void banners.push(m.getState().error?.message),
 			fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
 				if (net.down && String(input) !== "/api/chat") throw new TypeError("synthetic offline");
 				return base(input, init);
 			}) as typeof globalThis.fetch,
 		});
-		return { m, net, timer };
+		return { m, net, timer, banners };
 	}
 
 	it("a mid-stream drop whose recovery attempt also fails still arms recoverLostStream", async () => {
@@ -925,6 +928,20 @@ describe("lost-stream recovery (recoverLostStream and the bounded retry)", () =>
 		await timer.fire(); // still offline: the schedule is exhausted
 		assert.equal(m.status, "error");
 		assert.equal(timer.pending().length, 0, "bounded: no further retry");
+	});
+
+	it("failed automatic retries keep the approved banner and never show the browser's fetch text or flicker", async () => {
+		const { m, timer, banners } = dropsMidStream();
+		await m.send({ type: "text", text: "go" });
+		const dropped = "The connection dropped before the turn completed.";
+		assert.equal(m.getState().error?.message, dropped);
+		banners.length = 0;
+		await timer.fire();
+		await timer.fire();
+		assert.equal(m.status, "error");
+		assert.equal(m.getState().error?.message, dropped);
+		assert.ok(banners.length > 0);
+		assert.ok(banners.every((b) => b === dropped), `banner was ${JSON.stringify([...new Set(banners)])}`);
 	});
 
 	it("a retry that reconnects reattaches, clears the error and stops retrying", async () => {
