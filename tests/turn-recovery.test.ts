@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ChatStore } from "../src/core/ports.ts";
-import { runPiTurn } from "../src/server/pi/ui-stream.ts";
+import { abortSettleGraceMs, runPiTurn } from "../src/server/pi/ui-stream.ts";
 import { persistTurn } from "../src/server/turn-service.ts";
 
 /** No engine or network: exercise the runner's awaited listener seam. */
@@ -77,6 +77,57 @@ describe("turn settlement recovery", () => {
 		assert.equal(saves, 1);
 		assert.equal(frames.at(-1), "[DONE]");
 		assert.equal(frames.some(f => f.includes('"type":"error"')), false);
+	});
+
+	it("a forced settle after an ignored abort composes with a failed save; the stuck run's late end and failure are dropped", async () => {
+		// An agent whose abort() does nothing: the run ends only when the test says so.
+		const listeners: Array<(event: never) => unknown> = [];
+		let finishRun!: (failure?: Error) => void;
+		const runEnds = new Promise<Error | undefined>((resolve) => (finishRun = resolve));
+		let lateDone!: () => void;
+		const late = new Promise<void>((resolve) => (lateDone = resolve));
+		const agent = {
+			state: { messages: [] },
+			subscribe(listener: (event: never) => unknown) { listeners.push(listener); return () => {}; },
+			async continue() {
+				const failure = await runEnds;
+				try {
+					for (const listener of listeners) await listener({ type: "agent_end", messages: [] } as never);
+					if (failure) throw failure;
+				} finally { lateDone(); }
+			},
+			abort() {},
+		} as unknown as Agent;
+		const grace = abortSettleGraceMs.current;
+		abortSettleGraceMs.current = 10;
+		const warn = console.warn, error = console.error;
+		console.warn = () => {};
+		console.error = () => {};
+		let finishes = 0, cleanups = 0;
+		try {
+			const handle = runPiTurn({
+				agent,
+				onFinish(_messages, isAborted) { finishes++; assert.equal(isAborted, true); throw new Error("synthetic save failure"); },
+				onSettleFailure() { cleanups++; },
+				onSettleError: () => "The reply could not be saved.",
+			});
+			const wire = new Response(handle.subscribe()).text();
+			handle.abort();
+			const frames = wireFrames(await wire);
+			assert.equal(finishes, 1);
+			assert.equal(cleanups, 1, "the claim is released once, through the failure cleanup");
+			assert.equal(frames.filter(f => f.includes('"type":"error"')).length, 1);
+			assert.equal(frames.at(-1), "[DONE]");
+			finishRun(new Error("synthetic late loop failure"));
+			await late;
+			await new Promise((resolve) => setImmediate(resolve)); // let the runner's loop catch run
+			assert.equal(finishes, 1, "the late agent_end does not settle again");
+			assert.equal(cleanups, 1);
+		} finally {
+			abortSettleGraceMs.current = grace;
+			console.warn = warn;
+			console.error = error;
+		}
 	});
 
 	it("does not contain a canonical write failure as an empty successful persist", () => {

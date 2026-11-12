@@ -119,9 +119,19 @@ export interface PiTurnHandle {
 	subscribe(): ReadableStream<Uint8Array>;
 	/** The remote kill — the ONLY way a running turn dies early: sawAbort +
 	 *  agent.abort(); the loop's agent_end does the rest (the settle seam
-	 *  persists the partial transcript to every listener). */
+	 *  persists the partial transcript to every listener). A run that has
+	 *  not ended within abortSettleGraceMs is settled the same way without it. */
 	abort(): void;
 }
+
+/** How long an aborted run may take to reach agent_end by itself before the
+ *  runner settles it. A cooperative run ends well within it (a provider
+ *  stream cancels sub-second; server tools hard-reject 250 ms after the
+ *  abort); a tool that ignores its signal never ends, and its handle would
+ *  hold the chat (sends and deletion answer 409) until restart. */
+const ABORT_SETTLE_GRACE_MS = 5_000;
+/** Test seam (the toolTimeoutMs idiom). */
+export const abortSettleGraceMs = { current: ABORT_SETTLE_GRACE_MS };
 
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100 } = spec;
@@ -211,10 +221,13 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 		// Never holds the process (or the test runner) open for a straggler.
 		(flushTimer as { unref?: () => void }).unref?.();
 	};
+	// The forced settle after an abort (armed by abort(), cleared at close).
+	let forceTimer: ReturnType<typeof setTimeout> | undefined;
 	const closeAll = () => {
 		if (settled) return;
 		// Order to the very end: the last pending snapshot precedes [DONE].
 		flushPending();
+		clearTimeout(forceTimer);
 		settled = true;
 		viewersAtClose = subscribers.size;
 		for (const sub of subscribers) sub.done();
@@ -342,6 +355,17 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 			if (settled) return;
 			sawAbort = true;
 			agent.abort();
+			// A run whose tool ignores the signal never reaches agent_end. After
+			// the grace, settle it the way agent_end would (the settle seam with
+			// the state as it stands, then close every view). `settled` then
+			// drops everything the stuck run emits later, so a late agent_end
+			// or loop failure can neither settle again nor write.
+			forceTimer ??= setTimeout(() => {
+				if (settled) return;
+				console.warn("[turn] the aborted run did not end within the grace period; settling it");
+				settleWith();
+				closeAll();
+			}, abortSettleGraceMs.current);
 		},
 	};
 }
