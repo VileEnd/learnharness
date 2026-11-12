@@ -120,6 +120,15 @@ text two
 		assert.ok(md.slice(s[3]!.start, s[3]!.end).includes("# not a heading"));
 		assert.equal(s[3]!.end, md.length);
 	});
+	it("CRLF line endings give the same sections as LF, and the same content identity", () => {
+		const crlf = md.replace(/\n/g, "\r\n");
+		const lf = parseSections(md);
+		const s = parseSections(crlf);
+		assert.deepEqual(s.map((x) => [x.id, x.headingPath, x.pageFrom, x.pageTo]), lf.map((x) => [x.id, x.headingPath, x.pageFrom, x.pageTo]));
+		assert.ok(crlf.slice(s[1]!.start, s[1]!.end).startsWith("# One"));
+		assert.equal(s[3]!.end, crlf.length);
+		assert.equal(fingerprint(crlf).contentHash, fingerprint(md).contentHash);
+	});
 	it("plain markdown has no pages; no headings is one section", () => {
 		const [only, ...rest] = parseSections("just some text\nmore");
 		assert.equal(rest.length, 0);
