@@ -196,6 +196,27 @@ describe("saveKey / deleteKey (immediate effect, no restart)", () => {
 	});
 });
 
+describe("the key routes over a damaged key file", () => {
+	it("PUT and DELETE answer 500 with a clear error and change nothing", async () => {
+		const route = await import("../app/api/keys/[id]/route.ts");
+		const before = fs.readFileSync(AUTH, "utf-8");
+		const damaged = '{ "DEEPGRAM_API_KEY": "kept-one", "TAVILY_API_KEY": "kept-two", }';
+		fs.writeFileSync(AUTH, damaged);
+		try {
+			const params = { params: Promise.resolve({ id: "DEEPGRAM_API_KEY" }) };
+			const put = await route.PUT(new Request("http://x/api", { method: "PUT", body: JSON.stringify({ value: "d".repeat(40) }) }), params);
+			assert.equal(put.status, 500);
+			assert.match(((await put.json()) as { error: string }).error, /key file/);
+			const del = await route.DELETE(new Request("http://x/api", { method: "DELETE" }), params);
+			assert.equal(del.status, 500);
+			assert.match(((await del.json()) as { error: string }).error, /key file/);
+			assert.equal(fs.readFileSync(AUTH, "utf-8"), damaged, "the other keys are still there to repair");
+		} finally {
+			fs.writeFileSync(AUTH, before);
+		}
+	});
+});
+
 describe("resolveKeyStatuses (pure projection)", () => {
 	it("same value in env and file is NOT shadowed (redundant, not misleading)", () => {
 		const row = resolveKeyStatuses(

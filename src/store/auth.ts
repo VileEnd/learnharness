@@ -10,7 +10,10 @@
  * authVars(). Ordinary reads never throw (absent/corrupt file = {} = "no
  * keys yet", the documented first-boot state, matching settings doctrine)
  * and unknown vars are preserved verbatim (forward-compat: future entries
- * ride along untouched until a catalog entry adopts them).
+ * ride along untouched until a catalog entry adopts them). Writes read
+ * strictly: a file that exists but is not a JSON object throws
+ * AuthFileUnreadableError, because writing the lenient {} back would
+ * erase every other key.
  *
  * The custom endpoint's key + binding pair (upstream port 6) is the one
  * strict exception: readCustomAuth/writeCustomAuth refuse a damaged file
@@ -40,6 +43,30 @@ function readMap(): Record<string, string> {
 	}
 }
 
+/** The key file exists but cannot be read as a JSON object: a write over it
+ *  would erase every key in it, so writes refuse (the key routes answer 500). */
+export class AuthFileUnreadableError extends Error {
+	constructor() {
+		super("The key file (auth.json) exists but is not valid JSON, so nothing was changed. Fix or remove it, then try again.");
+		this.name = "AuthFileUnreadableError";
+	}
+}
+
+/** The whole map for a write (every JSON value kept): {} only when the file
+ *  is absent; throws AuthFileUnreadableError when it exists but cannot be
+ *  read or is not a JSON object. */
+function readMapForWrite(): Record<string, unknown> {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(fs.readFileSync(AUTH_FILE, "utf-8"));
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+		throw new AuthFileUnreadableError();
+	}
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new AuthFileUnreadableError();
+	return raw as Record<string, unknown>;
+}
+
 /** Write the map atomically at mode 0600: a partial write must never
  *  leave a 0644 file (secrets) or a truncated JSON (looks like "no keys").
  *  writeFileAtomicSync: unique temp in the same dir, fchmod before any
@@ -56,14 +83,14 @@ export const authStore: AuthStore = {
 	},
 	setAuthVar(name, value) {
 		assertOrdinaryVar(name);
-		const map = readMap();
-		map[name] = value;
+		const map = readMapForWrite();
+		setOwn(map, name, value);
 		writeMap(map);
 	},
 	deleteAuthVar(name) {
 		assertOrdinaryVar(name);
-		const map = readMap();
-		if (!(name in map)) return; // absent = silent success, idempotent
+		const map = readMapForWrite();
+		if (!Object.hasOwn(map, name)) return; // absent = silent success, idempotent
 		delete map[name];
 		writeMap(map);
 	},

@@ -14,13 +14,22 @@
  * (absent key = success). Writable ids are the CURATED CATALOG ∪ THE
  * MODEL-PROVIDER env vars (provider-keys interlude); anything else is 404
  * — unknown file vars are preserved, not editable.
+ *
+ * A key file that exists but is not valid JSON is never written over (that
+ * would erase every other key): PUT and DELETE answer 500 and change nothing.
  */
-import { isWritableAuthKey, requireAdmin, withTenant } from "@/src/server";
+import { AuthFileUnreadableError, isWritableAuthKey, requireAdmin, withTenant } from "@/src/server";
 import { deleteKey, saveKey } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
+
+/** The damaged-key-file refusal as a 500 with its own message; anything else rethrows. */
+function unreadable(err: unknown): Response {
+	if (err instanceof AuthFileUnreadableError) return Response.json({ error: err.message }, { status: 500 });
+	throw err;
+}
 
 export const PUT = withTenant(async (req: Request, { params }: Params) => {
 	const denied = requireAdmin();
@@ -38,7 +47,12 @@ export const PUT = withTenant(async (req: Request, { params }: Params) => {
 	if (!body || typeof body !== "object" || Array.isArray(body) || typeof (body as { value?: unknown }).value !== "string") {
 		return Response.json({ error: "body must be {value: string}" }, { status: 400 });
 	}
-	const result = saveKey(id, (body as { value: string }).value);
+	let result: ReturnType<typeof saveKey>;
+	try {
+		result = saveKey(id, (body as { value: string }).value);
+	} catch (err) {
+		return unreadable(err);
+	}
 	if (!result.ok) return Response.json({ error: result.error }, { status: 400 });
 	return Response.json({ status: result.status });
 });
@@ -50,5 +64,9 @@ export const DELETE = withTenant(async (_req: Request, { params }: Params) => {
 	if (!isWritableAuthKey(id)) {
 		return Response.json({ error: `unknown key "${id}"` }, { status: 404 });
 	}
-	return Response.json({ status: deleteKey(id) });
+	try {
+		return Response.json({ status: deleteKey(id) });
+	} catch (err) {
+		return unreadable(err);
+	}
 });

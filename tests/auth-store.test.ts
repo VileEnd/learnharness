@@ -71,6 +71,16 @@ describe("AuthStore adapter", () => {
 		assert.deepEqual(authStore.authVars(), { B: "2" });
 	});
 
+	it("a write over a damaged file throws and leaves the file as it is", () => {
+		for (const damaged of ['{ "A": "1", "B": "2", }', '["an", "array"]']) {
+			fs.writeFileSync(AUTH_FILE, damaged);
+			assert.throws(() => authStore.setAuthVar("OPENROUTER_API_KEY", "sk-or-v1-new"), /key file/);
+			assert.throws(() => authStore.deleteAuthVar("A"), /key file/);
+			assert.equal(fs.readFileSync(AUTH_FILE, "utf-8"), damaged, "the other keys are still there to repair");
+		}
+		fs.rmSync(AUTH_FILE);
+	});
+
 	it("atomic writes: no tmp leftovers, valid JSON on disk every time", () => {
 		authStore.setAuthVar("OPENROUTER_API_KEY", "sk-or-v1-final");
 		const files = fs.readdirSync(TMP).filter((f) => f.startsWith(".auth.json.tmp"));

@@ -53,6 +53,8 @@ import {
 	validateKeyShape,
 } from "../core/auth-keys.ts";
 import { authStore } from "../store/auth.ts";
+// A save or delete over a damaged key file throws this (the key routes answer 500).
+export { AuthFileUnreadableError } from "../store/auth.ts";
 import { CUSTOM_AUTH_BINDING } from "../core/custom-provider-auth.ts";
 
 /** The custom endpoint's key and binding (upstream port 6): written only
