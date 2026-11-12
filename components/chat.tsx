@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator";
 import { AnsweredCard } from "@/components/answered-card";
 import { artifactRenderers } from "@/components/artifacts";
 import { SubagentSteerCard } from "@/components/artifacts/steer-card";
+import { PartBoundary } from "@/components/part-boundary";
 import { ChatSessionComposer } from "@/components/composer";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
@@ -1559,7 +1560,7 @@ export function Chat({
 									// and centered like the teacher's artifacts (contracts.ts "THE ASYNC
 									// PROTOCOL" §4). Key fallback: legacy transcripts (pre id-hygiene)
 									// can still hold empty ids — the index keeps keys unique for them.
-									<SubagentSteerCard key={m.id || `m-${mi}`} message={m} />
+									<PartBoundary key={m.id || `m-${mi}`} render={() => <SubagentSteerCard message={m} />} />
 								) : m.role === "user" && m.parts.some((p) => p.type === "data-probe-handoff") ? (
 								// The probe→teach handoff wake (custom-message scheme): the
 								// PLANNING DIVIDER IS the seam (owner ruling 2026-09-26 — it
@@ -1579,7 +1580,8 @@ export function Chat({
 								// without this hoist a data-only message read as an
 								// EMPTY bubble (owner report, 2026-10-04).
 								<Fragment key={m.id || `m-${mi}`}>
-									{m.parts.map((part, pi) => {
+									{m.parts.map((part, pi) => (
+										<PartBoundary key={pi} resetKey={part.type} render={() => {
 										switch (part.type) {
 											case "data-graph-context":
 												return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
@@ -1609,7 +1611,8 @@ export function Chat({
 											default:
 												return null;
 										}
-									})}
+										}} />
+									))}
 								</Fragment>
 							) : (
 									<Fragment key={m.id || `m-${mi}`}>
@@ -1670,7 +1673,8 @@ export function Chat({
 									) : (
 									<Message from="assistant" className="max-w-full">
 									<MessageContent className="w-full">
-											{m.parts.map((part, pi) => {
+											{m.parts.map((part, pi) => (
+												<PartBoundary key={pi} resetKey={`${part.type}:${part.state ?? ""}`} render={() => {
 												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
 												// The step boundary where teaching begins (round 8): when
 												// the teach flip happens in a LATER step, its PhaseDivider
@@ -1767,7 +1771,8 @@ export function Chat({
 														return null;
 													}
 												}
-											})}
+												}} />
+											))}
 										</MessageContent>
 									</Message>
 									)}
