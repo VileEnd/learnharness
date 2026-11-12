@@ -18,7 +18,8 @@
  * an installed iOS app has its own cookie jar). Unsent text in the page's
  * text fields rides sessionStorage across the round-trip.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useModal } from "@/components/ui/use-modal";
 
 /** True for requests to this origin's `/api/*` (the guarded surface). */
 export function isOwnApiRequest(input: RequestInfo | URL, origin: string): boolean {
@@ -111,10 +112,17 @@ export function SessionWatch() {
 		};
 	}, []);
 
-	if (!signedOut) return null;
+	return signedOut ? <SignedOutDialog /> : null;
+}
+
+function SignedOutDialog() {
+	const ref = useRef<HTMLDivElement>(null);
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="alertdialog"
+			aria-modal="true"
 			aria-labelledby="lh-signed-out-title"
 			data-testid="session-expired"
 			className="fixed inset-0 z-[100] flex items-center justify-center bg-background/90 p-6 pt-safe pb-safe backdrop-blur"

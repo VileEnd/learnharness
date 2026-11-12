@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { useCoarsePointer } from "@/components/use-coarse-pointer";
 import { fitGraphView, fitZoomFor, pinchView, zoomedGraphView, type Pt, type Viewport } from "@/components/pan-zoom";
 import { renderMermaid } from "@/components/mermaid-render";
@@ -114,13 +115,15 @@ export function MermaidOverlay({
 
 	// The back gesture (Android back, iOS edge swipe) closes the overlay.
 	useBackDismiss(true, onClose);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useModal(dialogRef, true, "session");
 
 	// Esc closes — claimed at the document level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): one Esc, one action; the window chain
 	// (dictation → abort) never fires under a surfaced layer.
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(dialogRef.current)) {
 				e.preventDefault();
 				e.stopPropagation();
 				onClose();
@@ -239,6 +242,8 @@ export function MermaidOverlay({
 
 	return (
 		<div
+			ref={dialogRef}
+			data-autofocus
 			data-testid="mermaid-overlay"
 			// SESSION-SCOPED on md+: mounts absolute inside the chat page's
 			// session-area div, right of the sidebar. 80% + blur: the

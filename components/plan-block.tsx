@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { useCoarsePointer } from "@/components/use-coarse-pointer";
 // The placement engine — literally mermaid's: dagre-d3-es, the fork
 // mermaid 11 ships with (owner, plan-graph round 8: same engine as the
@@ -760,6 +761,8 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 
 	// The back gesture (Android back, iOS edge swipe) closes the overlay.
 	useBackDismiss(true, onClose);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useModal(dialogRef, true, "session");
 
 	// Esc closes — claimed at the DOCUMENT level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): a surfaced layer's Esc is exactly one
@@ -770,7 +773,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 	// cancelled the dictation).
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(dialogRef.current)) {
 				e.preventDefault();
 				e.stopPropagation();
 				onClose();
@@ -908,6 +911,8 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 
 	return (
 		<div
+			ref={dialogRef}
+			data-autofocus
 			data-testid="plan-popup"
 			// SESSION-SCOPED on md+ (absolute): the chat page mounts this
 			// INSIDE the session-area div, right of the sidebar. 80% + blur:

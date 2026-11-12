@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 
 /**
  * The ESC-abort guard (owner, 2026-10-02): the global Esc → abort chain
@@ -57,18 +58,25 @@ export function AbortTurnBody({
 	onClose,
 	onConfirm,
 	busy = false,
+	rootRef,
 }: {
 	mode: AbortMode;
 	onClose: () => void;
 	onConfirm: () => void;
+	/** The wrapper's handle on the dialog root (for its Esc topmost check). */
+	rootRef?: React.RefObject<HTMLDivElement | null>;
 	/** The dismiss doubles as the abort when a turn is still running
 	 * (owner, 2026-10-04): the line says so. */
 	busy?: boolean;
 }) {
 	const backdropDismiss = useBackdropDismiss(onClose);
 	const copy = COPY[mode];
+	const ownRef = useRef<HTMLDivElement>(null);
+	const ref = rootRef ?? ownRef;
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label={copy.title}
@@ -92,6 +100,7 @@ export function AbortTurnBody({
 					<button
 						type="button"
 						data-testid="abort-turn-cancel"
+						data-autofocus
 						onClick={onClose}
 						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
 					>
@@ -124,11 +133,13 @@ export function AbortTurnDialog({
 	onConfirm: (mode: AbortMode) => void;
 	busy?: boolean;
 }) {
-	// Esc cancels the popup (claimed — never a chained abort).
+	const rootRef = useRef<HTMLDivElement>(null);
+	// Esc cancels the popup (claimed — never a chained abort). Only the
+	// topmost modal surface acts on an Esc.
 	useEffect(() => {
 		if (mode === null) return;
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(rootRef.current)) {
 				// THE ONE-ESC LAW (keyboard round 2026-10-06): claim at the
 				// document level — a window-level stopPropagation cannot stop
 				// the earlier-registered global window listener.
@@ -143,7 +154,7 @@ export function AbortTurnDialog({
 
 	if (mode === null || typeof document === "undefined") return null;
 	return createPortal(
-		<AbortTurnBody mode={mode} onClose={onClose} onConfirm={() => onConfirm(mode)} busy={busy} />,
+		<AbortTurnBody mode={mode} onClose={onClose} onConfirm={() => onConfirm(mode)} busy={busy} rootRef={rootRef} />,
 		document.body,
 	);
 }

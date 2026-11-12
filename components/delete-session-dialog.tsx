@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import type { ChatDeleteMode, ChatListItem } from "@/src/core";
 
 /** The graph-traces checkbox copy (owner, 2026-09-24 flow rework — was
@@ -53,6 +54,7 @@ export function DeleteSessionDialog({
 }) {
 	const [traces, setTraces] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const rootRef = useRef<HTMLDivElement>(null);
 	const backdropDismiss = useBackdropDismiss(() => {
 		if (!busy) onClose();
 	});
@@ -74,22 +76,23 @@ export function DeleteSessionDialog({
 		}
 	}, [chat]);
 
-	// Esc closes (claimed — a menu/dialog Esc must not also abort a turn).
+	// Esc closes (claimed — a menu/dialog Esc must not also abort a turn),
+	// but not while the delete runs: same guard as the backdrop and back gesture.
 	useEffect(() => {
 		if (!chat) return;
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(rootRef.current)) {
 				// THE ONE-ESC LAW (keyboard round 2026-10-06): claim at the
 				// document level — a window-level stopPropagation cannot stop
 				// the earlier-registered global window listener.
 				e.preventDefault();
 				e.stopPropagation();
-				onClose();
+				if (!busy) onClose();
 			}
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [chat, onClose]);
+	}, [chat, busy, onClose]);
 
 	const run = async () => {
 		if (!chat || busy) return;
@@ -133,6 +136,7 @@ export function DeleteSessionDialog({
 				onTraces={(next) => setTraces(next)}
 				onClose={onClose}
 				onRun={() => void run()}
+				rootRef={rootRef}
 			/>
 		</div>,
 		document.body,
@@ -149,6 +153,7 @@ export function DeleteSessionBody({
 	onTraces,
 	onClose,
 	onRun,
+	rootRef,
 }: {
 	chat: Pick<ChatListItem, "id" | "title">;
 	/** The graph-traces checkbox — unchecked by default (preserve-graph). */
@@ -158,9 +163,15 @@ export function DeleteSessionBody({
 	onTraces: (next: boolean) => void;
 	onClose: () => void;
 	onRun: () => void;
+	/** The wrapper's handle on the dialog root (for its Esc topmost check). */
+	rootRef?: React.RefObject<HTMLDivElement | null>;
 }) {
+	const ownRef = useRef<HTMLDivElement>(null);
+	const ref = rootRef ?? ownRef;
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Delete session"
@@ -225,6 +236,7 @@ export function DeleteSessionBody({
 				<button
 					type="button"
 					data-testid="delete-cancel"
+					data-autofocus
 					onClick={onClose}
 					disabled={busy}
 					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"

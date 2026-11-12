@@ -35,6 +35,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { okJson } from "@/components/ok-json";
 import type React from "react";
 import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings } from "@/src/core";
@@ -244,6 +245,8 @@ export function SetupDialog({
 	onDone: (models: ModelsSettings) => void;
 }) {
 	const backdropDismiss = useBackdropDismiss(onClose);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useModal(dialogRef, open);
 	const [body, setBody] = useState<ModelsBody | null>(null);
 	const [failed, setFailed] = useState(false);
 	const [picked, setPicked] = useState<Partial<Record<ModelSlotName, ModelCatalogEntry>>>({});
@@ -329,7 +332,7 @@ export function SetupDialog({
 	useEffect(() => {
 		if (!open) return;
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
+			if (e.key !== "Escape" || !isTopModal(dialogRef.current)) return;
 			// THE ONE-ESC LAW (owner, keyboard round 2026-10-06): claim at
 			// the document level before the layered dismissal — every branch
 			// below acts, so the window chain (dictation → abort) must
@@ -426,6 +429,8 @@ export function SetupDialog({
 			{...backdropDismiss}
 		>
 			<div
+				ref={dialogRef}
+				data-autofocus
 				role="dialog"
 				aria-modal="true"
 				aria-label="Set up your models"

@@ -24,6 +24,7 @@ import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
 import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
@@ -152,9 +153,11 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 
 	// ── the back gesture and Esc: one Esc, one action (minimise) ──
 	useBackDismiss(true, onMinimize);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useModal(dialogRef, true, "session");
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
+			if (e.key !== "Escape" || !isTopModal(dialogRef.current)) return;
 			e.preventDefault();
 			e.stopPropagation();
 			// One Esc, one action: an open hints panel closes first.
@@ -410,7 +413,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			setBusy(false);
 		}
 	};
-	useEnterSubmits(() => void submit());
+	useEnterSubmits(() => void submit(), dialogRef);
 
 	const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as const);
 	useEffect(() => engineRef.current?.refresh(), [theme]);
@@ -419,6 +422,8 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 
 	return (
 		<div
+			ref={dialogRef}
+			data-autofocus
 			data-testid="canvas-workspace"
 			role="dialog"
 			aria-modal="true"

@@ -32,6 +32,7 @@ import {
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import {
 	CURRENT_SETTINGS_VERSION,
 	type AgentSettings,
@@ -153,6 +154,8 @@ export function SettingsDialogBody({
 	initialRow?: string | null;
 }) {
 	const { onAppearanceChange } = useAppearance();
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useModal(dialogRef);
 	const [record, setRecord] = useState<UserSettings | null | undefined>(
 		undefined,
 	);
@@ -234,7 +237,7 @@ export function SettingsDialogBody({
 	// dialog's outer layer).
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(dialogRef.current)) {
 				// THE ONE-ESC LAW (owner, keyboard round 2026-10-06): claim
 				// at the document level — the window chain (dictation →
 				// abort) must not also act. One Esc, one action.
@@ -289,6 +292,8 @@ export function SettingsDialogBody({
 
 	return (
 		<div
+			ref={dialogRef}
+			data-autofocus
 			role="dialog"
 			aria-modal="true"
 			aria-label="Settings"

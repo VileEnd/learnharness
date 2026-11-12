@@ -279,6 +279,7 @@ function GraphSettingsControl({
 			>
 				<button
 				type="button"
+				aria-label="Graph display settings"
 				aria-expanded={open}
 				onClick={() => setOpen((o) => !o)}
 				className={`flex size-9 items-center justify-center rounded-xl border bg-card/85 shadow-lg backdrop-blur transition-colors hover:bg-accent ${
@@ -663,6 +664,16 @@ export async function loadGraphSnapshot(groupBy: string): Promise<GraphSnapshot>
 	const res = await fetch(`/api/graph?groupBy=${groupBy}`);
 	if (!res.ok) throw new Error(`The graph request failed (${res.status}).`);
 	return (await res.json()) as GraphSnapshot;
+}
+
+/** The home graph's one canvas. Exported pure for the name pin. */
+export function GraphCanvas({ canvasRef }: { canvasRef: React.RefObject<HTMLCanvasElement | null> }) {
+	return (
+		<canvas ref={canvasRef} role="img" aria-label="Knowledge graph. Open the Chains table for a keyboard-accessible list of its nodes." className="block h-full w-full touch-none">
+			The knowledge graph is drawn on a canvas. Open the Chains table for a keyboard-accessible list of the same
+			nodes and chains.
+		</canvas>
+	);
 }
 
 /** What the home shows where the canvas would be: loading, failed (retry),
@@ -1370,7 +1381,7 @@ export function GraphView({
 					)}
 					{/* THE single canvas: every layer (hulls, edges, nodes, both
 					    label systems, hover) draws into it, once per frame. */}
-					<canvas ref={canvasRef} className="block h-full w-full touch-none" />
+					<GraphCanvas canvasRef={canvasRef} />
 					{/* The context menu's anchor: a zero-size point at the
 					    right-click position (canvas-relative == container-relative,
 					    the canvas fills this div). */}

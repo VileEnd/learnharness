@@ -612,6 +612,10 @@ function QuestionDockForm({
 		if (!active || (rowCount === 0 && kind !== "exercise")) return;
 		const onKeyDown = (e: KeyboardEvent) => {
 			const t = e.target as HTMLElement | null;
+			// While a modal surface is open (an abort confirm over a pending
+			// question) the dock behind it is inert and the modal owns the keys:
+			// Tab, arrows, Space and Enter must not walk or submit its rows.
+			if (document.querySelector('[aria-modal="true"]')) return;
 			// Exercise docks: the widget's inputs are a typing surface and Tab
 			// walks its cells natively, so the row machine is off; only the
 			// global confidence cycling (←/→, outside typing) stays.

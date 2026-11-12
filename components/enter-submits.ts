@@ -34,8 +34,9 @@
  * never checks answer validity, only focus honesty.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { isTypingSurface } from "@/src/core";
+import { topModalRoot } from "@/components/ui/use-modal";
 
 /** Overlay roots whose buttons keep native Enter (hand-rolled menus mark
  *  themselves data-lh-menu; Radix poppers/dialogs carry their own attrs). */
@@ -71,8 +72,10 @@ export function enterSends(
 }
 
 /** Mount-scoped: while the dock is mounted (a problem/question is active),
- *  plain Enter anywhere outside a typing surface or button submits it. */
-export function useEnterSubmits(submit: () => void): void {
+ *  plain Enter anywhere outside a typing surface or button submits it —
+ *  except while a modal surface is open and `scope` (the surface this
+ *  submit belongs to) is not inside it. */
+export function useEnterSubmits(submit: () => void, scope?: RefObject<Element | null>): void {
 	const submitRef = useRef(submit);
 	submitRef.current = submit;
 	useEffect(() => {
@@ -82,6 +85,11 @@ export function useEnterSubmits(submit: () => void): void {
 			if (isTypingSurface(e)) return;
 			const target = e.target as HTMLElement | null;
 			if (target?.tagName === "BUTTON" && buttonKeepsNativeEnter(target)) return;
+			// A modal surface owns Enter: a dock outside it must not submit
+			// behind the scrim. A surface that is itself modal (the canvas
+			// workspace) passes its root as `scope` and keeps submitting.
+			const top = topModalRoot();
+			if (top && !(scope?.current && top.contains(scope.current))) return;
 			e.preventDefault();
 			submitRef.current();
 		};

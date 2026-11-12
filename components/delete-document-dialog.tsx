@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 
 /** What a delete takes: concepts only this document supports, and the shared
  *  ones (other documents or chats also support them) that stay. */
@@ -40,6 +41,7 @@ export function DeleteDocumentBody({
 	failure,
 	onClose,
 	onRun,
+	rootRef,
 }: {
 	title: string;
 	removal: DocumentRemoval;
@@ -47,9 +49,15 @@ export function DeleteDocumentBody({
 	failure: string | null;
 	onClose: () => void;
 	onRun: () => void;
+	/** The wrapper's handle on the dialog root (for its Esc topmost check). */
+	rootRef?: React.RefObject<HTMLDivElement | null>;
 }) {
+	const ownRef = useRef<HTMLDivElement>(null);
+	const ref = rootRef ?? ownRef;
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Delete document"
@@ -79,6 +87,7 @@ export function DeleteDocumentBody({
 				<button
 					type="button"
 					data-testid="delete-document-cancel"
+					data-autofocus
 					onClick={onClose}
 					disabled={busy}
 					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
@@ -116,6 +125,7 @@ export function DeleteDocumentDialog({
 }) {
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<string | null>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
 	const backdropDismiss = useBackdropDismiss(() => {
 		if (!busy) onClose();
 	});
@@ -131,7 +141,7 @@ export function DeleteDocumentDialog({
 	useEffect(() => {
 		if (!open) return;
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
+			if (e.key !== "Escape" || !isTopModal(rootRef.current)) return;
 			e.preventDefault();
 			e.stopPropagation();
 			if (!busy) onClose();
@@ -162,7 +172,7 @@ export function DeleteDocumentDialog({
 	if (!open) return null;
 	return createPortal(
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80" {...backdropDismiss}>
-			<DeleteDocumentBody title={title} removal={removal} busy={busy} failure={failure} onClose={onClose} onRun={() => void run()} />
+			<DeleteDocumentBody title={title} removal={removal} busy={busy} failure={failure} onClose={onClose} onRun={() => void run()} rootRef={rootRef} />
 		</div>,
 		document.body,
 	);
