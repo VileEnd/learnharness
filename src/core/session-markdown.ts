@@ -20,6 +20,7 @@
  * learning evidence); custom markers are invisible, same as the view.
  */
 
+import { citationsToReadableText, type CitationCheck } from "./citations.ts";
 import type { LhMessage } from "./native-messages.ts";
 import {
 	failedOutputCallIds,
@@ -27,6 +28,7 @@ import {
 	PRACTICE_CONCLUDE_TOOL,
 	PRACTICE_PROBLEM_TOOL,
 	problemInputForConclude,
+	recordCitationCheck,
 	SEND_TO_USER_TOOL,
 	redundantTextBlocks,
 	userFacingTextOf,
@@ -54,9 +56,11 @@ export interface MarkdownContext {
 	/** Assistant messages answering a hint request or a submission: the only
 	 *  ones whose mid-text rung labels are stripped (hintReplyMessages). */
 	hintReplies?: ReadonlySet<unknown>;
+	/** Confirms a learner's tutor citation against this record (core/citations.ts). */
+	citationCheck?: CitationCheck;
 }
 
-function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
+function markdownContext(messages: ReadonlyArray<LhMessage>, chatId?: string): MarkdownContext {
 	const calls: MarkdownContext["calls"] = new Map();
 	for (const message of messages) {
 		if ((message as { role?: string }).role !== "assistant") continue;
@@ -78,6 +82,7 @@ function markdownContext(messages: ReadonlyArray<LhMessage>): MarkdownContext {
 		failedOutputCalls: failedOutputCallIds(messages),
 		redundantText: redundantTextBlocks(messages),
 		hintReplies: hintReplyMessages(messages),
+		citationCheck: recordCitationCheck(messages, chatId),
 	};
 }
 
@@ -229,8 +234,11 @@ export function messageMarkdown(
 	const parts: string[] = [];
 
 	if (role === "user") {
+		// A tutor citation reads as a quote, never as its raw link; a message
+		// shown alone (no ctx) can only cite itself, so its quotes are unavailable.
+		const check = ctx?.citationCheck ?? recordCitationCheck(ctx?.messages ?? [message]);
 		for (const text of userFacingTextOf((message as { content: unknown }).content)) {
-			parts.push(`### Learner${anchor}\n\n${text.trim()}`);
+			parts.push(`### Learner${anchor}\n\n${citationsToReadableText(text, check).trim()}`);
 		}
 	} else if (role === "assistant") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]), ctx?.redundantText)) {
@@ -267,11 +275,11 @@ export function messageMarkdown(
  */
 export function sessionMarkdown(
 	messages: ReadonlyArray<LhMessage>,
-	opts: { title?: string; anchors?: boolean } = {},
+	opts: { title?: string; anchors?: boolean; chatId?: string } = {},
 ): string {
 	const blocks: string[] = [];
 	if (opts.title !== undefined && opts.title.length > 0) blocks.push(`# ${opts.title}`);
-	const ctx = markdownContext(messages);
+	const ctx = markdownContext(messages, opts.chatId);
 	for (const message of messages) {
 		const block = messageMarkdown(message, (message as { id?: string }).id ?? "", opts.anchors ?? true, ctx);
 		if (block !== null) blocks.push(block);

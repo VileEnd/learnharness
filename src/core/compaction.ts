@@ -37,7 +37,8 @@ import type { PlanTree } from "./contracts/plan.ts";
 import { derivePlanStatusesLh, derivedNodeStatus } from "./contracts/plan.ts";
 import { COMPACTED_HISTORY_HEADER } from "./contracts/chat.ts";
 import type { LhMessage, LhMarkerMessage } from "./native-messages.ts";
-import { newMessageId, sendToUserText } from "./native-messages.ts";
+import { newMessageId, recordCitationCheck, sendToUserText } from "./native-messages.ts";
+import { citationsToReadableText } from "./citations.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, SystemMessage } from "@earendil-works/pi-ai";
 
@@ -307,12 +308,19 @@ export function keptIndexFor(messages: readonly LhMessage[], marker: LhMarkerMes
 /** Serialize a message span as labeled text for the summarizer. Tool
  * results truncate at ~2k chars (the kept tail carries them verbatim for
  * the model; the SUMMARY only needs their gist). */
-export function serializeForSummary(messages: readonly LhMessage[]): string {
+export function serializeForSummary(
+	messages: readonly LhMessage[],
+	/** `record`: the whole record the span was cut from (a quote may cite a
+	 *  message before the span); defaults to the span itself. */
+	opts: { record?: readonly LhMessage[]; chatId?: string } = {},
+): string {
 	const lines: string[] = [];
+	const check = recordCitationCheck(opts.record ?? messages, opts.chatId);
 	for (const m of messages) {
 		const role = (m as { role?: string }).role;
 		if (role === "user") {
-			lines.push(`[LEARNER] ${(m as { content: string }).content}`);
+			const content = (m as { content: string }).content;
+			lines.push(`[LEARNER] ${typeof content === "string" ? citationsToReadableText(content, check) : content}`);
 		} else if (role === "assistant") {
 			const assistant = m as AssistantMessage;
 			const blocks: string[] = [];

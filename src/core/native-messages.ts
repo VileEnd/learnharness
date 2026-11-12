@@ -47,6 +47,7 @@ import type { ExerciseVerdict, InteractiveFormat } from "./exercise-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 import { isHintScopedInput, stripInternalLabels } from "./internal-labels.ts";
 import { drawingRefOf, parseAnnotateInput, submittedDrawingIds, succeededCallIds, type AnnotationMark } from "./canvas-core.ts";
+import { citationCheck, expandCitationsForModel, type CitationCheck, type CitationSourceLookup } from "./citations.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -1006,6 +1007,53 @@ export interface DrawingContext {
 export const GRID_NOTE =
 	"The attached image shows the learner's drawing on a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text below; refer to a place by its cell (C4) or span (B2-D3).";
 
+// ─── tutor citations leaving the record (core/citations.ts) ──────────────────
+
+/** The assistant messages of ONE record, looked up by id: the learner-facing
+ *  text (userFacingTextOf, internal labels stripped: what both the learner
+ *  and the model saw). Indexed on first use, so a record without citations
+ *  pays nothing. Only assistant messages answer; a learner message, a marker
+ *  or a tool result is never quotable, so a link naming one is unavailable. */
+export function recordCitationLookup(messages: readonly LhMessage[]): CitationSourceLookup {
+	let index: Map<string, string> | null = null;
+	return (messageId) => {
+		if (!index) {
+			index = new Map();
+			for (const m of messages) {
+				if ((m as { role?: string }).role !== "assistant") continue;
+				const text = userFacingTextOf((m as { content: unknown }).content).map((t) => stripInternalLabels(t)).join("\n\n");
+				const before = index.get(m.id);
+				index.set(m.id, before === undefined ? text : `${before}\n\n${text}`);
+			}
+		}
+		return index.get(messageId) ?? null;
+	};
+}
+
+/** The citation check for one record (and, when given, one chat id). */
+export function recordCitationCheck(messages: readonly LhMessage[], chatId?: string): CitationCheck {
+	return citationCheck(recordCitationLookup(messages), chatId);
+}
+
+/** A learner message with its citations expanded; the SAME object when it holds none. */
+function expandUserCitations(message: UserMessage, check: CitationCheck): UserMessage {
+	const { content } = message;
+	if (typeof content === "string") {
+		const text = expandCitationsForModel(content, check);
+		return text === content ? message : { ...message, content: text };
+	}
+	if (!Array.isArray(content)) return message;
+	let changed = false;
+	const blocks = content.map((block) => {
+		if (block.type !== "text" || typeof block.text !== "string") return block;
+		const text = expandCitationsForModel(block.text, check);
+		if (text === block.text) return block;
+		changed = true;
+		return { ...block, text };
+	});
+	return changed ? { ...message, content: blocks } : message;
+}
+
 /**
  * AgentMessage[] → the provider wire (the agent's convertToLlm — required
  * by pi-agent-core's loop config, the ONE place model-facing decisions
@@ -1026,7 +1074,7 @@ export const GRID_NOTE =
  * Contract (pi-agent-core): never throws — an unknown shape passes
  * through untouched rather than killing the loop.
  */
-export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing?: DrawingContext } = {}): Message[] {
+export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing?: DrawingContext; chatId?: string } = {}): Message[] {
 	// THE COMPACTION CUT (owner round 14, 2026-10-05): the ACTIVE marker
 	// (the newest — chained compactions rule last) names the first kept
 	// message; everything before it is replaced by the marker's content
@@ -1072,6 +1120,10 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 	const drawingPlan = opts.drawing ? planDrawings(lhMessages, start) : null;
 	// Scoped over the WHOLE record, so a reply whose hint request sits before the cut still counts.
 	const hintReplies = hintReplyMessages(messages);
+	// Learner citations expand against THIS record only (checked, so a forged
+	// quote cannot reach the model); built on first use.
+	let citations: CitationCheck | null = null;
+	const checkCitation: CitationCheck = (c) => (citations ??= recordCitationCheck(lhMessages, opts.chatId))(c);
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
@@ -1113,6 +1165,10 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 				.map((b) => (b.type === "text" ? { ...b, text: stripInternalLabels(b.text, hintReply) } : b))
 				.filter((b) => b.type !== "text" || b.text.trim() !== "");
 			out.push(content.length > 0 ? { ...a, content } : a);
+		} else if (role === "user") {
+			// The one model-facing rewrite of learner text: citations expand to
+			// their quoted passage (core/citations.ts); text without one is untouched.
+			out.push(expandUserCitations(native as UserMessage, checkCitation));
 		} else out.push(native as Message);
 		// Dangling-call synthesis: an assistant message whose toolCalls have
 		// no results in the remaining tail (abort mid-question) — the
