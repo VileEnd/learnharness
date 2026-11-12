@@ -1,4 +1,5 @@
 import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { ToolCallIdUniquifier } from "./call-ids.ts";
 
 /**
@@ -133,6 +134,44 @@ const ABORT_SETTLE_GRACE_MS = 5_000;
 /** Test seam (the toolTimeoutMs idiom). */
 export const abortSettleGraceMs = { current: ABORT_SETTLE_GRACE_MS };
 
+/** What an honoured abort leaves in the record that a forced settle must add
+ *  itself, in the engine's own shapes (pi-agent-core's agent-loop): an
+ *  "Operation aborted" error result for each call of the stuck batch that has
+ *  none (pi's createErrorToolResult + createToolResultMessage), and the
+ *  partial reply the views watched (state.streamingMessage), to be stamped
+ *  aborted. The batch is the assistant message holding a pending call, so
+ *  history from earlier turns is never touched. */
+function abortedTail(state: Agent["state"]): { results: ToolResultMessage[]; partial: AssistantMessage | undefined } {
+	const results: ToolResultMessage[] = [];
+	const callsOf = (m: AgentMessage): ToolCall[] =>
+		(m as { role?: string }).role === "assistant"
+			? (m as AssistantMessage).content.filter((block): block is ToolCall => block.type === "toolCall")
+			: [];
+	const messages = state.messages;
+	const batch = state.pendingToolCalls.size > 0
+		? messages.findLastIndex((m) => callsOf(m).some((call) => state.pendingToolCalls.has(call.id)))
+		: -1;
+	if (batch !== -1) {
+		const answered = new Set(
+			messages.slice(batch + 1).flatMap((m) => ((m as { role?: string }).role === "toolResult" ? [(m as ToolResultMessage).toolCallId] : [])),
+		);
+		for (const call of callsOf(messages[batch]!)) {
+			if (answered.has(call.id)) continue;
+			results.push({
+				role: "toolResult",
+				toolCallId: call.id,
+				toolName: call.name,
+				content: [{ type: "text", text: "Operation aborted" }],
+				details: {},
+				isError: true,
+				timestamp: Date.now(),
+			});
+		}
+	}
+	const streaming = state.streamingMessage as { role?: string } | undefined;
+	return { results, partial: streaming?.role === "assistant" ? (streaming as AssistantMessage) : undefined };
+}
+
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100 } = spec;
 	const uniquifier = spec.uniquifier ?? (usedToolCallIds ? new ToolCallIdUniquifier(usedToolCallIds) : undefined);
@@ -239,13 +278,23 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// suppressing the fresh per-turn re-seed). Our app mints no system
 	// messages of its own (the prompt is composed per turn), so dropping
 	// the role wholesale is exact; revisit if prompt-updates ever land.
-	const settleWith = () => {
+	// `forced`: the run never reached agent_end (an ignored abort), so the
+	// record also takes what an honoured abort would have left (abortedTail).
+	const settleWith = (forced = false) => {
 		try {
-			const settled_ = [...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system");
+			const tail = forced ? abortedTail(agent.state) : { results: [], partial: undefined };
+			const settled_ = [
+				...[...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system"),
+				...tail.results,
+				...(tail.partial ? [tail.partial] : []),
+			];
+			let final = (uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_;
+			// The partial is remapped as the views saw it, then stamped aborted.
+			if (tail.partial) final = [...final.slice(0, -1), { ...(final.at(-1) as AssistantMessage), stopReason: "aborted" }];
 			// The views still attached: every settle path runs this before
 			// closeAll, which empties the set.
 			const viewers = subscribers.size;
-			onFinish((uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_, sawAbort, viewers);
+			onFinish(final, sawAbort, viewers);
 		} catch (err) {
 			console.error("[turn] settlement failed:", err);
 			try { onSettleFailure?.(err, reportedErrorText); }
@@ -362,7 +411,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 			forceTimer ??= setTimeout(() => {
 				if (settled) return;
 				console.warn("[turn] the aborted run did not end within the grace period; settling it");
-				settleWith();
+				settleWith(true);
 				closeAll();
 			}, abortSettleGraceMs.current);
 		},

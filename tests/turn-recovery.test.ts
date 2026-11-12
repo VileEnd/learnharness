@@ -4,6 +4,7 @@ import type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ChatStore } from "../src/core/ports.ts";
 import { abortSettleGraceMs, runPiTurn } from "../src/server/pi/ui-stream.ts";
 import { persistTurn } from "../src/server/turn-service.ts";
+import { newTurnNudge } from "../src/agent/turn-nudge.ts";
 
 /** No engine or network: exercise the runner's awaited listener seam. */
 function agentEndingWith(loopFailure?: Error): Agent {
@@ -100,7 +101,7 @@ describe("turn settlement recovery", () => {
 		let lateDone!: () => void;
 		const late = new Promise<void>((resolve) => (lateDone = resolve));
 		const agent = {
-			state: { messages: [] },
+			state: { messages: [], pendingToolCalls: new Set() },
 			subscribe(listener: (event: never) => unknown) { listeners.push(listener); return () => {}; },
 			async continue() {
 				const failure = await runEnds;
@@ -143,6 +144,38 @@ describe("turn settlement recovery", () => {
 		}
 	});
 
+	it("a forced settle records what an honoured abort would: aborted results for the stuck batch, the watched partial stamped aborted", async () => {
+		const call = (id: string) => ({ type: "toolCall", id, name: "stuck", arguments: {} });
+		const batch = { role: "assistant", content: [call("a"), call("b")], stopReason: "toolUse", timestamp: 1 };
+		const earlier = { role: "assistant", content: [call("old")], stopReason: "toolUse", timestamp: 0 };
+		const resultA = { role: "toolResult", toolCallId: "a", toolName: "stuck", content: [], isError: false, timestamp: 2 };
+		const partial = { role: "assistant", content: [{ type: "text", text: "half a sent" }], stopReason: "stop", timestamp: 3 };
+		const settleStuck = async (state: object) => {
+			const agent = { state, subscribe() { return () => {}; }, continue: () => new Promise(() => {}), abort() {} } as unknown as Agent;
+			let finished!: (messages: AgentMessage[]) => void;
+			const settled = new Promise<AgentMessage[]>((resolve) => (finished = resolve));
+			const handle = runPiTurn({ agent, onFinish(messages) { finished(messages); } });
+			handle.abort();
+			return settled;
+		};
+		const grace = abortSettleGraceMs.current;
+		abortSettleGraceMs.current = 1;
+		const warn = console.warn;
+		console.warn = () => {};
+		try {
+			const tools = await settleStuck({ messages: [earlier, batch, resultA], pendingToolCalls: new Set(["b"]) });
+			assert.deepEqual(tools.slice(0, 3), [earlier, batch, resultA], "the state is kept as it was");
+			assert.equal(tools.length, 4, "one result added, none for the earlier turn's call");
+			assert.deepEqual({ ...tools[3], timestamp: 0 }, { role: "toolResult", toolCallId: "b", toolName: "stuck", content: [{ type: "text", text: "Operation aborted" }], details: {}, isError: true, timestamp: 0 });
+
+			const streamed = await settleStuck({ messages: [], pendingToolCalls: new Set(), streamingMessage: partial });
+			assert.deepEqual(streamed, [{ ...partial, stopReason: "aborted" }], "the partial the views saw is kept, stamped aborted");
+		} finally {
+			abortSettleGraceMs.current = grace;
+			console.warn = warn;
+		}
+	});
+
 	it("does not contain a canonical write failure as an empty successful persist", () => {
 		const store = {
 			getChat: () => ({ messages: [] }),
@@ -150,5 +183,18 @@ describe("turn settlement recovery", () => {
 		} as unknown as ChatStore;
 		const message = { role: "assistant", content: [{ type: "text", text: "Synthetic reply" }], stopReason: "stop", timestamp: 1 } as AgentMessage;
 		assert.throws(() => persistTurn(store, "fixture", 0, [message], false), /The reply could not be saved\./);
+	});
+
+	it("never persists the hidden turn-nudge re-prompt", () => {
+		let saved: unknown[] = [];
+		const store = {
+			getChat: () => ({ messages: [] }),
+			saveMessages(_id: string, messages: unknown[]) { saved = messages; },
+		} as unknown as ChatStore;
+		const reply = { role: "assistant", content: [{ type: "text", text: "Synthetic reply" }], stopReason: "stop", timestamp: 1 } as AgentMessage;
+		const nudge = newTurnNudge("Synthetic re-prompt");
+		persistTurn(store, "fixture", 0, [reply, nudge as AgentMessage, reply], true);
+		assert.equal(saved.length, 2);
+		assert.ok(!JSON.stringify(saved).includes("Synthetic re-prompt"));
 	});
 });

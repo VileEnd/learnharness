@@ -1363,7 +1363,7 @@ describe("background-turn runner (owner ruling 2026-09-25: every turn is a serve
 		assert.deepEqual(abortTurn(chat.id), { ok: false, reason: "not_running" }, "second abort is not_running");
 	});
 
-	it("remote abort of a run whose tool ignores the signal: settled once after the grace, and a late end changes nothing", async () => {
+	it("remote abort of a run whose tool ignores the signal: settled once after the grace; the next turn runs beside the stuck tool; its late end changes nothing", async () => {
 		let releaseTool!: () => void;
 		const toolGate = new Promise<void>((resolve) => (releaseTool = resolve));
 		let started!: () => void;
@@ -1387,15 +1387,18 @@ describe("background-turn runner (owner ruling 2026-09-25: every turn is a serve
 		const engine: PiEngine = { model: faux.getModel(), streamFn: faux.streamSimple };
 		const chat = createConfiguredChat("Test: abort ignored");
 		createdChats.push(chat.id);
-		const settles: string[] = [];
-		const off = subscribe((e) => {
-			if (e.type === "turn-settled" && (e as { chatId?: string }).chatId === chat.id) settles.push(e.type);
-		});
 		const grace = abortSettleGraceMs.current;
 		abortSettleGraceMs.current = 20;
 		const warnings: unknown[][] = [];
 		const warn = console.warn;
 		console.warn = (...args: unknown[]) => void warnings.push(args);
+		const stuckCalls = () =>
+			chatStore.getChat(chat.id)!.messages.flatMap((m) => {
+				const content = (m as { content?: unknown }).content;
+				return Array.isArray(content) ? content.filter((c: { type?: string; id?: string }) => c.type === "toolCall" && c.id === "call-stuck") : [];
+			}).length;
+		const stuckResults = () =>
+			chatStore.getChat(chat.id)!.messages.filter((m) => (m as { role?: string; toolCallId?: string }).role === "toolResult" && (m as { toolCallId?: string }).toolCallId === "call-stuck") as unknown as Array<{ isError: boolean; content: Array<{ text?: string }> }>;
 		try {
 			const res = await handleChatRequest(post(chat.id, { type: "text", text: "run the stuck tool" }), (opts) => {
 				const agent = createTeacherAgent(undefined, { engine, messages: opts.messages });
@@ -1414,27 +1417,33 @@ describe("background-turn runner (owner ruling 2026-09-25: every turn is a serve
 			assert.ok(text.endsWith("data: [DONE]\n\n"), "the view is told the turn ended");
 			assert.equal(isTurnRunning(chat.id), false, "the claim is released");
 			assert.equal(runningTurn(chat.id), undefined, "the handle is unregistered");
-			assert.equal(settles.length, 1, "one settle");
 			assert.equal(warnings.length, 1, "the forced settle is logged");
-			const settled = chatStore.getChat(chat.id)!;
-			const last = settled.messages.at(-1) as { role?: string; content?: Array<{ type: string; id?: string }> };
-			assert.equal(last.role, "assistant", "the partial turn persisted through the settle path");
-			assert.ok(last.content?.some((c) => c.type === "toolCall" && c.id === "call-stuck"), "it ends at the stuck call");
+			assert.equal(stuckCalls(), 1, "the stuck call persisted through the settle path");
+			const results = stuckResults();
+			assert.equal(results.length, 1, "it carries the aborted result an honoured abort leaves");
+			assert.equal(results[0]!.isError, true);
+			assert.equal(results[0]!.content[0]!.text, "Operation aborted");
+
+			// The chat is free while the old tool is still pending: the next
+			// send is accepted, not answered 409, and settles normally.
+			const next = scriptedTeacher(() => [fauxAssistantMessage([fauxText("Back again.")])]);
+			const body = await drainTurn(post(chat.id, { type: "text", text: "again" }), agentFactory(next.engine));
+			assert.ok(body.includes("Back again."));
+			await waitFor(() => !isTurnRunning(chat.id), 8000, "the next turn's settle");
+			const snapshot = chatStore.getChat(chat.id)!;
+			assert.ok(JSON.stringify(snapshot.messages).includes("Back again."));
 
 			// The stuck run ends late: no second settle, no write after the forced one.
 			releaseTool();
 			await lateEnd;
-			assert.deepEqual(chatStore.getChat(chat.id), settled, "the record is unchanged");
-			assert.equal(settles.length, 1, "still one settle");
-
-			// The chat is free: the next send is accepted, not answered 409.
-			const next = scriptedTeacher(() => [fauxAssistantMessage([fauxText("Back again.")])]);
-			const body = await drainTurn(post(chat.id, { type: "text", text: "again" }), agentFactory(next.engine));
-			assert.ok(body.includes("Back again."));
+			await new Promise((resolve) => setImmediate(resolve)); // let the runner see the late agent_end
+			assert.deepEqual(chatStore.getChat(chat.id), snapshot, "the record is what the next turn left");
+			assert.equal(stuckCalls(), 1, "the stuck call was persisted once");
+			assert.equal(stuckResults().length, 1);
+			assert.equal(warnings.length, 1);
 		} finally {
 			console.warn = warn;
 			abortSettleGraceMs.current = grace;
-			off();
 		}
 	});
 

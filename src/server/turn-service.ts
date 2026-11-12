@@ -17,7 +17,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
-import type { LhMessage } from "../core/native-messages.ts";
+import type { LhMarkerMessage, LhMessage } from "../core/native-messages.ts";
 import { newMessageId } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
 import { planBlocksFor } from "../core/plan-blocks.ts";
@@ -50,7 +50,7 @@ export class TurnPersistenceError extends Error {
  *   terminate) — NEVER persisted (fork 1: the record ends at the
  *   unanswered call; the learner's answer arrives as the real tool
  *   result). Errored question calls DO persist — the model's retry
- *   context.
+ *   context. The hidden turn-nudge re-prompt is a loop device too.
  * - Plan blocks: one frozen snapshot per successful plan_init call,
  *   idempotent (persist replays are safe).
  *
@@ -78,6 +78,9 @@ export function persistTurn(
 			) {
 				continue;
 			}
+			// The hidden re-prompt (agent/turn-nudge.ts): the teacher strips it at
+			// agent_end, but a forced settle after an ignored abort has none.
+			if ((message as { role?: string }).role === "custom" && (message as LhMarkerMessage).customType === "turn-nudge") continue;
 			stamped.push(message.id ? message : ({ ...message, id: newMessageId() } as LhMessage));
 		}
 		const tree = record.tree;
