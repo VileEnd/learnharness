@@ -909,6 +909,41 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 		assert.deepEqual(await pipelineC.runExtraction(c.chatId), { nodes: 1, chains: 0 });
 	});
 
+	it("serialized audit: aborting a waiter does not let the waiter behind it in while the holder still audits", async () => {
+		const [a, b, c] = [fixtureChat(), fixtureChat(), fixtureChat()];
+		const ledgers = memoryLedgers();
+		const single = (id: string, name: string) => ({
+			propositions: [{ id, name, statement: `${name} statement`, aliases: [], messageId: "a1" }],
+			chains: [],
+		});
+		const pipeline = (id: string, name: string, auditor: PiEngine) =>
+			createExtractionPipeline({ chatStore, graphStore: ledgers, extractor: submitModel("submit_findings", single(id, name)), auditor });
+		const phaseOf = (chatId: string) => extractionStatuses().find((r) => r.chatId === chatId)?.phase;
+
+		let gateOpen!: () => void;
+		const gate = new Promise<void>((resolve) => (gateOpen = resolve));
+		const runA = pipeline("pa", "Alpha claim", gatedSubmitModel("submit_review", { links: [] }, gate)).runExtraction(a.chatId);
+		await until(() => phaseOf(a.chatId) === "auditing");
+		const runB = pipeline("pb", "Beta claim", submitModel("submit_review", { links: [] })).runExtraction(b.chatId);
+		await until(() => phaseOf(b.chatId) === "waiting");
+		let cAuditStartedBeforeAMerged: boolean | undefined;
+		const runC = pipeline("pc", "Gamma claim", submitModel("submit_review", { links: [] }, () => {
+			cAuditStartedBeforeAMerged = !ledgers.readNodes().some((n) => n.name === "Alpha claim");
+		})).runExtraction(c.chatId);
+		await until(() => phaseOf(c.chatId) === "waiting");
+
+		assert.equal(abortExtraction(b.chatId), true);
+		assert.deepEqual(await runB, { nodes: 0, chains: 0 });
+		await new Promise((r) => setTimeout(r, 50));
+		assert.equal(cAuditStartedBeforeAMerged, undefined, "C has not started auditing while A holds the lock");
+		assert.equal(phaseOf(c.chatId), "waiting");
+
+		gateOpen();
+		assert.deepEqual(await runA, { nodes: 1, chains: 0 });
+		assert.deepEqual(await runC, { nodes: 1, chains: 0 });
+		assert.equal(cAuditStartedBeforeAMerged, false, "C audited only after A's merge");
+	});
+
 	it("captures per-stage usage live, persists the run's usage into the chat record", async () => {
 		const { chatId } = fixtureChat();
 		const ledgers = memoryLedgers();
