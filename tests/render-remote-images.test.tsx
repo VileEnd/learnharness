@@ -54,16 +54,81 @@ for (const [name, render] of Object.entries(renderers)) {
 			assert.doesNotMatch(render("![chart](https://attacker.example/c.png)"), /rel="preload"/);
 		});
 
+		it("Streamdown's default pipeline is still raw, sanitize, harden (the list in message.tsx names them)", async () => {
+			const { defaultRehypePlugins } = await import("streamdown");
+			assert.deepEqual(Object.keys(defaultRehypePlugins), ["raw", "sanitize", "harden"]);
+		});
+
 		it("relative and same-origin paths are not images in markdown either", () => {
 			for (const md of ["![p](/image.png)", "![p](./image.png)", "![p](http://localhost/image.png)"]) {
 				assert.doesNotMatch(render(md), /<img/, md);
 			}
 		});
 
-		it("data: images stay as before: no <img>", () => {
-			const html = render(`![dot](${pixel})`);
+		it("a data: raster image still displays: it makes no network request", () => {
+			for (const type of ["png", "jpeg", "gif", "webp"]) {
+				const html = render(`![dot](data:image/${type};base64,AAAA)`);
+				assert.match(html, new RegExp(`<img[^>]+src="data:image/${type};base64,AAAA"`), type);
+			}
+			assert.match(render(`![dot](${pixel})`), /<img[^>]+src="data:image\/png;base64,iVBOR/);
+		});
+
+		it("other data: images and schemes stay blocked", () => {
+			for (const md of [
+				"![x](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)",
+				"![x](data:text/html;base64,PGI+PC9iPg==)",
+				"![x](DATA:image/png;base64,AAAA)",
+				"![x](javascript:alert(1))",
+				"![x](file:///etc/passwd)",
+				"![x](blob:https://example.com/0000)",
+			]) {
+				assert.doesNotMatch(render(md), /<img/, md);
+			}
+		});
+
+		it("a protocol-relative image becomes a link to the https address", () => {
+			const html = render("![p](//attacker.example/p.png)");
 			assert.doesNotMatch(html, /<img/);
-			assert.doesNotMatch(html, /iVBORw0KGgo/);
+			assert.doesNotMatch(html, /Image blocked/);
+			assert.match(html, /<button[^>]+data-streamdown="link"[^>]*>p<\/button>/);
+			assert.match(render("![](//attacker.example/p.png)"), />https:\/\/attacker\.example\/p\.png<\/button>/);
+		});
+
+		it("an upper-case scheme is blocked too (the sanitize step drops its address, so it is a badge)", () => {
+			for (const md of ["![c](HTTPS://attacker.example/c.png)", '<img src="HTTP://attacker.example/c.png" alt="c">']) {
+				const html = render(md);
+				assert.doesNotMatch(html, /<img/, md);
+				assert.doesNotMatch(html, /attacker\.example/, md);
+				assert.match(html, /\[Image blocked: c\]/, md);
+			}
+		});
+
+		it("an image inside a link is its alt text inside that one link, never a nested link", () => {
+			for (const md of [
+				"[![badge](https://attacker.example/b.svg)](https://example.com/page)",
+				'<a href="https://example.com/page"><img src="https://attacker.example/b.svg" alt="badge"></a>',
+				'<a href="https://example.com/page"><b><img src="//attacker.example/b.svg" alt="badge"></b></a>',
+			]) {
+				const html = render(md);
+				assert.equal(html.match(/<button/g)?.length, 1, md);
+				assert.doesNotMatch(html, /<a[ >]/, md);
+				assert.doesNotMatch(html, /<img/, md);
+				assert.doesNotMatch(html, /attacker\.example/, md);
+				assert.match(html, /<button[^>]+data-streamdown="link"[^>]*>(<b>)?badge(<\/b>)?<\/button>/, md);
+			}
+			assert.match(render("[![](https://attacker.example/b.svg)](https://example.com/page)"), /<button[^>]*>https:\/\/attacker\.example\/b\.svg<\/button>/);
+		});
+
+		it("<picture><source srcset> and srcset never leave another host in the output", () => {
+			for (const md of [
+				'<picture><source srcset="https://attacker.example/a.png 2x"><img src="https://attacker.example/b.png" alt="b"></picture>',
+				'<picture><source srcset="https://attacker.example/a.png"><img src="/local.png" alt="b"></picture>',
+				'<img src="/local.png" srcset="https://attacker.example/a.png 2x" alt="b">',
+			]) {
+				const html = render(md);
+				assert.doesNotMatch(html, /<img|<source|srcset|<picture/i, md);
+				assert.doesNotMatch(html, /attacker\.example/, md);
+			}
 		});
 
 		it("links are unchanged: still Streamdown's link button", () => {

