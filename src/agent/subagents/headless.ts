@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { guardedFetch, OutboundRefusedError, readCapped, withTimeout } from "../outbound.ts";
 import { standardFontsDir } from "./pdf-ops";
 
 /**
@@ -16,6 +17,18 @@ import { standardFontsDir } from "./pdf-ops";
  *
  * Test seam: `headlessOverride.current` replaces the whole API (tests inject
  * a fake; nothing here touches a real browser). Builders call `getHeadless()`.
+ *
+ * LOCKDOWN (2026-11-12 audit): the model writes the page and the demo
+ * probe, and the probe's value goes back to the model, so the browser must
+ * not read local files or reach the app's network. Every request is
+ * intercepted (demoRequestDecision): the document itself, data: and blob:
+ * pass; http(s) is fetched by this process through the outbound guard and
+ * handed to the page; everything else (other files, other schemes, any
+ * main-frame navigation away from the document) is aborted. Chromium
+ * itself gets no route anywhere (dead proxy, no host resolution, no
+ * unproxied UDP), which covers what interception cannot see: WebSockets,
+ * popups, WebRTC. It launches with a minimal environment, and the probe
+ * only runs while the page is still the demo document.
  */
 
 export interface DemoRunResult {
@@ -111,7 +124,82 @@ const NO_CHROME_MESSAGE =
 	"Install Chromium or set CHROME_PATH to a Chrome executable. " +
 	"(Verification is mandatory — demos are never delivered untested.)";
 
-async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => Promise<T>): Promise<T> {
+/** What the page may load. `documentUrl` is the one local file it may
+ *  read (the demo or figure page itself). */
+export type DemoRequestDecision = "continue" | "fetch" | "abort";
+
+function withoutHash(url: string): string {
+	const i = url.indexOf("#");
+	return i < 0 ? url : url.slice(0, i);
+}
+
+export function demoRequestDecision(url: string, documentUrl: string, mainFrameNavigation: boolean): DemoRequestDecision {
+	if (withoutHash(url) === withoutHash(documentUrl)) return "continue";
+	if (mainFrameNavigation) return "abort";
+	const scheme = url.slice(0, url.indexOf(":") + 1).toLowerCase();
+	if (scheme === "data:" || scheme === "blob:") return "continue";
+	if (scheme === "http:" || scheme === "https:") return "fetch";
+	return "abort";
+}
+
+/** Per-resource cap for what the page loads from the web (CDN libraries,
+ *  fonts, wasm). */
+const MAX_PAGE_RESOURCE_BYTES = 32 * 1024 * 1024;
+const PAGE_RESOURCE_TIMEOUT_MS = 30_000;
+/** Request headers worth passing on to the real server. */
+const FORWARDED_REQUEST_HEADERS = ["accept", "accept-language", "user-agent", "origin", "range"];
+/** Response headers that describe the wire, not the (decoded) body. */
+const DROPPED_RESPONSE_HEADERS = new Set(["content-length", "content-encoding", "transfer-encoding", "connection", "set-cookie"]);
+
+/** Fetch one http(s) request through the outbound guard and hand the result
+ *  to the page; a refused or failed fetch aborts the request. */
+async function fulfilThroughGuard(req: import("puppeteer-core").HTTPRequest, signal: AbortSignal): Promise<void> {
+	const method = req.method();
+	if (method !== "GET" && method !== "HEAD") {
+		await req.abort("blockedbyclient").catch(() => {});
+		return;
+	}
+	try {
+		const incoming = req.headers();
+		const headers: Record<string, string> = {};
+		for (const name of FORWARDED_REQUEST_HEADERS) {
+			const value = incoming[name];
+			if (value !== undefined) headers[name] = value;
+		}
+		const { response } = await guardedFetch(req.url(), {
+			method,
+			headers,
+			signal: withTimeout(signal, PAGE_RESOURCE_TIMEOUT_MS),
+		});
+		const body = method === "HEAD" ? new Uint8Array(0) : await readCapped(response, MAX_PAGE_RESOURCE_BYTES);
+		const outHeaders: Record<string, string> = {};
+		response.headers.forEach((value, name) => {
+			if (!DROPPED_RESPONSE_HEADERS.has(name)) outHeaders[name] = value;
+		});
+		await req.respond({ status: response.status, headers: outHeaders, body: Buffer.from(body) });
+	} catch (err) {
+		await req.abort(err instanceof OutboundRefusedError ? "blockedbyclient" : "failed").catch(() => {});
+	}
+}
+
+/** Only what Chromium needs from the environment: never the server's own
+ *  (provider keys, admin secrets). HOME and the XDG dirs point at the
+ *  throwaway profile. */
+const CHROME_ENV_KEYS = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "FONTCONFIG_FILE", "FONTCONFIG_PATH", "SYSTEMROOT", "WINDIR"];
+
+function chromeEnv(profile: string): Record<string, string> {
+	const env: Record<string, string> = { HOME: profile, XDG_CONFIG_HOME: profile, XDG_CACHE_HOME: profile };
+	for (const key of CHROME_ENV_KEYS) {
+		const value = process.env[key];
+		if (value !== undefined) env[key] = value;
+	}
+	return env;
+}
+
+async function withBrowserPage<T>(
+	documentUrl: string,
+	fn: (page: import("puppeteer-core").Page) => Promise<T>,
+): Promise<T> {
 	// Per-job launch, close on the way out.
 	const puppeteer = (await import("puppeteer-core")).default;
 	const executablePath = resolveChromeExecutablePath();
@@ -119,6 +207,8 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 	// node user with HOME=/root, where Chromium cannot create its profile or
 	// crashpad database and dies at launch (seen on the VM, 2026-10-25).
 	const profile = tempDir("lh-chrome-");
+	// Ends every fetch still running for the page once it closes.
+	const pageLife = new AbortController();
 	try {
 		const browser = await puppeteer.launch({
 			headless: true,
@@ -126,13 +216,39 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 			// system Chrome install itself via the "chrome" channel.
 			...(executablePath ? { executablePath } : { channel: "chrome" as const }),
 			userDataDir: profile,
-			env: { ...process.env, HOME: profile },
-			args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+			env: chromeEnv(profile),
+			args: [
+				"--disable-gpu",
+				// Chromium's own sandbox needs user namespaces the container does
+				// not provide, so it stays off; the lockdown above and below is
+				// what confines the page.
+				"--no-sandbox",
+				"--disable-dev-shm-usage",
+				// No route for Chromium itself: every http(s) request the page
+				// makes is intercepted and fetched by this process through the
+				// outbound guard, so Chromium never needs the network. This
+				// catches what interception cannot see (WebSockets, popups).
+				"--proxy-server=http://0.0.0.0:0",
+				"--proxy-bypass-list=<-loopback>",
+				"--host-resolver-rules=MAP * ~NOTFOUND",
+				// WebRTC may not send UDP around the (dead) proxy.
+				"--webrtc-ip-handling-policy=disable_non_proxied_udp",
+			],
 		});
 		try {
 			const page = await browser.newPage();
+			await page.setRequestInterception(true);
+			page.on("request", (req) => {
+				const frame = req.frame();
+				const mainFrameNavigation = req.isNavigationRequest() && (frame === null || frame === page.mainFrame());
+				const decision = demoRequestDecision(req.url(), documentUrl, mainFrameNavigation);
+				if (decision === "continue") void req.continue().catch(() => {});
+				else if (decision === "abort") void req.abort("blockedbyclient").catch(() => {});
+				else void fulfilThroughGuard(req, pageLife.signal);
+			});
 			return await fn(page);
 		} finally {
+			pageLife.abort();
 			await browser.close().catch(() => {});
 		}
 	} finally {
@@ -159,24 +275,35 @@ async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRun
 	let probeResult: unknown;
 	let probed = false;
 
+	const demoUrl = pathToFileURL(file).href;
 	try {
-		await withBrowserPage(async (page) => {
+		await withBrowserPage(demoUrl, async (page) => {
 		page.on("console", (msg) => {
 			if (msg.type() === "error") consoleErrors.push(msg.text());
 		});
 		page.on("pageerror", (err) => pageErrors.push(err instanceof Error ? err.message : String(err)));
 		page.on("requestfailed", (req) => failedRequests.push(`${req.url()} (${req.failure()?.errorText ?? "failed"})`));
+		// Interception aborts any navigation away; this is the second line:
+		// once the main frame has shown anything but the demo, no probe.
+		let leftDemo = false;
+		page.on("framenavigated", (frame) => {
+			if (frame === page.mainFrame() && withoutHash(frame.url()) !== withoutHash(demoUrl)) leftDemo = true;
+		});
 
 		try {
-			await page.goto(pathToFileURL(file).href, { waitUntil: "load", timeout: 30_000 });
+			await page.goto(demoUrl, { waitUntil: "load", timeout: 30_000 });
 			await new Promise((resolve) => setTimeout(resolve, settleMs));
 			if (opts.probe) {
-				try {
-					probeResult = await page.evaluate(opts.probe);
-				} catch (err) {
-					pageErrors.push(`probe failed: ${err instanceof Error ? err.message : String(err)}`);
+				if (leftDemo || withoutHash(page.url()) !== withoutHash(demoUrl)) {
+					pageErrors.push("probe not run: the page navigated away from the demo document");
+				} else {
+					try {
+						probeResult = await page.evaluate(opts.probe);
+					} catch (err) {
+						pageErrors.push(`probe failed: ${err instanceof Error ? err.message : String(err)}`);
+					}
+					probed = true;
 				}
-				probed = true;
 			}
 		} catch (err) {
 			pageErrors.push(err instanceof Error ? err.message : String(err));
@@ -308,10 +435,11 @@ async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buff
 		"utf-8",
 	);
 
-	return withBrowserPage(async (page) => {
+	const figureUrl = pathToFileURL(file).href;
+	return withBrowserPage(figureUrl, async (page) => {
 		const { width, height } = svgViewport(svg, opts);
 		await page.setViewport({ width, height });
-		await page.goto(pathToFileURL(file).href, { waitUntil: "load", timeout: 30_000 });
+		await page.goto(figureUrl, { waitUntil: "load", timeout: 30_000 });
 		const shot = (await page.screenshot({ fullPage: true, type: "png" })) as Buffer;
 		// Chrome's raw split-IDAT PNG is canonicalized before it reaches a
 		// provider (see providerSafePng) — the visual-maker feeds this exact

@@ -108,7 +108,15 @@ async function browserProbe(puppeteer) {
 		executablePath,
 		userDataDir: path.join(home, "browser-profile"),
 		// The same flags the demo builder launches with (src/agent/subagents/headless.ts).
-		args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+		args: [
+			"--disable-gpu",
+			"--no-sandbox",
+			"--disable-dev-shm-usage",
+			"--proxy-server=http://0.0.0.0:0",
+			"--proxy-bypass-list=<-loopback>",
+			"--host-resolver-rules=MAP * ~NOTFOUND",
+			"--webrtc-ip-handling-policy=disable_non_proxied_udp",
+		],
 	});
 	try {
 		const page = await browser.newPage();
