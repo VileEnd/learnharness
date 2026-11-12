@@ -31,6 +31,7 @@ async function main() {
 		...stores,
 		// Live budget: the graph section's setting, same as the app's trigger
 		getChunkTokens: () => effectiveSettings().graph.extractionChunkTokens,
+		getDigestTokens: () => effectiveSettings().graph.extractionDigestTokens,
 	});
 	const queue = [...files];
 	const totals = { nodes: 0, chains: 0, failed: 0 };

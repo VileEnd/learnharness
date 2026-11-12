@@ -33,7 +33,7 @@ import {
 import { runPiTurn } from "./pi/ui-stream.ts";
 import { collectToolCallIds, ToolCallIdUniquifier } from "./pi/call-ids.ts";
 import { providerEventNote } from "../agent/provider-events.ts";
-import { effectiveSettings, stores } from "./stores.ts";
+import { effectiveSettings, extractionBudgets, stores } from "./stores.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
 import { providerKeyPresent } from "./keys.ts";
 import { docIndex } from "./doc-index.ts";
@@ -159,6 +159,11 @@ export const extraction = createExtractionPipeline({
 	// refuses BEFORE any batch runs (the typed throw), never mid-run.
 	providerKeyMissing: (provider, tier) =>
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
+	// The Settings budgets, read fresh per run (per tenant): the batch/chunk
+	// size (it used to stay at the factory value here while the trigger read
+	// the setting) and the digest ceiling (audit B4).
+	getChunkTokens: extractionBudgets.chunkTokens,
+	getDigestTokens: extractionBudgets.digestTokens,
 	// Push: notes imports that landed (or failed) and failed chat runs.
 	onRunFinished: (run) => void notify({ kind: "extraction", ...run }),
 	// Session topics: proposed labels fold onto the library's topics before the merge.

@@ -26,7 +26,7 @@ import type {
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, EXTRACTION_DIGEST_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
@@ -366,6 +366,20 @@ export function parseGraphSettingsBody(body: unknown): SettingsBodyResult<GraphS
 			};
 		}
 		settings.extractionChunkTokens = floored;
+	}
+	if (raw.extractionDigestTokens !== undefined) {
+		if (typeof raw.extractionDigestTokens !== "number" || !Number.isFinite(raw.extractionDigestTokens)) {
+			return { ok: false, error: "extractionDigestTokens must be a number" };
+		}
+		const floored = Math.floor(raw.extractionDigestTokens);
+		if (floored < EXTRACTION_DIGEST_TOKENS_FLOOR) {
+			// the floor's rationale lives on GraphSettings.extractionDigestTokens.
+			return {
+				ok: false,
+				error: `extractionDigestTokens must be at least ${EXTRACTION_DIGEST_TOKENS_FLOOR} (the compact digest needs room for its header and topic counts)`,
+			};
+		}
+		settings.extractionDigestTokens = floored;
 	}
 	return { ok: true, settings };
 }

@@ -76,6 +76,7 @@ function harness(over: {
 	/** Concepts each default extraction finds. */
 	finds?: number;
 	describe?: () => Promise<{ title: string; summary: string; topics: string[] }>;
+	chunkTokens?: () => number;
 } = {}) {
 	const extracted: NotesImportInput[] = [];
 	const retired: [string, string][] = [];
@@ -105,6 +106,7 @@ function harness(over: {
 		extractionBusy: over.extractionBusy,
 		sourceBusy: over.sourceBusy,
 		onRebuilt: () => void events.rebuilt++,
+		chunkTokens: over.chunkTokens,
 		pollMs: 0,
 	});
 	return { service, extracted, retired, sourceWhenRetired, events, graph };
@@ -151,6 +153,11 @@ describe("offering a rebuild", () => {
 	it("an old .nw import is offered one, sized in extraction chunks", () => {
 		seedOldImport();
 		assert.deepEqual(harness().service.get(OLD_ID)!.rebuild, { chunks: 1 });
+	});
+
+	it("the offer is sized with the chunk budget from Settings, not the factory value", () => {
+		seedOldImport();
+		assert.ok(harness({ chunkTokens: () => 10 }).service.get(OLD_ID)!.rebuild!.chunks > 1);
 	});
 
 	it("any other document is not, and refuses one", () => {

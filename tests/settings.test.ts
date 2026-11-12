@@ -25,7 +25,8 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		// redesign's chunk budget (2026-09-24); doubled to 8192 with the
 		// digest-aware redesign (2026-09-30), then HALVED BACK to 4096
 		// with the message anchors (owner, 2026-10-13)
-		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096 });
+		// + the digest budget (audit B4, owner 2026-11-12: 8000 after review)
+		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 });
 		const a = FACTORY_SETTINGS.appearance;
 		assert.equal(a.mode, "dark");
 		assert.equal(a.background, null); // the mode's own default, not a factory hex
@@ -123,6 +124,12 @@ describe("sanitizeUserSettings", () => {
 		for (const junk of [0, -1000, NaN, Infinity, "4096", null, true]) {
 			const dropped = sanitizeUserSettings({ version: 1, graph: { extractionChunkTokens: junk } });
 			assert.equal(dropped?.graph?.extractionChunkTokens, undefined, `junk ${String(junk)} drops`);
+		}
+		// extractionDigestTokens (audit B4, 2026-11-12): the same discipline.
+		assert.equal(sanitizeUserSettings({ version: 1, graph: { extractionDigestTokens: 6000.7 } })?.graph?.extractionDigestTokens, 6000);
+		assert.equal(sanitizeUserSettings({ version: 1, graph: { extractionDigestTokens: 10 } })?.graph?.extractionDigestTokens, 500, "below the floor clamps UP");
+		for (const junk of [0, -1, NaN, "4000", null]) {
+			assert.equal(sanitizeUserSettings({ version: 1, graph: { extractionDigestTokens: junk } })?.graph?.extractionDigestTokens, undefined, `junk ${String(junk)} drops`);
 		}
 	});
 

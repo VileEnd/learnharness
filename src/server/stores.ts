@@ -113,3 +113,12 @@ if (
 export function effectiveSettings(): EffectiveSettings {
 	return resolveSettings(readSettingsView());
 }
+
+/** The extraction budgets from the effective settings, read fresh on every
+ *  call (per run, per tenant): the pipeline's batch and chunk size, the
+ *  document reader's rebuild estimate, and the digest ceiling. One reader so
+ *  every consumer follows the same Settings value. */
+export const extractionBudgets = {
+	chunkTokens: (): number => effectiveSettings().graph.extractionChunkTokens,
+	digestTokens: (): number => effectiveSettings().graph.extractionDigestTokens,
+};

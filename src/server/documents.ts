@@ -138,6 +138,9 @@ export interface DocumentServiceDeps {
 		assignments: ReadonlyArray<{ nodeId: string; topics: readonly string[] }>;
 	}): Promise<number>;
 	notify(event: PushEvent): void | Promise<void>;
+	/** The extraction chunk budget (Settings), read per call; absent = the
+	 *  factory value. Sizes the rebuild offer the way the pipeline will cut. */
+	chunkTokens?(): number;
 	/** Give up a rebuilt document's old source, its replacement complete. */
 	retireSource?(oldId: string, replacementId: string): void;
 	/** Is an extraction running on this source right now? */
@@ -817,7 +820,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		const plan = rebuildPlan(meta, markdown);
 		if (!plan) return null;
 		const { sections } = fingerprint(plan.markdown);
-		return { chunks: chunkDocument(plan.markdown, sections, FACTORY_SETTINGS.graph.extractionChunkTokens).length };
+		return { chunks: chunkDocument(plan.markdown, sections, deps.chunkTokens?.() ?? FACTORY_SETTINGS.graph.extractionChunkTokens).length };
 	}
 
 	// ── delete and rename ─────────────────────────────────────────────────────

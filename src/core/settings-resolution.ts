@@ -245,6 +245,9 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			// (pre-redesign record, fresh install) resolves to the factory
 			// 4096; the sanitizer has already clamped/floored any stored value.
 			extractionChunkTokens: graph.extractionChunkTokens ?? FACTORY_SETTINGS.graph.extractionChunkTokens,
+			// The digest budget (audit B4, 2026-11-12): absent resolves to the
+			// factory 8000; the sanitizer has already clamped any stored value.
+			extractionDigestTokens: graph.extractionDigestTokens ?? FACTORY_SETTINGS.graph.extractionDigestTokens,
 		},
 		compaction: {
 			thresholdTokens: record?.compaction?.thresholdTokens ?? FACTORY_SETTINGS.compaction.thresholdTokens,

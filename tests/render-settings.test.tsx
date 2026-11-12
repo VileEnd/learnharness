@@ -216,6 +216,15 @@ describe("GraphSection — master switch + chunk budget (wave 7 + 2026-10-02)", 
 		assert.ok(tagOf(html, "input-chunk-tokens").includes('value="6000"'));
 		assert.ok(html.includes(">6000 tok</"));
 	});
+
+	it("the digest budget row: unset shows the factory 8000, a stored value shows itself", () => {
+		const unset = renderToStaticMarkup(<GraphSection graph={undefined} onSectionChange={() => {}} />);
+		assert.ok(tagOf(unset, "input-digest-tokens").includes('placeholder="8000"'));
+		assert.ok(unset.includes(">8000 tok</"));
+		const stored = renderToStaticMarkup(<GraphSection graph={{ extractionDigestTokens: 7000 }} onSectionChange={() => {}} />);
+		assert.ok(tagOf(stored, "input-digest-tokens").includes('value="7000"'));
+		assert.ok(stored.includes(">7000 tok</"));
+	});
 });
 
 describe("KeysSection (thin SSR)", () => {
