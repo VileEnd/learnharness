@@ -116,6 +116,45 @@ function hasUsage(l: RequestLogLine): boolean {
 
 const add = (a: number | null, b: number): number => (a ?? 0) + b;
 
+/** The category a line counts under (a foreign or future category must not kill the month view). */
+function categoryOfLine(line: RequestLogLine): UsageCategory {
+	return isUsageCategory(line.category) ? line.category : categoryOf(line.purpose, line.chatKind, line.chatId);
+}
+
+/** Does an unpriced line count toward "N calls unpriced"? Only billable lines
+ *  do; an error with no usage is not. Tavily and Brave report no dollars:
+ *  counting their search lines as unpriced would keep "N calls unpriced" up
+ *  for good and hide a real partial total. A priced search line (Exa's
+ *  reported cost) never reaches this check; it counts like any other priced
+ *  line. A dictation token mint is free and reports no dollars either: same
+ *  exemption. */
+function countsAsUnpriced(line: RequestLogLine, category: UsageCategory): boolean {
+	return category !== "search" && line.purpose !== "dictation" && (line.outcome !== "error" || hasUsage(line));
+}
+
+/** Add lines onto a running month spend: the priced dollars and the unpriced
+ *  count, with the same per-line rules and the same addition order as
+ *  summarizeMonth, so folding a month in pieces gives exactly its full fold
+ *  (totalUsd ?? 0, unpricedCalls). Pure; returns a new accumulator. */
+export function foldSpend(
+	acc: { usd: number; unpriced: number },
+	month: string,
+	lines: readonly RequestLogLine[],
+	price: Pricer,
+): { usd: number; unpriced: number } {
+	let { usd, unpriced } = acc;
+	for (const line of lines) {
+		if (monthKey(line.at) !== month) continue;
+		const cost = lineCost(line, price);
+		if (cost === null) {
+			if (countsAsUnpriced(line, categoryOfLine(line))) unpriced++;
+			continue;
+		}
+		usd = add(usd, cost);
+	}
+	return { usd, unpriced };
+}
+
 export function summarizeMonth(month: string, lines: readonly RequestLogLine[], price: Pricer): UsageMonth {
 	const categories = {} as Record<UsageCategory, CategoryTotal>;
 	for (const c of CATEGORIES) categories[c] = { usd: null, calls: 0, tokens: 0, unpriced: 0, cacheReadTokens: 0, promptTokens: 0 };
@@ -129,10 +168,7 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 	for (const line of lines) {
 		if (monthKey(line.at) !== month) continue;
 		calls++;
-		// A foreign or future category must not kill the month view.
-		const category = isUsageCategory(line.category)
-			? line.category
-			: categoryOf(line.purpose, line.chatKind, line.chatId);
+		const category = categoryOfLine(line);
 		const cat = categories[category];
 		cat.calls++;
 		cat.tokens += (line.input ?? 0) + (line.output ?? 0) + (line.cacheRead ?? 0) + (line.cacheWrite ?? 0);
@@ -151,13 +187,8 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 		}
 		const usd = lineCost(line, price);
 		if (usd === null) {
-			// Only billable lines count as unpriced; an error with no usage is not.
-			// Tavily and Brave report no dollars: counting their search lines as
-			// unpriced would keep "N calls unpriced" up for good and hide a real
-			// partial total. A priced search line (Exa's reported cost) never
-			// reaches this branch; it counts like any other priced line. A dictation
-			// token mint is free and reports no dollars either: same exemption.
-			if (category !== "search" && line.purpose !== "dictation" && (line.outcome !== "error" || hasUsage(line))) {
+			// See countsAsUnpriced for which unpriced lines count.
+			if (countsAsUnpriced(line, category)) {
 				unpricedCalls++;
 				cat.unpriced++;
 			}

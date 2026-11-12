@@ -91,15 +91,16 @@ test("(c) a disallowed model with its tier slot unset is refused", () => {
 	});
 });
 
-test("(f) the month spend is cached on the log file's size and mtime", () => {
+test("(f) the month spend is folded incrementally: an unchanged log reads nothing", () => {
 	runAsTenant(USER, () => {
 		stores.requestLog.markBackfilled();
-		spend(0.01); // a new size: the next read folds the file again
-		const spy = mock.method(stores.requestLog, "readMonth");
+		spend(0.01); // new bytes: the next check folds just those
+		const spy = mock.method(stores.requestLog, "readMonthSince");
 		try {
 			assertWithinCap();
 			assertWithinCap();
-			assert.equal(spy.mock.callCount(), 1);
+			const read = spy.mock.calls.map((c) => c.result!.lines.length);
+			assert.equal(read[1], 0, "the second check finds nothing new to fold");
 		} finally {
 			spy.mock.restore();
 		}

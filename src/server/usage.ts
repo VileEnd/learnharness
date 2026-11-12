@@ -14,7 +14,8 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import type { CallUsage, ChatRecord, ExtractionRunUsage, JobKind } from "../core/contracts.ts";
 import type { RequestLogLine, UsageFailuresPage, UsageMonthTotal, UsageMonthView } from "../core/contracts/usage.ts";
-import { categoryOf, monthCacheHitRate, monthKey, summarizeMonth } from "../core/usage.ts";
+import type { RequestLogCursor } from "../core/ports.ts";
+import { categoryOf, foldSpend, monthCacheHitRate, monthKey, summarizeMonth } from "../core/usage.ts";
 import { createPricer } from "./pricing.ts";
 import { stores } from "./stores.ts";
 
@@ -42,6 +43,29 @@ export function monthSpend(month: string = monthKey(new Date())): { usd: number;
 	ensureBackfill();
 	const { totalUsd, unpricedCalls } = summarizeMonth(month, stores.requestLog.readMonth(month), createPricer({ customFromConfig: false }));
 	return { usd: totalUsd ?? 0, unpriced: unpricedCalls };
+}
+
+/** A month's spend folded so far and where in the log file it stopped. */
+export interface MonthSpendState {
+	month: string;
+	cursor: RequestLogCursor | null;
+	usd: number;
+	unpriced: number;
+}
+
+/** Bring a month's running spend up to date by folding only the lines
+ *  appended since `prev` (the cap check runs on every call and every call
+ *  appends a line). Same result as monthSpend: the fold adds in file order
+ *  with the same per-line rules. Starts over when there is no state for this
+ *  month or the file is not the one the state came from. */
+export function advanceMonthSpend(month: string, prev?: MonthSpendState): MonthSpendState {
+	ensureBackfill();
+	const seed = prev?.month === month ? prev : undefined;
+	const { lines, cursor, reset } = stores.requestLog.readMonthSince(month, seed?.cursor ?? null);
+	const base = seed && !reset ? seed : { usd: 0, unpriced: 0 };
+	if (lines.length === 0 && seed && !reset) return seed;
+	const next = foldSpend(base, month, lines, createPricer({ customFromConfig: false }));
+	return { month, cursor, ...next };
 }
 
 /** This month's observed cache-hit rate for the ambient tenant (null when no data). */
