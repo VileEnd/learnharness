@@ -12,11 +12,19 @@
  * handle if they need to reach the sender; it must be an https: or mailto: URI
  * (Apple rejects anything else), and a repo URL avoids baking an email in.
  *
+ * Endpoints come from the browser, so they pass the outbound guard
+ * (agent/outbound.ts): https only, public hosts only. subscribe() resolves
+ * and checks the host before storing; at send time a stored endpoint is
+ * re-checked by name and the default sender connects through pushAgent(),
+ * which checks every resolved address and connects to the one it checked.
+ *
  * Tests inject the `send` seam; the default sender is silent under
  * NODE_ENV=test so no suite can ever reach a push service.
  */
 
+import type * as https from "node:https";
 import webpush from "web-push";
+import { guardedHttpsAgent, hostRefusal, resolvePublicTarget } from "../agent/outbound.ts";
 import type { PushSubscriptionRecord, VapidKeys } from "../core/ports.ts";
 import { stores } from "./stores.ts";
 
@@ -54,8 +62,41 @@ export function pushPublicKey(): string {
 	return vapidKeys().publicKey;
 }
 
-/** Register (or refresh) a device. The endpoint is the identity. */
-export function subscribe(sub: { endpoint: string; keys: { p256dh: string; auth: string } }, label: string): void {
+/** A push endpoint the guard refused (or whose host did not resolve). */
+export class PushEndpointError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "PushEndpointError";
+	}
+}
+
+/** Why a stored endpoint may not be sent to, without a lookup: not https,
+ *  or a local name / non-public literal. Null when it may be tried. */
+function endpointRefusal(endpoint: string): string | null {
+	let url: URL;
+	try {
+		url = new URL(endpoint);
+	} catch {
+		return "invalid URL";
+	}
+	if (url.protocol !== "https:") return "not https";
+	return hostRefusal(url.hostname);
+}
+
+/** Register (or refresh) a device. The endpoint is the identity. Throws
+ *  PushEndpointError when the endpoint is not https or its host is not
+ *  public (every resolved address is checked). */
+export async function subscribe(
+	sub: { endpoint: string; keys: { p256dh: string; auth: string } },
+	label: string,
+): Promise<void> {
+	const refusal = endpointRefusal(sub.endpoint);
+	if (refusal) throw new PushEndpointError(`Push endpoint refused: ${refusal}`);
+	try {
+		await resolvePublicTarget(new URL(sub.endpoint));
+	} catch (err) {
+		throw new PushEndpointError(`Push endpoint refused: ${err instanceof Error ? err.message : String(err)}`);
+	}
 	stores.pushStore.saveSubscription({
 		endpoint: sub.endpoint,
 		keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
@@ -68,11 +109,22 @@ export function unsubscribe(endpoint: string): void {
 	stores.pushStore.removeSubscription(endpoint);
 }
 
+let agent: https.Agent | undefined;
+
+/** The https.Agent every push send connects through: it resolves the
+ *  endpoint host, refuses any non-public answer (or literal), and connects
+ *  to the address it checked. */
+export function pushAgent(): https.Agent {
+	agent ??= guardedHttpsAgent();
+	return agent;
+}
+
 const defaultSend: PushSender = (sub, payload) => {
 	const { publicKey, privateKey } = vapidKeys();
 	return webpush.sendNotification(sub, payload, {
 		TTL: TTL_SECONDS,
 		vapidDetails: { subject: VAPID_SUBJECT, publicKey, privateKey },
+		agent: pushAgent(),
 	});
 };
 
@@ -113,6 +165,11 @@ export async function notify(event: PushEvent, send?: PushSender): Promise<void>
 		const deliver = send ?? defaultSend;
 		await Promise.all(
 			subs.map(async (sub) => {
+				// Stored before the guard existed, or planted: never sent to.
+				if (endpointRefusal(sub.endpoint)) {
+					stores.pushStore.removeSubscription(sub.endpoint);
+					return;
+				}
 				try {
 					await deliver(sub, body);
 				} catch (err) {

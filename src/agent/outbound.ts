@@ -426,7 +426,7 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
  *  socket connects to the checked address), and an IP literal host is
  *  classified directly (net skips the lookup for literals). */
 export function guardedHttpsAgent(lookup?: LookupFn): https.Agent {
-	const resolve = lookup ?? depsOf().lookup;
+	const resolve: LookupFn = (hostname) => (lookup ?? depsOf().lookup)(hostname);
 	const checkedLookup = (
 		hostname: string,
 		options: LookupOptions,
