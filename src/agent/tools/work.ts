@@ -73,7 +73,7 @@ function openTaskProblem(ctx: WorkToolContext): string | null {
 	return (
 		`A canvas task is already open (call ${active.toolCallId}) - one canvas task at a time. ` +
 		"Wait for the learner's submission and grade it (or let the learner dismiss it) before posing another. " +
-		"Quiz, explain, exercise and ask questions are still allowed meanwhile."
+		"Your question and exercise tools are still allowed meanwhile."
 	);
 }
 
