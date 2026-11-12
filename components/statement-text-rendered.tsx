@@ -18,11 +18,11 @@ import { cn } from "@/lib/utils";
  *  hold math are taller, so plain statements are unchanged. */
 export default function RenderedStatement({
 	children,
-	type,
+	type = "statement",
 	className,
 }: {
 	children: string;
-	type: StatementType;
+	type?: StatementType;
 	className?: string;
 }) {
 	return (
