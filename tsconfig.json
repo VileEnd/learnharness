@@ -11,6 +11,9 @@
     "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -44,6 +47,9 @@
   "exclude": [
     "node_modules",
     "dist",
-    ".next"
+    ".next",
+    ".claude",
+    ".fresh-data",
+    "deploy/volumes"
   ]
 }
