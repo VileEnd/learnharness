@@ -7,7 +7,7 @@
  *    config.ts reads both at module load, so this runs before any suite
  *    code; suites that set their own LH_DATA_DIR before their first config
  *    import simply override it.
- * 2. Network guard: globalThis.fetch refuses every non-loopback host. Tests
+ * 2. Network guard: globalThis.fetch rejects every non-loopback host. Tests
  *    that stub fetch replace this wrapper (and restore it); loopback passes
  *    through for suites that start their own servers.
  */
@@ -15,12 +15,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// Worker threads and forked children inherit the parent's environment (and
-// this preload), so they find both variables set and create nothing.
-if (!process.env.LH_DATA_DIR || !process.env.LH_AUTH_FILE) {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-test-"));
-	process.env.LH_DATA_DIR ??= path.join(dir, "data");
-	process.env.LH_AUTH_FILE ??= path.join(dir, "auth.json");
+// An inherited value is kept only when it already sits under the temp root:
+// that is the case for worker threads and for child processes of a test
+// (they inherit their parent's temp dir and create nothing). Anything else,
+// such as a shell that exports the real data dir, is replaced.
+const tmpRoot = path.resolve(os.tmpdir());
+const underTmp = (value: string | undefined): value is string => {
+	if (!value) return false;
+	const rel = path.relative(tmpRoot, path.resolve(value));
+	return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+};
+const keepData = underTmp(process.env.LH_DATA_DIR);
+const keepAuth = underTmp(process.env.LH_AUTH_FILE);
+if (!keepData || !keepAuth) {
+	const dir = fs.mkdtempSync(path.join(tmpRoot, "lh-test-"));
+	if (!keepData) process.env.LH_DATA_DIR = path.join(dir, "data");
+	if (!keepAuth) process.env.LH_AUTH_FILE = path.join(dir, "auth.json");
 	process.on("exit", () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
@@ -34,7 +44,8 @@ function hostOf(input: Parameters<typeof fetch>[0]): string {
 	return new URL(url).hostname;
 }
 
-globalThis.fetch = ((input, init) => {
+// async: a blocked call is a rejected promise, like a real network failure.
+globalThis.fetch = (async (input, init) => {
 	const host = hostOf(input);
 	if (!LOOPBACK.has(host)) {
 		throw new Error(`Network blocked in tests: fetch to ${host} (only loopback is allowed; stub globalThis.fetch)`);
