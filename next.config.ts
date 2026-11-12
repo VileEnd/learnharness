@@ -1,6 +1,17 @@
+import { randomBytes } from "node:crypto";
 import type { NextConfig } from "next";
 
+// One id per build. Next evaluates this file more than once per build, so the
+// first evaluation stores the id in the environment for the rest (LH_BUILD_ID
+// can pin it). It names the build (BUILD_ID) and reaches the client as
+// NEXT_PUBLIC_BUILD_ID, which the page puts on the service worker's URL so
+// every deploy ships a different worker (components/pwa-runtime.tsx).
+process.env.LH_BUILD_ID ||= randomBytes(6).toString("hex");
+const buildId = process.env.LH_BUILD_ID;
+
 const nextConfig: NextConfig = {
+	generateBuildId: () => buildId,
+	env: { NEXT_PUBLIC_BUILD_ID: buildId },
 	// Container target: standalone output = a self-contained
 	// .next/standalone/server.js the Docker image runs (`node server.js`).
 	// The manual copies the docs require — public/ and .next/static — are

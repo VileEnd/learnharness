@@ -9,6 +9,13 @@
  */
 import { useEffect, useState } from "react";
 
+/** The worker's URL carries the build id: public/sw.js is a static file, so
+ *  this is what makes the worker differ per deploy and lets the browser see
+ *  an update (next.config.ts exposes the id at build time). */
+export function serviceWorkerUrl(buildId: string | undefined): string {
+	return buildId ? `/sw.js?v=${encodeURIComponent(buildId)}` : "/sw.js";
+}
+
 export function PwaRuntime() {
 	const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
 
@@ -39,7 +46,7 @@ export function PwaRuntime() {
 		};
 
 		navigator.serviceWorker
-			.register("/sw.js", { scope: "/", updateViaCache: "none" })
+			.register(serviceWorkerUrl(process.env.NEXT_PUBLIC_BUILD_ID), { scope: "/", updateViaCache: "none" })
 			.then((reg) => {
 				registration = reg;
 				watch(reg);
