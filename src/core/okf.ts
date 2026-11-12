@@ -33,6 +33,7 @@ import type { GraphChain, GraphNode } from "./contracts/graph.ts";
 import type { ConceptState, EvidenceEvent, LearnerSnapshot } from "./contracts/learner.ts";
 import type { OkfFile, OkfInput } from "./contracts/okf.ts";
 import { topicKey } from "./topic-key.ts";
+import { canonicalTopic } from "./topics.ts";
 
 export const OKF_VERSION = "0.2";
 /** Bumped when the renderer changes what it writes; part of the freshness stamp, so a deploy rebuilds the bundle. */
@@ -504,7 +505,7 @@ export function renderOkfBundle(input: OkfInput): OkfFile[] {
 	}
 
 	// ── topics ──
-	const canon = (label: string) => oneLine(input.aliases[topicKey(label)] ?? label);
+	const canon = (label: string) => canonicalTopic(label, input.aliases);
 	interface TopicAcc {
 		labels: Set<string>;
 		nodes: Set<string>;

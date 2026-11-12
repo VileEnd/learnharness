@@ -690,8 +690,11 @@ export function graphSnapshot(
 	// a node with no topic falls back to its source cluster (so a graph
 	// that was never tagged looks exactly like source mode). Derived on
 	// every read from the topics ledger - nothing persisted per mode.
+	// Read through the alias table like every other topic reader, so rows
+	// written before an alias existed still fold into one cluster.
 	const topicRows = deps.graphStore.readTopics();
-	const topicsOf = topicsByNode(topicRows);
+	const topicAliases = deps.graphStore.readTopicAliases();
+	const topicsOf = topicsByNode(topicRows, topicAliases);
 	const nodeTopics: Record<string, string[]> = {};
 	for (const node of graph.nodes) {
 		const list = topicsOf.get(node.id);
@@ -701,7 +704,7 @@ export function graphSnapshot(
 	let layoutClusters: Cluster[] | undefined;
 	if (groupBy === "topic") {
 		const display = new Map<string, string>();
-		for (const row of topicRows) if (!display.has(topicKey(row.topic))) display.set(topicKey(row.topic), row.topic);
+		for (const topics of topicsOf.values()) for (const t of topics) if (!display.has(topicKey(t))) display.set(topicKey(t), t);
 		const clusterKeyOf = (node: Pick<GraphNode, "id" | "provenance">): string | null => {
 			const first = nodeTopics[node.id]?.[0];
 			return first !== undefined ? `topic:${topicKey(first)}` : birthSessionOf(node);
