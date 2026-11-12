@@ -1,7 +1,7 @@
 # LearnHarness self-hosted stack (docs/self-hosting.md).
 #
 #   browser ──HTTPS──▶ caddy ──forward_auth──▶ oauth2-proxy ──OIDC──▶ keycloak
-#                        └──────────────────────▶ learnharness (no auth of its own) ──▶ ocr (internal, token)
+#                        └──────────────────────▶ learnharness (no auth of its own) ──▶ ocr (own network, token)
 #
 # Only Caddy publishes ports. Hostnames come from .env (see .env.example).
 name: learnharness
@@ -11,12 +11,36 @@ services:
     build: ..
     image: learnharness:local
     restart: unless-stopped
+    # Hardening: this container holds every user's data and the provider keys, and
+    # runs Chromium and PDF parsing. tini (init) reaps Chromium's leftovers; the
+    # root filesystem is read-only (the app writes only /data and /tmp). The
+    # entrypoint starts as root only to chown /data and drop to node, so it keeps
+    # exactly CHOWN (hand files over), DAC_READ_SEARCH (find must read 0700 data
+    # directories) and SETUID/SETGID (setpriv to node); node itself has none.
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    # /tmp: PDF page renders and Chromium's per-launch profile. Capped, since tmpfs counts as memory.
+    tmpfs:
+      - /tmp:mode=1777,size=512m
+    # Peaks seen with this image: ~0.4 GB idle plus a Chromium launch, ~1.7 GB for a
+    # 240 MB PDF upload, ~2.7 GB for a 40 MB text upload. Large uploads are a shipped
+    # feature and two users importing while a demo renders can cross 4 GB, so the cap is
+    # 6 GB on a 12 GB VM: a runaway is killed before it takes Keycloak and Postgres with
+    # it. memswap_limit equals mem_limit because Docker would otherwise allow the same
+    # amount again in swap (the server has zram), and a runaway would thrash first.
+    mem_limit: 6g
+    memswap_limit: 6g
+    # Threads count: the app idles at ~180, and six concurrent Chromium launches peaked at ~1000.
+    pids_limit: 2048
     volumes:
       # /data/data = LH_DATA_DIR (chats, graph, settings), /data/auth.json = API keys.
       # The entrypoint hands the files to the app user (uid 1000) on start.
       - ./volumes/learnharness:/data
     environment:
-      # PDF scanning sidecar (services/ocr): internal only, shared secret on every call.
+      # PDF scanning sidecar (services/ocr): on its own ocr-link network shared with the app only, shared secret on every call.
       OCR_URL: http://ocr:8000
       OCR_TOKEN: ${OCR_TOKEN}
       # Per-user data under users/<keycloak sub>/ (docs/self-hosting.md).
@@ -44,6 +68,7 @@ services:
     networks:
       internal:
         aliases: [lh-app]
+      ocr-link:
       claude-bridge:
         ipv4_address: 172.30.66.2
 
@@ -89,11 +114,25 @@ services:
     build: ../services/ocr
     image: learnharness-ocr:local
     restart: unless-stopped
+    # Hardened like the app: it parses user-uploaded PDFs and has internet egress.
+    # The entrypoint starts as root only to chown /data and drop to uid 10001.
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    # /tmp: uploads above 1 MB spool there (up to a 200 MB PDF), and so does the zip download.
+    tmpfs:
+      - /tmp:mode=1777,size=512m
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 512
     environment:
       OCR_TOKEN: ${OCR_TOKEN:?set OCR_TOKEN in .env}
     volumes:
       - ./volumes/ocr:/data
-    networks: [internal]
+    # Its own network, shared only with the app: not the internal one, so the
+    # app's port (which trusts identity headers) is out of its reach.
+    networks: [ocr-link]
 
   caddy:
     # caddy:2.11.7 + the Cloudflare DNS plugin (caddy/Dockerfile).
@@ -182,7 +221,7 @@ services:
     volumes:
       - ./keycloak/realm-learnharness.json:/opt/keycloak/data/import/realm-learnharness.json:ro
     depends_on: [keycloak-db]
-    networks: [internal]
+    networks: [internal, keycloak-link]
 
   keycloak-db:
     image: postgres:17.11-alpine
@@ -193,10 +232,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./volumes/keycloak-db:/var/lib/postgresql/data
-    networks: [internal]
+    # Reachable from keycloak only, and with no route out.
+    networks: [keycloak-link]
 
 networks:
   internal:
+  # The app and the OCR sidecar only. A plain bridge: OCR needs the internet for OpenRouter.
+  ocr-link:
+  # Keycloak and its database only; no route out.
+  keycloak-link:
+    internal: true
   # Private link between the app and the claude runner: no route out.
   claude-bridge:
     internal: true

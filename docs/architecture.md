@@ -478,7 +478,7 @@ flowchart LR
         KC["Keycloak (+ Postgres) — users, OIDC"]
         NEXT["LearnHarness image: standalone Next server<br/>ALL app logic: turns · extraction · jobs · graph<br/>+ Chromium (demo verification)"]
         DISK["/data volume — data/ ledgers (LH_DATA_DIR) · auth.json (LH_AUTH_FILE)"]
-        OCR["ocr sidecar (services/ocr) — PDF → markdown<br/>internal only, X-OCR-Token · own volume out/ + cache/"]
+        OCR["ocr sidecar (services/ocr) — PDF → markdown<br/>own network shared with the app only, X-OCR-Token · own volume out/ + cache/"]
     end
     subgraph OUTSIDE["outside"]
         OR["LLM providers (BYOK keys from auth.json, reflected into env)"]
@@ -497,7 +497,7 @@ flowchart LR
     BROWSER --> DG
 ```
 
-The `ocr` sidecar is a separate Python container on the internal network only (no port, no Caddy route); the app calls it with the shared `OCR_TOKEN` and forwards the OpenRouter key from Settings per job, so the sidecar holds no provider key of its own.
+The `ocr` sidecar is a separate Python container on a network shared only with the app (no port, no Caddy route); the app calls it with the shared `OCR_TOKEN` and forwards the OpenRouter key from Settings per job, so the sidecar holds no provider key of its own.
 
 The app server has **no authentication of its own**: every `/api/*` route trusts whoever reaches it, so it publishes no port — only Caddy does, and Caddy forwards a request only after oauth2-proxy has accepted the Keycloak session (the PWA manifest and its icons are the one public exception: browsers fetch them without cookies). All app data lives on the mounted `/data` volume through the `LH_DATA_DIR` / `LH_AUTH_FILE` seams (also the test seam — `data-dir-seam.test.ts`). The image build hard-fails if repo `data/` or keys would leak into the payload or if prompt assets fall out of the trace (`scripts/build-server.mjs`), boots the server once (`scripts/smoke-server.mjs`), and drives a demo page through the image's Chromium (`scripts/smoke-demo-runtime.mjs --browser`). **Outbound guard:** every fetch whose URL a model or a user supplies (the researcher's `web_fetch`/`web_fetch_pdf`, the demo browser's http(s) subresources, Web Push endpoints) goes through `src/agent/outbound.ts`, because the app shares a network with Keycloak, oauth2-proxy, the OCR sidecar and Postgres and sits on a home LAN. It allows only http(s) to names that resolve to public addresses (`localhost`, single-label and private-suffix names are refused before any lookup; one non-public answer refuses the whole name), connects to the address it checked (no second lookup), re-checks every redirect hop and counts body bytes as they arrive (`readCapped`); a new fetch of that kind must use it, and tests inject its lookup and transport.
 

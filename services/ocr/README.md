@@ -59,7 +59,7 @@ The page shows an estimate before converting. Every API result is cached in `.ca
 
 ## Service mode (used by LearnHarness)
 
-The same app runs as a sidecar container (`Dockerfile`, `deploy/compose.yaml`: service `ocr`, internal network only, no published port).
+The same app runs as a sidecar container (`Dockerfile`, `deploy/compose.yaml`: service `ocr`, on a network shared only with the app, no published port).
 
 | Env | Meaning | Default |
 |---|---|---|
