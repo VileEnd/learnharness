@@ -2388,7 +2388,77 @@ describe("chain simplification (the merger's maintenance pass, owner 2026-09-30 
 		provenance: [{ chatId: "src_1", messageId: "" }],
 	});
 
-	it("the owner example: [A,B]⇒X + [X,C]⇒Y make [A,B,C]⇒Y redundant (ancestry-cover)", () => {
+	const keptIds = (lines: GraphChain[]) => simplifyChains(lines).map((c) => c.id).sort();
+	const at = (hour: number) => `2026-09-30T${String(hour).padStart(2, "0")}:00:00.000Z`;
+
+	it("an equivalence extracted as two chains keeps the grounded chain: [A,B]⇒Y, [Y]⇒X, [X]⇒Y", () => {
+		assert.deepEqual(keptIds([
+			chain("arg_g", ["n_a", "n_b"], "n_y", at(1)),
+			chain("arg_yx", ["n_y"], "n_x", at(2)),
+			chain("arg_xy", ["n_x"], "n_y", at(3)),
+		]), ["arg_g", "arg_xy", "arg_yx"]);
+	});
+
+	it("a joint premise alone does not derive: [A,Q]⇒X, [X]⇒Y keep [A]⇒Y", () => {
+		assert.deepEqual(keptIds([
+			chain("arg_aqx", ["n_a", "n_q"], "n_x", at(1)),
+			chain("arg_xy", ["n_x"], "n_y", at(2)),
+			chain("arg_ay", ["n_a"], "n_y", at(3)),
+		]), ["arg_aqx", "arg_ay", "arg_xy"]);
+	});
+
+	it("two chains never justify each other's removal: [X]⇒Y, [Y]⇒X, [Z]⇒X, [Z]⇒Y keep exactly one Z chain", () => {
+		const kept = keptIds([
+			chain("arg_xy", ["n_x"], "n_y", at(1)),
+			chain("arg_yx", ["n_y"], "n_x", at(2)),
+			chain("arg_zx", ["n_z"], "n_x", at(3)),
+			chain("arg_zy", ["n_z"], "n_y", at(4)),
+		]);
+		assert.equal(kept.filter((id) => id.startsWith("arg_z")).length, 1);
+		assert.ok(kept.includes("arg_xy") && kept.includes("arg_yx"));
+	});
+
+	it("a plain shortcut drops: [A]⇒X, [X]⇒Y make [A]⇒Y redundant", () => {
+		assert.deepEqual(keptIds([
+			chain("arg_ay", ["n_a"], "n_y", at(1)),
+			chain("arg_ax", ["n_a"], "n_x", at(2)),
+			chain("arg_xy", ["n_x"], "n_y", at(3)),
+		]), ["arg_ax", "arg_xy"]);
+	});
+
+	it("dropping never loses a derivation, and the result does not depend on the input order", () => {
+		// Deterministic pseudo-random ledgers over a few nodes, cycles allowed.
+		let seed = 7;
+		const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+		const nodes = ["n_a", "n_b", "n_c", "n_d", "n_e", "n_f"];
+		for (let round = 0; round < 25; round++) {
+			const lines: GraphChain[] = [];
+			for (let i = 0; i < 9; i++) {
+				const conclusion = nodes[rand(nodes.length)]!;
+				const premises = [...new Set(Array.from({ length: 1 + rand(3) }, () => nodes[rand(nodes.length)]!))].filter((p) => p !== conclusion);
+				if (premises.length > 0) lines.push(chain(`arg_${round}_${i}`, premises, conclusion, at(i)));
+			}
+			const kept = simplifyChains(lines);
+			const derives = (start: string[], target: string) => {
+				const out = new Set(start);
+				for (let grew = true; grew; ) {
+					grew = false;
+					for (const c of kept) {
+						if (out.has(c.conclusion) || !c.premises.every((p) => out.has(p))) continue;
+						out.add(c.conclusion);
+						grew = true;
+					}
+				}
+				return out.has(target);
+			};
+			for (const c of lines) assert.ok(derives(c.premises, c.conclusion), `round ${round}: ${c.id} is still derivable`);
+			const ids = kept.map((c) => c.id).sort();
+			assert.deepEqual(keptIds([...lines].reverse()), ids, `round ${round}: reversed input`);
+			assert.deepEqual(keptIds([...lines].sort(() => rand(3) - 1)), ids, `round ${round}: shuffled input`);
+		}
+	});
+
+	it("the owner example: [A,B]⇒X + [X,C]⇒Y make [A,B,C]⇒Y redundant (derivability)", () => {
 		const kept = simplifyChains([
 			chain("arg_3", ["n_a", "n_b", "n_c"], "n_y", "2026-09-30T03:00:00.000Z"),
 			chain("arg_1", ["n_a", "n_b"], "n_x", "2026-09-30T01:00:00.000Z"),
@@ -2418,7 +2488,7 @@ describe("chain simplification (the merger's maintenance pass, owner 2026-09-30 
 		assert.deepEqual(kept.map((c) => c.id).sort(), ["arg_1", "arg_2", "arg_3"]);
 	});
 
-	it("ancestry reaches transitively: [W]⇒A chains through [A,B]⇒X", () => {
+	it("derivability reaches transitively: [W]⇒A chains through [A,B]⇒X", () => {
 		const kept = simplifyChains([
 			chain("arg_1", ["n_w"], "n_a", "2026-09-30T01:00:00.000Z"),
 			chain("arg_2", ["n_a", "n_b"], "n_x", "2026-09-30T02:00:00.000Z"),
