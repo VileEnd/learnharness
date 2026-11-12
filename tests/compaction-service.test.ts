@@ -324,6 +324,30 @@ describe("the compaction service", () => {
 		assert.equal(messages.at(-1)!.id, activeCompactionOf(messages)!.id, "the marker follows the concurrent write");
 	});
 
+	it("a chat deleted during the summary call ends the compaction quietly", async () => {
+		const chatId = overThresholdChat("compact: deleted meanwhile");
+		const deps = depsOf(chatId, 40_000);
+		const errors: unknown[][] = [];
+		const orig = console.error;
+		console.error = (...args: unknown[]) => void errors.push(args);
+		try {
+			await ensureCompacted(
+				{
+					...deps,
+					summarize: async (prompt, engine) => {
+						chatStore.deleteChat(chatId);
+						return deps.summarize!(prompt, engine);
+					},
+				},
+				chatId,
+			);
+		} finally {
+			console.error = orig;
+		}
+		assert.deepEqual(errors, [], "a deleted chat is not a failed compaction");
+		assert.equal(chatStore.getChat(chatId), null);
+	});
+
 	it("a summarised message changed during the summary call → no marker, no usage", async () => {
 		const chatId = overThresholdChat("compact: concurrent edit");
 		const deps = depsOf(chatId, 40_000);

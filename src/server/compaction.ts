@@ -240,6 +240,8 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 		// prefix with the kept boundary in place; otherwise the summary
 		// describes text that is gone, so nothing is checkpointed (the next
 		// gate retries on current truth).
+		// Deleted during the summary call: nothing to checkpoint, and not a failure.
+		if (!deps.chatStore.getChat(chatId)) return;
 		const summarised = JSON.stringify(messages.slice(0, cut));
 		const appended = deps.chatStore.updateMessages(chatId, (current) =>
 			current[cut]?.id === firstKept.id && JSON.stringify(current.slice(0, cut)) === summarised ? [...current, marker] : null,
