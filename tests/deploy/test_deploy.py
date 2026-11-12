@@ -44,6 +44,18 @@ def ours(images):
     return sorted({i.split(":")[1] for i in images if i.split(":")[0] in REPOS})
 
 
+def writes_then_full(n):
+    """A write_state that succeeds n times, then fails as on a full disk."""
+    done = []
+
+    def write(path, s):
+        if len(done) >= n:
+            raise OSError(28, "No space left on device")
+        done.append(s)
+        D.write_state(path, s)
+    return write
+
+
 def state(current, previous=None, pending=None):
     return {"version": 1, "current": current, "previous": previous, "pending": pending}
 
@@ -444,6 +456,20 @@ class Deploy(unittest.TestCase):
         self.assertEqual(w.did("timeout"), [])  # no Keycloak bootstrap for a release that never got healthy
         self.assertEqual(w.did("up")[-1][-2:], ["--pull", "never"])  # the go-back never reaches for the network
 
+    def test_a_go_back_whose_state_write_fails_still_says_where_it_is(self):
+        w = World()
+        r = Run(self, w)
+        r.deployed(2, previous=rec(1))
+        w.tag("v0.3.0", sha(3))
+        w.unhealthy.add(sha(3)[:12])
+        r.stack.write_state = writes_then_full(1)  # the pending marker is written, the go-back's write fails
+        self.assertEqual(r.stack.deploy("v0.3.0"), D.EXIT_FAILED)
+        self.assertEqual(w.app(), f"learnharness:{sha(2)[:12]}")
+        self.assertIn("cannot read records", r.log())
+        self.assertIn("back on v0.2.0", r.lines[-1])
+        self.assertIn("could not be written", r.lines[-1])
+        self.assertEqual(r.state()["current"], rec(2))  # and the next start reports the pending deploy
+
     def test_a_failed_up_goes_back_too(self):
         w = World()
         r = Run(self, w)
@@ -485,6 +511,17 @@ class Deploy(unittest.TestCase):
         self.assertEqual((w.builds(), w.did("up")), ([], []))
         self.assertEqual(r.state(), state(rec(2), rec(1)))
 
+    def test_already_running_puts_back_a_checkout_left_elsewhere(self):
+        w = World()
+        r = Run(self, w)
+        r.deployed(2, previous=rec(1))
+        w.tag("v0.2.0", sha(2))
+        w.objects.add(sha(9))
+        w.head = sha(9)  # a killed build had moved it
+        self.assertEqual(r.stack.deploy("v0.2.0"), 0)
+        self.assertEqual(w.head, sha(2))
+        self.assertEqual((w.builds(), w.did("up")), ([], []))
+
     def test_a_failed_final_state_write_leaves_the_pending_marker_for_the_next_start(self):
         w = World()
         r = Run(self, w)
@@ -506,7 +543,8 @@ class Deploy(unittest.TestCase):
 
         r.stack.write_state = D.write_state
         self.assertEqual(r.stack.start("latest"), 0)
-        self.assertIn(f"a deploy of v0.3.0 ({sha(3)[:12]}) was interrupted; starting the recorded v0.2.0", r.log())
+        self.assertIn(f"a deploy or rollback to v0.3.0 ({sha(3)[:12]}) was interrupted; starting the recorded v0.2.0",
+                      r.log())
         self.assertEqual(r.state(), state(rec(2), rec(1)))
         self.assertEqual(w.app(), f"learnharness:{sha(2)[:12]}")
 
@@ -573,6 +611,21 @@ class Rollback(unittest.TestCase):
         self.assertEqual((w.head, w.did("up")), (sha(2), []))
         self.assertEqual(r.stack.rollback(force=True), 0)
         self.assertEqual((w.head, w.app()), (sha(1), f"learnharness:{sha(1)[:12]}"))
+
+    def test_an_interrupted_rollback_is_reported_by_the_next_start(self):
+        w = World()
+        r = Run(self, w)
+        w.build(sha(1)[:12], sha(1))
+        r.deployed(2, previous=rec(1))
+        r.stack.write_state = writes_then_full(1)  # the pending marker is written, the final write fails
+        self.assertEqual(r.stack.rollback(), D.EXIT_FAILED)
+        self.assertEqual(r.state(), state(rec(2), rec(1), rec(1)))
+        self.assertEqual(w.app(), f"learnharness:{sha(1)[:12]}")
+        r.stack.write_state = D.write_state
+        self.assertEqual(r.stack.start("latest"), 0)
+        self.assertIn(f"a deploy or rollback to v0.1.0 ({sha(1)[:12]}) was interrupted; starting the recorded v0.2.0",
+                      r.log())
+        self.assertEqual((w.app(), r.state()), (f"learnharness:{sha(2)[:12]}", state(rec(2), rec(1))))
 
     def test_a_failed_up_brings_the_current_deploy_back(self):
         w = World()

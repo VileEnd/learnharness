@@ -26,7 +26,7 @@ of these at a time) and have prepared the checkout, volumes and secrets.env.
 
 State: deploy-state.json {version, current, previous, pending}, each {target,
 commit, tag, time}; `pending` names a deploy between its `up` and its final
-record. Written atomically. Exit 0 ok, 1 transient (the boot unit tries
+record, or a rollback between its `up` and its record. Written atomically. Exit 0 ok, 1 transient (the boot unit tries
 again), 3 failed for good (it does not). Standard library only.
 """
 
@@ -40,6 +40,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
+# Any new field in the state file bumps this (an older build then refuses the file).
 STATE_VERSION = 1
 # compose service -> image repository; compose builds these, tagged per deploy.
 SERVICES = {
@@ -60,10 +61,10 @@ MAX_STATE = 64 * 1024
 EXIT_RETRY = 1
 EXIT_FAILED = 3
 # Seconds per step, so a hung step fails here and the deploy goes back, well
-# inside the units' TimeoutStartSec (deploy 60 min, rollback 30 min).
+# inside the units' TimeoutStartSec (deploy and stack 90 min, rollback 40 min).
 T_GIT = 120
 T_FETCH = 300
-T_BUILD = 25 * 60
+T_BUILD = 40 * 60
 T_UP = 300
 T_RELOAD = 60
 T_INSPECT = 30
@@ -458,7 +459,7 @@ class Stack:
                              f"(re-cloned?); deploy again with learnharness-deploy@<target>")
                     return EXIT_FAILED
                 if state["pending"]:
-                    self.log(f"a deploy of {describe(state['pending'])} was interrupted; "
+                    self.log(f"a deploy or rollback to {describe(state['pending'])} was interrupted; "
                              f"starting the recorded {describe(cur)}")
                     try:
                         self.save(make_state(cur, state["previous"]))
@@ -509,6 +510,11 @@ class Stack:
 
         new = record(name, commit, image_tag(commit), self.now())
         if state and commit == state["current"]["commit"] and self.health(new["tag"]) == "healthy":
+            try:
+                self.checkout(commit)  # a killed build may have left the checkout elsewhere
+            except Failed as e:
+                self.log(f"{name} is already running {new['tag']}, but its checkout could not be put back ({e})")
+                return EXIT_FAILED
             self.log(f"{name} is {commit[:12]}, already running {new['tag']}; nothing to do")
             return 0
 
@@ -559,7 +565,10 @@ class Stack:
             return 0
 
         if before["tag"] == new["tag"]:
-            self.save(base)
+            try:
+                self.save(base)
+            except OSError as e:
+                self.log(f"the deploy state could not be written ({e})")
             self.log(f"deploy of {describe(new)} failed: {reason}; it is the same build as the deploy that was "
                      f"running, so there is no other build to go back to (learnharness-rollback returns to the "
                      f"previous deploy)")
@@ -570,8 +579,14 @@ class Stack:
             self.log(f"deploy of {describe(new)} failed: {reason}; going back to {describe(before)} "
                      f"failed too ({e}): check docker compose ps")
             return EXIT_FAILED
-        self.save(base)
         self.format_note(before, new)
+        try:
+            self.save(base)
+        except OSError as e:
+            self.log(f"deploy of {describe(new)} failed: {reason}; back on {describe(before)}, but the deploy state "
+                     f"could not be written ({e}): the next start reports the interrupted deploy and keeps "
+                     f"{describe(before)}")
+            return EXIT_FAILED
         self.log(f"deploy of {describe(new)} failed: {reason}; back on {describe(before)}")
         return EXIT_FAILED
 
@@ -632,6 +647,11 @@ class Stack:
         self.log(f"rolling back from {describe(cur)} to {describe(prev)}")
         self.format_note(prev, cur)
         try:
+            self.save({**state, "pending": prev})
+        except OSError as e:
+            self.log(f"rollback: the deploy state could not be written ({e}); nothing was changed")
+            return EXIT_FAILED
+        try:
             self.bring_up(prev, pull_never=True)
         except Failed as e:
             self.log(f"rollback to {describe(prev)} failed ({e}); bringing {describe(cur)} back")
@@ -639,12 +659,17 @@ class Stack:
                 self.bring_up(cur, pull_never=True)
             except Failed as e2:
                 self.log(f"bringing {describe(cur)} back failed too ({e2}): check docker compose ps")
+                return EXIT_FAILED
+            try:
+                self.save({**state, "pending": None})
+            except OSError as e2:
+                self.log(f"the deploy state could not be written ({e2})")
             return EXIT_FAILED
         try:
             self.save(after_rollback(state))
         except OSError as e:
             self.log(f"rolled back to {describe(prev)} but the deploy state could not be written ({e}); "
-                     f"a restart would start {describe(cur)} again")
+                     f"the next start reports the interrupted rollback and starts {describe(cur)} again")
             return EXIT_FAILED
         if not self.wait_healthy(prev["tag"]):
             self.log(f"rolled back to {describe(prev)}, but the app did not report healthy within "

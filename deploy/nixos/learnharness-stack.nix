@@ -56,7 +56,7 @@ let
     serviceConfig = {
       Type = "oneshot";
       StateDirectory = "learnharness";
-      TimeoutStartSec = "30min";
+      TimeoutStartSec = "40min";
     };
     script = ''
       ${prepare false}
@@ -197,7 +197,7 @@ in
         RemainAfterExit = true;
         StateDirectory = "learnharness";
         # Only the first start on a new machine builds (npm ci + next build).
-        TimeoutStartSec = "60min";
+        TimeoutStartSec = "90min";
         Restart = "on-failure";
         RestartSec = "30s";
         RestartPreventExitStatus = 3;
@@ -220,7 +220,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         StateDirectory = "learnharness";
-        TimeoutStartSec = "60min";
+        TimeoutStartSec = "90min";
       };
       scriptArgs = "%I";
       # `--`: a target that starts with "-" stays a target (and is refused).
