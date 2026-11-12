@@ -73,6 +73,26 @@ for (const [name, render] of Object.entries(renderers)) {
 			assert.match(render(`![dot](${pixel})`), /<img[^>]+src="data:image\/png;base64,iVBOR/);
 		});
 
+		it("a kept data: image carries only src, alt, title, width and height", () => {
+			const html = render(`<img name=body id=x usemap="#m" longdesc="https://attacker.example/d" align=left class=y style="width:1px" data-k=v onerror="alert(1)" alt="dot" title="t" width="8" height="9" src="${pixel}">`);
+			const tag = html.match(/<img[^>]*>/)?.[0] ?? "";
+			assert.ok(tag, html);
+			assert.doesNotMatch(tag, /\b(name|id|usemap|longdesc|align|style|onerror|data-k)=/);
+			assert.doesNotMatch(html, /attacker\.example/);
+			for (const a of ['alt="dot"', 'title="t"', 'width="8"', 'height="9"']) assert.ok(tag.includes(a), a);
+			assert.ok(tag.includes(`src="${pixel}"`));
+		});
+
+		it("a kept data: image is a bare <img>: no block element inside a paragraph or a link button", () => {
+			for (const md of [`before ![dot](${pixel}) after`, `[![dot](${pixel})](https://example.com/page)`, `[text ![dot](${pixel})](https://example.com/page)`]) {
+				const html = render(md);
+				assert.match(html, /<img/, md);
+				assert.doesNotMatch(html, /<div[^>]*data-streamdown="image-wrapper"/, md);
+				assert.doesNotMatch(html, /<(p|button)\b(?:(?!<\/(?:p|button)>)[\s\S])*<div/, md);
+				assert.match(html, /<img[^>]*class="[^"]*max-w-full/, md);
+			}
+		});
+
 		it("other data: images and schemes stay blocked", () => {
 			for (const md of [
 				"![x](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)",

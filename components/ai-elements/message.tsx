@@ -367,7 +367,7 @@ export const streamdownRemend = { htmlTags: false };
 // ![x](https://host/?d=...) sends data out with no click. Streamdown's
 // default harden step allows every image prefix, so this keeps its
 // raw → sanitize → harden pipeline and sets allowedImagePrefixes to [], which
-// blocks every <img> that markdown can produce, with three deliberate changes:
+// blocks every <img> that markdown can produce, with four deliberate changes:
 //   - before harden, an image to another site (http(s) or protocol-relative)
 //     becomes a link (its alt text, else its address) that the learner can
 //     open: Streamdown's link button asks before it navigates. Inside an
@@ -377,6 +377,9 @@ export const streamdownRemend = { htmlTags: false };
 //     harden's own allowDataImages switch (already on in Streamdown's default
 //     options) lets it through; other data: types (svg, html, ...) are dropped
 //     here;
+//   - a kept data: image is reduced to src, alt, title, width and height and
+//     rendered as a bare <img> (md-blocks `img`), not in Streamdown's block
+//     wrapper, which is a <div> and cannot sit inside a <p> or a link;
 //   - relative and same-origin addresses stay blocked: an <img> pointed at
 //     one of the app's own GET routes would call it.
 // The app's own images (figures, drawings, photos, page images) are separate
@@ -387,6 +390,7 @@ export const streamdownRemend = { htmlTags: false };
 type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
 
 const RASTER_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp)[;,]/;
+const KEPT_IMAGE_ATTRIBUTES = ["src", "alt", "title", "width", "height"];
 const REMOTE_IMAGE = /^(?:https?:)?\/\/[^/\s]/i;
 
 function imageToLink(root: HastNode): void {
@@ -407,8 +411,12 @@ function imageToLink(root: HastNode): void {
       const src = String(child.properties?.src ?? "");
       if (src.startsWith("data:")) {
         // Harden's own switch would also pass data:image/svg+xml.
-        const { srcSet: _a, srcset: _b, ...properties } = child.properties ?? {};
-        child.properties = RASTER_DATA_IMAGE.test(src) ? properties : { ...properties, src: "" };
+        // A kept image carries only these attributes: id, name, usemap and the
+        // like could clobber document globals (name="body") or reach out
+        // (srcset, longdesc).
+        const kept: Record<string, unknown> = {};
+        for (const key of KEPT_IMAGE_ATTRIBUTES) if (child.properties?.[key] !== undefined) kept[key] = child.properties[key];
+        child.properties = RASTER_DATA_IMAGE.test(src) ? kept : { ...kept, src: "" };
         return [child];
       }
       if (!REMOTE_IMAGE.test(src)) return [child];
