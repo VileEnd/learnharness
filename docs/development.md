@@ -180,7 +180,7 @@ All deterministic, no LLM, no network (engines are injected — pi-ai's faux pro
 
 ## Lineage
 
-The teaching methodology comes from an Obsidian-based POC (its `knowledge graph design.md` was the original epistemic-model source, since amended — see the amendments table in `docs/vision.md`). The harness was originally built on the pi agent SDK, pivoted to standalone Next.js + the Vercel AI SDK, and later swapped its LLM engine back to pi-ai and has since dropped the AI SDK entirely (the client wire is the native pi event stream) ([`docs/pi-engine-swap.md`](pi-engine-swap.md)).
+The teaching methodology comes from an Obsidian-based POC (its `knowledge graph design.md` was the original epistemic-model source, since amended — see the amendments table in `docs/vision.md`). The harness was originally built on the pi agent SDK, pivoted to standalone Next.js + the Vercel AI SDK, and later swapped its LLM engine back to pi-ai, while the AI SDK's `UIMessage` client protocol has since been dropped for the native pi event wire ([`docs/pi-engine-swap.md`](pi-engine-swap.md)).
 
 ## Data
 

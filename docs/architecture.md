@@ -565,7 +565,7 @@ Before 2026-10-02 the client discovered server-side change by polling: a lattice
 | `turn-started` | `{chatId}` | `beginTurn` success (after the registry write; the double-begin 409 path is silent) — every turn, client-initiated included |
 | `turn-settled` | `{chatId}` | `endTurn` on a live entry — fires after `persistTurn`, so fetches read durable truth |
 | `jobs-changed` | `{chatId}` | every job-store write (create/update/delete-that-removed) |
-| `activity-changed` | `{}` | extraction `setPhase`/`finishExtraction`; practice `registerRow`/phase-writes/`finishPractice` |
+| `activity-changed` | `{}` | extraction `setPhase`/`finishExtraction` |
 | `chats-changed` | `{}` | list-shape writes only: chat create/rename/delete-that-removed |
 
 ### 10.3 Emitter laws
