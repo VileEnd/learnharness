@@ -35,6 +35,12 @@ const { runAsTenant } = await import("../src/core/tenant-context.ts");
 const { emit } = await import("../src/core/events.ts");
 const { stores } = await import("../src/server/stores.ts");
 const { extraction } = await import("../src/server/chat-handler.ts");
+const { outboundOverride } = await import("../src/agent/outbound.ts");
+// Push endpoints are resolved and checked for a public address on registration: every name resolves to a documentation address.
+outboundOverride.current = { lookup: async () => [{ address: "192.0.2.10", family: 4 }] };
+after(() => {
+	outboundOverride.current = undefined;
+});
 
 const USER = "3f2b8c1e-9d4a-4e6b-8a57-1c2d3e4f5a6b";
 const OTHER = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
@@ -329,6 +335,8 @@ describe("push registration", () => {
 		{ name: "POST without a subscription is 400", run: () => call(routes.push, "POST", { body: { label: "x" } }), status: 400 },
 		{ name: "POST with an endpoint that is not a URL is 400", run: () => call(routes.push, "POST", { body: { subscription: { ...subscription, endpoint: "nope" } } }), status: 400 },
 		{ name: "POST with a body that is not JSON is 400", run: () => call(routes.push, "POST", { raw: "{nope" }), status: 400 },
+		{ name: "POST with a local endpoint is refused 400", run: () => call(routes.push, "POST", { body: { subscription: { ...subscription, endpoint: "https://localhost/x" } } }), status: 400, body: (b) => assert.equal(b.error, "Push endpoint refused") },
+		{ name: "POST with an http endpoint is refused 400", run: () => call(routes.push, "POST", { body: { subscription: { ...subscription, endpoint: "http://push.example.com/x" } } }), status: 400 },
 		{ name: "POST from another site is refused 403", run: () => call(routes.push, "POST", { body: { subscription }, headers: { "sec-fetch-site": "cross-site" } }), status: 403, body: (b) => assert.equal(b.error, "same_origin_required") },
 		{ name: "POST registers the device (204)", run: () => call(routes.push, "POST", { body: { subscription, label: "Phone" } }), status: 204 },
 		{ name: "DELETE without an endpoint is 400", run: () => call(routes.push, "DELETE", { body: {} }), status: 400 },
