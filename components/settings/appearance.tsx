@@ -87,7 +87,7 @@ export function appearanceVars(a: ReturnType<typeof resolveAppearance>): Record<
 	const vars: Record<string, string> = {};
 	if (a.background !== null) Object.assign(vars, derivedPalette(a.background));
 	if (a.fontFamily !== null) {
-		const bundled = BUNDLED_READING_FONTS[a.fontFamily];
+		const bundled = Object.hasOwn(BUNDLED_READING_FONTS, a.fontFamily) ? BUNDLED_READING_FONTS[a.fontFamily] : undefined;
 		vars["--font-prose"] = `"${a.fontFamily}", ${bundled ? `${bundled}, ` : ""}var(--font-sans3), ui-sans-serif, system-ui, sans-serif`;
 	}
 	// The ONE documented reading-size variable (typography round 4): prose,

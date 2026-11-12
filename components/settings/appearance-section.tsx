@@ -78,6 +78,15 @@ function localFontsApi(): LocalFontsApi | null {
 	return (window as unknown as { queryLocalFonts?: LocalFontsApi }).queryLocalFonts ?? null;
 }
 
+/** The menu list from the OS-reported families: the bundled families join
+ *  them (they render whether or not the OS has them), but only when the OS
+ *  list was actually read; deduped, default row removed, sorted. Pure. */
+export function installedFontFamilies(installed: readonly string[]): string[] {
+	return [...new Set(installed.length ? [...installed, ...Object.keys(BUNDLED_READING_FONTS)] : [])]
+		.filter((f) => f !== DEFAULT_READING_FONT)
+		.sort((a, b) => a.localeCompare(b));
+}
+
 /** Compose the reading-font pick: null (or blank) = the factory
  *  Source Sans 3; otherwise the family verbatim (trimmed — the
  *  sanitizer trims again server-side). Pure — exported for tests. */
@@ -127,13 +136,7 @@ export function AppearanceSection({
 				} else {
 					void api()
 						.then((fonts) => {
-							const installed = fonts.map((f) => f.family);
-							// The bundled families join the installed ones (they
-							// render whether or not the OS has them), but only
-							// when the OS list was actually read.
-							const families = [...new Set(installed.length ? [...installed, ...Object.keys(BUNDLED_READING_FONTS)] : [])]
-								.filter((f) => f !== DEFAULT_READING_FONT)
-								.sort((a, b) => a.localeCompare(b));
+							const families = installedFontFamilies(fonts.map((f) => f.family));
 							if (families.length === 0) {
 								// Resolved-but-empty: not a failure the catch sees —
 								// an honest unavailable.

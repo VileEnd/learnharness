@@ -17,6 +17,7 @@ import {
 	DEFAULT_READING_FONT,
 	AppearanceSection,
 	composeFontFamily,
+	installedFontFamilies,
 } from "../components/settings/appearance-section";
 
 describe("fontMenuResults — the DEFAULT row is a candidate, never a ghost pick", () => {
@@ -172,5 +173,17 @@ describe("customFamilyFor — the single-field custom escape (2026-09-26)", () =
 	it("an empty query is never a custom pick", () => {
 		assert.equal(customFamilyFor("", families), null);
 		assert.equal(customFamilyFor("   ", families), null);
+	});
+});
+
+describe("installedFontFamilies — the desktop list", () => {
+	it("appends the bundled JetBrains Mono to a non-empty OS list", () => {
+		assert.deepEqual(installedFontFamilies(["Georgia", "Arial"]), ["Arial", "Georgia", "JetBrains Mono"]);
+	});
+	it("does not duplicate it when the OS already lists it", () => {
+		assert.deepEqual(installedFontFamilies(["JetBrains Mono", "Georgia"]), ["Georgia", "JetBrains Mono"]);
+	});
+	it("stays empty when the OS list is empty (the curated fallback takes over)", () => {
+		assert.deepEqual(installedFontFamilies([]), []);
 	});
 });

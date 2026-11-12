@@ -88,6 +88,13 @@ describe("appearanceVars — the mapping the provider applies", () => {
 		);
 	});
 
+	it("a family named like an inherited Object member is not treated as bundled", () => {
+		for (const name of ["constructor", "toString", "__proto__"]) {
+			const vars = appearanceVars(resolveAppearance({ fontFamily: name }));
+			assert.equal(vars["--font-prose"], `"${name}", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`);
+		}
+	});
+
 	it("full delta: every knob lands on its token", () => {
 		const vars = appearanceVars(
 			resolveAppearance({
