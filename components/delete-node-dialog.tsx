@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
-import { useModal } from "@/components/ui/use-modal";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 
 /** The 409 extraction_running line (owner phrasing, node interlude):
  *  the server's error names the extraction; the ACTIVITY DOCK is the
@@ -37,6 +37,7 @@ export function DeleteNodeBody({
 	failure,
 	onClose,
 	onRun,
+	rootRef,
 }: {
 	/** One node (the canvas context menu) or many (the chain table's
 	 *  selection). One names it alone; many pluralize the title and
@@ -46,8 +47,11 @@ export function DeleteNodeBody({
 	failure: { code: string; error: string } | null;
 	onClose: () => void;
 	onRun: () => void;
+	/** The wrapper's handle on the dialog root (for its Esc topmost check). */
+	rootRef?: React.RefObject<HTMLDivElement | null>;
 }) {
-	const ref = useRef<HTMLDivElement>(null);
+	const ownRef = useRef<HTMLDivElement>(null);
+	const ref = rootRef ?? ownRef;
 	useModal(ref);
 	return (
 		<div
@@ -153,6 +157,7 @@ export function DeleteNodeDialog({
 	onDeleted: (nodeIds: string[], graphRevision: number) => void;
 }) {
 	const [busy, setBusy] = useState(false);
+	const rootRef = useRef<HTMLDivElement>(null);
 	const backdropDismiss = useBackdropDismiss(() => {
 		if (!busy) onClose();
 	});
@@ -174,7 +179,7 @@ export function DeleteNodeDialog({
 	useEffect(() => {
 		if (!nodes || nodes.length === 0) return;
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(rootRef.current)) {
 				// THE ONE-ESC LAW (keyboard round 2026-10-06): claim at the
 				// document level — a window-level stopPropagation cannot stop
 				// the earlier-registered global window listener.
@@ -236,6 +241,7 @@ export function DeleteNodeDialog({
 				failure={failure}
 				onClose={onClose}
 				onRun={() => void run()}
+				rootRef={rootRef}
 			/>
 		</div>,
 		document.body,

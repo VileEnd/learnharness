@@ -39,7 +39,12 @@ second pillar of input).
   Enter-submits-from-anywhere listeners stand down while one is open (the
   canvas workspace, itself modal, keeps submitting its own content). The
   in-session overlays (plan popup, diagram focus, canvas) make inert only
-  the session area around them: the sidebar and top bar stay live.
+  the session area around them: the sidebar and top bar stay live. With several
+  surfaces open, only the topmost acts on Esc and on Enter (one Esc closes
+  one surface). Focus returns to the opener; if the app blurred it after a
+  pointer click, to the control last pressed; if it has unmounted (a menu
+  item), to the control pressed before it (the menu's trigger), else the
+  main region, never `<body>`.
 - **Esc priority chain**: topmost popover → cheat sheet → cancel
   dictation (DISCARD — the transcript flush is Cmd+D/Stop only, owner
   round) → abort turn (local stream only — a server-side wake turn has

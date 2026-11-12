@@ -8,7 +8,7 @@ import { filterFolderPick, skippedNotice, type DocumentDecision, type DuplicateV
 import { createTaskQueue, fileForm, jsonOf, tooLargeReason } from "@/components/add-documents-queue";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
-import { useModal } from "@/components/ui/use-modal";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { useActivity } from "@/components/activity-dock";
 
 /**
@@ -124,6 +124,7 @@ export function AddDocumentsBody({
 	onImport,
 	fileInputRef,
 	folderInputRef,
+	rootRef,
 }: {
 	entries: Entry[];
 	decisions: Record<number, DocumentDecision>;
@@ -142,6 +143,8 @@ export function AddDocumentsBody({
 	onImport: () => void;
 	fileInputRef?: React.RefObject<HTMLInputElement | null>;
 	folderInputRef?: React.RefObject<HTMLInputElement | null>;
+	/** The wrapper's handle on the dialog root (for its Esc topmost check). */
+	rootRef?: React.RefObject<HTMLDivElement | null>;
 }) {
 	const toImport = entries.filter((e) => willImport(e, decisions));
 	const skipped = entries.filter((e) => e.state === "ready" && !willImport(e, decisions)).length;
@@ -149,7 +152,8 @@ export function AddDocumentsBody({
 	const scanTotal = toImport.reduce((sum, e) => sum + (e.usd ?? 0), 0);
 	const started = results.filter((r) => r.outcome === "started").length;
 	const failed = results.filter((r) => r.outcome === "failed");
-	const ref = useRef<HTMLDivElement>(null);
+	const ownRef = useRef<HTMLDivElement>(null);
+	const ref = rootRef ?? ownRef;
 	useModal(ref);
 	return (
 		<div
@@ -392,6 +396,7 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 	const nextKey = useRef(1);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const folderInputRef = useRef<HTMLInputElement>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
 	const [notice, setNotice] = useState("");
 	const [progress, setProgress] = useState<{ done: number; total: number }>();
 	const [canPickFolder, setCanPickFolder] = useState(false);
@@ -413,7 +418,13 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 	// Esc closes (claimed at the document level - the one-Esc law).
 	useEffect(() => {
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key !== "Escape" || busy) return;
+			if (e.key !== "Escape" || !isTopModal(rootRef.current)) return;
+			if (busy) {
+				// Claimed even while importing, so it cannot chain into the window handlers.
+				e.preventDefault();
+				e.stopPropagation();
+				return;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			onClose();
@@ -528,6 +539,7 @@ function Dialog({ onClose, onImported }: { onClose: () => void; onImported: () =
 				onImport={() => void run()}
 				fileInputRef={fileInputRef}
 				folderInputRef={folderInputRef}
+				rootRef={rootRef}
 			/>
 		</div>,
 		document.body,

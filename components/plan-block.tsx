@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBackDismiss } from "@/components/use-back-dismiss";
-import { useModal } from "@/components/ui/use-modal";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { useCoarsePointer } from "@/components/use-coarse-pointer";
 // The placement engine — literally mermaid's: dagre-d3-es, the fork
 // mermaid 11 ships with (owner, plan-graph round 8: same engine as the
@@ -773,7 +773,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 	// cancelled the dictation).
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key === "Escape" && isTopModal(dialogRef.current)) {
 				e.preventDefault();
 				e.stopPropagation();
 				onClose();

@@ -36,6 +36,7 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import { isTypingSurface } from "@/src/core";
+import { topModalRoot } from "@/components/ui/use-modal";
 
 /** Overlay roots whose buttons keep native Enter (hand-rolled menus mark
  *  themselves data-lh-menu; Radix poppers/dialogs carry their own attrs). */
@@ -87,8 +88,7 @@ export function useEnterSubmits(submit: () => void, scope?: RefObject<Element | 
 			// A modal surface owns Enter: a dock outside it must not submit
 			// behind the scrim. A surface that is itself modal (the canvas
 			// workspace) passes its root as `scope` and keeps submitting.
-			const modals = document.querySelectorAll('[aria-modal="true"]');
-			const top = modals[modals.length - 1];
+			const top = topModalRoot();
 			if (top && !(scope?.current && top.contains(scope.current))) return;
 			e.preventDefault();
 			submitRef.current();

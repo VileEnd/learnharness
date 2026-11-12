@@ -24,7 +24,7 @@ import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
-import { useModal } from "@/components/ui/use-modal";
+import { isTopModal, useModal } from "@/components/ui/use-modal";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
 import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
@@ -157,7 +157,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	useModal(dialogRef, true, "session");
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
+			if (e.key !== "Escape" || !isTopModal(dialogRef.current)) return;
 			e.preventDefault();
 			e.stopPropagation();
 			// One Esc, one action: an open hints panel closes first.

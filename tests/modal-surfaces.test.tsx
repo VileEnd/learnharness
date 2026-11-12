@@ -11,6 +11,9 @@ import { SetupDialog } from "../components/setup-dialog.tsx";
 import { MermaidOverlay } from "../components/session-overlay.tsx";
 import { PlanPopup } from "../components/plan-block.tsx";
 import { SessionWatch } from "../components/session-watch.tsx";
+import React from "react";
+import { useModal } from "../components/ui/use-modal.ts";
+import { blurAfterPointerClick } from "../components/focus-hygiene.ts";
 import { QuestionDock } from "../components/question-dock.tsx";
 import { CanvasWorkspace } from "../components/canvas/canvas-workspace.tsx";
 
@@ -57,6 +60,13 @@ afterEach(async () => {
 });
 
 const noop = () => {};
+
+/** A minimal registered modal surface that takes focus itself (a root-focus surface). */
+function RootModal() {
+	const ref = React.useRef<HTMLDivElement>(null);
+	useModal(ref);
+	return <div ref={ref} data-testid="root-modal" data-autofocus role="dialog" aria-modal="true" />;
+}
 const testId = () => (document.activeElement as HTMLElement | null)?.getAttribute("data-testid") ?? document.activeElement?.tagName ?? "";
 
 /** The app: an opener, a scroller and the slot the surface mounts into. */
@@ -240,14 +250,35 @@ describe("Enter while a modal is open", () => {
 		press(document.body, "Enter");
 		assert.equal(submitted, 1, "baseline: Enter submits the selected answer from anywhere");
 		submitted = 0;
-		const modal = document.createElement("div");
-		modal.setAttribute("aria-modal", "true");
-		modal.setAttribute("tabindex", "-1");
-		document.body.appendChild(modal);
+		await rerender(
+			<>
+				<QuestionDock toolName="probe" toolCallId="q2" input={quiz} expanded dictationClaim={false} onExpand={noop} onSubmit={() => submitted++} />
+				<RootModal />
+			</>,
+		);
+		const modal = document.querySelector<HTMLElement>('[data-testid="root-modal"]')!;
 		const e = press(modal, "Enter");
 		assert.equal(submitted, 0, "Enter inside the modal does not reach the dock outside it");
 		assert.equal(e.defaultPrevented, false);
-		modal.remove();
+	});
+
+	it("the plan popup opened over the canvas workspace is on top: Enter there does not submit the canvas", async () => {
+		const tree = (withPlan: boolean) => (
+			<App
+				inline={
+					<>
+						{withPlan ? <PlanPopup messages={[]} onClose={noop} /> : null}
+						<CanvasWorkspace chatId="c1" callId="k1" question="Draw it" onSubmit={noop} onMinimize={noop} />
+					</>
+				}
+			/>
+		);
+		await mount(tree(false));
+		await rerender(tree(true));
+		assert.equal(testId(), "plan-popup");
+		assert.equal(press(document.activeElement!, "Enter").defaultPrevented, false, "the canvas, last in the document but below it in the stack, does not take it");
+		await rerender(tree(false));
+		assert.equal(press(byId("app").querySelector<HTMLElement>('[data-testid="canvas-workspace"]')!, "Enter").defaultPrevented, true, "and it does again once the plan closes");
 	});
 
 	it("the canvas workspace, itself modal, keeps submitting: Enter right after opening does not minimise", async () => {
@@ -257,5 +288,139 @@ describe("Enter while a modal is open", () => {
 		const e = press(document.activeElement!, "Enter");
 		assert.equal(minimised, 0);
 		assert.ok(e.defaultPrevented, "the workspace's own Enter-submits listener took it");
+	});
+});
+
+const escape = () => press(document.body, "Escape");
+
+describe("Escape acts on the topmost surface only", () => {
+	const plan = (onClose: () => void) => <PlanPopup messages={[]} onClose={onClose} />;
+	const canvas = (onMinimize: () => void) => <CanvasWorkspace chatId="c1" callId="k1" question="Draw it" onSubmit={noop} onMinimize={onMinimize} />;
+
+	it("delete confirm (portalled) over the plan popup: one Esc closes the confirm, the next the plan", async () => {
+		const closed = { plan: 0, del: 0 };
+		const tree = (del: boolean) => (
+			<App
+				inline={plan(() => closed.plan++)}
+				portal={del ? <DeleteSessionDialog chat={{ id: "c", title: "T" }} onClose={() => closed.del++} onDeleted={noop} /> : null}
+			/>
+		);
+		await mount(tree(false));
+		await rerender(tree(true));
+		escape();
+		assert.deepEqual(closed, { plan: 0, del: 1 });
+		await rerender(tree(false));
+		escape();
+		assert.deepEqual(closed, { plan: 1, del: 1 });
+	});
+
+	it("the plan popup over the canvas workspace (the real component): one Esc closes the plan, the next minimises the canvas", async () => {
+		const closed = { plan: 0, canvas: 0 };
+		const tree = (withPlan: boolean) => (
+			<App inline={<>{withPlan ? plan(() => closed.plan++) : null}{canvas(() => closed.canvas++)}</>} />
+		);
+		await mount(tree(false));
+		await rerender(tree(true));
+		escape();
+		assert.deepEqual(closed, { plan: 1, canvas: 0 });
+		await rerender(tree(false));
+		escape();
+		assert.deepEqual(closed, { plan: 1, canvas: 1 });
+	});
+
+	it("Settings (opened by its provider) over Add documents: one Esc closes Settings only", async () => {
+		let importClosed = 0;
+		function Opener() {
+			const { open } = useSettingsDialog();
+			return <button id="opener" type="button" onClick={() => open()}>open</button>;
+		}
+		await mount(
+			<SettingsDialogProvider>
+				<Opener />
+				<AddDocumentsDialog open onClose={() => importClosed++} onImported={noop} />
+			</SettingsDialogProvider>,
+		);
+		await click(byId("opener"));
+		assert.ok(document.querySelector('[data-testid="settings-dialog"]'));
+		escape();
+		await act(async () => {});
+		assert.equal(document.querySelector('[data-testid="settings-dialog"]'), null);
+		assert.equal(importClosed, 0, "the dialog underneath did not act on the same Esc");
+		escape();
+		assert.equal(importClosed, 1);
+	});
+});
+
+describe("focus returns somewhere sensible when the opener is gone or was blurred", () => {
+	const pointerdown = (el: Element) => void el.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+
+	it("a pointer-opened surface whose opener the app blurred (focus-hygiene) gives focus back to it", async () => {
+		function Host() {
+			const [open, setOpen] = React.useState(false);
+			return (
+				<>
+					<button id="pill" type="button" onClick={(e) => { blurAfterPointerClick(e); setOpen(true); }}>plan</button>
+					{open ? <PlanPopup messages={[]} onClose={() => setOpen(false)} /> : null}
+				</>
+			);
+		}
+		await mount(<App inline={<Host />} />);
+		byId("pill").focus();
+		pointerdown(byId("pill"));
+		await click(byId("pill"));
+		assert.equal(document.activeElement?.tagName, "DIV", "focus is on the popup (the pill was blurred first)");
+		press(document.activeElement!, "Escape");
+		await act(async () => {});
+		assert.equal(document.querySelector('[data-testid="plan-popup"]'), null);
+		assert.equal(document.activeElement?.id, "pill");
+	});
+
+	it("session delete confirm opened from a menu item that unmounts: focus returns to the row's Session actions button", async () => {
+		function Row() {
+			const [menu, setMenu] = React.useState(false);
+			const [del, setDel] = React.useState(false);
+			return (
+				<>
+					<button id="session-actions" type="button" aria-label="Session actions" onClick={() => setMenu((m) => !m)}>...</button>
+					{menu ? (
+						<div role="menu">
+							<button id="menu-delete" type="button" role="menuitem" onClick={() => { setMenu(false); setDel(true); }}>Delete</button>
+						</div>
+					) : null}
+					{del ? <DeleteSessionDialog chat={{ id: "c", title: "T" }} onClose={() => setDel(false)} onDeleted={noop} /> : null}
+				</>
+			);
+		}
+		await mount(<App inline={<Row />} />);
+		pointerdown(byId("session-actions"));
+		byId("session-actions").focus();
+		await click(byId("session-actions"));
+		byId("menu-delete").focus();
+		pointerdown(byId("menu-delete"));
+		await click(byId("menu-delete"));
+		assert.equal(testId(), "delete-cancel");
+		escape();
+		await act(async () => {});
+		assert.equal(document.querySelector('[data-testid="delete-session-dialog"]'), null);
+		assert.equal(document.activeElement?.id, "session-actions");
+	});
+
+	it("with no earlier control to return to, focus goes to the main region, never <body>", async () => {
+		function Transient() {
+			const [state, setState] = React.useState<"button" | "open" | "closed">("button");
+			return (
+				<>
+					{state === "button" ? <button id="gone" type="button" onClick={() => setState("open")}>x</button> : null}
+					{state === "open" ? <AbortTurnDialog mode="turn" onClose={() => setState("closed")} onConfirm={noop} /> : null}
+				</>
+			);
+		}
+		await mount(<App portal={<Transient />} />);
+		byId("gone").focus();
+		await click(byId("gone"));
+		await act(async () => {});
+		escape();
+		await act(async () => {});
+		assert.equal(document.activeElement?.tagName, "MAIN");
 	});
 });

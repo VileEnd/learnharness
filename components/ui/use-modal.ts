@@ -25,8 +25,13 @@ import { useEffect, useRef, type RefObject } from "react";
  *     not cover the app chrome, so only its siblings inside that area go
  *     inert and the sidebar and top bar stay live;
  *   - on close, focus returns to the element that had it at open, if it is
- *     still in the document. A modal closed out of order hands the opener of
+ *     still in the document. Where the app blurred the opener on a pointer
+ *     click (focus-hygiene.ts), the control last pressed stands in for it.
+ *     When the opener has unmounted (a menu item), the controls pressed
+ *     before it are tried newest first (the menu's trigger), then the main
+ *     region: never <body>. A modal closed out of order hands the opener of
  *     the ones above it on, so focus never lands behind a modal that remains.
+ *   - only the topmost surface may act on Escape: `isTopModal(root)`.
  *
  * Hand-written rather than radix FocusScope: the manual Tab handling above is
  * needed anyway, and FocusScope neither makes the page inert nor counts
@@ -69,6 +74,44 @@ export function nextTabTarget<T extends Element>(items: T[], current: Element | 
 		if (found) return found;
 	}
 	return backwards ? (items[items.length - 1] ?? null) : (items[0] ?? null);
+}
+
+/** The controls the user pressed lately, newest last: the stand-in opener
+ *  when the app blurred the control before the surface mounted, and the way
+ *  back to a menu's trigger once the menu item that opened the surface is gone. */
+const PRESSABLE = 'button, a[href], input, select, textarea, summary, [role="button"], [role="menuitem"], [tabindex]';
+const pressed: { el: Element; at: number }[] = [];
+/** A pointer press this recent stands in for a blurred opener (ms). */
+const RECENT_PRESS_MS = 1500;
+let tracking = false;
+
+function notePress(e: Event) {
+	if (e.type === "keydown" && (e as KeyboardEvent).key !== "Enter" && (e as KeyboardEvent).key !== " ") return;
+	const t = e.target;
+	if (!(t instanceof Element)) return;
+	const el = t.closest(PRESSABLE) ?? t;
+	if (el === document.body || el === document.documentElement) return;
+	const at = pressed.findIndex((p) => p.el === el);
+	if (at >= 0) pressed.splice(at, 1);
+	pressed.push({ el, at: Date.now() });
+	if (pressed.length > 8) pressed.shift();
+}
+
+function track() {
+	if (tracking || typeof document === "undefined") return;
+	tracking = true;
+	document.addEventListener("pointerdown", notePress, true);
+	document.addEventListener("keydown", notePress, true);
+}
+track();
+
+/** The element that "opened" a surface now mounting. */
+function currentOpener(): Element | null {
+	track();
+	const active = document.activeElement;
+	if (active && active !== document.body && active !== document.documentElement) return active;
+	const last = pressed[pressed.length - 1];
+	return last && last.el.isConnected && Date.now() - last.at < RECENT_PRESS_MS ? last.el : null;
 }
 
 interface Entry {
@@ -173,8 +216,41 @@ function close(entry: Entry) {
 		}
 		return;
 	}
-	const { opener } = entry;
-	if (opener && opener !== document.body && opener instanceof HTMLElement && document.contains(opener)) opener.focus();
+	restoreFocus(entry.opener);
+}
+
+function focusIfPossible(el: Element | null): boolean {
+	if (!el || el === document.body || !(el instanceof HTMLElement) || !document.contains(el)) return false;
+	el.focus();
+	return document.activeElement === el;
+}
+
+function restoreFocus(opener: Element | null) {
+	if (focusIfPossible(opener)) return;
+	// Only when there WAS an opener that is gone (its menu closed): the
+	// control pressed before it, newest first.
+	if (opener) {
+		for (let i = pressed.length - 1; i >= 0; i--) {
+			const el = pressed[i]!.el;
+			if (el !== opener && focusIfPossible(el)) return;
+		}
+	}
+	const main = document.querySelector<HTMLElement>('main, [role="main"]');
+	if (!main) return;
+	if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+	main.focus();
+}
+
+/** The topmost open surface's root (null: none open). */
+export function topModalRoot(): HTMLElement | null {
+	return stack[stack.length - 1]?.root ?? null;
+}
+
+/** May the surface rooted at `root` act on Escape? Only the topmost may;
+ *  with nothing registered (not yet mounted) it may. */
+export function isTopModal(root: Element | null | undefined): boolean {
+	const top = stack[stack.length - 1];
+	return !top || top.root === root;
 }
 
 /** Make the surface in `ref` modal while `active` (default: as long as the
@@ -185,7 +261,7 @@ export function useModal(ref: RefObject<HTMLElement | null>, active = true, scop
 	// Captured while rendering, before an `autoFocus` inside can steal focus.
 	const opener = useRef<Element | null | undefined>(undefined);
 	if (!active) opener.current = undefined;
-	else if (opener.current === undefined) opener.current = typeof document === "undefined" ? null : document.activeElement;
+	else if (opener.current === undefined) opener.current = typeof document === "undefined" ? null : currentOpener();
 	useEffect(() => {
 		const root = ref.current;
 		if (!active || !root) return;
