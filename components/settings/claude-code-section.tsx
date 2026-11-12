@@ -53,7 +53,7 @@ export function ClaudeCodeSectionView({
 					{error}
 				</p>
 			)}
-			<p data-testid="claude-code-note" className="text-[11px] text-muted-foreground/70">
+			<p data-testid="claude-code-note" className="text-[11px] text-muted-foreground-70">
 				Runs on the account logged into the claude container. Only you can use it; usage isn&apos;t priced.
 			</p>
 		</div>

@@ -233,7 +233,7 @@ export function AddDocumentsBody({
 							>
 								<UploadIcon className="size-5" />
 								<span>{entries.length === 0 ? "Choose files, or drop them here" : "Add more files"}</span>
-								<span className="text-xs text-muted-foreground/80">Markdown, text, or PDF</span>
+								<span className="text-xs text-muted-foreground-80">Markdown, text, or PDF</span>
 							</button>
 							{onPickFolder && (
 								<button

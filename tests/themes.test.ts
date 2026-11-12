@@ -69,6 +69,25 @@ const UPSTREAM_IVORY = {
 	error: "#c43d3d", success: "#3f8f6b", warning: "#b8822a",
 };
 
+const channels = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number];
+/** WCAG relative luminance and contrast ratio. */
+function lum(hex: string): number {
+	const [r, g, b] = channels(hex).map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)) as [number, number, number];
+	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a: string, b: string): number {
+	const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p) as [number, number];
+	return (x + 0.05) / (y + 0.05);
+}
+/** HSL hue in whole degrees (the darkening keeps it). */
+function hueSat(hex: string): { h: number } {
+	const [r, g, b] = channels(hex);
+	const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+	if (d === 0) return { h: 0 };
+	const h = mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+	return { h: Math.round(h * 60) };
+}
+
 /** `--name: value;` declarations of one CSS block (comments stripped). */
 function declarations(block: string): Record<string, string> {
 	const out: Record<string, string> = {};
@@ -103,8 +122,37 @@ describe("presets", () => {
 		for (const [name, value] of Object.entries(PRE_THEME_DARK)) assert.equal(vars[name], value, name);
 	});
 
-	it("Ivory is upstream's preset", () => {
-		assert.deepEqual(IVORY_THEME.colors, UPSTREAM_IVORY);
+	it("Ivory is upstream's preset, except muted text, success and warning, darkened in the same hue for AA (owner ruling)", () => {
+		assert.deepEqual(
+			{ ...IVORY_THEME.colors, textMuted: UPSTREAM_IVORY.textMuted, success: UPSTREAM_IVORY.success, warning: UPSTREAM_IVORY.warning },
+			UPSTREAM_IVORY,
+		);
+		for (const key of ["textMuted", "success", "warning"] as const) {
+			// Same HSL hue, up to 8-bit rounding (a near-gray moves a few degrees).
+			assert.ok(Math.abs(hueSat(IVORY_THEME.colors[key]).h - hueSat(UPSTREAM_IVORY[key]).h) <= 3, `${key} keeps its hue`);
+			assert.ok(lum(IVORY_THEME.colors[key]) < lum(UPSTREAM_IVORY[key]), `${key} is darker`);
+		}
+	});
+
+	it("Ivory's text inks reach WCAG AA on the page and the surface; tertiary text 3:1; white on success 4.5:1", () => {
+		const page = IVORY_THEME.colors.background;
+		const surface = IVORY_THEME.colors.surface;
+		const vars = themeVars(IVORY_THEME);
+		for (const name of ["--muted-foreground", "--lh-warning", "--lh-success", "--foreground"]) {
+			for (const bg of [page, surface]) assert.ok(contrast(vars[name]!, bg) >= 4.5, `${name} on ${bg}: ${contrast(vars[name]!, bg).toFixed(2)}`);
+		}
+		for (const name of ["--lh-muted-80", "--lh-muted-70", "--lh-muted-60", "--lh-muted-50", "--lh-muted-40", "--lh-foreground-50"]) {
+			for (const bg of [page, surface]) assert.ok(contrast(vars[name]!, bg) >= 3, `${name} on ${bg}: ${contrast(vars[name]!, bg).toFixed(2)}`);
+		}
+		for (const name of ["--lh-success", "--lh-success-strong"]) assert.ok(contrast("#ffffff", vars[name]!) >= 4.5, `white on ${name}`);
+	});
+
+	it("Default's tertiary text is exactly what the old opacity modifiers drew", () => {
+		const vars = themeVars(DEFAULT_THEME);
+		for (const pct of [80, 70, 60, 50, 40]) {
+			assert.equal(vars[`--lh-muted-${pct}`], `color-mix(in oklab, var(--muted-foreground) ${pct}%, transparent)`);
+		}
+		assert.equal(vars["--lh-foreground-50"], "color-mix(in oklab, var(--foreground) 50%, transparent)");
 	});
 
 	it("each step 1 token has a value per theme", () => {

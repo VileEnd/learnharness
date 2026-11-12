@@ -130,7 +130,7 @@ export function WorkDock({
 						type="button"
 						data-testid="work-dismiss"
 						onClick={onDismiss}
-						className="ml-auto rounded px-1.5 py-0.5 normal-case tracking-normal text-muted-foreground/70 transition-colors hover:text-foreground"
+						className="ml-auto rounded px-1.5 py-0.5 normal-case tracking-normal text-muted-foreground-70 transition-colors hover:text-foreground"
 					>
 						Dismiss
 					</button>

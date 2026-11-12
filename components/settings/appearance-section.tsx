@@ -291,7 +291,7 @@ export function AppearanceSection({
 				<div className="flex items-end justify-between gap-4">
 					<p className="text-xs uppercase tracking-widest text-muted-foreground">
 						Colours{" "}
-						<span data-testid="colors-theme" className="normal-case tracking-normal text-muted-foreground/70">
+						<span data-testid="colors-theme" className="normal-case tracking-normal text-muted-foreground-70">
 							· {activeTheme.name}&apos;s own overrides
 							{choice === "system" ? " (the theme on screen now)" : ""}
 						</span>

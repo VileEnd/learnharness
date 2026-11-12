@@ -130,9 +130,9 @@ export function pinsPayload(drafts: Record<string, PinDraft>): { ok: true; model
 }
 
 const fieldCls =
-	"h-7 min-w-0 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50";
+	"h-7 min-w-0 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground-60 focus:border-muted-foreground/50";
 const linkBtn =
-	"shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
+	"shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground-40 disabled:no-underline";
 
 /** The connect form + per-model pins and rates. State starts from `status`; the section remounts it (key=etag) after each change. */
 export function CustomEndpointEditor({
@@ -272,7 +272,7 @@ export function CustomEndpointEditor({
 				disabled={busy}
 				className={fieldCls}
 			/>
-			<p data-testid="custom-pricing-help" className="text-[11px] text-muted-foreground/70">
+			<p data-testid="custom-pricing-help" className="text-[11px] text-muted-foreground-70">
 				{pricing === "free"
 					? "Free: every call counts as $0, including toward user spending limits."
 					: "Paid: calls are priced from the per-model rates below. A model without rates is unpriced, so it cannot be offered to users with a spending limit."}
@@ -287,7 +287,7 @@ export function CustomEndpointEditor({
 						onClick={() => setConfirmDisconnect(true)}
 						disabled={busy}
 						data-testid="custom-disconnect"
-						className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
+						className="shrink-0 text-xs text-muted-foreground-70 underline-offset-2 hover:text-error hover:underline"
 					>
 						Disconnect
 					</button>
@@ -402,7 +402,7 @@ export function CustomEndpointEditor({
 					<button type="button" onClick={savePins} disabled={busy} data-testid="custom-pins-save" className={`${linkBtn} ml-auto`}>
 						Save model settings
 					</button>
-					<div data-testid="custom-help" className="text-[11px] text-muted-foreground/70">
+					<div data-testid="custom-help" className="text-[11px] text-muted-foreground-70">
 						<p data-testid="custom-budget-help">Context and output pins set the app&apos;s budgets; they do not resize backend context.</p>
 						<p data-testid="custom-reasoning-help">Off may not disable reasoning on every backend.</p>
 					</div>

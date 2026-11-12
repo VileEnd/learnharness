@@ -59,7 +59,7 @@ export function ThemeCards({ choice, onSelect }: { choice: ThemeChoice; onSelect
 		<div data-testid="row-theme" className="flex flex-col gap-3 py-1">
 			<span className="min-w-0">
 				<span className="block font-prose text-(length:--lh-prose-size)">Theme</span>
-				<span data-testid="theme-hint" className="block text-xs text-muted-foreground/70">
+				<span data-testid="theme-hint" className="block text-xs text-muted-foreground-70">
 					Sets every colour below · Follow system switches with your device
 				</span>
 			</span>

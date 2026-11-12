@@ -101,7 +101,7 @@ export function KeyboardSection() {
 				if (!actions.length) return null;
 				return (
 					<div key={scope} data-testid={`kbd-scope-${scope}`}>
-						<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">{label}</p>
+						<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground-70">{label}</p>
 						<div className="flex flex-col gap-2">
 							{actions.map((def) => {
 								const effective = overrides[def.id] ?? def.binding;
@@ -120,7 +120,7 @@ export function KeyboardSection() {
 												<button
 													type="button"
 													onClick={() => setRebinding(null)}
-													className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+													className="text-xs text-muted-foreground-70 underline-offset-2 hover:text-foreground hover:underline"
 												>
 													Cancel
 												</button>
@@ -139,7 +139,7 @@ export function KeyboardSection() {
 															type="button"
 															onClick={() => resetOne(def.id)}
 															data-testid={`kbd-reset-${def.id}`}
-															className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+															className="text-xs text-muted-foreground-70 underline-offset-2 hover:text-foreground hover:underline"
 														>
 															Reset
 														</button>
@@ -155,7 +155,7 @@ export function KeyboardSection() {
 				);
 			})}
 			<div className="mt-1 flex items-center justify-between">
-				<span className="text-xs text-muted-foreground/70">Stored on this device (lh:keymap) — overrides only.</span>
+				<span className="text-xs text-muted-foreground-70">Stored on this device (lh:keymap) — overrides only.</span>
 				<button
 					type="button"
 					onClick={resetAll}

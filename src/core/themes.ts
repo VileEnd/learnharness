@@ -88,7 +88,21 @@ export interface ThemeTokens {
 	learnerShaky: string;
 	learnerLearning: string;
 	learnerSolid: string;
+	/** Tertiary text: --lh-muted-80 … --lh-muted-40 (the `text-muted-foreground-NN`
+	 *  utilities) and --lh-foreground-50. Default keeps exactly what the old
+	 *  opacity modifiers drew (the muted / text colour mixed with transparent);
+	 *  Ivory sets solid inks of the same hue that read at 3:1 or better on its
+	 *  page and surface (owner ruling 2026-11-12). */
+	muted80: string;
+	muted70: string;
+	muted60: string;
+	muted50: string;
+	muted40: string;
+	foreground50: string;
 }
+
+/** Default's tertiary inks: the muted / text colour at the old opacity. */
+const fade = (cssVar: string, pct: number) => `color-mix(in oklab, var(${cssVar}) ${pct}%, transparent)`;
 
 /** A preset. */
 export interface Theme {
@@ -108,8 +122,10 @@ export function isHex(value: unknown): value is string {
 /** Default: the app's dark palette as app/globals.css carried it before
  *  themes, value for value (the status colours are the Tailwind 4 oklch
  *  values step 1 compiled to, inline code inherits). Ivory: upstream's preset (warm ivory page,
- *  terracotta accent, blue/green/clay emphasis); its tokens are the fork's
- *  additions, taken from its own status colours. */
+ *  terracotta accent, blue/green/clay emphasis), except that its muted
+ *  text, success and warning are darker (same hue) to reach WCAG AA, a
+ *  deliberate departure from upstream (owner ruling 2026-11-12); its tokens
+ *  are the fork's additions. */
 export const DEFAULT_THEME: Theme = {
 	id: "default",
 	name: "Default",
@@ -137,6 +153,12 @@ export const DEFAULT_THEME: Theme = {
 		learnerShaky: "#ef4444",
 		learnerLearning: "#eab308",
 		learnerSolid: "#22c55e",
+		muted80: fade("--muted-foreground", 80),
+		muted70: fade("--muted-foreground", 70),
+		muted60: fade("--muted-foreground", 60),
+		muted50: fade("--muted-foreground", 50),
+		muted40: fade("--muted-foreground", 40),
+		foreground50: fade("--foreground", 50),
 	},
 };
 
@@ -149,22 +171,40 @@ export const IVORY_THEME: Theme = {
 		surface: "#f0eee6",
 		border: "#e0ddd2",
 		text: "#3d3d3a",
-		textMuted: "#83827d",
+		// Darker than upstream's #83827d (3.31:1 on the surface): 4.66:1 on the
+		// surface, 5.14:1 on the page. Same hue and saturation (HSL), owner
+		// ruling 2026-11-12 (AA for text).
+		textMuted: "#6b6a66",
 		accent: "#d97757",
 		bold: "#3266c9",
 		italic: "#3f8f6b",
 		code: "#c4613f",
 		error: "#c43d3d",
-		success: "#3f8f6b",
-		warning: "#b8822a",
+		// Darker than upstream (#3f8f6b, #b8822a), same hue: white on success
+		// 5.34:1 (was 3.92), success text 4.60:1 on the surface; warning
+		// text 4.61:1 on the surface, 5.08:1 on the page (was 2.89 / 3.18).
+		success: "#347759",
+		warning: "#8c6320",
 	},
 	tokens: {
 		destructive: "#c43d3d",
-		successStrong: "#33775a",
+		// White on it 6.02:1; one step darker than success so the hover shows.
+		successStrong: "#316e53",
 		lineStrong: "#3d3d3a",
+		// Fills, not text: upstream's status hues as they were.
 		learnerShaky: "#c43d3d",
 		learnerLearning: "#b8822a",
 		learnerSolid: "#3f8f6b",
+		// Tertiary text, each the lightest ink of the muted hue that reaches
+		// its target on the surface #f0eee6 (the page is lighter, so higher):
+		// 4.03 / 3.60 / 3.36 / 3.18 / 3.05 on the surface, 4.44 / 3.97 /
+		// 3.70 / 3.51 / 3.37 on the page. foreground50: 3.61 / 3.99.
+		muted80: "#757470",
+		muted70: "#7d7c77",
+		muted60: "#82817c",
+		muted50: "#868580",
+		muted40: "#898884",
+		foreground50: "#7c7c76",
 	},
 };
 
@@ -263,6 +303,12 @@ export function themeVars(theme: Theme, appearance?: AppearanceSettings): Record
 		"--lh-learner-shaky": t.learnerShaky,
 		"--lh-learner-learning": t.learnerLearning,
 		"--lh-learner-solid": t.learnerSolid,
+		"--lh-muted-80": t.muted80,
+		"--lh-muted-70": t.muted70,
+		"--lh-muted-60": t.muted60,
+		"--lh-muted-50": t.muted50,
+		"--lh-muted-40": t.muted40,
+		"--lh-foreground-50": t.foreground50,
 	};
 }
 

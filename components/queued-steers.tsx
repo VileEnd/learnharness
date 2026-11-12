@@ -31,7 +31,7 @@ export function QueuedSteersBody({ steers }: { steers: QueuedSteerLine[] }) {
 					<span
 						key={s.id}
 						title={line}
-						className="block max-w-[240px] truncate font-ui text-[11px] text-muted-foreground/60"
+						className="block max-w-[240px] truncate font-ui text-[11px] text-muted-foreground-60"
 					>
 						{line}
 					</span>

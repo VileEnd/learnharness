@@ -131,7 +131,7 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 	// learner clicked; the record needs only the fact).
 	if (outcome === "dismissed") {
 		return (
-			<div data-testid="conclude-card" className="my-1 px-1 text-sm text-muted-foreground/70">
+			<div data-testid="conclude-card" className="my-1 px-1 text-sm text-muted-foreground-70">
 				Problem dismissed.
 			</div>
 		);
@@ -153,7 +153,7 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 			{/* The verdict — plain prose under the heading, no 'Verdict:' label
 			    (owner round 3): the same quiet 50% register as quiz explanations. */}
 			{verdict.length > 0 && (
-				<div className="text-sm text-foreground/50">
+				<div className="text-sm text-foreground-50">
 					<ToolContentResponse>{verdict}</ToolContentResponse>
 				</div>
 			)}

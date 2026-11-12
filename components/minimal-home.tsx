@@ -75,7 +75,7 @@ export function KnowledgeSummary({
 				{importedNotes} {importedNotes === 1 ? "imported note" : "imported notes"}
 			</p>
 			{empty && (
-				<p className="pt-2 font-ui text-xs text-muted-foreground/70">
+				<p className="pt-2 font-ui text-xs text-muted-foreground-70">
 					Nothing here yet — add documents to begin building the graph.
 				</p>
 			)}

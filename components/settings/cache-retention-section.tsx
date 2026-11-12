@@ -44,7 +44,7 @@ export function CacheRetentionSectionView({
 					{error}
 				</p>
 			)}
-			<p data-testid="cache-retention-note" className="text-[11px] text-muted-foreground/70">
+			<p data-testid="cache-retention-note" className="text-[11px] text-muted-foreground-70">
 				Writing a 1-hour cache costs 2× the input price instead of 1.25× for the short one. It pays off only when learners
 				often pause 5 to 60 minutes between turns; otherwise it costs more. Compare the cache hit rate under Usage before
 				and after switching. Applies to all users&apos; chat turns on Anthropic, OpenRouter Anthropic, Bedrock and OpenAI

@@ -133,9 +133,9 @@ export function UsageView({
 			</SettingsRow>
 
 			{view === null ? (
-				<p className="text-xs text-muted-foreground/70">Loading usage…</p>
+				<p className="text-xs text-muted-foreground-70">Loading usage…</p>
 			) : view === "error" ? (
-				<p className="text-xs text-muted-foreground/70">This month's usage could not be loaded — reopen Settings to retry.</p>
+				<p className="text-xs text-muted-foreground-70">This month's usage could not be loaded — reopen Settings to retry.</p>
 			) : view.calls === 0 ? (
 				<p className="text-xs text-muted-foreground" data-testid="usage-empty">
 					No requests logged this month.
@@ -157,7 +157,7 @@ export function UsageView({
 
 			{months === "error" ? (
 				<SettingsGroup label="Last 12 months" testid="usage-months">
-					<p className="text-xs text-muted-foreground/70">The monthly totals could not be loaded.</p>
+					<p className="text-xs text-muted-foreground-70">The monthly totals could not be loaded.</p>
 				</SettingsGroup>
 			) : (
 				months.length > 0 && (
@@ -196,7 +196,7 @@ export function UsageView({
 											<td className={numClass}>{t.calls}</td>
 											<td className={numClass}>{formatTokens(t.tokens)}</td>
 											<td className={numClass} data-testid={`usage-cache-${c}`}>{formatHitRate(categoryCacheHitRate(t))}</td>
-											<td className={`${numClass} ${t.unpriced ? "" : "text-muted-foreground/60"}`}>{t.unpriced}</td>
+											<td className={`${numClass} ${t.unpriced ? "" : "text-muted-foreground-60"}`}>{t.unpriced}</td>
 										</tr>
 									);
 								})}
@@ -275,9 +275,9 @@ function FailedRequests({
 	return (
 		<SettingsGroup label={label} testid="usage-failures">
 			{failures === null ? (
-				<p className="text-xs text-muted-foreground/70">Loading…</p>
+				<p className="text-xs text-muted-foreground-70">Loading…</p>
 			) : failures === "error" ? (
-				<p className="text-xs text-muted-foreground/70">Failed requests could not be loaded.</p>
+				<p className="text-xs text-muted-foreground-70">Failed requests could not be loaded.</p>
 			) : failures.total === 0 ? (
 				<p className="text-xs text-muted-foreground">No failed requests this month.</p>
 			) : (

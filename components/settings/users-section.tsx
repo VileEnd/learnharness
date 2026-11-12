@@ -498,7 +498,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 			</SettingsGroup>
 			<SettingsGroup label="Users">
 				{p.users === null ? (
-					<p className="text-xs text-muted-foreground/70">Loading users…</p>
+					<p className="text-xs text-muted-foreground-70">Loading users…</p>
 				) : (
 					p.users.map((u) => {
 						const mine = live.filter((d) => d.userId === u.id);
