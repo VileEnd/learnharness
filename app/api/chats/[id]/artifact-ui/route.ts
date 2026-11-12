@@ -14,9 +14,6 @@ import { getChat, stores, withTenant } from "@/src/server";
 
 export const POST = withTenant(async (req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> => {
 	const { id } = await ctx.params;
-	const chat = getChat(id);
-	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
-
 	const body = (await req.json().catch(() => null)) as { input?: unknown } | null;
 	const input = body?.input as { messageId?: unknown; inverted?: unknown } | null | undefined;
 	if (
@@ -27,6 +24,11 @@ export const POST = withTenant(async (req: Request, ctx: { params: Promise<{ id:
 	) {
 		return Response.json({ error: "input must be { messageId: string, inverted: boolean }" }, { status: 400 });
 	}
+
+	// Read AFTER the body (no await from here to the save): an earlier read
+	// would erase whatever was written while the body arrived.
+	const chat = getChat(id);
+	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
 
 	// Honesty: the target must actually be a demo/figure steer.
 	const target = chat.messages.find((m) => m.id === input.messageId);

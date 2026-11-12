@@ -24,8 +24,6 @@ import { getChat, isTurnRunning, parkDismissal, stores, withTenant } from "@/src
 
 export const POST = withTenant(async (req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> => {
 	const { id } = await ctx.params;
-	const chat = getChat(id);
-	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
 
 	let input;
 	try {
@@ -37,6 +35,11 @@ export const POST = withTenant(async (req: Request, ctx: { params: Promise<{ id:
 		if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 		throw err;
 	}
+
+	// Read AFTER the body: a record read before that await could miss a
+	// write landing meanwhile, which the save below would then erase.
+	const chat = getChat(id);
+	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
 
 	// A running turn owns the chat's record (its messages persist at
 	// settle) — the dismissal cannot validate against stale truth, so it

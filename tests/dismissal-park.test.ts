@@ -235,6 +235,34 @@ describe("the dismiss route — the park contract (202)", () => {
 		assert.ok(!isTurnRunning(chat));
 	});
 
+	it("keeps a message written while the request body was still arriving", async () => {
+		const chat = chatWithDanglingQuiz("slow-body");
+		const pending = danglingQuestionOf(chatStore.getChat(chat)!.messages);
+		assert.ok(pending);
+		const dismissRoute = await import("../app/api/chats/[id]/dismiss/route.ts");
+		let release!: () => void;
+		const body = new ReadableStream<Uint8Array>({
+			async start(controller) {
+				await new Promise<void>((resolve) => (release = resolve));
+				const input = { type: "dismiss", toolCallId: pending!.toolCallId, answer: dismissedAnswer("quiz", "What is a cyclic group?") };
+				controller.enqueue(new TextEncoder().encode(JSON.stringify({ input })));
+				controller.close();
+			},
+		});
+		const response = dismissRoute.POST(
+			new Request(`http://test/api/chats/${chat}/dismiss`, { method: "POST", body, duplex: "half" } as RequestInit),
+			{ params: Promise.resolve({ id: chat }) },
+		);
+		await new Promise((resolve) => setImmediate(resolve));
+		const early = { id: newMessageId(), role: "user", content: "written meanwhile", timestamp: 0 } as never;
+		chatStore.saveMessages(chat, [early, ...chatStore.getChat(chat)!.messages]);
+		release();
+		assert.equal((await response).status, 200);
+		const messages = chatStore.getChat(chat)!.messages;
+		assert.equal(messages[0]!.id, (early as { id: string }).id, "the concurrent write is kept");
+		assert.equal(danglingQuestionOf(messages), null, "the dismissal landed");
+	});
+
 	it("still refuses honestly (400) with no turn and nothing dangling", async () => {
 		const chat = chatStore.createChat("park: nothing dangling").id;
 		const dismissRoute = await import("../app/api/chats/[id]/dismiss/route.ts");
