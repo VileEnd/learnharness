@@ -97,3 +97,5 @@ export * from "./grade-heal.ts";
 export * from "./usage.ts";
 export * from "./recommended-models.ts";
 export * from "./upload-limits.ts";
+// svg-image-source.ts: the two repairs the learner's figure display and the visual maker's native render share - pure, browser-safe.
+export * from "./svg-image-source.ts";

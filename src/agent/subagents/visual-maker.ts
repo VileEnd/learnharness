@@ -157,6 +157,8 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	/** The svg shown in the most recent render (null = never rendered). */
 	let renderedSvg: string | null = null;
 	let finalText = "";
+	/** The last final-gate render error and the svg it belongs to. */
+	let gateError: { svg: string; message: string } | null = null;
 
 	try {
 		for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -191,8 +193,20 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 					try {
 						png = await headless.renderSvg(currentSvg);
 					} catch (err) {
+						// Same as a render_svg error: the model gets it back and revises
+						// while iterations remain; the limit below fails the job.
 						const msg = err instanceof Error ? err.message : String(err);
-						return { svg: "", notes: `FAILED: rendering the final SVG failed — ${msg}` };
+						gateError = { svg: currentSvg, message: msg };
+						opts.onActivity?.("render_svg: render error on the final SVG");
+						messages = [
+							...messages,
+							{
+								role: "user",
+								content: `RENDER ERROR on your final SVG (it may be malformed): ${msg}. Fix it with write_svg and render again.`,
+								timestamp: Date.now(),
+							},
+						];
+						continue;
 					}
 					const image = await processImage(png, "image/png", { resizeOptions: engine.model.inputLimits?.images?.resize });
 					opts.abortSignal?.throwIfAborted();
@@ -306,6 +320,9 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	// Iteration limit: deliver the last written SVG only if it was looked at.
 	if (currentSvg && renderedSvg === currentSvg) {
 		return { svg: currentSvg, notes: finalText || "Iteration limit reached — delivering the last verified SVG." };
+	}
+	if (gateError && gateError.svg === currentSvg) {
+		return { svg: "", notes: `FAILED: rendering the final SVG failed — ${gateError.message}` };
 	}
 	return { svg: "", notes: `FAILED: iteration limit (${maxIterations}) reached without a verified SVG.` };
 }

@@ -42,10 +42,12 @@ WORKDIR /app
 COPY --from=build --chown=node:node /src/.next/standalone ./
 COPY --chown=node:node scripts/migrate-to-tenants.mjs ./scripts/migrate-to-tenants.mjs
 # Prove demo verification works in THIS image: the payload's own puppeteer
-# drives the installed Chromium through one interactive page.
-COPY scripts/smoke-demo-runtime.mjs /tmp/smoke-demo-runtime.mjs
+# drives the installed Chromium through one interactive page, and its resvg
+# draws a rectangle and a glyph with the fonts installed above.
+COPY scripts/smoke-demo-runtime.mjs scripts/smoke-svg-runtime.mjs /tmp/
 RUN node /tmp/smoke-demo-runtime.mjs --standalone /app --browser \
-	&& rm /tmp/smoke-demo-runtime.mjs \
+	&& node /tmp/smoke-svg-runtime.mjs --standalone /app --text \
+	&& rm /tmp/smoke-demo-runtime.mjs /tmp/smoke-svg-runtime.mjs \
 	&& mkdir -p /data \
 	&& chown node:node /data
 # Starts as root only to hand /data to the node user (bind mounts arrive

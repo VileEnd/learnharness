@@ -2,14 +2,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { svgImageSource } from "../../core/svg-image-source.ts";
 import { guardedFetch, OutboundRefusedError, readCapped, withTimeout } from "../outbound.ts";
 import { standardFontsDir } from "./pdf-ops";
 
 /**
  * Verification engines for sub-agents: demos run in a system Chrome/
  * Chromium via puppeteer-core (the Docker image installs Chromium and sets
- * CHROME_PATH). SVGs use resvg (browser fallback); PDFs use pdfjs + Skia
- * (no browser). No Chromium is downloaded at runtime.
+ * CHROME_PATH). SVGs use only resvg (no browser, no fallback); PDFs use pdfjs
+ * + Skia (no browser). No Chromium is downloaded at runtime.
  *
  * Chrome resolution: CHROME_PATH first, then common macOS, Windows and
  * Linux install paths. `available()` is a cheap executable check; the
@@ -514,52 +515,117 @@ function crc32(buf: Buffer): number {
 	return ~c >>> 0;
 }
 
+/** The one acceptance test for an href value, shared by the tokenizer pass and
+ *  the final scan so they cannot disagree. Accepted: empty; a same-document
+ *  fragment with no path separator (resvg would read "#a/b" as a relative file
+ *  path); an inline image of a known type with its comma (without it resvg
+ *  would read the value as a relative file path). Exported for the tests. */
+export function isAcceptableReference(value: string): boolean {
+	const v = value.trim();
+	return v === "" || /^#[^/\\]*$/.test(v) || /^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml)(?:;[^,]*)?,/i.test(v);
+}
+
+/** resvg resolves an <image>/<feImage> href from the local filesystem (absolute
+ *  paths, and relative ones against the working directory) and exposes no
+ *  option to stop it. The render goes back to the model as "what the figure
+ *  looks like", so model-written markup must not pull a local file into it,
+ *  and the learner's <img> view never loads one. Every href-named attribute
+ *  (any element, any namespace prefix: the XML parser resolves prefixes, so
+ *  the element name is not a safe filter) survives only as a same-document
+ *  "#id" or an inline data:image/ source (isAcceptableReference); anything
+ *  else is removed. Names merely ending in href (data-href, xlink:HREF) are
+ *  treated alike, so the guard below never has to break them. Entity
+ *  references and other spellings fail the allow-list and are dropped too.
+ *  Applied to the render input only, after the display repairs. */
+function withoutExternalReferences(svg: string): string {
+	return svg.replace(
+		/<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<\?[\s\S]*?(?:\?>|$)|<\/?[a-zA-Z](?:[^<>"']|"[^"]*"|'[^']*')*>/g,
+		(token) => {
+			if (!/^<[a-zA-Z]/.test(token)) return token;
+			return token.replace(/\s([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/g, (attr, name: string, raw: string) => {
+				if (!/href$/i.test(name)) return attr;
+				// A space, not nothing: deleting must never glue the neighbours together.
+				return isAcceptableReference(raw.replace(/^["']|["']$/g, "")) ? attr : " ";
+			});
+		},
+	);
+}
+
+/** The rule, applied to the exact text handed to resvg and tokenizing nothing:
+ *  every occurrence of `href`, optional whitespace, `=` anywhere in the text
+ *  (comments, CDATA and displayed text included) must be followed by a quoted
+ *  value that passes isAcceptableReference. Returns the offset of the `=` of
+ *  each occurrence that breaks the rule. */
+function unacceptableHrefs(text: string): number[] {
+	const bad: number[] = [];
+	for (const match of text.matchAll(/href\s*=/gi)) {
+		const eq = match.index + match[0].length - 1;
+		const value = /^\s*(["'])([\s\S]*?)\1/.exec(text.slice(eq + 1))?.[2];
+		if (value === undefined || !isAcceptableReference(value)) bad.push(eq);
+	}
+	return bad;
+}
+
+const DOCTYPE_LITERAL = String.raw`(?:"[^<>\[\]"']*"|'[^<>\[\]"']*')`;
+const PLAIN_DOCTYPE = new RegExp(
+	String.raw`^\uFEFF?\s*(?:<\?xml[^<>]*\?>\s*)?<!DOCTYPE\s+[A-Za-z_:][\w:.-]*(?:\s+PUBLIC\s+${DOCTYPE_LITERAL}\s+${DOCTYPE_LITERAL}|\s+SYSTEM\s+${DOCTYPE_LITERAL})?\s*>`,
+	"i",
+);
+
+/** Last gate before resvg, on the exact string it will parse (so it holds
+ *  whatever the rewriting above did, and the tokenizer above and the XML
+ *  parser may disagree). Entities cannot be declared and a DOCTYPE may only be
+ *  one plain declaration at the start, so an attribute name can only appear
+ *  literally; then each unacceptable `href=` has its `=` turned into `&#61;`
+ *  (identical in text content and in another attribute's value, not
+ *  well-formed inside a tag, so the render fails there), and a final scan
+ *  throws if anything unacceptable is left. */
+const HREF_RULE = "SVG not rendered: an href may only point to #id or an inline data:image/ address; remove the other reference";
+
+function guardedRenderSource(text: string): { text: string; rewrites: number } {
+	if (/<!(?:ENTITY|ATTLIST)/i.test(text)) throw new Error("SVG not rendered: remove the <!ENTITY …> / <!ATTLIST …> declarations; entities are not supported in figures");
+	const declared = /<!DOCTYPE/i.test(text);
+	let rest = text;
+	if (declared) {
+		const doctype = PLAIN_DOCTYPE.exec(text);
+		if (!doctype) throw new Error("SVG not rendered: remove the DOCTYPE (or keep only a plain <!DOCTYPE svg> / PUBLIC … / SYSTEM … line at the very start, with no [ … ] subset)");
+		rest = text.slice(doctype[0].length);
+		if (/<!DOCTYPE/i.test(rest)) throw new Error("SVG not rendered: remove the extra DOCTYPE; only one plain declaration at the start is allowed");
+	}
+	let out = text;
+	const found = unacceptableHrefs(text);
+	for (const eq of found.reverse()) out = `${out.slice(0, eq)}&#61;${out.slice(eq + 1)}`;
+	if (unacceptableHrefs(out).length > 0) throw new Error(HREF_RULE);
+	return { text: out, rewrites: found.length };
+}
+
 async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buffer> {
-	// NATIVE FIRST (Wave E stage 2, owner 2026-10-10): resvg rasterizes
-	// static SVG in-process — visual-maker SVGs never execute script, so a
-	// browser adds nothing but a process. White background mirrors the old
-	// Chrome page (html,body{background:#fff}); fitTo width mirrors
+	// Static native rasterization only: resvg draws in-process, so model-written
+	// SVG is never opened in a browser. The same two render-only repairs as the
+	// learner's display are applied first (svgImageSource), so a figure that
+	// displays fine also renders; the caller's source is not rewritten. Local
+	// file references are then stripped (withoutExternalReferences). A native
+	// error propagates to the visual-maker's revise/fail loop, with no Chrome
+	// fallback. White background mirrors the old Chrome page; fitTo width mirrors
 	// svgViewport semantics (attrs win, viewBox-only gets the 900 default,
-	// opts override). The browser path below stays as the fallback for
-	// exotic-SVG features resvg cannot parse — failures there used to be
-	// the ONLY path, so nothing regresses.
+	// opts override).
 	const { width } = svgViewport(svg, opts);
+	const { Resvg } = await import("@resvg/resvg-js");
+	const guarded = guardedRenderSource(withoutExternalReferences(svgImageSource(svg)));
+	let resvg: InstanceType<typeof Resvg>;
 	try {
-		const { Resvg } = await import("@resvg/resvg-js");
-		const resvg = new Resvg(svg, {
+		resvg = new Resvg(guarded.text, {
 			fitTo: { mode: "width", value: width },
 			font: { loadSystemFonts: true },
 			background: "#ffffff",
 		});
-		return providerSafePng(resvg.render().asPng());
-	} catch {
-		/* fall through to the browser path */
+	} catch (error) {
+		// The guard breaks a reference the parser would have followed, so the parse
+		// error then points at text the model did not write: say why, in its terms.
+		if (guarded.rewrites === 0) throw error;
+		throw new Error(`${HREF_RULE}. (${error instanceof Error ? error.message : String(error)})`, { cause: error });
 	}
-	const dir = tempDir("lh-visual-");
-	const file = path.join(dir, "figure.html");
-	fs.writeFileSync(
-		file,
-		`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#fff}svg{display:block}</style></head><body>${svg}</body></html>`,
-		"utf-8",
-	);
-
-	const figureUrl = pathToFileURL(file).href;
-	return withBrowserPage(figureUrl, async (page) => {
-		const { width, height } = svgViewport(svg, opts);
-		await page.setViewport({ width, height });
-		await page.goto(figureUrl, { waitUntil: "load", timeout: 30_000 });
-		const shot = (await page.screenshot({ fullPage: true, type: "png" })) as Buffer;
-		// Chrome's raw split-IDAT PNG is canonicalized before it reaches a
-		// provider (see providerSafePng) — the visual-maker feeds this exact
-		// buffer back to the vision model as its only way to "look".
-		return providerSafePng(Buffer.from(shot));
-	}).finally(() => {
-		try {
-			fs.rmSync(dir, { recursive: true, force: true });
-		} catch {
-			/* best-effort cleanup */
-		}
-	});
+	return providerSafePng(resvg.render().asPng());
 }
 
 // ─── PDF page rasterization (pdfjs paints, Skia hosts) ─────────────────
