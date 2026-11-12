@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { LogOutIcon } from "lucide-react";
 import { Hint } from "@/components/ui/hint";
-import { dropPushSubscription } from "./push-device.ts";
+import { dropPushSubscription, syncPushSubscription } from "./push-device.ts";
 
 interface Account {
 	name: string;
@@ -28,6 +28,12 @@ export function AccountLine() {
 		return () => {
 			live = false;
 		};
+	}, []);
+	// Once per page load, wherever the sidebar is: a browser subscription the
+	// server lost or that the browser rotated gets registered again, whether or
+	// not Settings is ever opened. Best effort; single-user mode included.
+	useEffect(() => {
+		void syncPushSubscription().catch(() => {});
 	}, []);
 	if (!account) return null;
 	return (

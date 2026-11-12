@@ -24,6 +24,7 @@ export function registerSubscription(sub: PushSubscription): Promise<Response> {
  *  server that lost it (another user signed in here, a wiped record) is brought
  *  in line. Resolves to whether the browser is subscribed. */
 export async function syncPushSubscription(): Promise<boolean> {
+	if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return false;
 	const sub = await currentSubscription();
 	if (!sub) return false;
 	await registerSubscription(sub).catch(() => {});
