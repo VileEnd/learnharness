@@ -15,7 +15,7 @@
  *   surface owns its Enter (the dock field, the composer, settings);
  * - modified Enter (⇧↵ is a newline, ⌘/Ctrl↵ belongs to the surface).
  *
- * BUTTONS — the pointer/keyboard split (owner, keyboard round 2026-10-10):
+ * BUTTONS (and <summary> disclosures, same rule) — the pointer/keyboard split (owner, keyboard round 2026-10-10):
  * a mouse click on a transcript control (a thinking toggle, a copy button)
  * leaves focus ON that button; the learner's next Enter must SUBMIT, not
  * re-activate the toggle — the report that born this rule. But two button
@@ -42,8 +42,9 @@ import { topModalRoot } from "@/components/ui/use-modal";
  *  themselves data-lh-menu; Radix poppers/dialogs carry their own attrs). */
 const OVERLAY_ROOTS = '[data-lh-menu], [data-radix-popper-content-wrapper], [role="menu"], [role="dialog"]';
 
-/** Pure decision, exported for pins: does a focused BUTTON keep native
- *  Enter (true) or does Enter belong to submit (false)? */
+/** Pure decision, exported for pins: does a focused BUTTON (or a <summary>,
+ *  which toggles on Enter like a button) keep native Enter (true) or does
+ *  Enter belong to submit (false)? */
 export function buttonKeepsNativeEnter(el: HTMLElement): boolean {
 	// Keyboard-walked focus: the menu arrows landed here — Enter activates.
 	// (Guarded: a selector engine without the pseudo — linkedom in the
@@ -84,7 +85,8 @@ export function useEnterSubmits(submit: () => void, scope?: RefObject<Element | 
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 			if (isTypingSurface(e)) return;
 			const target = e.target as HTMLElement | null;
-			if (target?.tagName === "BUTTON" && buttonKeepsNativeEnter(target)) return;
+			// A <summary> (the probe card's disclosure) follows the button rule.
+			if ((target?.tagName === "BUTTON" || target?.tagName === "SUMMARY") && buttonKeepsNativeEnter(target)) return;
 			// A modal surface owns Enter: a dock outside it must not submit
 			// behind the scrim. A surface that is itself modal (the canvas
 			// workspace) passes its root as `scope` and keeps submitting.

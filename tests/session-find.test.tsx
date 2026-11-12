@@ -94,6 +94,18 @@ describe("sessionFindRanges — the displayed-text DOM seam", () => {
 		assert.ok((ranges[0]!.startContainer as Text).data.includes("visible"));
 	});
 
+	it("a closed <details> hides its content from Find but keeps its summary; an open one is searched", () => {
+		const text = (html: string) => {
+			mount(`<div data-session-find-root="">${html}</div>`);
+			return sessionFindRanges(document.body as unknown as HTMLElement, "needle").map((r) => r.toString());
+		};
+		assert.equal(text(`<details><summary>needle summary</summary><div><p>needle body</p></div></details>`).length, 1, "only the summary of a closed details");
+		assert.equal(text(`<details open><summary>needle summary</summary><div><p>needle body</p></div></details>`).length, 2, "an open details counts again");
+		assert.equal(text(`<details><summary>x</summary>needle direct text</details>`).length, 0, "direct text children too");
+		mount(`<details><summary>x</summary><div data-session-find-root=""><p>needle inside a closed root</p></div></details>`);
+		assert.equal(sessionFindRanges(document.body as unknown as HTMLElement, "needle").length, 0, "a find root inside a closed details is not displayed");
+	});
+
 	it("collapsed whitespace matches: a phrase with spaces/tabs/newlines between words", () => {
 		mount(`<div data-session-find-root=""><p>the\n\tchain    rule</p></div>`);
 		const ranges = sessionFindRanges(document.body as unknown as HTMLElement, "the chain rule");

@@ -28,9 +28,21 @@ function hidden(element: Element, style: CSSStyleDeclaration | null): boolean {
 			|| style.visibility === "collapse" || style.opacity === "0" || style.contentVisibility === "hidden");
 }
 
+/** The browser does not render a CLOSED <details>' content (everything but its
+ *  first <summary>), yet the content's own computed style still says visible:
+ *  the closed state must be checked by hand. */
+function firstSummary(details: Element): Element | undefined {
+	return [...details.children].find((child) => child.tagName === "SUMMARY");
+}
+function closedDetails(element: Element): boolean {
+	return element.tagName === "DETAILS" && !element.hasAttribute("open");
+}
+
 function displayedRoot(root: Element): boolean {
 	for (let element: Element | null = root; element; element = element.parentElement) {
 		if (hidden(element, styleOf(element))) return false;
+		const parent = element.parentElement;
+		if (parent && closedDetails(parent) && element !== firstSummary(parent)) return false;
 	}
 	return true;
 }
@@ -75,7 +87,11 @@ function displayRuns(root: Element): DisplayRun[] {
 		// tags keep literal whitespace.
 		const whiteSpace = style?.whiteSpace ?? (element.matches("pre, listing, plaintext") ? "pre" : "normal");
 		if (block) flush();
+		// A closed <details> shows only its summary; its content is not text the
+		// learner can see, so it is not searched (it counts again once opened).
+		const summary = closedDetails(element) ? firstSummary(element) : undefined;
 		for (const child of element.childNodes) {
+			if (closedDetails(element) && child !== summary) continue;
 			if (child.nodeType === 3) append(child as Text, whiteSpace);
 			else if (child.nodeType === 1) visit(child as Element);
 		}

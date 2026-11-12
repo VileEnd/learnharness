@@ -7,6 +7,7 @@ import { finishDictation, isDictationActive, joinDictation, useDictationTarget }
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { ToolContentResponse } from "@/components/ai-elements/message";
+import { QuestionPreview } from "@/components/question-preview";
 import { cn } from "@/lib/utils";
 import {
 	buildAnswer,
@@ -14,7 +15,6 @@ import {
 	gradeExercise,
 	unreadableItems,
 	parseExerciseInput,
-	repairMathForDisplay,
 	normalizeQuizType,
 	CONFIDENCE_STOPS,
 	DEFAULT_CONFIDENCE_INDEX,
@@ -217,19 +217,6 @@ export function QuestionDock({
 	);
 }
 
-/** A plain-text teaser of a question for the collapsed bar: unwrap math, flatten common LaTeX. */
-function teaserText(q: string): string {
-	return repairMathForDisplay(q)
-		.replace(/\\\(([\s\S]*?)\\\)/g, "$1") // \(...\) inline math
-		.replace(/\\\[([\s\S]*?)\\\]/g, "$1") // \[...\] display math
-		.replace(/\$\$?([^$]*)\$\$?/g, "$1") // standard $...$/$$...$$ math
-		.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "$1/$2")
-		.replace(/\\([a-zA-Z]+)/g, "$1")
-		.replace(/[{}]/g, "")
-		.replace(/\s+/g, " ")
-		.trim();
-}
-
 /** The collapsed strip. Two species (W5): "collapsed" is the scroll minimization
  *  (kind chip + one-liner + Answer ↓); "reveal" is the teach-check invitation —
  *  a distinct, more inviting affordance, because it asks the learner to start
@@ -267,7 +254,9 @@ export function QuestionDockBar({
 				</span>
 				<span className="min-w-0 flex-1">
 					<span className="block text-sm font-medium">Check your understanding</span>
-					<span className="block truncate text-xs text-muted-foreground">{teaserText(question)}</span>
+					<span className="block text-xs text-muted-foreground">
+						<QuestionPreview>{question}</QuestionPreview>
+					</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
 					Open <ChevronRightIcon className="size-3.5" />
@@ -287,7 +276,9 @@ export function QuestionDockBar({
 							toolLabel ??
 							(toolName === "quiz" ? "Check" : toolName === "explain" ? "Explain" : toolName === "exercise" ? "Exercise" : "Question")}
 			</span>
-			<span className="min-w-0 flex-1 truncate text-muted-foreground">{teaserText(question)}</span>
+			<span className="min-w-0 flex-1 text-muted-foreground">
+				<QuestionPreview>{question}</QuestionPreview>
+			</span>
 			<span className="flex shrink-0 items-center gap-1 text-xs font-medium">
 				Answer <ArrowDownIcon className="size-3.5" />
 			</span>

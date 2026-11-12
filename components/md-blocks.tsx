@@ -27,7 +27,7 @@
  * EXPAND icon (opens the session overlay) when a chat page is mounted.
  */
 
-import { cloneElement, isValidElement, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { cloneElement, createContext, isValidElement, useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { CheckIcon, CopyIcon, MaximizeIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -74,6 +74,11 @@ async function copyText(text: string): Promise<boolean> {
 	}
 }
 
+/** Whether blocks show their corner copy icon. A surface that is dense or
+ *  list-like (the chains rows, the graph card) provides `false`: the icons
+ *  are clutter there, and the text stays selectable. */
+export const CopyControlsContext = createContext(true);
+
 /** A small muted copy icon for a block's top-right corner. The CONSUMER'S
  *  wrapper carries `group/md relative` (a NAMED group — the message container
  *  is also a `group`, and an unnamed group-hover would light EVERY corner in
@@ -94,6 +99,7 @@ export function CopyCorner({
 	const [copied, setCopied] = useState(false);
 	const timerRef = useRef<number | undefined>(undefined);
 	useEffect(() => () => window.clearTimeout(timerRef.current), []);
+	if (!useContext(CopyControlsContext)) return null;
 	return (
 		<span className={cn("relative inline-flex", className)}>
 			<button

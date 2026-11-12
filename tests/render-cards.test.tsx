@@ -17,6 +17,7 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MessageResponse } from "../components/ai-elements/message.tsx";
 import { QuestionDock } from "../components/question-dock.tsx";
+import { parseHTML } from "linkedom";
 import { ProbeDoneCard } from "../components/artifacts/probe-done-card.tsx";
 import { DispatchCard } from "../components/artifacts/dispatch-card.tsx";
 import { JobsContext } from "../components/jobs-context.ts";
@@ -454,6 +455,33 @@ describe("teach-check reveal (W5 phase separation)", () => {
 		assert.match(html, /Open/, "a clear reveal action");
 	});
 
+	it("renders math in the collapsed teach-check teaser", () => {
+		const html = renderToStaticMarkup(
+			<QuestionDock
+				toolName="quiz"
+				toolCallId="math-teaser"
+				input={{
+					...quizInput,
+					question: String.raw`A gas occupies
+\(4.0\,\text{L}\) at \(3.0\,\text{atm}\) and \(400\,\text{K}\). The temperature is
+changed and the final volume must be calculated from the combined gas law.`,
+				} as never}
+				expanded={false}
+				reveal
+				onExpand={() => {}}
+				onSubmit={() => {}}
+			/>,
+		);
+		const bar = html.match(/<button[^>]*data-testid="teach-check-reveal"[\s\S]*?<\/button>/)?.[0];
+		assert.ok(bar, "the collapsed check invitation is rendered");
+		assert.ok(bar.includes('class="katex"'), "math in the teaser renders through KaTeX");
+		assert.ok(!bar.includes("textL") && !bar.includes("textatm"), "LaTeX commands are not shown as plain text");
+		assert.ok(bar.includes("whitespace-nowrap"), "the teaser prevents rendered text from wrapping");
+		assert.ok(bar.includes("data-preview-line") && !bar.includes("text-ellipsis"), "one measured line with its own continuation marker");
+		assert.ok(bar.includes("h-[1.6em]") && bar.includes("overflow-hidden"), "the preview slot has a fixed height and clips");
+		assert.ok(!bar.includes("<br"), "source newlines are flattened rather than rendered as forced line breaks");
+	});
+
 	it("probe questions keep the plain collapsed bar (no invitation copy)", () => {
 		const html = renderToStaticMarkup(
 				<QuestionDock
@@ -517,6 +545,82 @@ describe("probe-done card", () => {
 			<ProbeDoneCard part={{ state: "input-available", input: { assessment: validAssessment } } as never} />,
 		);
 		assert.match(html, /modal logic basics/);
+	});
+
+	it("renders math in the strand, assessment, and summary", () => {
+		const html = renderToStaticMarkup(
+			<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+				strands: [{ strand: "Compare $x$", assessment: "Understands $y$" }],
+				summary: "Review\n\n$$\nz=1\n$$",
+			} }, output: { ok: true } } as never} />,
+		);
+		assert.equal((html.match(/class="katex"/g) ?? []).length, 3);
+		assert.ok(html.includes("katex-display"), "display math in the summary renders as display math");
+		assert.match(html, /Compare/);
+		assert.match(html, /Understands/);
+		assert.match(html, /Review/);
+	});
+
+	it("renders Markdown through the shared sanitised path, keeps retry bookkeeping plain, never rewrites the input", () => {
+		const input = Object.freeze({ assessment: Object.freeze({
+			strands: Object.freeze([Object.freeze({ strand: "**Arrays** and `map`", assessment: "Understands *iteration* <script>alert(1)</script>." })]),
+			summary: "Use `reduce` with $n$ terms.",
+		}) });
+		const before = JSON.stringify(input);
+		const html = renderToStaticMarkup(<ProbeDoneCard part={{ state: "output-available", input, output: { ok: true } } as never} />);
+		assert.match(html, /<strong[^>]*>Arrays<\/strong>/);
+		assert.match(html, /<em[^>]*>iteration<\/em>/);
+		assert.ok(!html.includes("<script"));
+		assert.equal(JSON.stringify(input), before);
+		const refused = renderToStaticMarkup(<ProbeDoneCard part={{ output: { ok: false, error: "Retry `$x$` and **literal**" } } as never} />);
+		assert.ok(!refused.includes("katex") && !refused.includes("<strong") && refused.includes("`$x$`"));
+	});
+
+	it("a completed assessment starts collapsed behind a quiet strand count and separates sections with full-width dividers", () => {
+		for (const [count, includeSummary] of [[1, false], [3, true]] as const) {
+			const html = renderToStaticMarkup(<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+				strands: Array.from({ length: count }, (_, i) => ({ strand: `Topic ${i}`, assessment: "ASSESSMENT_BODY" })),
+				...(includeSummary ? { summary: "SUMMARY_BODY" } : {}),
+			} }, output: { ok: true } } as never} />);
+			const { document } = parseHTML(`<html><body>${html}</body></html>`);
+			const card = document.querySelector('[data-testid="probe-done-card"]')!;
+			assert.equal(card.tagName.toLowerCase(), "details");
+			assert.ok(!card.hasAttribute("open"));
+			const summary = card.querySelector("summary")!;
+			assert.ok(summary.textContent!.includes(`${count} strand${count === 1 ? "" : "s"}`));
+			assert.ok(!summary.textContent!.includes("BODY"), "the header never shows the content");
+			assert.equal(summary.querySelectorAll("button, a, input").length, 0);
+			const body = card.lastElementChild!;
+			assert.equal(body.className, "divide-y", "no inset may shorten the separators");
+			assert.equal(body.children.length, count + (includeSummary ? 1 : 0));
+			assert.ok(card.textContent!.includes("ASSESSMENT_BODY"), "the content is in the markup, reachable by assistive technology and find-in-page once opened");
+		}
+	});
+
+	it("lets the header wrap instead of truncating, and scrolls wide text inside its own block", () => {
+		const html = renderToStaticMarkup(<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+			strands: [{ strand: "Topic", assessment: String.raw`Wide $\frac{a}{b}$` }], summary: "Summary",
+		} }, output: { ok: true } } as never} />);
+		const { document } = parseHTML(`<html><body>${html}</body></html>`);
+		const heading = document.querySelector("summary span")!;
+		assert.ok(heading.textContent!.includes("Probe concluded"));
+		assert.ok(!heading.classList.contains("truncate"), "a narrow phone shows the whole heading");
+		const blocks = [...document.querySelectorAll("details .lh-prose")];
+		assert.equal(blocks.length, 3);
+		for (const block of blocks) for (const css of ["min-w-0", "max-w-full", "overflow-x-auto"]) assert.ok(block.classList.contains(css), css);
+	});
+
+	it("never puts refusal, rejected-input or partial-input notes behind a disclosure", () => {
+		const rejected = { assessment: { strands: [{ strand: "REJECTED_INPUT", assessment: "REJECTED_INPUT" }] } };
+		for (const part of [
+			{ state: "output-available", input: rejected, output: { ok: false, error: "Retry `literal`" } },
+			{ state: "output-error", input: rejected },
+			{ state: "input-streaming", input: { assessment: { summary: "PARTIAL_INPUT" } } },
+		]) {
+			const html = renderToStaticMarkup(<ProbeDoneCard part={part as never} />);
+			assert.ok(!html.includes("<details") && !html.includes("<summary"));
+			assert.ok(!html.includes("REJECTED_INPUT") && !html.includes("PARTIAL_INPUT"));
+		}
 	});
 
 	it("a REJECTED assessment (the stringified live shape) renders the retry note, never the garbage", () => {
