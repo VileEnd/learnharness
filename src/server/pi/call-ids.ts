@@ -75,6 +75,15 @@ export class ToolCallIdUniquifier {
 		for (const id of usedIds) this.seen.add(id);
 	}
 
+	/** The id the record will hold for a provider call id, as of now: what
+	 *  a tool's `execute` must key on. Valid from the assistant message's
+	 *  message_end (every one of its tool executions starts after it, before
+	 *  the next message_start), so it resolves in the current epoch. An id
+	 *  this turn never saw passes through unchanged. */
+	resolve(orig: string): string {
+		return this.epoch?.get(orig) ?? orig;
+	}
+
 	/** Keep `orig` if never used; otherwise mint an unused `${orig}~n`. */
 	private claim(orig: string): string {
 		if (!this.seen.has(orig)) {

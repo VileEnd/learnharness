@@ -80,6 +80,19 @@ describe("ToolCallIdUniquifier", () => {
 		assert.equal(settled[3]!.toolCallId, "call_0~3");
 	});
 
+	it("resolve() gives a tool the id the wire and record use, per message, as of its message_end", () => {
+		const u = new ToolCallIdUniquifier(["call_0"]);
+		assert.equal(u.resolve("call_0"), "call_0", "before any message: unchanged");
+		u.event(asEvent({ type: "message_start", message: assistantMsg("m1", []) }));
+		u.event(asEvent({ type: "message_end", message: assistantMsg("m1", ["call_0", "call_9"]) }));
+		assert.equal(u.resolve("call_0"), "call_0~2");
+		assert.equal(u.resolve("call_9"), "call_9", "an id that never collided is unchanged");
+		// the next message reuses call_0: its executions resolve to ITS mint
+		u.event(asEvent({ type: "message_start", message: assistantMsg("m2", []) }));
+		u.event(asEvent({ type: "message_end", message: assistantMsg("m2", ["call_0"]) }));
+		assert.equal(u.resolve("call_0"), "call_0~3");
+	});
+
 	it("mint candidates skip ids already used (a provider that counts globally can't be ambushed)", () => {
 		const u = new ToolCallIdUniquifier(["call_0", "call_0~2"]);
 		assert.equal(firstCallId(u.event(asEvent({ type: "message_end", message: assistantMsg("m1", ["call_0"]) }))), "call_0~3");

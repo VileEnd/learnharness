@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { invalidInputResult, questionResult, serverExecute } from "./tool-execute.ts";
+import { invalidInputResult, questionResult, serverExecute, type CallIdResolver } from "./tool-execute.ts";
 import {
 	exerciseInputBase,
 	exerciseInputObject,
@@ -464,6 +464,8 @@ export interface ProberToolContext extends ProbeDoneContext {
 	drawingStore?: Pick<DrawingStore, "getScene">;
 	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
 	workGate?: WorkGate;
+	/** Provider call id -> the id the record holds (jobs and the canvas ack key on it). */
+	resolveCallId?: CallIdResolver;
 	/** The in-flight turn's view (late-bound by the prober agent): lets `grade` see a
 	 *  refusal or coaching from earlier in the SAME turn. Absent = record only. */
 	turn?: TeachTurnView;
@@ -490,6 +492,7 @@ export function createProberTools(
 		jobStore: ctx.jobStore,
 		spawn: ctx.spawn,
 		searchAvailable: ctx.searchAvailable,
+		resolveCallId: ctx.resolveCallId,
 	});
 	// Quizzing mechanics (owner 2026-09-27): free-recall swaps the probe
 	// quiz for the probe explain; Mixed arms both. Whichever the settings
@@ -664,6 +667,8 @@ export interface TeacherToolContext extends PlanToolContext {
 	drawingStore?: Pick<DrawingStore, "getScene">;
 	/** Turn-scoped "graded this turn" view shared by `grade` and the canvas tool. */
 	workGate?: WorkGate;
+	/** Provider call id -> the id the record holds (jobs and the canvas ack key on it). */
+	resolveCallId?: CallIdResolver;
 }
 
 /**
@@ -736,7 +741,7 @@ export function createTeacherTools(
 			find: findToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 			grep: grepToolFor(ctx.libraryRoot, { beforeAccess: ctx.libraryBeforeAccess }),
 			...planTools(ctx),
-			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
+			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable, resolveCallId: ctx.resolveCallId }),
 			...(ctx.documents ? documentTools(ctx.documents) : {}),
 			...gradeFor(ctx, mechanics),
 			// The canvas task (work): only on a canvas-capable turn.

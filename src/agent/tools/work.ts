@@ -18,7 +18,7 @@ import type { Static } from "typebox";
 import { sketchInputObject, workInputObject, workInputProblems } from "../../core/question-core.ts";
 import { activeWorkOf } from "../../core/native-messages.ts";
 import type { ChatStore } from "../../core/ports.ts";
-import { invalidInputResult, workResult } from "../tool-execute.ts";
+import { invalidInputResult, workResult, type CallIdResolver } from "../tool-execute.ts";
 import {
 	conceptsProblems,
 	nodeIdProblem,
@@ -45,6 +45,8 @@ export interface WorkToolContext {
 	graphNodes?: ConceptNodes;
 	turn?: TeachTurnView;
 	workGate?: WorkGate;
+	/** Provider call id -> the record's id, which `grade` is told to use. */
+	resolveCallId?: CallIdResolver;
 }
 
 function description(name: "work" | "sketch", teach: boolean): string {
@@ -96,7 +98,7 @@ export function teachWorkToolFor(ctx: WorkToolContext): AgentTool<typeof workInp
 			if (problems.length > 0) return invalidInputResult("work", problems);
 			const refusal = guard("work", input.type);
 			if (refusal) return invalidInputResult("work", [refusal]);
-			return workResult(toolCallId);
+			return workResult(ctx.resolveCallId?.(toolCallId) ?? toolCallId);
 		},
 	};
 }
@@ -115,7 +117,7 @@ export function probeSketchToolFor(ctx: Omit<WorkToolContext, "turn">): AgentToo
 			const open = openTaskProblem(ctx);
 			if (open) problems.push(open);
 			if (problems.length > 0) return invalidInputResult("sketch", problems);
-			return workResult(toolCallId);
+			return workResult(ctx.resolveCallId?.(toolCallId) ?? toolCallId);
 		},
 	};
 }
