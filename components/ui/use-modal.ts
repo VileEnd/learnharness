@@ -87,8 +87,9 @@ let tracking = false;
 
 function notePress(e: Event) {
 	if (e.type === "keydown" && (e as KeyboardEvent).key !== "Enter" && (e as KeyboardEvent).key !== " ") return;
-	const t = e.target;
-	if (!(t instanceof Element)) return;
+	// Duck-typed: harnesses without the Element global dispatch events too.
+	const t = e.target as Element | null;
+	if (!t || typeof t.closest !== "function") return;
 	const el = t.closest(PRESSABLE) ?? t;
 	if (el === document.body || el === document.documentElement) return;
 	const at = pressed.findIndex((p) => p.el === el);
