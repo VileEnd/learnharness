@@ -252,7 +252,14 @@ export function DocumentReaderBody({
 					)}
 					<div className="mt-6 space-y-8">
 						{pages.map((p, i) => (
-							<section key={i} id={p.page !== null ? `p-${p.page}` : undefined} className="min-w-0 scroll-mt-20">
+							// A long document mounts one markdown renderer per page; the browser
+							// skips layout and paint of off-screen pages (auto keeps the measured
+							// height once a page has been seen, so the scrollbar stays steady).
+							<section
+								key={i}
+								id={p.page !== null ? `p-${p.page}` : undefined}
+								className={`min-w-0 scroll-mt-20${numbered.length > 1 ? " [content-visibility:auto] [contain-intrinsic-size:auto_48rem]" : ""}`}
+							>
 								{p.page !== null && numbered.length > 1 && (
 									<div className="mb-2 text-[11px] uppercase tracking-widest text-muted-foreground/70">Page {p.page}</div>
 								)}
