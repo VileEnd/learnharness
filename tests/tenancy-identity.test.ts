@@ -113,3 +113,28 @@ test("every app/api route except health wraps each exported HTTP method in withT
 	}
 	assert.equal(checked, 64);
 });
+
+test("every app/api/admin handler calls requireAdmin()", () => {
+	const adminDir = path.join(import.meta.dirname, "..", "app", "api", "admin");
+	const files: string[] = [];
+	const walk = (d: string) => {
+		for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+			const p = path.join(d, e.name);
+			if (e.isDirectory()) walk(p);
+			else if (e.name === "route.ts") files.push(p);
+		}
+	};
+	walk(adminDir);
+	let handlers = 0;
+	for (const f of files) {
+		// Each handler's text runs from its `export const METHOD` to the next export.
+		const parts = fs.readFileSync(f, "utf8").split(/^export const /m).slice(1);
+		for (const part of parts) {
+			const method = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/.exec(part)?.[1];
+			if (!method) continue;
+			assert.ok(part.includes("requireAdmin("), `${f}: ${method} never calls requireAdmin()`);
+			handlers++;
+		}
+	}
+	assert.equal(handlers, 14);
+});

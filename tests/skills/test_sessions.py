@@ -77,10 +77,11 @@ class SessionsTest(unittest.TestCase):
         listing = self.cli(GOLDEN, "--format", "json", "list")
         self.assertEqual(listing.returncode, 0, listing.stderr)
         index = json.loads(listing.stdout)
-        self.assertEqual(len(index["sessions"]), 2)
+        fixture = [json.loads(p.read_text()) for p in sorted((GOLDEN / "chats").glob("*.json"))]
+        self.assertEqual(sorted(s["id"] for s in index["sessions"]), sorted(r["id"] for r in fixture))
         self.assertEqual(index["skipped_count"], 0)
         self.assertEqual(index["data_dir"], str(GOLDEN.resolve()))
-        self.assertEqual({s["kind"] for s in index["sessions"]}, {"teach", "practice"})
+        self.assertEqual({s["kind"] for s in index["sessions"]}, {r.get("kind", "teach") for r in fixture})
         for summary in index["sessions"]:
             response = self.cli(GOLDEN, "read", summary["id"])
             self.assertEqual(response.returncode, 0, response.stderr)

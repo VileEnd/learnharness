@@ -47,6 +47,8 @@ jobs:
         working-directory: services/ocr
       # Host-side deploy scripts (wg-apply.py); stdlib only.
       - run: python3 -I -B -m unittest discover -s tests/deploy -v
+      # The standalone data skill (skills/learnharness/); stdlib only.
+      - run: python3 -I -B -m unittest discover -s tests/skills -v
 
   docker:
     name: Docker image (build + boot)
