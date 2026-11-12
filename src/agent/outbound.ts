@@ -21,9 +21,9 @@ import * as zlib from "node:zlib";
  *   refused before any lookup;
  * - every address a name resolves to must be public (classifyAddress); one
  *   non-public answer refuses the whole name;
- * - the connection goes to the address that was checked: the lookup result
- *   is pinned into the socket's own lookup, so there is no second DNS query
- *   between check and connect (no rebinding window);
+ * - the connection goes to an address that was checked: the checked lookup
+ *   result is pinned into the socket's own lookup, so there is no second DNS
+ *   query between check and connect (no rebinding window);
  * - redirects are followed by hand, each hop re-checked, at most
  *   MAX_REDIRECTS of them;
  * - bodies are read through readCapped, which counts the bytes as they
@@ -51,12 +51,12 @@ export interface ResolvedAddress {
 /** Resolve a hostname to every address it has. */
 export type LookupFn = (hostname: string) => Promise<ResolvedAddress[]>;
 
-/** One request to an already-checked address. */
+/** One request to already-checked addresses. */
 export interface PinnedRequest {
 	url: URL;
-	/** The checked address the connection must go to. */
-	address: string;
-	family: 4 | 6;
+	/** Every address the host resolved to, all checked; the connection
+	 *  must go to one of them (first choice first). Never empty. */
+	addresses: ResolvedAddress[];
 	method: "GET" | "HEAD";
 	headers: Record<string, string>;
 	signal?: AbortSignal;
@@ -232,50 +232,56 @@ function depsOf(deps?: OutboundDeps): Required<OutboundDeps> {
 	};
 }
 
-/** Check a URL and return the one public address to connect to. Throws
+/** Check a URL and return the public addresses to connect to (all of the
+ *  host's answers, every one checked; never empty). Throws
  *  OutboundRefusedError for a refused scheme, name or address; a failed
  *  lookup throws its own error. The refusal never names the internal
  *  address (the model reads these messages). */
-export async function resolvePublicTarget(url: URL, lookup?: LookupFn): Promise<ResolvedAddress> {
+export async function resolvePublicTarget(url: URL, lookup?: LookupFn): Promise<ResolvedAddress[]> {
 	if (url.protocol !== "http:" && url.protocol !== "https:")
 		throw new OutboundRefusedError(`refused: only http(s) URLs are allowed (got ${url.protocol})`);
 	const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
 	const refusal = hostRefusal(url.hostname);
 	if (refusal) throw new OutboundRefusedError(`refused: ${url.hostname} is not a public host (${refusal})`);
 	const literal = net.isIP(host);
-	if (literal) return { address: host, family: literal === 6 ? 6 : 4 };
+	if (literal) return [{ address: host, family: literal === 6 ? 6 : 4 }];
 	const answers = await (lookup ?? depsOf().lookup)(host);
 	if (answers.length === 0) throw new Error(`${host} did not resolve`);
 	for (const a of answers) {
 		const verdict = classifyAddress(a.address);
 		if (verdict) throw new OutboundRefusedError(`refused: ${host} resolves to a non-public address (${verdict})`);
 	}
-	return answers[0]!;
+	return answers;
+}
+
+/** A socket lookup that answers only with these (checked) addresses. */
+function pinnedLookup(addresses: ResolvedAddress[]) {
+	return (
+		_hostname: string,
+		options: LookupOptions,
+		callback: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void,
+	) => {
+		const first = addresses[0]!;
+		if (options.all) callback(null, addresses.map((a) => ({ address: a.address, family: a.family })));
+		else callback(null, first.address, first.family);
+	};
 }
 
 // ─── the default transport (node:http/https, pinned) ─────────────────────────
 
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
-/** One request over node:http(s) whose socket lookup returns the checked
- *  address, so the connection cannot go anywhere else. TLS still verifies
- *  the URL's host name. Decompresses gzip/deflate/br (the size cap then
- *  applies to the decoded bytes). */
+/** One request over node:http(s) whose socket lookup returns only the
+ *  checked addresses, so the connection cannot go anywhere else. TLS still
+ *  verifies the URL's host name. Decompresses gzip/deflate/br (the size cap
+ *  then applies to the decoded bytes). */
 export const nodePinnedFetch: PinnedFetch = (req) =>
 	new Promise<Response>((resolve, reject) => {
-		const pinnedLookup = (
-			_hostname: string,
-			options: LookupOptions,
-			callback: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void,
-		) => {
-			if (options.all) callback(null, [{ address: req.address, family: req.family }]);
-			else callback(null, req.address, req.family);
-		};
 		const transport = req.url.protocol === "https:" ? https : http;
 		const headers = { "accept-encoding": "gzip, deflate, br", ...req.headers };
 		const request = transport.request(
 			req.url,
-			{ method: req.method, headers, signal: req.signal, lookup: pinnedLookup, agent: false },
+			{ method: req.method, headers, signal: req.signal, lookup: pinnedLookup(req.addresses), agent: false },
 			(res) => {
 				const status = res.statusCode ?? 0;
 				const out = new Headers();
@@ -357,11 +363,10 @@ export async function guardedFetch(
 	}
 	for (let hop = 0; ; hop++) {
 		init.signal?.throwIfAborted();
-		const target = await resolvePublicTarget(url, lookup);
+		const addresses = await resolvePublicTarget(url, lookup);
 		const response = await fetch({
 			url,
-			address: target.address,
-			family: target.family,
+			addresses,
 			method: init.method ?? "GET",
 			headers: init.headers ?? {},
 			...(init.signal ? { signal: init.signal } : {}),
@@ -423,7 +428,7 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
 
 /** An https.Agent that refuses non-public destinations at connect time: a
  *  host name is resolved through the lookup and every answer checked (the
- *  socket connects to the checked address), and an IP literal host is
+ *  socket connects only to checked addresses), and an IP literal host is
  *  classified directly (net skips the lookup for literals). */
 export function guardedHttpsAgent(lookup?: LookupFn): https.Agent {
 	const resolve: LookupFn = (hostname) => (lookup ?? depsOf().lookup)(hostname);
@@ -433,10 +438,7 @@ export function guardedHttpsAgent(lookup?: LookupFn): https.Agent {
 		callback: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void,
 	) => {
 		resolvePublicTarget(new URL(`https://${hostname.includes(":") ? `[${hostname}]` : hostname}/`), resolve).then(
-			(target) => {
-				if (options.all) callback(null, [{ address: target.address, family: target.family }]);
-				else callback(null, target.address, target.family);
-			},
+			(addresses) => pinnedLookup(addresses)(hostname, options, callback),
 			(err: unknown) => callback(err instanceof Error ? err : new Error(String(err)), ""),
 		);
 	};

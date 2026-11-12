@@ -130,7 +130,7 @@ describe("guardedFetch", () => {
 		};
 		const { url } = await guardedFetch("https://example.com/a", {}, deps);
 		assert.equal(url, "https://example.com/a");
-		assert.deepEqual([seen[0]!.address, seen[0]!.url.hostname], ["192.0.2.10", "example.com"]);
+		assert.deepEqual([seen[0]!.addresses, seen[0]!.url.hostname], [[PUBLIC], "example.com"]);
 		await assert.rejects(guardedFetch("https://mixed.example.com/", {}, deps), /non-public address/);
 		assert.equal(seen.length, 1, "the refused name was never fetched");
 	});
@@ -147,8 +147,7 @@ describe("guardedFetch", () => {
 			const port = (server.address() as { port: number }).port;
 			const resp = await nodePinnedFetch({
 				url: new URL(`http://unresolvable.invalid:${port}/`),
-				address: "127.0.0.1",
-				family: 4,
+				addresses: [{ address: "127.0.0.1", family: 4 }],
 				method: "GET",
 				headers: {},
 			});
