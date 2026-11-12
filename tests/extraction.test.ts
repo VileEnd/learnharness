@@ -42,7 +42,8 @@ import type {
 	SessionCheckpoint,
 	SessionFindings,
 } from "../src/core/contracts.ts";
-import type { GraphStore } from "../src/core/ports.ts";
+import type { ChatStore, GraphStore } from "../src/core/ports.ts";
+import { runAsTenant } from "../src/core/tenant-context.ts";
 import {
 	abortExtraction,
 	createExtractionPipeline,
@@ -1137,36 +1138,85 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 		assert.ok(!g.__lhExtractionRuns?.running.has(chatId), "nothing leaks into the global registry");
 	});
 
+	/** Runs of a pipeline whose extractor never submits, so every batch fails;
+	 *  counts extractor calls and run reports. */
+	const failingRuns = (chatId: string, store: ChatStore = chatStore) => {
+		const ledgers = memoryLedgers();
+		const out = {
+			ledgers,
+			extractorCalls: 0,
+			reports: [] as string[],
+			run: (opts?: { explicit?: boolean }) => {
+				const silent = silentModel();
+				return createExtractionPipeline({
+					chatStore: store,
+					graphStore: ledgers,
+					extractor: { ...silent, streamFn: (...args) => (out.extractorCalls++, silent.streamFn(...args)) },
+					auditor: silentModel(),
+					onRunFinished: (r) => out.reports.push(r.status),
+				}).runExtraction(chatId, opts);
+			},
+		};
+		return out;
+	};
+
 	it("a batch that fails 3 times running is skipped by automatic runs; an explicit run retries it and resets the count", async () => {
 		const { chatId } = fixtureChat();
-		const ledgers = memoryLedgers();
-		const reports: string[] = [];
-		let extractorCalls = 0;
-		const run = (opts?: { explicit?: boolean }) => {
-			const silent = silentModel();
-			return createExtractionPipeline({
-				chatStore,
-				graphStore: ledgers,
-				extractor: { ...silent, streamFn: (...args) => (extractorCalls++, silent.streamFn(...args)) },
-				auditor: silentModel(),
-				onRunFinished: (r) => reports.push(r.status),
-			}).runExtraction(chatId, opts);
-		};
+		const runs = failingRuns(chatId);
 
-		for (let i = 0; i < 3; i++) assert.deepEqual(await run(), { nodes: 0, chains: 0 });
-		assert.deepEqual(reports, ["error", "error", "error"], "a run whose every batch failed is reported");
-		const billed = extractorCalls;
+		for (let i = 0; i < 3; i++) assert.deepEqual(await runs.run(), { nodes: 0, chains: 0 });
+		assert.deepEqual(runs.reports, ["error", "error", "error"], "a run whose every batch failed is reported");
+		const billed = runs.extractorCalls;
 		assert.ok(billed > 0);
 
-		assert.deepEqual(await run(), { nodes: 0, chains: 0 });
-		assert.equal(extractorCalls, billed, "the 4th automatic run skips the batch: no model call");
+		assert.deepEqual(await runs.run(), { nodes: 0, chains: 0 });
+		assert.equal(runs.extractorCalls, billed, "the 4th automatic run skips the batch: no model call");
+		assert.equal(runs.reports.length, 3, "a run that only skipped batches reports nothing");
 
-		await run({ explicit: true });
-		assert.ok(extractorCalls > billed, "an explicit request tries the batch again");
-		const afterExplicit = extractorCalls;
-		await run();
-		assert.ok(extractorCalls > afterExplicit, "the explicit run reset the count, so the next automatic run tries too");
-		assert.equal(ledgers.readCoverage().some((row) => row.chatId === chatId), false, "nothing was checkpointed");
+		await runs.run({ explicit: true });
+		assert.ok(runs.extractorCalls > billed, "an explicit request tries the batch again");
+		const afterExplicit = runs.extractorCalls;
+		await runs.run();
+		assert.ok(runs.extractorCalls > afterExplicit, "the explicit run reset the count, so the next automatic run tries too");
+		assert.equal(runs.ledgers.readCoverage().some((row) => row.chatId === chatId), false, "nothing was checkpointed");
+	});
+
+	it("a skipped batch whose fingerprint changes starts a fresh count", async () => {
+		const { chatId } = fixtureChat();
+		const runs = failingRuns(chatId);
+		for (let i = 0; i < 3; i++) await runs.run();
+		const billed = runs.extractorCalls;
+		await runs.run();
+		assert.equal(runs.extractorCalls, billed, "skipped");
+
+		chatStore.saveMessages(chatId, [
+			...chatStore.getChat(chatId)!.messages,
+			user("u9", "and limits?"),
+			...assistant("a9", [{ type: "text", text: "A limit is the value a function approaches." }]),
+		]);
+		await runs.run();
+		assert.ok(runs.extractorCalls > billed, "the changed batch is tried again");
+	});
+
+	it("tenants do not share a batch's failure count", async () => {
+		const { chatId } = fixtureChat();
+		const record = chatStore.getChat(chatId)!;
+		// The same chat id and batch in both tenants: only the tenant differs.
+		const runs = failingRuns(chatId, { ...chatStore, getChat: () => record, appendExtractionUsage: () => {} });
+		const as = (id: string) => (fn: () => Promise<unknown>) => runAsTenant({ id, name: id, isAdmin: false }, fn);
+		const previous = process.env.LH_MULTI_USER;
+		process.env.LH_MULTI_USER = "1";
+		try {
+			for (let i = 0; i < 3; i++) await as("tenant-a")(() => runs.run());
+			const billed = runs.extractorCalls;
+			await as("tenant-a")(() => runs.run());
+			assert.equal(runs.extractorCalls, billed, "tenant A's 4th run skips the batch");
+			await as("tenant-b")(() => runs.run());
+			assert.ok(runs.extractorCalls > billed, "tenant B's run still tries it");
+		} finally {
+			if (previous === undefined) delete process.env.LH_MULTI_USER;
+			else process.env.LH_MULTI_USER = previous;
+		}
 	});
 
 	it("throws for unknown chats", async () => {
