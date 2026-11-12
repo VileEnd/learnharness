@@ -661,8 +661,10 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 					};
 				}
 				await new Promise<void>((resolve, reject) => {
-					const t = setTimeout(resolve, pollMs);
-					controller.signal.addEventListener("abort", () => { clearTimeout(t); reject(controller.signal.reason); }, { once: true });
+					// The listener goes when the wait ends, or a long scan stacks one per poll.
+					const onAbort = () => { clearTimeout(t); reject(controller.signal.reason); };
+					const t = setTimeout(() => { controller.signal.removeEventListener("abort", onAbort); resolve(); }, pollMs);
+					controller.signal.addEventListener("abort", onAbort, { once: true });
 				});
 			}
 		} finally {
