@@ -163,8 +163,12 @@ const GRACE_MS = 750;
 /** 409 backoff: capped ramp so a busy client can't spin the pump. */
 const RETRY_BACKOFF_MS = [500, 1000, 2000, 5000] as const;
 
+/** Test seam (the abortSettleGraceMs idiom): how the pump waits. Tests swap in
+ *  a virtual clock so the poll, the grace and the backoff cost no wall time. */
+export const pumpDelay = { current: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)) };
+
 function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+	return pumpDelay.current(ms);
 }
 
 /** The job a steer belongs to, if it is a job steer (result/abort);
