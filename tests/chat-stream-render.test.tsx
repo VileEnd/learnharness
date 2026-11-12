@@ -210,8 +210,9 @@ it("a row re-renders exactly once when only streamingTail flips", async () => {
 	const m = projectView(settledTurn(1)).find((v) => v.role === "assistant")!;
 	const sourceTextParts = new Map<string, string>();
 	const onOpenPlan = () => {};
+	const citationActions = { check: () => false, reveal: () => false };
 	const row = (streamingTail: boolean) => (
-		<TranscriptRow m={m} phase="probe" prevPhase="probe" streamingTail={streamingTail} sourceTextParts={sourceTextParts} chatId="chat_x" onOpenPlan={onOpenPlan} />
+		<TranscriptRow m={m} phase="probe" prevPhase="probe" streamingTail={streamingTail} sourceTextParts={sourceTextParts} citationActions={citationActions} chatId="chat_x" onOpenPlan={onOpenPlan} />
 	);
 	const host = document.createElement("div");
 	document.body.append(host);
