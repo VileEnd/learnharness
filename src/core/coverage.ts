@@ -177,13 +177,10 @@ export function batchRuns(slots: ReadonlyArray<CoverageSlot>, uncovered: Readonl
 }
 
 /**
- * A batch's deterministic tag: hash of its member fingerprints. This is the
- * observation-ref prefix for the run (obs:<tag>:<sourceId> in the merger):
- * re-running the SAME batch (crash recovery) produces the same refs and
- * dedupes; a re-opened (mutated) message changes the tag, so its fresh
- * understanding observations land as new events — the most-recent fold
- * sees the update. Run-local source ids ("p1"…) alone could never do this:
- * their positions shift between runs.
+ * A batch's deterministic tag: hash of its member fingerprints. Re-running
+ * the SAME batch produces the same tag; a re-opened (mutated) message or a
+ * different batch boundary changes it. The extraction pipeline keys its
+ * in-memory failure count per batch by it.
  */
 export function batchTag(batch: ReadonlyArray<CoverageSlot>): string {
 	const h = createHash("sha256");

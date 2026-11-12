@@ -33,7 +33,7 @@ import { chunkDocument, documentChunkView, type DocumentChunk } from "./section-
 import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
 import { settleGraphLayout } from "../../core/layout-settle.ts";
-import { batchRuns, coverageOf, messageViewLines } from "../../core/coverage.ts";
+import { batchRuns, batchTag, coverageOf, messageViewLines } from "../../core/coverage.ts";
 import { registryKey, requireTenant } from "../../core/tenant-context.ts";
 import { failedOutputCallIds, type LhMessage } from "../../core/native-messages.ts";
 import { prepareAuditorReview } from "../tools/graph.ts";
@@ -834,6 +834,10 @@ interface LhExtractionGlobal {
 	 *  process-wide. globalThis for the same module-instance reason as
 	 *  the run registries. */
 	__lhAuditLock?: { tail: Promise<void> };
+	/** Consecutive failures per chat batch, keyed by tenant + chat + the
+	 *  batch's fingerprint (batchTag). In memory only: a restart forgets it,
+	 *  and nothing about a failure is ever persisted. */
+	__lhBatchFailures?: Map<string, number>;
 	/** The EXTRACT SEMAPHORE (owner, 2026-09-28): 3 concurrent extractor
 	 *  calls process-wide — the provider-facing rate stance (the import
 	 *  route's old 3-wide pool doctrine, now global). Per-chunk jobs fan
@@ -851,6 +855,16 @@ interface LhExtractionGlobal {
 function runs(): NonNullable<LhExtractionGlobal["__lhExtractionRuns"]> {
 	const g = globalThis as typeof globalThis & LhExtractionGlobal;
 	return (g.__lhExtractionRuns ??= { running: new Map(), inFlight: new Set(), lastStartedAt: 0 });
+}
+
+/** After this many consecutive failures of the same batch, automatic runs
+ *  skip it until its fingerprint changes, the process restarts, or an
+ *  explicit request tries it again. */
+const MAX_BATCH_FAILURES = 3;
+
+function batchFailures(): Map<string, number> {
+	const g = globalThis as typeof globalThis & LhExtractionGlobal;
+	return (g.__lhBatchFailures ??= new Map());
 }
 
 /** In-flight pipeline runs (oldest first) — the /api/graph/status payload. */
@@ -967,8 +981,11 @@ export class NotesImportError extends Error {
 
 export interface ExtractionPipeline {
 	/** Extract + audit + merge ONE chat. Single-flight per chat; resolves to
-	 *  the merger's append stats (or throws — no checkpoint on failure). */
-	runExtraction(chatId: string): Promise<EmissionStats>;
+	 *  the merger's append stats (or throws — no checkpoint on failure).
+	 *  Automatic runs skip a batch that already failed MAX_BATCH_FAILURES
+	 *  times in a row; `explicit` (the learner's extract request) tries every
+	 *  batch and resets its failure count. */
+	runExtraction(chatId: string, opts?: { explicit?: boolean }): Promise<EmissionStats>;
 	/** The format-agnostic front door (2026-09-13): run the same pipeline
 	 *  over ONE raw notes file. The source id is deterministic per file
 	 *  path, so re-importing the same file re-runs extraction against the
@@ -1362,7 +1379,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		return stats;
 	}
 
-	async function runExtraction(chatId: string): Promise<EmissionStats> {
+	async function runExtraction(chatId: string, opts?: { explicit?: boolean }): Promise<EmissionStats> {
 		if (inFlight.has(chatId)) return { nodes: 0, chains: 0 };
 		inFlight.add(chatId);
 		const t0 = performance.now();
@@ -1405,9 +1422,23 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			// process-wide gate ("waiting"). A batch that fails is ISOLATED
 			// (its messages stay uncovered — honestly re-runnable); its
 			// siblings keep merging.
+			// A batch that keeps failing (an extractor that cannot satisfy the
+			// anchor law, an auditor that never submits) leaves coverage
+			// untouched, so every later turn would re-run and re-bill it:
+			// after MAX_BATCH_FAILURES in a row, automatic runs skip it.
+			const failures = batchFailures();
 			const settled: PromiseSettledResult<EmissionStats>[] = [];
+			let failed = 0;
+			let skipped = 0;
 			for (const [batchIndex, batch] of batches.entries()) {
 				const part = batches.length > 1 ? { i: batchIndex + 1, n: batches.length } : undefined;
+				const failureKey = registryKey(`${chatId}:${batchTag(batch)}`);
+				if (opts?.explicit) failures.delete(failureKey);
+				else if ((failures.get(failureKey) ?? 0) >= MAX_BATCH_FAILURES) {
+					skipped++;
+					console.info(`[extraction ${chatId}] batch ${batchIndex + 1}/${batches.length} skipped — failed ${MAX_BATCH_FAILURES} times in a row`);
+					continue;
+				}
 				try {
 					settled.push({
 						status: "fulfilled",
@@ -1476,6 +1507,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 							});
 						}),
 					});
+					failures.delete(failureKey);
 				} catch (err) {
 					settled.push({ status: "rejected", reason: err });
 					// A source-wide abort (user abort / session deletion)
@@ -1483,9 +1515,19 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 					// un-aborted jobs and hang — stop here. Isolated
 					// FAILURES keep going (siblings still merge).
 					if (err instanceof Error && err.name === "AbortError") break;
+					// Refusals (models, keys, policy) are not the batch's fault.
+					if (isReportable(err)) {
+						failures.set(failureKey, (failures.get(failureKey) ?? 0) + 1);
+						failed++;
+					}
 				}
 			}
 			const stats = aggregateJobs(chatId, settled);
+			// Nothing merged: every batch failed or was skipped. Reported when
+			// this run itself failed a batch; a run that only skipped batches
+			// cost nothing and has nothing new to say.
+			if (failed > 0 && failed + skipped === batches.length)
+				reportRun(record.title || "Session", "error");
 			console.info(
 				`[extraction ${chatId}] merged: ${stats.nodes} nodes, ${stats.chains ?? 0} chains ` +
 					`(${Math.round(performance.now() - t0)}ms total, ${batches.length} batch job(s))`,

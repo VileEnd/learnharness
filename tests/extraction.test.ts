@@ -1137,6 +1137,38 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 		assert.ok(!g.__lhExtractionRuns?.running.has(chatId), "nothing leaks into the global registry");
 	});
 
+	it("a batch that fails 3 times running is skipped by automatic runs; an explicit run retries it and resets the count", async () => {
+		const { chatId } = fixtureChat();
+		const ledgers = memoryLedgers();
+		const reports: string[] = [];
+		let extractorCalls = 0;
+		const run = (opts?: { explicit?: boolean }) => {
+			const silent = silentModel();
+			return createExtractionPipeline({
+				chatStore,
+				graphStore: ledgers,
+				extractor: { ...silent, streamFn: (...args) => (extractorCalls++, silent.streamFn(...args)) },
+				auditor: silentModel(),
+				onRunFinished: (r) => reports.push(r.status),
+			}).runExtraction(chatId, opts);
+		};
+
+		for (let i = 0; i < 3; i++) assert.deepEqual(await run(), { nodes: 0, chains: 0 });
+		assert.deepEqual(reports, ["error", "error", "error"], "a run whose every batch failed is reported");
+		const billed = extractorCalls;
+		assert.ok(billed > 0);
+
+		assert.deepEqual(await run(), { nodes: 0, chains: 0 });
+		assert.equal(extractorCalls, billed, "the 4th automatic run skips the batch: no model call");
+
+		await run({ explicit: true });
+		assert.ok(extractorCalls > billed, "an explicit request tries the batch again");
+		const afterExplicit = extractorCalls;
+		await run();
+		assert.ok(extractorCalls > afterExplicit, "the explicit run reset the count, so the next automatic run tries too");
+		assert.equal(ledgers.readCoverage().some((row) => row.chatId === chatId), false, "nothing was checkpointed");
+	});
+
 	it("throws for unknown chats", async () => {
 		const ledgers = memoryLedgers();
 		const pipeline = createExtractionPipeline({
