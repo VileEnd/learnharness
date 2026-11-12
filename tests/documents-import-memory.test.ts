@@ -100,7 +100,6 @@ describe("importing a large text file", () => {
 
 		assert.deepEqual([ticket!.outcome, done?.ok], ["started", true]);
 		const size = bytes.length / 2 ** 20;
-		console.info(`[memory] ${size.toFixed(1)} MiB text import: peak +${peak.toFixed(0)} MiB = ${(peak / size).toFixed(1)}x`);
 		assert.ok(peak < size * 25, `peak resident growth ${peak.toFixed(0)} MiB is ${(peak / size).toFixed(1)}x the ${size.toFixed(1)} MiB file; the bound is 25x`);
 	});
 });

@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
-import { contentHash, fingerprint, MINHASH_SIZE, minhash, normalizedPieces, normalizeText } from "../src/core/documents.ts";
+import { contentHash, fingerprint, MINHASH_SIZE, minhash, minhashOfPieces, normalizedPieces, normalizeText } from "../src/core/documents.ts";
 
 // ─── the original implementations ────────────────────────────────────────────
 
@@ -77,6 +77,7 @@ describe("block-wise normalisation equals whole-text normalisation", () => {
 				for (const keepCase of [false, true]) {
 					const pieces = [...normalizedPieces(text, { keepCase, block })];
 					assert.equal(pieces.join(""), refNormalize(text, keepCase), JSON.stringify(text));
+					if (!keepCase) assert.deepEqual(minhashOfPieces(pieces), refMinhash(pieces.join("")), JSON.stringify(text));
 					// A piece never starts or ends inside a word: after the first, each starts with the separating space.
 					for (const piece of pieces.slice(1)) assert.ok(piece.startsWith(" ") || refNormalize(text, keepCase) === "", JSON.stringify(piece));
 				}
@@ -98,8 +99,9 @@ describe("block-wise normalisation equals whole-text normalisation", () => {
 	});
 
 	it("a text spanning several default-size blocks, markers at the cuts, matches the original", () => {
-		const para = `${"word ".repeat(1000)}\n\n`;
-		const text = `---\nt: 1\n---\n${(para + "<!--\n  page   7 -->\n").repeat(450)}`;
+		// Distinct words: a lost or misplaced shingle window across a cut must change the sketch.
+		const paras = Array.from({ length: 450 }, (_, p) => `${Array.from({ length: 1000 }, (_, w) => `w${p}x${w}`).join(" ")}\n\n<!--\n  page   7 -->\n`);
+		const text = `---\nt: 1\n---\n${paras.join("")}`;
 		assert.ok(text.length > 2 * (1 << 20));
 		const want = refNormalize(text);
 		assert.equal(normalizeText(text), want);

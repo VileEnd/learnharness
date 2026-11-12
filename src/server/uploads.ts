@@ -57,6 +57,7 @@ export async function readUploadForm(request: Request, maxBytes = MAX_REQUEST_BY
 		whole.set(chunk, offset);
 		offset += chunk.byteLength;
 	}
+	chunks.length = 0; // the body is whole now: the pieces must not live on beside the parsed form
 	try {
 		return await new Response(whole, { headers: { "Content-Type": request.headers.get("content-type") ?? "" } }).formData();
 	} catch {

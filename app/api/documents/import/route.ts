@@ -22,6 +22,7 @@ export const POST = withTenant(async (request: Request) => {
 	const form = await readUploadForm(request);
 	if (form instanceof Response) return form;
 	const files = await incomingFiles(form);
+	form.delete("files"); // the bytes are copied out: do not keep a second copy of every upload alive
 	if (files.length === 0) return Response.json({ results: [], error: "no files" }, { status: 400 });
 	let decisions: (DocumentDecision | undefined)[] = [];
 	const raw = form.get("decisions");
