@@ -1251,7 +1251,14 @@ export function Chat({
 		}, 250);
 	});
 	// Reconnect catch-up: events missed while the channel was down.
-	useServerResync(() => fetchJobsRef.current());
+	useServerResync(() => {
+		fetchJobsRef.current();
+		// A turn-settled missed while the channel was down leaves an idle (or
+		// errored) chat on a stale record: catch it up. A running turn owns
+		// its view and settles itself. statusRef is declared further down;
+		// the handler only runs after render.
+		if (statusRef.current === "ready" || statusRef.current === "error") void syncFromServer();
+	});
 	useEffect(
 		() => () => {
 			if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
