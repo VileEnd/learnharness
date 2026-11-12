@@ -331,9 +331,10 @@ export function mergeFindings(
 	// 2b. Simplification (owner, 2026-09-30 evening) — the deterministic
 	//     dedupe pass over the WHOLE chain ledger (this merge runs inside
 	//     the serialized audit section, so the rewrite is race-free). One
-	//     greedy pass in (premiseCount, createdAt, key) order — the leanest,
-	//     earliest derivation stands: a chain whose conclusion the chains
-	//     still standing already derive from its premises is redundant —
+	//     greedy pass in descending (premiseCount, createdAt, key) order —
+	//     the leanest, earliest derivation stands: a chain whose conclusion
+	//     the chains still standing already derive from its premises is
+	//     redundant —
 	//     [A,B]⟹X plus [X,C]⟹Y makes [A,B,C]⟹Y redundant. Nothing that
 	//     was derivable stops being derivable (simplifyChains below).
 	//     Dropped keys take every provenance line with them (the rewrite is
@@ -364,8 +365,9 @@ export function mergeFindings(
  *  Pure over the input list; the caller owns the ledger rewrite. Exported
  *  for tests.
  *
- *  One global greedy pass over the logical chains in (premise count,
- *  createdAt, key) order: a chain [P]⟹X is dropped exactly when X is in
+ *  One global greedy pass over the logical chains in DESCENDING (premise
+ *  count, createdAt, key) order, so the leanest, earliest derivation
+ *  stands: a chain [P]⟹X is dropped exactly when X is in
  *  the forward closure of P over the chains still standing at that moment
  *  (every chain not yet dropped, kept or not yet visited, minus itself).
  *  [A,B]⟹X plus [X,C]⟹Y make [A,B,C]⟹Y redundant; a premise superset of
@@ -392,8 +394,10 @@ export function simplifyChains(lines: GraphChain[]): GraphChain[] {
 			byKey.set(key, { key, premises: [...new Set(line.premises)], conclusion: line.conclusion, createdAt: line.createdAt });
 		else if (line.createdAt < have.createdAt) have.createdAt = line.createdAt;
 	}
+	// Visit order: DESCENDING (premise count, createdAt, key) — the fattest,
+	// latest chains are tested first, while the lean, early ones still stand.
 	const chains = [...byKey.values()].sort(
-		(a, b) => a.premises.length - b.premises.length || a.createdAt.localeCompare(b.createdAt) || a.key.localeCompare(b.key),
+		(a, b) => b.premises.length - a.premises.length || b.createdAt.localeCompare(a.createdAt) || b.key.localeCompare(a.key),
 	);
 	const usesPremise = new Map<string, number[]>();
 	const concluding = new Map<string, number>(); // standing chains per conclusion
@@ -407,15 +411,21 @@ export function simplifyChains(lines: GraphChain[]): GraphChain[] {
 	});
 	const dropped = new Array<boolean>(chains.length).fill(false);
 
-	// Forward chaining with per-chain missing-premise counters (linear in the
-	// ledger), stopping as soon as `target` is reached.
+	// Forward chaining with missing-premise counters, touched only for the
+	// chains the walk reaches, stopping as soon as `target` is reached. One
+	// walk is linear in the ledger, so the pass is quadratic in the worst
+	// case (every chain has a competing chain for its conclusion and every
+	// walk explores the whole ledger).
 	const derives = (start: readonly string[], target: string, excluded: number): boolean => {
-		const missing = chains.map((c) => c.premises.length);
+		const missing = new Map<number, number>();
 		const have = new Set(start);
 		const queue = [...have];
 		while (queue.length > 0) {
 			for (const i of usesPremise.get(queue.pop()!) ?? []) {
-				if (i === excluded || dropped[i] || --missing[i]! > 0) continue;
+				if (i === excluded || dropped[i]) continue;
+				const left = (missing.get(i) ?? chains[i]!.premises.length) - 1;
+				missing.set(i, left);
+				if (left > 0) continue;
 				const conclusion = chains[i]!.conclusion;
 				if (conclusion === target) return true;
 				if (!have.has(conclusion)) {

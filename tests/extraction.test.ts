@@ -2414,8 +2414,15 @@ describe("chain simplification (the merger's maintenance pass, owner 2026-09-30 
 			chain("arg_zx", ["n_z"], "n_x", at(3)),
 			chain("arg_zy", ["n_z"], "n_y", at(4)),
 		]);
-		assert.equal(kept.filter((id) => id.startsWith("arg_z")).length, 1);
-		assert.ok(kept.includes("arg_xy") && kept.includes("arg_yx"));
+		assert.deepEqual(kept, ["arg_xy", "arg_yx", "arg_zx"], "exactly one Z chain, the earlier one");
+	});
+
+	it("the lean chain stands and the fat one goes: [Z]⇒W, [Z,W]⇒X, [Z]⇒X keep [Z]⇒X", () => {
+		assert.deepEqual(keptIds([
+			chain("arg_zw", ["n_z"], "n_w", at(1)),
+			chain("arg_zwx", ["n_z", "n_w"], "n_x", at(2)),
+			chain("arg_zx", ["n_z"], "n_x", at(3)),
+		]), ["arg_zw", "arg_zx"]);
 	});
 
 	it("a plain shortcut drops: [A]⇒X, [X]⇒Y make [A]⇒Y redundant", () => {
