@@ -466,6 +466,20 @@ export interface GraphSettings {
 	 *  delays extraction — the user's stated cost/thoroughness tradeoff,
 	 *  not a misconfiguration to police. */
 	extractionChunkTokens?: number;
+	/** The digest budget (audit B4, owner ruling 2026-11-12): the token
+	 *  ceiling of THE GRAPH SO FAR — the earlier ideas of the same source
+	 *  that every extraction chunk's prompt carries. A digest within it rides
+	 *  whole, exactly as before; a larger one compacts (the nearest ideas in
+	 *  full, every other one by id and name, and for the largest sources a
+	 *  per-topic count plus a search tool), so a long document's late chunks
+	 *  stop paying for the whole book again.
+	 *
+	 *  FACTORY DEFAULT 4000 (owner: "about 4,000"). FLOOR 500
+	 *  (EXTRACTION_DIGEST_TOKENS_FLOOR, the chunk budget's discipline): the
+	 *  compact digest's fixed part — its header and the topic counts — needs
+	 *  room before any idea gets its full statement. NO CEILING: a large
+	 *  budget only keeps more statements in full. */
+	extractionDigestTokens?: number;
 }
 
 /**
@@ -558,7 +572,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		sessionNameSerif: true,
 		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
 	},
-	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
+	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 4000 },
 	compaction: { thresholdTokens: 150_000 },
 	documents: { embeddingModel: DEFAULT_EMBEDDING_MODEL, embeddingBatch: true },
 };
@@ -567,6 +581,10 @@ export const FACTORY_SETTINGS: FactorySettings = {
  *  — see its doc for the penny-batch rationale; the settings PUT names this
  *  in its rejection, the sanitizer clamps to it). */
 export const EXTRACTION_CHUNK_TOKENS_FLOOR = 500;
+
+/** The digest budget's validated floor (GraphSettings.extractionDigestTokens
+ *  — the sanitizer clamps to it, the settings PUT names it in its rejection). */
+export const EXTRACTION_DIGEST_TOKENS_FLOOR = 500;
 
 // ─── Sanitizer ─────────────────────────────────────────────────────────────
 
@@ -754,6 +772,12 @@ function sanitizeGraph(raw: Record<string, unknown>): GraphSettings {
 	const rawTokens = raw.extractionChunkTokens;
 	if (typeof rawTokens === "number" && Number.isFinite(rawTokens) && rawTokens > 0) {
 		out.extractionChunkTokens = Math.max(EXTRACTION_CHUNK_TOKENS_FLOOR, Math.floor(rawTokens));
+	}
+	// extractionDigestTokens (audit B4, 2026-11-12): the same clamp-never-
+	// reject discipline as the chunk budget.
+	const rawDigest = raw.extractionDigestTokens;
+	if (typeof rawDigest === "number" && Number.isFinite(rawDigest) && rawDigest > 0) {
+		out.extractionDigestTokens = Math.max(EXTRACTION_DIGEST_TOKENS_FLOOR, Math.floor(rawDigest));
 	}
 	return out;
 }

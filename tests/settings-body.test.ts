@@ -197,6 +197,17 @@ describe("parseGraphSettingsBody", () => {
 		assert.equal(parseGraphSettingsBody({ extractionChunkTokens: null }).ok, false);
 	});
 
+	it("extractionDigestTokens: whole tokens ≥ the 500 floor (audit B4, 2026-11-12)", () => {
+		const ok = parseGraphSettingsBody({ enabled: true, extractionDigestTokens: 6000.5 });
+		assert.ok(ok.ok);
+		assert.deepEqual(ok.settings, { enabled: true, extractionDigestTokens: 6000 });
+		const tiny = parseGraphSettingsBody({ extractionDigestTokens: 100 });
+		assert.equal(tiny.ok, false, "below-floor rejected");
+		assert.match(tiny.ok === false ? tiny.error : "", /extractionDigestTokens must be at least 500/);
+		assert.equal(parseGraphSettingsBody({ extractionDigestTokens: "4000" }).ok, false);
+		assert.equal(parseGraphSettingsBody({ extractionDigestTokens: null }).ok, false);
+	});
+
 	it("the dead wave-6 rungs in a body are ignored — the section collapses on write", () => {
 		// Old clients may still send {embedding: true, embeddingModel: …};
 		// the parser reads ONLY the master switch — the dead keys are not

@@ -33,6 +33,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	EXTRACTION_CHUNK_TOKENS_FLOOR,
+	EXTRACTION_DIGEST_TOKENS_FLOOR,
 	resolveSettings,
 	type AppearanceSettings,
 	type GraphSettings,
@@ -424,6 +425,34 @@ export function GraphSection({
 						onSectionChange({
 							...graph,
 							extractionChunkTokens: Math.max(EXTRACTION_CHUNK_TOKENS_FLOOR, Math.round(n)),
+						});
+					}}
+				/>
+			</SettingsRow>
+			{/* THE DIGEST BUDGET (audit B4, owner 2026-11-12): the ceiling of the
+			    earlier ideas each chunk's prompt carries. Same commit discipline
+			    as the chunk budget above: empty = factory, floor only. */}
+			<SettingsRow
+				label="Extraction digest budget"
+				hint={`${resolved.extractionDigestTokens} tok`}
+				testid="graph-row-digest-tokens"
+			>
+				<CommitInput
+					type="number"
+					value={String(graph?.extractionDigestTokens ?? "")}
+					placeholder={String(resolved.extractionDigestTokens)}
+					ariaLabel="extraction digest budget"
+					testid="input-digest-tokens"
+					onCommit={(v) => {
+						if (v === "") {
+							onSectionChange({ ...graph, extractionDigestTokens: undefined });
+							return;
+						}
+						const n = Number(v);
+						if (!Number.isFinite(n) || n <= 0) return; // bad input: no write
+						onSectionChange({
+							...graph,
+							extractionDigestTokens: Math.max(EXTRACTION_DIGEST_TOKENS_FLOOR, Math.round(n)),
 						});
 					}}
 				/>
