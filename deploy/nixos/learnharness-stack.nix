@@ -1,9 +1,24 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, utils, ... }:
 
 # Runs the deploy/ Docker stack from a checkout of the fork. Hostnames are
 # Nix options (the move-day switch is a change in the site file +
 # deploy/nixos/rebuild.sh); secrets are generated on the VM on first start
 # and never leave it.
+#
+# Deploys are explicit and boots never build (docs/self-hosting.md, Updating):
+#   learnharness-stack        boot/restart: starts the last deploy's checkout and
+#                             images; no fetch, no build. On a machine where
+#                             nothing was ever deployed it deploys `ref` once.
+#   learnharness-deploy@T     T = latest (newest vX.Y.Z tag), a tag, or a branch:
+#                             fetch, build images tagged with the commit, start
+#                             them, wait for the app to be healthy, else go back.
+#   learnharness-rollback     back to the previous deploy, without building or
+#                             pulling; refused when a third-party image differs
+#                             (learnharness-rollback-force goes anyway).
+#   learnharness-prune        the weekly docker prune, keeping both deploys' images.
+# `systemctl restart learnharness-stack` does not deploy anything.
+# deploy.py makes the decisions and keeps the state in
+# /var/lib/learnharness/deploy-state.json; these units lock, prepare and call it.
 let
   cfg = config.services.learnharness;
   stateDir = "/var/lib/learnharness";
@@ -12,6 +27,80 @@ let
     AUTH_SITE=${cfg.authSite}
     AUTH_URL=${cfg.authUrl}
     CADDY_TLS=${cfg.tls}
+  '';
+  # One start, deploy, rollback or prune at a time.
+  lockFile = "${stateDir}/deploy.lock";
+  deployArgv = [
+    "${pkgs.python3}/bin/python3" "-I" "-B" "${./deploy.py}"
+    "--src" "${stateDir}/src"
+    "--state" "${stateDir}/deploy-state.json"
+    "--hosts-env" "${hostsEnv}"
+    "--secrets" "${stateDir}/secrets.env"
+    "--keycloak-bootstrap" "${./bootstrap-keycloak.sh}"
+  ];
+  deployCmd = lib.escapeShellArgs deployArgv;
+  unitPath = with pkgs; [ git docker openssl coreutils gnused gnugrep util-linux bash ];
+
+  # Shared by the three units: take the lock (start waits for it, deploy and
+  # rollback refuse while it is held), then the checkout, volumes and secrets.
+  # deploy.py inherits fd 9 and so holds the lock until it exits.
+  takeLock = wait:
+    if wait then "flock 9"
+    else ''flock -n 9 || { echo "learnharness: another deploy, rollback or prune is running; try again when it has finished" >&2; exit 1; }'';
+  rollbackUnit = force: {
+    description = "LearnHarness: back to the previous deploy (no build${lib.optionalString force ", even if third-party images differ"})";
+    requires = [ "docker.service" ];
+    after = [ "docker.service" ];
+    path = unitPath;
+    restartIfChanged = false;
+    serviceConfig = {
+      Type = "oneshot";
+      StateDirectory = "learnharness";
+      TimeoutStartSec = "40min";
+    };
+    script = ''
+      ${prepare false}
+      exec ${deployCmd} rollback${lib.optionalString force " --force"}
+    '';
+  };
+
+  prepare = wait: ''
+    set -euo pipefail
+    exec 9>>${lockFile}
+    ${takeLock wait}
+
+    src=${stateDir}/src
+    if [ ! -d "$src/.git" ]; then
+      git clone ${lib.escapeShellArg cfg.repo} "$src"
+    fi
+
+    # Runtime state lives outside the checkout: deploy/volumes (git-ignored)
+    # points at ${stateDir}/volumes.
+    mkdir -p ${stateDir}/volumes
+    ln -sfn ${stateDir}/volumes "$src/deploy/volumes"
+    # The claude container runs as node (uid 1000) and keeps its login here.
+    install -d -m 0700 -o 1000 -g 1000 ${stateDir}/volumes/claude
+
+    secrets=${stateDir}/secrets.env
+    if [ ! -f "$secrets" ]; then
+      umask 077
+      {
+        echo "KC_ADMIN_USER=admin"
+        echo "KC_ADMIN_PASSWORD=$(openssl rand -hex 16)"
+        echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+        echo "OIDC_CLIENT_SECRET=$(openssl rand -hex 32)"
+        echo "OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32 | tr -- '+/' '-_')"
+        echo "OCR_TOKEN=$(openssl rand -hex 32)"
+        echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)"
+        echo "CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)"
+      } > "$secrets"
+    fi
+    # secrets.env of an older install has no OCR_TOKEN yet (PDF scanning service): add it once.
+    grep -q '^OCR_TOKEN=' "$secrets" || (umask 077; echo "OCR_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
+    # …nor KC_ADMIN_API_SECRET (the app's Keycloak client for the admin Users section).
+    grep -q '^KC_ADMIN_API_SECRET=' "$secrets" || (umask 077; echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)" >> "$secrets")
+    # …nor CLAUDE_RUNNER_TOKEN (the app's token for the Claude Code runner).
+    grep -q '^CLAUDE_RUNNER_TOKEN=' "$secrets" || (umask 077; echo "CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
   '';
 in
 {
@@ -23,8 +112,12 @@ in
     };
     ref = lib.mkOption {
       type = lib.types.str;
-      default = "main";
-      description = "Branch or tag to deploy (restart the service to pull it).";
+      default = "latest";
+      description = ''
+        What the boot deploys on a machine where nothing was deployed yet:
+        "latest" (the newest vX.Y.Z tag), a tag, or a branch. Later deploys
+        name their target: systemctl start learnharness-deploy@<target>.
+      '';
     };
     host = lib.mkOption {
       type = lib.types.str;
@@ -54,14 +147,36 @@ in
 
   config = {
     virtualisation.docker.enable = true;
-    # Every deploy rebuilds the images on a small disk: prune weekly. Unused
-    # images and build cache older than a week go; recent cache stays so
-    # redeploys remain fast. No --volumes: the bind-mounted data is untouched.
-    virtualisation.docker.autoPrune = {
-      enable = true;
-      dates = "weekly";
-      flags = [ "--all" "--filter" "until=168h" ];
+    # Every deploy builds images on a small disk: prune weekly. Unused images
+    # and build cache older than a week go; recent cache stays so redeploys
+    # remain fast. No --volumes: the bind-mounted data is untouched.
+    # The previous deploy's images are used by no container, and --all with
+    # until=168h removes unused images built more than a week ago: a rollback
+    # target could go in the first prune after the deploy that replaced it.
+    # So the prune is ours, not virtualisation.docker.autoPrune: deploy.py runs
+    # it under the deploy lock, with stopped containers holding the current and
+    # previous deploy's images (third-party ones included) while it runs, and
+    # skips it if one cannot be held. Same schedule and flags as autoPrune had.
+    virtualisation.docker.autoPrune.enable = false;
+    systemd.services.learnharness-prune = {
+      description = "LearnHarness: weekly docker prune that keeps the rollback images";
+      requires = [ "docker.service" ];
+      after = [ "docker.service" ];
+      path = [ config.virtualisation.docker.package ];
+      startAt = "weekly";
+      restartIfChanged = false;
+      serviceConfig = {
+        Type = "oneshot";
+        StateDirectory = "learnharness";
+        ExecStart = utils.escapeSystemdExecArgs (
+          [ "${pkgs.util-linux}/bin/flock" lockFile ] ++ deployArgv
+          ++ [ "prune" "--" (lib.getExe config.virtualisation.docker.package) "system" "prune" "-f"
+               "--all" "--filter" "until=168h" ]
+        );
+      };
     };
+    # As autoPrune's timer: a run missed while the VM was off happens at boot.
+    systemd.timers.learnharness-prune.timerConfig.Persistent = true;
 
     systemd.services.learnharness-stack = {
       description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app, OCR, Claude runner)";
@@ -71,68 +186,54 @@ in
       after = [ "docker.service" "network-online.target" ];
       # A hostname change (nixos-rebuild) re-runs the stack with the new values.
       restartTriggers = [ hostsEnv ];
-      path = with pkgs; [ git docker openssl coreutils gnused gnugrep ];
-      # Retry until the network (DHCP, GitHub, registries) is really there —
-      # network-online.target can be reached before the first lease.
+      path = unitPath;
+      # Starting what is built only needs Docker: a failure there is retried.
+      # Only a machine that never had a deploy fetches (and may need to wait
+      # for the network); a failed build or an unusable deploy state exits 3,
+      # which is not retried, so nothing is rebuilt in a loop.
       startLimitIntervalSec = 0;
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         StateDirectory = "learnharness";
-        # The first start builds the app image (npm ci + next build).
-        TimeoutStartSec = "60min";
+        # Only the first start on a new machine builds (npm ci + next build).
+        TimeoutStartSec = "90min";
         Restart = "on-failure";
         RestartSec = "30s";
+        RestartPreventExitStatus = 3;
       };
       script = ''
-        set -euo pipefail
-        src=${stateDir}/src
-        if [ ! -d "$src/.git" ]; then
-          git clone ${lib.escapeShellArg cfg.repo} "$src"
-        fi
-        git -C "$src" fetch --prune --tags origin ${lib.escapeShellArg cfg.ref}
-        git -C "$src" checkout --quiet --detach FETCH_HEAD
-
-        # Runtime state lives outside the checkout: deploy/volumes (git-ignored)
-        # points at ${stateDir}/volumes.
-        mkdir -p ${stateDir}/volumes
-        ln -sfn ${stateDir}/volumes "$src/deploy/volumes"
-        # The claude container runs as node (uid 1000) and keeps its login here.
-        install -d -m 0700 -o 1000 -g 1000 ${stateDir}/volumes/claude
-
-        secrets=${stateDir}/secrets.env
-        if [ ! -f "$secrets" ]; then
-          umask 077
-          {
-            echo "KC_ADMIN_USER=admin"
-            echo "KC_ADMIN_PASSWORD=$(openssl rand -hex 16)"
-            echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
-            echo "OIDC_CLIENT_SECRET=$(openssl rand -hex 32)"
-            echo "OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32 | tr -- '+/' '-_')"
-            echo "OCR_TOKEN=$(openssl rand -hex 32)"
-            echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)"
-            echo "CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)"
-          } > "$secrets"
-        fi
-        # secrets.env of an older install has no OCR_TOKEN yet (PDF scanning service): add it once.
-        grep -q '^OCR_TOKEN=' "$secrets" || (umask 077; echo "OCR_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
-        # …nor KC_ADMIN_API_SECRET (the app's Keycloak client for the admin Users section).
-        grep -q '^KC_ADMIN_API_SECRET=' "$secrets" || (umask 077; echo "KC_ADMIN_API_SECRET=$(openssl rand -hex 32)" >> "$secrets")
-        # …nor CLAUDE_RUNNER_TOKEN (the app's token for the Claude Code runner).
-        grep -q '^CLAUDE_RUNNER_TOKEN=' "$secrets" || (umask 077; echo "CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)" >> "$secrets")
-
-        cd "$src/deploy"
-        docker compose --env-file ${hostsEnv} --env-file "$secrets" up -d --build --remove-orphans
-        # The Caddyfile is a bind mount: compose does not notice content changes,
-        # so apply them explicitly (a no-op when nothing changed).
-        docker compose --env-file ${hostsEnv} --env-file "$secrets" exec -T caddy \
-          caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || true
-
-        # Group, admin-API client (secret = KC_ADMIN_API_SECRET) and its roles in
-        # the realm, idempotently. It waits up to 3 minutes for Keycloak and never
-        # fails the stack: on failure (or after 5 minutes) it logs "keycloak bootstrap failed".
-        timeout 300 ${pkgs.bash}/bin/bash ${./bootstrap-keycloak.sh} "$secrets" || echo "keycloak bootstrap failed"
+        ${prepare true}
+        exec ${deployCmd} start --default-target ${lib.escapeShellArg cfg.ref}
       '';
     };
+
+    # systemctl start learnharness-deploy@latest   (or @v1.2.3, or @main)
+    systemd.services."learnharness-deploy@" = {
+      description = "LearnHarness: deploy %I (fetch, build, start, wait for healthy)";
+      requires = [ "docker.service" ];
+      wants = [ "network-online.target" ];
+      after = [ "docker.service" "network-online.target" ];
+      path = unitPath;
+      # A switch must not restart (and so cut short) a running deploy.
+      restartIfChanged = false;
+      serviceConfig = {
+        Type = "oneshot";
+        StateDirectory = "learnharness";
+        TimeoutStartSec = "90min";
+      };
+      scriptArgs = "%I";
+      # `--`: a target that starts with "-" stays a target (and is refused).
+      script = ''
+        ${prepare false}
+        exec ${deployCmd} deploy -- "$1"
+      '';
+    };
+
+    # systemctl start learnharness-rollback: back to the previous deploy, no build,
+    # no pull. Refused when a third-party image (Keycloak, Postgres, oauth2-proxy)
+    # differs between the two deploys; learnharness-rollback-force goes anyway.
+    systemd.services.learnharness-rollback = rollbackUnit false;
+    systemd.services.learnharness-rollback-force = rollbackUnit true;
   };
 }

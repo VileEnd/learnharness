@@ -63,7 +63,7 @@ deploy/proxmox/tofu.sh plan
 deploy/proxmox/tofu.sh apply      # uploads the NixOS image, creates and starts VM 104
 ```
 
-- **What happens on first boot:** the VM boots fully configured, gets its address by DHCP (hostname `learnharness`, so the FRITZ!Box serves `learnharness.fritz.box`), and builds and starts the stack. The first image build takes 10–20 minutes. Follow it with `ssh root@learnharness.fritz.box journalctl -fu learnharness-stack`.
+- **What happens on first boot:** the VM boots fully configured, gets its address by DHCP (hostname `learnharness`, so the FRITZ!Box serves `learnharness.fritz.box`), and builds and starts the stack from the newest release tag (`services.learnharness.ref`, default `latest`). The first image build takes 10–20 minutes. Follow it with `ssh root@learnharness.fritz.box journalctl -fu learnharness-stack`.
 - **Pin the address:** in the FRITZ!Box, go to Heimnetz → Netzwerk → `learnharness` → *Diesem Netzwerkgerät immer die gleiche IPv4-Adresse zuweisen*.
 - **Secrets** (Keycloak admin, database, OIDC client, cookie) are generated on the VM at first start. They live in `/var/lib/learnharness/secrets.env` and never leave it. App data, the Caddy CA and the Keycloak database live in `/var/lib/learnharness/volumes`.
 - **The OpenTofu state** is committed to the repo, encrypted with `TF_VAR_state_passphrase`. If the passphrase is lost, `tofu import proxmox_virtual_environment_vm.learnharness pve/104` re-adopts the VM.
@@ -74,9 +74,9 @@ deploy/proxmox/tofu.sh apply      # uploads the NixOS image, creates and starts 
 deploy/nixos/rebuild.sh switch --target-host root@learnharness.fritz.box
 ```
 
-**Update the app** to the latest `main`:
+**Update the app** to the newest release tag (see Updating for tags, branches and rollback):
 ```bash
-ssh root@learnharness.fritz.box systemctl restart learnharness-stack
+ssh root@learnharness.fritz.box systemctl start learnharness-deploy@latest
 ```
 
 ### Manual alternative (any Docker host)
@@ -171,7 +171,7 @@ then type `/login` and follow the prompts. The login lives in `deploy/volumes/cl
 
 The runner starts every CLI with `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and the default output style, so a `CLAUDE.md` or output style left in the login volume by your interactive `/login` session never reaches the tutor's prompt. It also raises the CLI's MCP idle timeout to 30 minutes, so a question the learner answers late is not dropped.
 
-**Updating the CLI.** The image pins the CLI version, and its auto-updater is off. To update, bump the pinned `@anthropic-ai/claude-code@<version>` in `deploy/claude/Dockerfile` and rebuild: `docker compose up -d --build` on a manual host, or `systemctl restart learnharness-stack` on the NixOS VM once the change is on `main` (it pulls and rebuilds). The login in `volumes/claude` survives the rebuild. When the installed CLI is below the minimum version the app needs, the Claude Code status in Settings shows "Needs an update" and turns are refused until you update.
+**Updating the CLI.** The image pins the CLI version, and its auto-updater is off. To update, bump the pinned `@anthropic-ai/claude-code@<version>` in `deploy/claude/Dockerfile` and rebuild: `docker compose up -d --build` on a manual host, or `systemctl start learnharness-deploy@latest` on the NixOS VM once the change is in a release tag (or `learnharness-deploy@main` before it is tagged). The login in `volumes/claude` survives the rebuild. When the installed CLI is below the minimum version the app needs, the Claude Code status in Settings shows "Needs an update" and turns are refused until you update.
 
 **Upgrading an older install.** `docker compose up` refuses to start unless `CLAUDE_RUNNER_TOKEN` is set, even while Claude Code is off. The NixOS stack generates it into `secrets.env`. On a manual host, add `CLAUDE_RUNNER_TOKEN=$(openssl rand -hex 32)` to `deploy/.env` first (put the command's output in the file, not the command), and create `deploy/volumes/claude` as above.
 
@@ -231,9 +231,40 @@ Away from home, devices reach LearnHarness through a WireGuard tunnel that ends 
 ## Updating
 
 ```bash
-ssh root@learnharness.fritz.box systemctl restart learnharness-stack     # NixOS VM: pulls main, rebuilds
+ssh root@learnharness.fritz.box systemctl start learnharness-deploy@latest   # NixOS VM: the newest vX.Y.Z tag
+ssh root@learnharness.fritz.box systemctl start learnharness-rollback        # NixOS VM: back to the previous deploy
 cd ~/learnharness && git pull && cd deploy && docker compose up -d --build   # manual host
 ```
+
+**`systemctl restart learnharness-stack` does not deploy anything** on the NixOS VM: it starts what is already recorded. To deploy, use `systemctl start learnharness-deploy@<target>`.
+
+On the NixOS VM, a deploy is always explicit (`deploy/nixos/learnharness-stack.nix`, `deploy/nixos/deploy.py`):
+
+- **Deploy:** `systemctl start learnharness-deploy@<target>`. The target is one of:
+  - `latest`: the newest `vX.Y.Z` tag on origin, by version order.
+  - A tag such as `v1.2.3`.
+  - A branch such as `main`, for changes that carry no release tag (stack configuration, docs).
+
+  Unit names treat `-` and `/` specially, so pass a branch name that contains either through `systemd-escape`, on the VM. Over ssh, quote the whole command so the backslash survives: `ssh root@learnharness.fritz.box 'systemctl start "learnharness-deploy@$(systemd-escape ops/new-thing)"'`.
+
+  The deploy fetches, checks out the target and builds images tagged with the commit's first 12 hex digits. It then starts the stack on them, reloads Caddy and waits up to 5 minutes for the app to report healthy. Only after that does it run the Keycloak bootstrap; a failed bootstrap logs `keycloak bootstrap failed` and does not fail the deploy. Each step has its own time limit, so a hung step fails the deploy rather than leaving it to run into the unit's timeout. A target that is already running and healthy is left alone (`already running <tag>; nothing to do`).
+
+  The command returns when it is done; follow it with `journalctl -fu 'learnharness-deploy@*'`. Only one deploy, rollback or prune runs at a time: a second one is refused with a message, and a restart of `learnharness-stack` waits for it.
+- **When a deploy fails:** if the build fails, the running stack is untouched. If the app is not healthy in time, or the stack does not start, the deploy goes back by itself, without pulling anything, to the deploy that was running before. The journal then says `deploy of <target> (<commit>) failed: … back on <previous>`. Either way the unit exits with an error and does not retry.
+- **Rollback:** `systemctl start learnharness-rollback` goes back to the previous deploy without building and without pulling. It checks out the previous deploy's commit (its `compose.yaml` and Caddyfile) and starts that deploy's images. Rolling back twice returns to where you were.
+
+  The rollback is refused when a third-party image differs between the two deploys (Keycloak, its Postgres, oauth2-proxy). An older Keycloak or Postgres may not start on data the newer one has migrated, and only the app's health is checked. The journal line names each image that differs. To roll back anyway, run `systemctl start learnharness-rollback-force`, then check the whole stack (`docker compose ps`, a login).
+
+  The images of the current and the previous deploy are kept, third-party ones included, whatever their age. The weekly prune (`learnharness-prune.service`) holds them with stopped containers while it runs, and does not prune at all if it cannot hold one. Images of older deploys are removed after each successful deploy. So a rollback stays possible until the next deploy.
+- **App data after a rollback:** the app refuses records stamped with a newer data format than its own build knows. Data written by a newer release can therefore be unreadable after a rollback or an automatic go-back. Every rollback and go-back writes a journal line that names both commits and the check to run: `git -C /var/lib/learnharness/src log --oneline <older>..<newer> -- tests/fixtures/golden-data`. Every on-disk format change updates those fixtures in the same commit, so any commit that command lists changed a format.
+- **What a reboot does:** `learnharness-stack` starts the current deploy from its checkout and images. It does not fetch or build. `systemctl restart learnharness-stack` does the same and also applies changed hostnames. If a deploy or rollback was cut off between starting its images and recording them (a power cut, say), the journal says `a deploy or rollback to <target> was interrupted; starting the recorded <current>`, and the recorded deploy comes back. Only a machine where nothing was ever deployed (no deploy state, no images) deploys `services.learnharness.ref` once.
+- **State:** `/var/lib/learnharness/deploy-state.json` holds the current and previous deploy (target, commit, image tag, time) and, while a deploy or rollback is starting, the pending one. Their commits are also pinned as `refs/learnharness/current` and `refs/learnharness/previous` in the checkout, so they stay available when a branch or tag goes away on origin. Do not re-clone the checkout: a fresh clone loses those pins.
+
+  If the state file is unreadable, start, deploy and rollback refuse and change nothing, and the containers keep running under Docker's restart policy. Fix or move the file away, then deploy. A recorded commit missing from the checkout is refused the same way, without retrying.
+- **Before the first tagged deploy**, the VM ran `:local` images with no deploy state, and `learnharness-stack` keeps starting that stack as it is. The first `learnharness-deploy@…` records it as the previous deploy, so it can be rolled back to; it does so only when every built service runs exactly its `:local` image. A target from before per-deploy image tags (its `deploy/compose.yaml` has no `LH_IMAGE_TAG`) is refused.
+- **Known limits:**
+  - While a build runs, the checkout already holds the new Caddyfile, so if Caddy restarted in that window it would read the new file.
+  - A release that never becomes healthy is served for the length of the health wait (up to 5 minutes) before the deploy goes back.
 
 ### Moving an existing install to multi-user
 
@@ -242,7 +273,7 @@ With `LH_MULTI_USER=1`, an old single-user data dir makes `/api/health` answer 5
 1. **Create the admin group.** The realm file only applies on first start, so on a live install create `learnharness-admin` in the Keycloak admin console (Groups), and add yourself to it. You must stay in `learnharness` too.
 2. **Find your `sub`.** In the Keycloak admin console, open Users, select yourself; the **ID** is the `sub` (a UUID).
 3. **Take a VM snapshot first.** A Proxmox snapshot or vzdump backup of VM 104; the migration moves data in place and has no undo.
-4. **Update and rebuild:** `git pull && cd deploy && docker compose up -d --build` (on the NixOS VM, `systemctl restart learnharness-stack` does all of this: it pulls main and rebuilds). The app now answers `/api/health` with 503 `legacy_layout`, which is expected until the data is moved.
+4. **Update and rebuild:** `git pull && cd deploy && docker compose up -d --build` (on the NixOS VM, `systemctl start learnharness-deploy@latest` does all of this; it waits up to 5 minutes for the app to be healthy and otherwise goes back to the previous deploy, so run step 5 while it waits). The app now answers `/api/health` with 503 `legacy_layout`, which is expected until the data is moved.
 5. **Migrate inside the running new container.** Everything in the old data dir moves to `users/<sub>/`; the push keys and prompt overrides move to `global/`:
 
    ```bash
