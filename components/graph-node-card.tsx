@@ -5,6 +5,7 @@ import Link from "next/link";
 import { FileTextIcon } from "lucide-react";
 import { documentCitation, propositionSessionHref, type ConceptState, type GraphNode, type SnapshotDocument } from "@/src/core";
 import { NodeKnowledge } from "@/components/node-knowledge";
+import { ToolContentResponse } from "@/components/ai-elements/message";
 
 /**
  * The graph's concept detail card, shared by the home graph and the "My
@@ -22,9 +23,39 @@ export interface CardSelection {
 	anchor: { x: number; y: number };
 }
 
-/** Position the card below its node: flipped above near the bottom edge, clamped
- *  horizontally. Imperative (ref + layout effect, before paint) because the flip
- *  needs the card's measured height; the card renders hidden until placed. */
+/** Place the card below its node: flipped above near the bottom edge, clamped
+ *  horizontally. It runs once at selection and again whenever the card or its
+ *  container changes size, because rendered math, tables and fonts can resize
+ *  the card after the first measure. Returns the cleanup. The card renders
+ *  hidden until placed. */
+export function observeNodeCardPosition(
+	card: HTMLDivElement,
+	container: HTMLElement,
+	anchor: { x: number; y: number },
+): () => void {
+	const place = () => {
+		const width = card.offsetWidth;
+		const height = card.offsetHeight;
+		const margin = 8;
+		const gap = 12;
+		const left = Math.min(Math.max(anchor.x - width / 2, margin), Math.max(container.clientWidth - width - margin, margin));
+		let top = anchor.y + gap;
+		if (top + height > container.clientHeight - margin) {
+			top = Math.max(anchor.y - gap - height, margin);
+		}
+		card.style.left = `${left}px`;
+		card.style.top = `${top}px`;
+		card.style.visibility = "visible";
+	};
+	place();
+	const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(place);
+	observer?.observe(card);
+	observer?.observe(container);
+	return () => observer?.disconnect();
+}
+
+/** Position the card (see observeNodeCardPosition). Imperative (ref + layout
+ *  effect, before paint) because the flip needs the card's measured height. */
 export function useCardPlacement(
 	selected: CardSelection | null,
 	containerRef: RefObject<HTMLElement | null>,
@@ -34,23 +65,35 @@ export function useCardPlacement(
 		const card = cardRef.current;
 		const container = containerRef.current;
 		if (!selected || !card || !container) return;
-		const width = card.offsetWidth;
-		const height = card.offsetHeight;
-		const margin = 8;
-		const gap = 12;
-		const left = Math.min(
-			Math.max(selected.anchor.x - width / 2, margin),
-			Math.max(container.clientWidth - width - margin, margin),
-		);
-		let top = selected.anchor.y + gap;
-		if (top + height > container.clientHeight - margin) {
-			top = Math.max(selected.anchor.y - gap - height, margin);
-		}
-		card.style.left = `${left}px`;
-		card.style.top = `${top}px`;
-		card.style.visibility = "visible";
+		return observeNodeCardPosition(card, container, selected.anchor);
 	}, [selected, containerRef]);
 	return cardRef;
+}
+
+/** The card's name and statement. Both are model output or imported text, so
+ *  they render through ToolContentResponse like other tool content: Markdown
+ *  and math, sanitised by the shared pipeline, never streamed. `.lh-prose`
+ *  sets the chat font and size in unlayered CSS that beats Tailwind's type
+ *  utilities; the variable overrides keep the card's own type. */
+const NODE_CARD_TYPE = "[--font-prose:var(--font-ui)] " +
+	"[&_[data-streamdown=inline-code]]:[font-size:inherit] [&_[data-streamdown=inline-code]]:[color:inherit]";
+function NodeCardText({ name, statement }: Pick<GraphNode, "name" | "statement">) {
+	return (
+		<>
+			<ToolContentResponse
+				mode="static"
+				className={`${NODE_CARD_TYPE} font-medium [--lh-prose-size:var(--text-sm)] [--lh-prose-leading:1.375]`}
+			>
+				{name}
+			</ToolContentResponse>
+			<ToolContentResponse
+				mode="static"
+				className={`${NODE_CARD_TYPE} mt-1 text-muted-foreground [--lh-prose-size:var(--text-xs)] [--lh-prose-leading:1.625]`}
+			>
+				{statement}
+			</ToolContentResponse>
+		</>
+	);
 }
 
 export function NodeCardBody({
@@ -72,8 +115,7 @@ export function NodeCardBody({
 }) {
 	return (
 		<>
-			<div className="text-sm font-medium leading-snug">{node.name}</div>
-			<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{node.statement}</div>
+			<NodeCardText name={node.name} statement={node.statement} />
 			{knowledge && <NodeKnowledge state={knowledge.state} sessions={knowledge.sessions} />}
 			{sourceIds.length > 0 ? (
 				<div className="mt-3 flex flex-col gap-1">
