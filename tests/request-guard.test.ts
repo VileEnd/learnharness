@@ -46,3 +46,9 @@ test("the check runs after identity: an unauthenticated cross-site write is stil
 	const res = await handler(new Request("http://app.example.com/api/x", { method: "POST", headers: { "sec-fetch-site": "cross-site" } }));
 	assert.equal(res.status, 401);
 });
+
+test("forwarded headers are never trusted: a forged X-Forwarded-Host/Proto equal to the Origin is still refused", async () => {
+	const forged = { "x-forwarded-host": "evil.example.com", "x-forwarded-proto": "https", forwarded: "host=evil.example.com;proto=https" };
+	assert.equal((await call("POST", { ...forged, origin: "https://evil.example.com" })).status, 403);
+	assert.equal((await call("POST", { ...forged, origin: "https://evil.example.com", "sec-fetch-site": "cross-site" })).status, 403);
+});
