@@ -60,6 +60,7 @@ import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
+import { UserMessageText, useCitationActions, type CitationActions } from "@/components/citation-quote";
 import { PracticeDock } from "@/components/practice-dock";
 import { WorkDock } from "@/components/work-dock";
 import { CanvasWorkspace } from "@/components/canvas/canvas-workspace";
@@ -270,6 +271,7 @@ export const TranscriptRow = memo(function TranscriptRow({
 	prevPhase,
 	streamingTail,
 	sourceTextParts,
+	citationActions,
 	chatId,
 	onOpenPlan,
 }: {
@@ -280,6 +282,8 @@ export const TranscriptRow = memo(function TranscriptRow({
 	/** The last row of a streaming turn: its final part is live. */
 	streamingTail: boolean;
 	sourceTextParts: ReadonlyMap<string, string>;
+	/** Tutor quotes in a learner message (stable across streamed chunks). */
+	citationActions: CitationActions;
 	chatId: string;
 	onOpenPlan: () => void;
 }) {
@@ -397,7 +401,7 @@ export const TranscriptRow = memo(function TranscriptRow({
 							rail as the thinking rows — one quote geometry. */}
 						<div className="font-medium uppercase tracking-wide text-muted-foreground">You</div>
 						<div className="lh-prose whitespace-pre-wrap text-foreground">
-							{m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")}
+							<UserMessageText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} actions={citationActions} />
 						</div>
 					</div>
 				) : (
@@ -572,6 +576,7 @@ export function Chat({
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
 	const sourceTextParts = useStableMap(firstSourceTextParts(messages));
+	const citationActions = useCitationActions(chatId, messages, scrollContextRef);
 
 	// The reattach settled terminal → the sync-and-continue seam (below).
 	setReattachSettled(() => reattachSettledRef.current());
@@ -1824,6 +1829,7 @@ export function Chat({
 									prevPhase={phases[mi - 1]}
 									streamingTail={status === "streaming" && mi === messages.length - 1}
 									sourceTextParts={sourceTextParts}
+									citationActions={citationActions}
 									chatId={chatId}
 									onOpenPlan={openPlan}
 								/>

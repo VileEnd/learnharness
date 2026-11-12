@@ -45,3 +45,17 @@ export function firstSourceTextParts(messages: readonly LhViewMessage[]): Map<st
 	}
 	return first;
 }
+
+/** The text of one native assistant message as the transcript shows it (its
+ * text parts, in order), or null when the transcript holds none for that id.
+ * The browser's source for checking a tutor citation (core/citations.ts). */
+export function citationSourceText(messages: readonly LhViewMessage[], messageId: string): string | null {
+	const texts: string[] = [];
+	for (const message of messages) {
+		if (message.role !== "assistant") continue;
+		for (const part of message.parts) {
+			if (part.type === "text" && typeof part.text === "string" && textPartMessageId(part.id) === messageId) texts.push(part.text);
+		}
+	}
+	return texts.length > 0 ? texts.join("\n\n") : null;
+}

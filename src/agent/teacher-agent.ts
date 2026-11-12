@@ -292,7 +292,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		// UI-only markers (plan-block) drop, the app's id fields strip, and
 		// an abort's dangling question call gets its INTERRUPTED result. It
 		// must never throw (pi's convertToLlm contract).
-		convertToLlm: (m) => toLlmMessages(m, { drawing: opts.drawing }),
+		convertToLlm: (m) => toLlmMessages(m, { drawing: opts.drawing, chatId: opts.chatId }),
 	});
 	agent.subscribe((event: AgentEvent) => {
 		if (event.type === "message_end" && event.message.role === "assistant" && "usage" in event.message) {

@@ -243,7 +243,7 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 	// The separately supplied prior summary replaces all summary markers in
 	// this span; without a resolved prior boundary keep the legacy fallback.
 	const summaryMessages = priorSummary ? span.filter((m) => m.role !== "custom" || m.customType !== "compaction") : span;
-	const spanText = serializeForSummary(summaryMessages);
+	const spanText = serializeForSummary(summaryMessages, { record: messages, chatId });
 	const fullSpan = priorSummary ? `[SYSTEM NOTE — prior compaction summary, still authoritative where not superseded]\n${priorSummary}\n\n${spanText}` : spanText;
 
 	const prompt = buildCompactionPrompt({
