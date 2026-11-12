@@ -127,15 +127,15 @@ This is the user's choice. The tunnel ends **on the VM**, not on the FRITZ!Box, 
 - **Host (NixOS, `deploy/nixos/`):**
   - `networking.wireguard.interfaces.wg0` on `10.66.0.1/24`, listening on UDP 51820. Open 51820/udp in `networking.firewall`.
   - The server private key is generated on first boot into `/var/lib/learnharness/wg/` and never enters the container. The public key and endpoint reach the app as env vars: `WG_SERVER_PUBLIC_KEY`, `WG_ENDPOINT`, `WG_ALLOWED_IPS`.
-  - **Clients use the same hostnames as today.** Peer `AllowedIPs` is the VM's LAN IP `/32` (`WG_ALLOWED_IPS`). The public DNS for `learnharness.home.moyjak.com`/`auth.home.moyjak.com` already points there, so OIDC redirects, cookies and certificates are unchanged. Traffic to the VM's own address over wg0 is local INPUT, not forwarding.
-    - **Move day** (LAN IP changes to `10.20.1.70`): existing peers must re-download their config. The admin page shows a "configs outdated" badge when the stored `allowedIps` no longer matches the env.
-  - **Endpoint:** a Cloudflare DDNS record `vpn.moyjak.com`, updated by a small systemd timer on the VM using the existing CF token in `secrets.env`, or the MyFRITZ name if you prefer.
+  - **Clients use the same hostnames as today.** Peer `AllowedIPs` is the VM's LAN IP `/32` (`WG_ALLOWED_IPS`). The public DNS for `learnharness.home.example.com`/`auth.home.example.com` already points there, so OIDC redirects, cookies and certificates are unchanged. Traffic to the VM's own address over wg0 is local INPUT, not forwarding.
+    - **Move day** (LAN IP changes to `192.0.2.70`): existing peers must re-download their config. The admin page shows a "configs outdated" badge when the stored `allowedIps` no longer matches the env.
+  - **Endpoint:** a Cloudflare DDNS record `vpn.example.com`, updated by a small systemd timer on the VM using the existing CF token in `secrets.env`, or the MyFRITZ name if you prefer.
     - **Pre-check (blocking):** the FRITZ!Box WAN must have a public IPv4. On DS-Lite, inbound v4 is impossible, and the endpoint falls back to an AAAA record for the VM's global IPv6 plus an IPv6 port opening on the FRITZ!Box.
   - **FRITZ!Box** (your step): a port share of UDP 51820 to VM 104.
 - **Isolation (nftables on the VM):**
   - wg0 is allowed INPUT only on tcp 80/443 (Caddy). There is no forwarding from wg0 anywhere (`forward` drop for `iifname wg0`).
   - **Egress from the VM and its Docker containers to the LAN is dropped**: RFC1918 and the LAN's IPv6 ULA/GUA prefix, with exceptions for the gateway's DNS/NTP and for established and related traffic, so SSH from your WSL into the VM still works. The container rules go in `DOCKER-USER`.
-  - **Access from home is unchanged.** Any LAN device opens `https://learnharness.home.moyjak.com` (80/443) and `auth.home.moyjak.com` directly, with no tunnel, and `ssh root@learnharness.fritz.box` (22) keeps working, as do 8443 and deploys from WSL.
+  - **Access from home is unchanged.** Any LAN device opens `https://learnharness.home.example.com` (80/443) and `auth.home.example.com` directly, with no tunnel, and `ssh root@learnharness.fritz.box` (22) keeps working, as do 8443 and deploys from WSL.
     - The isolation is one-way: it only stops the VM and its containers from **opening** connections into the LAN. Replies to connections that LAN devices open are allowed (`ct state established,related accept`).
     - WireGuard is needed only away from home. On phones, the WireGuard app's on-demand rule (iOS), or just switching the tunnel off, keeps home Wi-Fi on the direct path.
   - The verification below checks LAN access to 80/443/22 explicitly after the firewall change.
@@ -173,7 +173,7 @@ My calls (vetoable):
   - `server.json` is written by the host and read by the app: `{publicKey, endpoint, allowedIps}`. `allowedIps` is the VM's current LAN IPv4 `/32`, read from the default route, so move day updates it by itself.
   - `peers.json` is written by the app with temp-file-then-rename and read by the host applier.
   - `status.json` is written by the host every minute and after each apply. It is the parsed `wg show wg0 dump`: the last handshake per public key.
-- **Endpoint.** `vpn.moyjak.com:51820` is an A record kept current by a 5-minute DDNS timer on the VM, using `CLOUDFLARE_API_TOKEN` from `secrets.env`. The record is created by the script, not by OpenTofu. Verified 2026-10-29: the FRITZ!Box WAN has a public IPv4 (no DS-Lite).
+- **Endpoint.** `vpn.example.com:51820` is an A record kept current by a 5-minute DDNS timer on the VM, using `CLOUDFLARE_API_TOKEN` from `secrets.env`. The record is created by the script, not by OpenTofu. Verified 2026-10-29: the FRITZ!Box WAN has a public IPv4 (no DS-Lite).
 - **Client config:** `AllowedIPs = <VM LAN IP>/32`, no `DNS` line, `PersistentKeepalive = 25`. The existing public names resolve to the LAN IP, so the browser goes through the tunnel and OIDC is unchanged.
 
 ### 10. Addendum (2026-10-29): per-user models and monthly caps, as built
@@ -230,8 +230,8 @@ Before step 1, the design also goes into `docs/superpowers/specs/2026-10-29-mult
 - **WireGuard:**
   - Unit test: a generated config parses, the public key derives from the private key, and IP allocation skips used and revoked addresses. The applier script rejects malformed entries (shell test in the NixOS check).
   - On the VM, create a peer from `/admin`, scan the QR on the phone over mobile data, and confirm the app loads after the Keycloak login.
-  - From the phone, confirm that `192.168.178.1` (the FRITZ!Box UI) and other LAN hosts are unreachable.
+  - From the phone, confirm that `192.0.2.1` (the FRITZ!Box UI) and other LAN hosts are unreachable.
   - From the VM (and from inside the `learnharness` container), confirm that `curl` to a LAN host fails while the LLM providers work.
   - Revoke the peer and confirm its handshake stops.
-  - After the firewall change, from a LAN device with no tunnel: the app loads at `https://learnharness.home.moyjak.com` (and `http://` redirects), `ssh root@learnharness.fritz.box` works, and `systemctl restart learnharness-stack` over SSH still deploys.
+  - After the firewall change, from a LAN device with no tunnel: the app loads at `https://learnharness.home.example.com` (and `http://` redirects), `ssh root@learnharness.fritz.box` works, and `systemctl restart learnharness-stack` over SSH still deploys.
 - **VM:** after the deploy, run `systemctl start restic-backups-learnharness`, then `restic snapshots` and a test `restic restore` into a scratch directory.
