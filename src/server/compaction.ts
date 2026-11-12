@@ -57,11 +57,38 @@ const SUMMARIZER_SYSTEM_PROMPT =
 
 /** The one-shot summary call: zero tools, one turn, text out. The engine
  *  is the chat's own conversation engine (owner ruling: the session's
- *  model writes its own summary). Injectable for tests. */
-export type Summarizer = (prompt: string, engine: PiEngine) => Promise<{ summary: string; usage: Usage }>;
+ *  model writes its own summary). Injectable for tests. `signal` aborts
+ *  the call when the summary bound is reached. */
+export type Summarizer = (prompt: string, engine: PiEngine, signal?: AbortSignal) => Promise<{ summary: string; usage: Usage }>;
+
+/** The bound on one summary call. Every turn waits for a running
+ *  compaction, so a provider stream that hangs would stall the chat until
+ *  restart; past this bound the call is aborted and the compaction
+ *  abandons like a failed one. No sub-agent call has a shared bound to
+ *  follow; a summary over a long span by a reasoning model takes minutes. */
+const SUMMARY_TIMEOUT_MS = 5 * 60_000;
+
+/** Race the summary call against the bound; on timeout abort it and throw
+ *  (compact's catch treats it like any summarizer failure). A late result
+ *  of a call that ignored the abort is dropped. */
+async function withSummaryTimeout<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+	const controller = new AbortController();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => {
+			controller.abort();
+			reject(new Error(`the compaction summary did not finish within ${ms} ms`));
+		}, ms);
+	});
+	try {
+		return await Promise.race([run(controller.signal), timeout]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
 
 /** The production summarizer over the sub-agent seam. */
-async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ summary: string; usage: Usage }> {
+async function subagentSummarizer(prompt: string, engine: PiEngine, signal?: AbortSignal): Promise<{ summary: string; usage: Usage }> {
 	let usage: Usage = {
 		input: 0,
 		output: 0,
@@ -80,6 +107,7 @@ async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ s
 		engine,
 		systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
 		maxTurns: 1,
+		...(signal ? { abortSignal: signal } : {}),
 		onUsage: (u) => {
 			usage = u;
 		},
@@ -114,6 +142,8 @@ export interface CompactionDeps {
 	systemPromptTokens: number;
 	/** Injectable summarizer (tests); default = the sub-agent one-shot. */
 	summarize?: Summarizer;
+	/** Test seam; production bounds the summary call at SUMMARY_TIMEOUT_MS. */
+	summaryTimeoutMs?: number;
 }
 
 // ─── the registry (module-global on globalThis, jobs.ts's pattern) ─────────
@@ -223,7 +253,9 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 	emit("compaction-changed", { chatId, running: true });
 	try {
 		const summarize = deps.summarize ?? subagentSummarizer;
-		const { summary, usage } = await summarize(prompt, deps.engine);
+		const { summary, usage } = await withSummaryTimeout(deps.summaryTimeoutMs ?? SUMMARY_TIMEOUT_MS, (signal) =>
+			summarize(prompt, deps.engine, signal),
+		);
 		const trimmed = summary.trim();
 		if (!trimmed) return; // an empty summary is a refusal artifact — leave the record honest
 

@@ -373,6 +373,68 @@ describe("the compaction service", () => {
 		assert.equal(activeCompactionOf(record.messages), null, "a summary of text that changed is not checkpointed");
 		assert.equal((record.turns ?? []).length, 0, "no usage for an abandoned compaction");
 	});
+
+	it("a summary call that never returns is aborted at the bound: nothing is checkpointed and waiting turns go on", async () => {
+		const chatId = overThresholdChat("compact: hung summary");
+		const before = JSON.stringify(chatStore.getChat(chatId));
+		let seen: AbortSignal | undefined;
+		const errors: unknown[][] = [];
+		const orig = console.error;
+		console.error = (...args: unknown[]) => void errors.push(args);
+		try {
+			kickCompaction(() => ({
+				...depsOf(chatId, 40_000),
+				summaryTimeoutMs: 20,
+				summarize: (_prompt, _engine, signal) => {
+					seen = signal;
+					return new Promise(() => {}); // a provider stream that hangs
+				},
+			}), chatId);
+			assert.equal(compactionInFlight(chatId), true);
+			await awaitCompaction(chatId); // what every turn-start gate waits on
+		} finally {
+			console.error = orig;
+		}
+		assert.equal(compactionInFlight(chatId), false, "the gate is open again");
+		assert.equal(seen?.aborted, true, "the summary call is aborted at the bound");
+		assert.equal(JSON.stringify(chatStore.getChat(chatId)), before, "nothing is checkpointed");
+		assert.equal(errors.length, 1, "logged once, as a failed compaction");
+		assert.match(String(errors[0]![1]), /did not finish within 20 ms/);
+		// The next gate retries on current truth, exactly as after a failure.
+		await ensureCompacted(depsOf(chatId, 40_000), chatId);
+		assert.ok(activeCompactionOf(chatStore.getChat(chatId)!.messages));
+	});
+
+	it("the production summarizer hands the bound's abort to the model request", async () => {
+		const chatId = overThresholdChat("compact: hung provider");
+		const before = JSON.stringify(chatStore.getChat(chatId));
+		let seen: AbortSignal | undefined;
+		const faux = createFauxCore({});
+		faux.setResponses([
+			((_context: unknown, options: { signal?: AbortSignal } | undefined) => {
+				seen = options?.signal;
+				return new Promise(() => {}); // never answers, never looks at the signal
+			}) as never,
+		]);
+		const { summarize: _injected, ...base } = depsOf(chatId, 40_000);
+		const deps: CompactionDeps = { ...base, summaryTimeoutMs: 20, engine: { model: faux.getModel(), streamFn: faux.streamSimple } };
+		// NODE_ENV=test otherwise deliberately skips non-injected summaries.
+		const env: Record<string, string | undefined> = process.env;
+		const originalNodeEnv = env.NODE_ENV;
+		env.NODE_ENV = "development";
+		const orig = console.error;
+		console.error = () => {};
+		try {
+			await ensureCompacted(deps, chatId);
+		} finally {
+			console.error = orig;
+			if (originalNodeEnv === undefined) delete env.NODE_ENV;
+			else env.NODE_ENV = originalNodeEnv;
+		}
+		assert.equal(seen?.aborted, true, "the provider request saw the abort");
+		assert.equal(compactionInFlight(chatId), false);
+		assert.equal(JSON.stringify(chatStore.getChat(chatId)), before, "nothing is checkpointed");
+	});
 });
 
 // The marker sits where the summarised chat ended, so what the learner writes
