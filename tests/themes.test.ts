@@ -158,7 +158,8 @@ describe("the choice", () => {
 			{ media: "(prefers-color-scheme: light)", color: "#faf9f5" },
 			{ media: "(prefers-color-scheme: dark)", color: "#141414" },
 		]);
-		assert.deepEqual(chromeColors({ theme: "system", background: "#202020" }), { light: "#202020", dark: "#202020" });
+		// Per-theme overrides: Default's background colours the dark chrome only.
+		assert.deepEqual(chromeColors({ theme: "system", colors: { default: { background: "#202020" } } }), { light: "#faf9f5", dark: "#202020" });
 		assert.deepEqual([colorSchemeOf("default"), colorSchemeOf("ivory"), colorSchemeOf("system")], ["dark", "light", "light dark"]);
 	});
 
@@ -170,53 +171,60 @@ describe("the choice", () => {
 	});
 });
 
-describe("overrides", () => {
-	it("both homes merge onto the theme, invalid values are ignored", () => {
-		const c = effectiveColors(IVORY_THEME, {
-			background: "#101010",
-			colors: { accent: "#00ff00", warning: "nope", error: null },
-			mdRendering: { boldColor: "#ff0000" },
-		});
-		assert.equal(c.background, "#101010");
-		assert.equal(c.accent, "#00ff00");
-		assert.equal(c.bold, "#ff0000");
-		assert.equal(c.warning, IVORY_THEME.colors.warning);
-		assert.equal(c.error, IVORY_THEME.colors.error);
+/** A learner's Default overrides (a dark background and an accent). */
+const dark = { colors: { default: { background: "#202020", accent: "#123456" } } };
+
+describe("overrides are stored per theme (owner ruling 2026-11-12, unlike upstream)", () => {
+	it("a theme shows only its own overrides; invalid values are ignored", () => {
+		const a = { colors: { default: { background: "#101010", warning: "nope", error: null }, ivory: { bold: "#ff0000" } } };
+		const d = effectiveColors(DEFAULT_THEME, a);
+		assert.equal(d.background, "#101010");
+		assert.equal(d.warning, DEFAULT_THEME.colors.warning);
+		assert.equal(d.error, DEFAULT_THEME.colors.error);
+		assert.equal(d.bold, DEFAULT_THEME.colors.bold, "Ivory's bold never reaches Default");
+		const i = effectiveColors(IVORY_THEME, a);
+		assert.equal(i.bold, "#ff0000");
+		assert.equal(i.background, IVORY_THEME.colors.background, "Default's dark background never reaches Ivory");
 	});
 
-	it("an override is kept across a theme switch: it applies to whichever preset shows", () => {
-		const appearance = { colors: { accent: "#123456" } };
-		assert.equal(themeVars(DEFAULT_THEME, appearance)["--ring"], "#123456");
-		assert.equal(themeVars(IVORY_THEME, appearance)["--ring"], "#123456");
+	it("a switch in both directions shows the target theme's own set, and keeps the other's", () => {
+		// Default → Ivory: the dark overrides stay with Default.
+		const onIvory = { ...dark, theme: "ivory" as const };
+		assert.equal(themeVars(IVORY_THEME, onIvory)["--background"], "#faf9f5");
+		assert.equal(themeVars(IVORY_THEME, onIvory)["--ring"], "#d97757");
+		// An Ivory override made there, then back to Default.
+		const edited = composeColorOverride(onIvory, "ivory", "accent", "#aa3300");
+		const back = { ...edited, theme: "default" as const };
+		assert.equal(themeVars(DEFAULT_THEME, back)["--background"], "#202020");
+		assert.equal(themeVars(DEFAULT_THEME, back)["--ring"], "#123456");
+		assert.equal(themeVars(IVORY_THEME, back)["--ring"], "#aa3300", "Ivory's own set waits for the next switch");
 	});
 
 	it("the hover surface steps lighter on dark and darker on light", () => {
-		const appearance = { colors: { surface: "#808080" } };
-		assert.equal(themeVars(DEFAULT_THEME, appearance)["--accent"], "#8e8e8e");
-		assert.equal(themeVars(IVORY_THEME, appearance)["--accent"], "#727272");
+		const a = { colors: { default: { surface: "#808080" }, ivory: { surface: "#808080" } } };
+		assert.equal(themeVars(DEFAULT_THEME, a)["--accent"], "#8e8e8e");
+		assert.equal(themeVars(IVORY_THEME, a)["--accent"], "#727272");
 	});
 
 	it("--destructive and --lh-success-strong follow an error / success override", () => {
 		assert.equal(themeVars(DEFAULT_THEME)["--destructive"], "oklch(0.704 0.191 22.216)");
-		const vars = themeVars(DEFAULT_THEME, { colors: { error: "#aa0000", success: "#00aa00" } });
+		const vars = themeVars(DEFAULT_THEME, { colors: { default: { error: "#aa0000", success: "#00aa00" } } });
 		assert.equal(vars["--destructive"], "#aa0000");
 		assert.equal(vars["--lh-error"], "#aa0000");
 		assert.equal(vars["--lh-success-strong"], "#00aa00");
 	});
 
-	it("the Settings compose helpers write the right home and Reset all clears every colour", () => {
-		let a = composeColorOverride({ theme: "ivory", proseFontSize: 18 }, "background", "#111111");
-		a = composeColorOverride(a, "bold", "#222222");
-		a = composeColorOverride(a, "accent", "#333333");
+	it("the Settings compose helpers touch one theme's set; Reset all clears that theme only", () => {
+		let a = composeColorOverride({ theme: "ivory", proseFontSize: 18 }, "ivory", "background", "#111111");
+		a = composeColorOverride(a, "default", "bold", "#222222");
+		a = composeColorOverride(a, "ivory", "accent", "#333333");
 		assert.deepEqual(a, {
 			theme: "ivory",
 			proseFontSize: 18,
-			background: "#111111",
-			mdRendering: { boldColor: "#222222" },
-			colors: { accent: "#333333" },
+			colors: { ivory: { background: "#111111", accent: "#333333" }, default: { bold: "#222222" } },
 		});
-		assert.deepEqual(composeColorOverride(a, "accent", "").colors, {}, "empty = back to the theme's");
-		assert.deepEqual(clearColorOverrides(a), { theme: "ivory", proseFontSize: 18, mdRendering: {} });
+		assert.deepEqual(composeColorOverride(a, "ivory", "accent", "").colors?.ivory, { background: "#111111" }, "empty = back to the theme's");
+		assert.deepEqual(clearColorOverrides(a, "ivory"), { theme: "ivory", proseFontSize: 18, colors: { default: { bold: "#222222" } } });
 	});
 });
 
@@ -226,23 +234,27 @@ describe("appearanceCss — the provider's <style>", () => {
 		assert.equal(appearanceCss({ theme: "ivory" }), appearanceCss(undefined), "the choice is the attribute, not CSS");
 	});
 
-	it("an override: both full palettes, one selector step above globals.css, Ivory again for system in light", () => {
-		const css = appearanceCss({ colors: { accent: "#123456" } });
-		const lines = css.split("\n");
-		assert.equal(lines.length, 4);
-		assert.match(lines[1]!, /^html:root:not\(\[data-theme="ivory"\]\)\{--background:#141414;.*--ring:#123456;/);
-		assert.match(lines[2]!, /^html:root\[data-theme="ivory"\]\{--background:#faf9f5;.*--ring:#123456;/);
-		assert.equal(lines[3], `@media (prefers-color-scheme: light){${lines[2]!.replace('"ivory"', '"system"')}}`);
+	it("Default's overrides: the Default page, and Follow system while the device is not light; never Ivory", () => {
+		const lines = appearanceCss(dark).split("\n");
+		assert.equal(lines.length, 3);
+		assert.match(lines[1]!, /^html:root:not\(\[data-theme="ivory"\]\):not\(\[data-theme="system"\]\)\{--background:#202020;.*--ring:#123456;/);
+		assert.equal(lines[2], `@media not all and (prefers-color-scheme: light){${lines[1]!.replace(/^[^{]+/, 'html:root[data-theme="system"]')}}`);
+		assert.ok(!lines.join("").includes('[data-theme="ivory"]{'), "no Ivory rule");
 	});
 
-	it("an override equal to an Ivory colour still emits the light rule (the dark rule also matches system)", () => {
-		const css = appearanceCss({ background: "#faf9f5" });
-		assert.match(css, /html:root\[data-theme="system"\]/);
+	it("Ivory's overrides: the Ivory page, and Follow system while the device is light; never Default", () => {
+		const lines = appearanceCss({ colors: { ivory: { accent: "#aa3300" } } }).split("\n");
+		assert.equal(lines.length, 3);
+		assert.match(lines[1]!, /^html:root\[data-theme="ivory"\]\{--background:#faf9f5;.*--ring:#aa3300;/);
+		assert.equal(lines[2], `@media (prefers-color-scheme: light){${lines[1]!.replace('"ivory"', '"system"')}}`);
 	});
 
-	it("Reset all removes every colour rule", () => {
-		const a = { proseFontSize: 18, background: "#101010", colors: { accent: "#123456" } };
-		assert.equal(appearanceCss(clearColorOverrides(a)), "html:root{--lh-prose-size:18px;--lh-heading-weight:900;}");
+	it("Reset all removes that theme's rules only", () => {
+		const a = { proseFontSize: 18, colors: { default: { background: "#101010" }, ivory: { accent: "#123456" } } };
+		const css = appearanceCss(clearColorOverrides(a, "default"));
+		assert.ok(!css.includes(":not("), "the Default rule is gone");
+		assert.match(css, /html:root\[data-theme="ivory"\]\{/);
+		assert.equal(appearanceCss(clearColorOverrides(clearColorOverrides(a, "default"), "ivory")), "html:root{--lh-prose-size:18px;--lh-heading-weight:900;}");
 	});
 
 	it("a font name can never end the rule or the element", () => {

@@ -102,22 +102,20 @@ describe("parseAppearanceSettingsBody", () => {
 	it("parses every field; hex-or-null colors; clamps happen at sanitize, rejects here", () => {
 		const r = parseAppearanceSettingsBody({
 			theme: "system",
-			background: "#ffffff",
-			colors: { accent: "#123456", text: null },
+			colors: { default: { background: "#ffffff", accent: "#123456" }, ivory: { text: null, bold: "#ff8800" } },
 			fontFamily: "Some Font",
 			proseFontSize: 20,
 			sessionNameSerif: false,
-			mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
+			mdRendering: { headingWeight: 700 },
 		});
 		assert.ok(r.ok);
 		assert.deepEqual(r.settings, {
 			theme: "system",
-			background: "#ffffff",
-			colors: { accent: "#123456", text: null },
+			colors: { default: { background: "#ffffff", accent: "#123456" }, ivory: { text: null, bold: "#ff8800" } },
 			fontFamily: "Some Font",
 			proseFontSize: 20,
 			sessionNameSerif: false,
-			mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
+			mdRendering: { headingWeight: 700 },
 		});
 	});
 
@@ -126,16 +124,16 @@ describe("parseAppearanceSettingsBody", () => {
 			{ theme: "sepia" },
 			{ theme: "catppuccin-mocha" },
 			{ colors: "red" },
-			{ colors: { accent: "red" } },
-			{ background: "blue" },
-			{ background: 42 },
+			{ colors: { accent: "#123456" } },
+			{ colors: { sepia: { accent: "#123456" } } },
+			{ colors: { ivory: "x" } },
+			{ colors: { default: { accent: "red" } } },
 			{ fontFamily: "" },
 			{ fontFamily: 12 },
 			{ proseFontSize: 30 },
 			{ proseFontSize: 64.5 },
 			{ sessionNameSerif: 1 },
 			{ mdRendering: { headingWeight: 1000 } },
-			{ mdRendering: { boldColor: "red" } },
 		];
 		for (const body of cases) {
 			assert.equal(parseAppearanceSettingsBody(body).ok, false, JSON.stringify(body));
@@ -145,11 +143,11 @@ describe("parseAppearanceSettingsBody", () => {
 		assert.ok(parseAppearanceSettingsBody({ proseFontSize: 24 }));
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 100 } }));
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 900 } }));
-		assert.ok(parseAppearanceSettingsBody({ background: "#abc" }));
-		// v1's never-enabled mode key is ignored, not rejected
-		assert.deepEqual(parseAppearanceSettingsBody({ mode: "light" }), { ok: true, settings: {} });
+		assert.ok(parseAppearanceSettingsBody({ colors: { default: { background: "#abc" } } }).ok);
+		// v1's keys (mode, background, the emphasis inks) are ignored, not rejected
+		assert.deepEqual(parseAppearanceSettingsBody({ mode: "light", background: "#000000", mdRendering: { boldColor: "#ffffff" } }), { ok: true, settings: {} });
 		// null = "the theme's colour" — explicit, valid
-		assert.ok(parseAppearanceSettingsBody({ background: null, fontFamily: null }));
+		assert.ok(parseAppearanceSettingsBody({ colors: { default: { background: null } }, fontFamily: null }).ok);
 	});
 
 	it("rejects non-object bodies and non-object mdRendering", () => {

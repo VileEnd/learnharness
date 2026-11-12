@@ -10,10 +10,14 @@
  * on [data-theme="ivory"] and, under prefers-color-scheme: light, on
  * [data-theme="system"]). This text only adds what the record changes:
  *   - the type knobs, on every palette;
- *   - colour overrides, as the full palette of both presets once any
- *     override changes either (the dark block first, then Ivory, then Ivory
- *     under the light media query), each one selector step more specific
- *     than its globals.css block, so it wins without !important.
+ *   - colour overrides, which are stored per theme: when Default has its
+ *     own, its full palette for [data-theme="default"] (and no attribute)
+ *     and for [data-theme="system"] while the device is NOT light; when
+ *     Ivory has its own, its full palette for [data-theme="ivory"] and for
+ *     [data-theme="system"] while the device IS light. The selectors never
+ *     overlap, so one theme's overrides cannot reach the other's page; each
+ *     is one step more specific than its globals.css block, so it wins
+ *     without !important.
  * Every colour that reaches the text passed isHex(); the one free-text
  * value (the font family) is escaped as a CSS string, so no record value
  * can end the rule or the element.
@@ -27,15 +31,12 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 	const f = FACTORY_SETTINGS.appearance;
 	return {
 		theme: delta?.theme ?? f.theme,
-		background: delta?.background ?? f.background,
 		colors: delta?.colors ?? f.colors,
 		fontFamily: delta?.fontFamily ?? f.fontFamily,
 		proseFontSize: delta?.proseFontSize ?? f.proseFontSize,
 		sessionNameSerif: delta?.sessionNameSerif ?? f.sessionNameSerif,
 		mdRendering: {
 			headingWeight: delta?.mdRendering?.headingWeight ?? f.mdRendering.headingWeight,
-			boldColor: delta?.mdRendering?.boldColor ?? f.mdRendering.boldColor,
-			italicColor: delta?.mdRendering?.italicColor ?? f.mdRendering.italicColor,
 		},
 	};
 }
@@ -85,17 +86,21 @@ const rule = (selector: string, vars: Record<string, string>) =>
 		.map(([k, v]) => `${k}:${v};`)
 		.join("")}}`;
 
+const DARK_SELECTOR = 'html:root:not([data-theme="ivory"]):not([data-theme="system"])';
+const SYSTEM_SELECTOR = 'html:root[data-theme="system"]';
+
 /** THE text: see the module header. */
 export function appearanceCss(appearance: AppearanceSettings | undefined): string {
 	const out = [rule("html:root", appearanceTypeVars(resolveAppearance(appearance)))];
-	// Both palettes or neither: the dark rule also matches "system" while
-	// the device is light, so the light rule must always follow it (an
-	// override equal to an Ivory colour leaves only the dark one changed).
-	if (overriddenPalette(DEFAULT_THEME, appearance) || overriddenPalette(IVORY_THEME, appearance)) {
-		const light = themeVars(IVORY_THEME, appearance);
-		out.push(rule('html:root:not([data-theme="ivory"])', themeVars(DEFAULT_THEME, appearance)));
+	const dark = overriddenPalette(DEFAULT_THEME, appearance);
+	if (dark) {
+		out.push(rule(DARK_SELECTOR, dark));
+		out.push(`@media not all and (prefers-color-scheme: light){${rule(SYSTEM_SELECTOR, dark)}}`);
+	}
+	const light = overriddenPalette(IVORY_THEME, appearance);
+	if (light) {
 		out.push(rule('html:root[data-theme="ivory"]', light));
-		out.push(`@media (prefers-color-scheme: light){${rule('html:root[data-theme="system"]', light)}}`);
+		out.push(`@media (prefers-color-scheme: light){${rule(SYSTEM_SELECTOR, light)}}`);
 	}
 	return out.join("\n");
 }

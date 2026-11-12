@@ -45,7 +45,7 @@ describe("fontMenuResults — the DEFAULT row is a candidate, never a ghost pick
 
 describe("composeFontFamily — null/blank = the factory family, otherwise verbatim", () => {
 	it("null → fontFamily null (Source Sans 3 semantics preserved)", () => {
-		assert.equal(composeFontFamily({ background: "#101010" }, null).fontFamily, null);
+		assert.equal(composeFontFamily({ colors: { default: { background: "#101010" } } }, null).fontFamily, null);
 	});
 	it("blank/whitespace → null too", () => {
 		assert.equal(composeFontFamily(undefined, "  ").fontFamily, null);
@@ -54,8 +54,8 @@ describe("composeFontFamily — null/blank = the factory family, otherwise verba
 		assert.equal(composeFontFamily(undefined, " Georgia ").fontFamily, "Georgia");
 	});
 	it("the rest of the section rides along", () => {
-		const next = composeFontFamily({ background: "#101010" }, "Menlo");
-		assert.equal(next.background, "#101010");
+		const next = composeFontFamily({ colors: { default: { background: "#101010" } } }, "Menlo");
+		assert.deepEqual(next.colors, { default: { background: "#101010" } });
 	});
 });
 

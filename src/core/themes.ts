@@ -12,9 +12,13 @@
  * which shows Ivory while the device is in light mode and Default otherwise.
  * No import or export (out of scope).
  *
- * Per-colour overrides survive every theme switch (upstream's ruling:
- * losing user config is worse than an odd combination) and apply to
- * whichever preset is on screen.
+ * Per-colour overrides are stored PER THEME (owner ruling 2026-11-12, a
+ * deliberate departure from upstream, whose overrides survive every switch):
+ * a dark override under Ivory's dark text would make the light theme
+ * unreadable. `appearance.colors.default` and `appearance.colors.ivory` each
+ * hold that preset's own overrides; a switch shows the target theme's own,
+ * and Follow system applies Default's while the device is dark and Ivory's
+ * while it is light.
  *
  * Both palettes also live as literals in app/globals.css (the first frame
  * needs them before any script): tests/themes.test.ts pins those blocks
@@ -50,29 +54,14 @@ export type ThemeColorKey = (typeof THEME_COLOR_KEYS)[number];
  *  overrides are always #hex). */
 export type ThemeColors = Record<ThemeColorKey, string>;
 
-/** The keys whose override lives in `appearance.colors`. The other three
- *  keep their pre-theme homes (`background`, `mdRendering.boldColor` and
- *  `mdRendering.italicColor`). */
-export const COLOR_OVERRIDE_KEYS = [
-	"surface",
-	"border",
-	"text",
-	"textMuted",
-	"accent",
-	"code",
-	"error",
-	"success",
-	"warning",
-] as const;
-
-/** A key whose override lives in `appearance.colors`. */
-export type ColorOverrideKey = (typeof COLOR_OVERRIDE_KEYS)[number];
-/** `appearance.colors`: hex wins over the theme; null/absent = the theme's colour. */
-export type AppearanceColorOverrides = Partial<Record<ColorOverrideKey, string | null>>;
-
 /** The preset ids. */
 export const THEME_IDS = ["default", "ivory"] as const;
 export type ThemeId = (typeof THEME_IDS)[number];
+
+/** One theme's overrides: hex wins over the theme; null/absent = the theme's colour. */
+export type ThemeColorOverrides = Partial<Record<ThemeColorKey, string | null>>;
+/** `appearance.colors`: each preset's own overrides, by theme id. */
+export type AppearanceColorOverrides = Partial<Record<ThemeId, ThemeColorOverrides>>;
 
 /** What the learner picks: a preset, or "system" (follow the device). */
 export const THEME_CHOICES = ["default", "ivory", "system"] as const;
@@ -203,17 +192,18 @@ export function renderedModeOf(choice: ThemeChoice, deviceMode: ThemeMode): Them
 	return choice === "system" ? deviceMode : resolveTheme(choice).mode;
 }
 
-/** The single place the two override homes merge onto the theme: the
- *  legacy keys (`background`, `mdRendering.boldColor/italicColor`) and
- *  `colors`. A null/absent/invalid override = the theme's colour. */
+/** This theme's own overrides from the record (never another theme's). */
+export function themeOverrides(theme: Theme, appearance: AppearanceSettings | undefined): ThemeColorOverrides {
+	return appearance?.colors?.[theme.id] ?? {};
+}
+
+/** The single place a theme's overrides merge onto it. A null/absent/
+ *  invalid override = the theme's colour. */
 export function effectiveColors(theme: Theme, appearance: AppearanceSettings | undefined): ThemeColors {
 	const out: ThemeColors = { ...theme.colors };
-	if (!appearance) return out;
-	if (isHex(appearance.background)) out.background = appearance.background;
-	if (isHex(appearance.mdRendering?.boldColor)) out.bold = appearance.mdRendering.boldColor;
-	if (isHex(appearance.mdRendering?.italicColor)) out.italic = appearance.mdRendering.italicColor;
-	for (const key of COLOR_OVERRIDE_KEYS) {
-		const v = appearance.colors?.[key];
+	const own = themeOverrides(theme, appearance);
+	for (const key of THEME_COLOR_KEYS) {
+		const v = own[key];
 		if (isHex(v)) out[key] = v;
 	}
 	return out;
@@ -240,7 +230,8 @@ const HOVER_STEP = 14;
 export function themeVars(theme: Theme, appearance?: AppearanceSettings): Record<string, string> {
 	const c = effectiveColors(theme, appearance);
 	const t = theme.tokens;
-	const overridden = (key: ColorOverrideKey) => isHex(appearance?.colors?.[key]);
+	const own = themeOverrides(theme, appearance);
+	const overridden = (key: ThemeColorKey) => isHex(own[key]);
 	return {
 		"--background": c.background,
 		"--foreground": c.text,

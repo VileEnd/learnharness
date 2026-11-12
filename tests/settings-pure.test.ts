@@ -27,12 +27,11 @@ describe("resolveAppearance — delta over factory", () => {
 	it("absent everything = the factory view", () => {
 		const a = resolveAppearance(undefined);
 		assert.equal(a.theme, "default");
-		assert.equal(a.background, null);
 		assert.deepEqual(a.colors, {});
 		assert.equal(a.fontFamily, null);
 		assert.equal(a.proseFontSize, 16);
 		assert.equal(a.sessionNameSerif, true);
-		assert.deepEqual(a.mdRendering, { headingWeight: 900, boldColor: null, italicColor: null });
+		assert.deepEqual(a.mdRendering, { headingWeight: 900 });
 	});
 
 	it("explicit deltas win field-by-field", () => {
@@ -40,7 +39,7 @@ describe("resolveAppearance — delta over factory", () => {
 		assert.equal(a.proseFontSize, 20);
 		assert.equal(a.fontFamily, "Iowan Old Style");
 		assert.equal(a.theme, "ivory");
-		assert.equal(a.background, null);
+		assert.deepEqual(a.colors, {});
 	});
 });
 
@@ -68,11 +67,11 @@ describe("appearanceTypeVars — the type knobs the provider applies", () => {
 	it("full delta: every knob lands on its token; colours are not type knobs", () => {
 		const vars = appearanceTypeVars(
 			resolveAppearance({
-				background: "#101820",
+				colors: { default: { background: "#101820", bold: "#ff0000", italic: "#00ff00" } },
 				fontFamily: "Georgia",
 				proseFontSize: 18,
 				sessionNameSerif: false,
-				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
+				mdRendering: { headingWeight: 700 },
 			}),
 		);
 		assert.deepEqual(vars, {

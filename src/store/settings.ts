@@ -22,6 +22,7 @@ import path from "node:path";
 import { settingsFile } from "../../config.ts";
 import {
 	CURRENT_SETTINGS_VERSION,
+	isHexColor,
 	sanitizeUserSettings,
 	type UserSettings,
 } from "../core/settings.ts";
@@ -44,34 +45,52 @@ export function readSettings(): UserSettings | null {
 	} catch {
 		return null; // corrupt → first-boot semantics (all factory defaults)
 	}
-	const record = sanitizeUserSettings(parsed);
-	if (!record) return null;
-	// Version chain. Lazy: the migrated shape lands on disk with the next
-	// section write. Unknown NEWER versions pass through untouched (the
-	// sanitizer preserved unknowns).
-	// An unstamped file is v1 (lazy v1: absence reads as the first shape).
-	const stamped = (parsed as { version?: unknown }).version;
-	return stamped === 1 || stamped === undefined ? migrateSettingsV1(record) : record;
+	// Version chain, on the raw JSON before the sanitizer (which knows only
+	// the current shape). Lazy: the migrated shape lands on disk with the
+	// next section write. Unknown NEWER versions pass through untouched (the
+	// sanitizer preserves unknowns). An unstamped file is v1 (lazy v1:
+	// absence reads as the first shape).
+	const stamped = parsed !== null && typeof parsed === "object" ? (parsed as { version?: unknown }).version : undefined;
+	return sanitizeUserSettings(stamped === 1 || stamped === undefined ? migrateSettingsV1(parsed) : parsed);
 }
 
+const isHex = (v: unknown): v is string => typeof v === "string" && isHexColor(v);
+const asObject = (v: unknown): Record<string, unknown> | undefined =>
+	v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+
 /**
- * v1 → v2 (themes, 2026-11-12). In v1 a custom `appearance.background`
- * derived the whole dark palette from itself (components/settings/
- * appearance.tsx derivedPalette: surfaces +8 per channel, hover +22, edges
- * +47). In v2 `background` overrides the background only, so the derived
- * surface and border become explicit overrides (the hover follows the
- * surface, +14, which lands on the same +22): nobody's colours change. The
- * never-enabled `mode` key was already dropped by the sanitizer. Pure.
+ * v1 → v2 (themes, 2026-11-12), on the raw record. v1 had one set of colour
+ * knobs, all chosen against the dark page: `appearance.background` (which
+ * derived the whole palette from itself: components/settings/appearance.tsx
+ * derivedPalette, surfaces +8 per channel, hover +22, edges +47) and
+ * `mdRendering.boldColor/italicColor`. v2 stores overrides per theme, and
+ * these move into DEFAULT's only (owner ruling: a dark background must not
+ * follow the learner onto Ivory): background, surface (+8) and border (+47)
+ * (the hover follows the surface, +14, landing on the same +22), bold and
+ * italic. Nobody's Default colours change; Ivory starts clean. The
+ * never-enabled `mode` key is dropped. Pure; non-objects pass through.
  */
-export function migrateSettingsV1(record: UserSettings): UserSettings {
-	const out: UserSettings = { ...record, version: CURRENT_SETTINGS_VERSION };
-	const background = record.appearance?.background;
-	if (record.appearance && typeof background === "string") {
-		out.appearance = {
-			...record.appearance,
-			colors: { surface: shiftHex(background, 8), border: shiftHex(background, 47), ...record.appearance.colors },
-		};
+export function migrateSettingsV1(raw: unknown): unknown {
+	const record = asObject(raw);
+	if (!record) return raw;
+	const out: Record<string, unknown> = { ...record, version: CURRENT_SETTINGS_VERSION };
+	const appearance = asObject(record.appearance);
+	if (!appearance) return out;
+	const { background, mode: _mode, mdRendering, ...rest } = appearance;
+	const md = asObject(mdRendering);
+	const { boldColor, italicColor, ...mdRest } = md ?? {};
+	const own: Record<string, string> = {};
+	if (isHex(background)) {
+		own.background = background;
+		own.surface = shiftHex(background, 8);
+		own.border = shiftHex(background, 47);
 	}
+	if (isHex(boldColor)) own.bold = boldColor;
+	if (isHex(italicColor)) own.italic = italicColor;
+	const next: Record<string, unknown> = { ...rest };
+	if (md) next.mdRendering = mdRest;
+	if (Object.keys(own).length) next.colors = { default: own };
+	out.appearance = next;
 	return out;
 }
 

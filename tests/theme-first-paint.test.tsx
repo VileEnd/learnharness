@@ -76,12 +76,17 @@ describe("first paint, one per choice", () => {
 		assert.ok(!html.includes("<script"), "the first frame needs no script");
 	});
 
-	it("overrides and type knobs paint in the first HTML too", () => {
-		writeSettings({ version: 2, appearance: { theme: "system", colors: { accent: "#123456" }, proseFontSize: 20 } });
+	it("overrides and type knobs paint in the first HTML too, each theme its own (Follow system: Default's while dark, Ivory's while light)", () => {
+		writeSettings({
+			version: 2,
+			appearance: { theme: "system", colors: { default: { background: "#202020" }, ivory: { accent: "#aa3300" } }, proseFontSize: 20 },
+		});
 		const html = single();
 		assert.match(html, /html:root\{--lh-prose-size:20px;/);
-		assert.match(html, /html:root:not\(\[data-theme="ivory"\]\)\{[^}]*--ring:#123456;/);
-		assert.match(html, /@media \(prefers-color-scheme: light\)\{html:root\[data-theme="system"\]\{[^}]*--ring:#123456;/);
+		assert.match(html, /@media not all and \(prefers-color-scheme: light\)\{html:root\[data-theme="system"\]\{--background:#202020;[^}]*--ring:#8d8d8d;/);
+		assert.match(html, /@media \(prefers-color-scheme: light\)\{html:root\[data-theme="system"\]\{--background:#faf9f5;[^}]*--ring:#aa3300;/);
+		assert.match(html, /<meta name="theme-color" media="\(prefers-color-scheme: dark\)" content="#202020"\/>/);
+		assert.match(html, /<meta name="theme-color" media="\(prefers-color-scheme: light\)" content="#faf9f5"\/>/);
 	});
 });
 

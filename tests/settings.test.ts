@@ -29,14 +29,11 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 });
 		const a = FACTORY_SETTINGS.appearance;
 		assert.equal(a.theme, "default");
-		assert.equal(a.background, null); // the theme's own background, not a factory hex
-		assert.deepEqual(a.colors, {}); // no overrides
+		assert.deepEqual(a.colors, {}); // no overrides: each theme's own colours
 		assert.equal(a.fontFamily, null); // Source Sans 3
 		assert.equal(a.proseFontSize, 16);
 		assert.equal(a.sessionNameSerif, true);
-		assert.equal(a.mdRendering.headingWeight, 900);
-		assert.equal(a.mdRendering.boldColor, null); // the theme's bold
-		assert.equal(a.mdRendering.italicColor, null);
+		assert.deepEqual(a.mdRendering, { headingWeight: 900 }); // emphasis inks are theme colours
 	});
 
 	it("has NO factory model pin — chat defaults and role overrides start absent", () => {
@@ -74,12 +71,11 @@ describe("sanitizeUserSettings", () => {
 			},
 			appearance: {
 				theme: "system",
-				background: "#ffffff",
-				colors: { surface: "#eeeeee", error: null },
+				colors: { default: { background: "#ffffff", surface: "#eeeeee", error: null }, ivory: { bold: "#ff8800" } },
 				fontFamily: "Some Font",
 				proseFontSize: 18,
 				sessionNameSerif: false,
-				mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
+				mdRendering: { headingWeight: 700 },
 			},
 			graph: { enabled: false },
 		};
@@ -148,14 +144,12 @@ describe("sanitizeUserSettings", () => {
 		assert.equal(low.appearance?.mdRendering?.headingWeight, 100);
 	});
 
-	it("invalid colors become null (the factory default), valid ones pass", () => {
+	it("invalid colors become null (the theme's colour), valid ones pass; unknown themes and keys drop", () => {
 		const out = sanitizeUserSettings({
-			appearance: { background: "blue", mdRendering: { boldColor: "#f00", italicColor: 42 } },
+			appearance: { colors: { default: { background: "blue", bold: "#f00", italic: 42, glow: "#fff" }, sepia: { text: "#000" }, ivory: "x" } },
 		});
 		assert.ok(out);
-		assert.equal(out.appearance?.background, null);
-		assert.equal(out.appearance?.mdRendering?.boldColor, "#f00");
-		assert.equal(out.appearance?.mdRendering?.italicColor, null);
+		assert.deepEqual(out.appearance?.colors, { default: { background: null, bold: "#f00", italic: null } });
 	});
 
 	it("empty strings/whitespace fontFamily → null (Source Sans 3); wrong-type → null too (the default)", () => {

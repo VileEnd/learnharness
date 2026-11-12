@@ -7,7 +7,8 @@
  * Each card previews with literal colours (never the page's live tokens):
  * an "Aa ai" sample on the theme background (text + accent ink) and three
  * dots (surface, error, success). Follow system shows both presets, split.
- * Picking a card only changes `appearance.theme`; overrides ride along.
+ * Picking a card only changes `appearance.theme`; each preset keeps its own
+ * overrides, and the page shows the picked one's.
  */
 
 import { CheckIcon } from "lucide-react";

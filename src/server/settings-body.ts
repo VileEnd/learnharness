@@ -12,7 +12,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { COLOR_OVERRIDE_KEYS, isHexColor, isThemeChoice, THEME_CHOICES, type AppearanceColorOverrides, type ChatSettings } from "../core";
+import { isHexColor, isThemeChoice, THEME_CHOICES, THEME_COLOR_KEYS, THEME_IDS, type AppearanceColorOverrides, type ChatSettings, type ThemeColorOverrides } from "../core";
 import type {
 	AgentSettings,
 	QuizMechanic,
@@ -258,8 +258,10 @@ function parseHexOrNull(value: unknown, field: string): { color?: string | null;
 	return { color: value };
 }
 
-/** appearance: { theme?, background?, colors?, fontFamily?, proseFontSize?,
- *  sessionNameSerif?, mdRendering? } */
+/** appearance: { theme?, colors?: { default?, ivory? }, fontFamily?,
+ *  proseFontSize?, sessionNameSerif?, mdRendering? }. v1's `background`,
+ *  `mode` and `mdRendering.boldColor/italicColor` are ignored (their values
+ *  live in colors.default since v2). */
 export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<AppearanceSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
@@ -270,20 +272,24 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 		}
 		settings.theme = raw.theme;
 	}
-	if (raw.background !== undefined) {
-		const parsed = parseHexOrNull(raw.background, "background");
-		if (parsed.error) return { ok: false, error: parsed.error };
-		settings.background = parsed.color ?? null;
-	}
 	if (raw.colors !== undefined) {
-		const c = asRecord(raw.colors);
-		if (!c) return { ok: false, error: "colors must be an object" };
+		const byTheme = asRecord(raw.colors);
+		if (!byTheme) return { ok: false, error: "colors must be an object of theme ids" };
 		const colors: AppearanceColorOverrides = {};
-		for (const key of COLOR_OVERRIDE_KEYS) {
-			if (c[key] === undefined) continue;
-			const parsed = parseHexOrNull(c[key], `colors.${key}`);
-			if (parsed.error) return { ok: false, error: parsed.error };
-			colors[key] = parsed.color ?? null;
+		for (const id of Object.keys(byTheme)) {
+			if (!(THEME_IDS as readonly string[]).includes(id)) {
+				return { ok: false, error: `colors: unknown theme "${id}" (one of: ${THEME_IDS.join(", ")})` };
+			}
+			const c = asRecord(byTheme[id]);
+			if (!c) return { ok: false, error: `colors.${id} must be an object` };
+			const own: ThemeColorOverrides = {};
+			for (const key of THEME_COLOR_KEYS) {
+				if (c[key] === undefined) continue;
+				const parsed = parseHexOrNull(c[key], `colors.${id}.${key}`);
+				if (parsed.error) return { ok: false, error: parsed.error };
+				own[key] = parsed.color ?? null;
+			}
+			colors[id as (typeof THEME_IDS)[number]] = own;
 		}
 		settings.colors = colors;
 	}
@@ -324,16 +330,6 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 				return { ok: false, error: "mdRendering.headingWeight must be an integer between 100 and 900" };
 			}
 			rendering.headingWeight = md.headingWeight;
-		}
-		if (md.boldColor !== undefined) {
-			const parsed = parseHexOrNull(md.boldColor, "mdRendering.boldColor");
-			if (parsed.error) return { ok: false, error: parsed.error };
-			rendering.boldColor = parsed.color ?? null;
-		}
-		if (md.italicColor !== undefined) {
-			const parsed = parseHexOrNull(md.italicColor, "mdRendering.italicColor");
-			if (parsed.error) return { ok: false, error: parsed.error };
-			rendering.italicColor = parsed.color ?? null;
 		}
 		if (Object.keys(rendering).length) settings.mdRendering = rendering;
 	}

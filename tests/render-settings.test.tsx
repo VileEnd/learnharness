@@ -253,11 +253,13 @@ describe("AppearanceSection (thin SSR)", () => {
 		assert.ok(html.includes("16px"));
 	});
 
-	it("a set background shows in the input, not the placeholder", () => {
+	it("the grid shows the on-screen theme's own overrides, never the other theme's", () => {
 		const html = renderToStaticMarkup(
-			<AppearanceSection appearance={{ background: "#1a1a2e" }} onSectionChange={() => {}} />,
+			<AppearanceSection appearance={{ colors: { default: { background: "#1a1a2e" }, ivory: { accent: "#aa3300" } } }} onSectionChange={() => {}} />,
 		);
-		assert.ok(html.includes(`value="#1a1a2e"`));
+		assert.ok(html.includes(`value="#1a1a2e"`), "Default (on screen outside a provider) shows its background");
+		assert.ok(!html.includes(`value="#aa3300"`), "Ivory's accent is not Default's");
+		assert.match(html, /Default&#x27;s own overrides|Default's own overrides/);
 	});
 });
 

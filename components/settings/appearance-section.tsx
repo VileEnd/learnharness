@@ -8,8 +8,10 @@
  * something). Themes step 2 (2026-11-12, port of upstream's section): the
  * theme cards (./theme-cards.tsx: Default, Ivory, Follow system) sit on
  * top; the "Colours" block holds one hex override per theme colour (empty =
- * the theme's), kept across theme switches; "Typography" holds the type
- * knobs. Hex inputs commit on blur/Enter.
+ * the theme's) for the theme ON SCREEN: overrides are stored per theme
+ * (owner ruling 2026-11-12), so Ivory's grid never shows or edits Default's,
+ * and under Follow system the grid edits whichever theme the device shows.
+ * "Typography" holds the type knobs. Hex inputs commit on blur/Enter.
  *
  * Graph graying (owner, 2026-09-20) follows the graph viewer's render-panel
  * convention: the whole row dims when a parent is off (stored values
@@ -25,10 +27,8 @@
  * The custom-family input inside the menu is the manual escape path.
  * Empty/unset keeps meaning Source Sans 3.
  *
- * Overrides live in two homes by design: `background` and
- * `mdRendering.boldColor/italicColor` keep their pre-theme keys; the other
- * nine sit in `colors`. core/themes.ts effectiveColors is the one place
- * they merge.
+ * Overrides live in `appearance.colors.<themeId>`; core/themes.ts
+ * effectiveColors is the one place they merge onto a theme.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -40,6 +40,7 @@ import {
 	type AppearanceSettings,
 	type GraphSettings,
 	type ThemeColorKey,
+	type ThemeId,
 } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
@@ -126,40 +127,33 @@ const LEGACY_TESTIDS: Partial<Record<ThemeColorKey, string>> = {
 	italic: "input-italic-color",
 };
 
-/** The stored override for one theme colour ("" = none). Pure — exported
- *  for tests. */
-export function colorOverride(appearance: AppearanceSettings | undefined, key: ThemeColorKey): string {
-	if (key === "background") return appearance?.background ?? "";
-	if (key === "bold") return appearance?.mdRendering?.boldColor ?? "";
-	if (key === "italic") return appearance?.mdRendering?.italicColor ?? "";
-	return appearance?.colors?.[key] ?? "";
+/** The stored override for one colour of one theme ("" = none). Pure —
+ *  exported for tests. */
+export function colorOverride(appearance: AppearanceSettings | undefined, themeId: ThemeId, key: ThemeColorKey): string {
+	return appearance?.colors?.[themeId]?.[key] ?? "";
 }
 
-/** Compose one override into the section ("" = back to the theme's).
- *  Every other field rides along untouched. Pure — exported for tests. */
+/** Compose one override into one theme's set ("" = back to the theme's).
+ *  The other theme's overrides and every other field ride along untouched.
+ *  Pure — exported for tests. */
 export function composeColorOverride(
 	appearance: AppearanceSettings | undefined,
+	themeId: ThemeId,
 	key: ThemeColorKey,
 	value: string,
 ): AppearanceSettings {
-	const v = value === "" ? null : value;
-	if (key === "background") return { ...appearance, background: v };
-	if (key === "bold") return { ...appearance, mdRendering: { ...appearance?.mdRendering, boldColor: v } };
-	if (key === "italic") return { ...appearance, mdRendering: { ...appearance?.mdRendering, italicColor: v } };
-	const colors = { ...appearance?.colors };
-	if (v === null) delete colors[key];
-	else colors[key] = v;
-	return { ...appearance, colors };
+	const own = { ...appearance?.colors?.[themeId] };
+	if (value === "") delete own[key];
+	else own[key] = value;
+	return { ...appearance, colors: { ...appearance?.colors, [themeId]: own } };
 }
 
-/** "Reset all": every colour back to the theme's; type knobs and the
- *  theme choice untouched. Pure — exported for tests. */
-export function clearColorOverrides(appearance: AppearanceSettings | undefined): AppearanceSettings {
-	const { background: _bg, colors: _colors, ...rest } = appearance ?? {};
-	const md = appearance?.mdRendering;
-	if (!md) return rest;
-	const { boldColor: _b, italicColor: _i, ...mdRest } = md;
-	return { ...rest, mdRendering: mdRest };
+/** "Reset all": every colour of ONE theme back to the theme's; the other
+ *  theme's overrides, the type knobs and the choice untouched. Pure —
+ *  exported for tests. */
+export function clearColorOverrides(appearance: AppearanceSettings | undefined, themeId: ThemeId): AppearanceSettings {
+	const { [themeId]: _cleared, ...others } = appearance?.colors ?? {};
+	return { ...appearance, colors: others };
 }
 
 function ColorOverrideRow({
@@ -297,14 +291,15 @@ export function AppearanceSection({
 				<div className="flex items-end justify-between gap-4">
 					<p className="text-xs uppercase tracking-widest text-muted-foreground">
 						Colours{" "}
-						<span className="normal-case tracking-normal text-muted-foreground/70">
-							· overrides on top of the theme, kept when you switch
+						<span data-testid="colors-theme" className="normal-case tracking-normal text-muted-foreground/70">
+							· {activeTheme.name}&apos;s own overrides
+							{choice === "system" ? " (the theme on screen now)" : ""}
 						</span>
 					</p>
 					<button
 						type="button"
 						data-testid="colors-reset"
-						onClick={() => onSectionChange(clearColorOverrides(appearance))}
+						onClick={() => onSectionChange(clearColorOverrides(appearance, activeTheme.id))}
 						className="h-6 shrink-0 rounded-sm px-2 font-ui text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					>
 						Reset all
@@ -315,10 +310,10 @@ export function AppearanceSection({
 						<ColorOverrideRow
 							key={key}
 							colorKey={key}
-							value={colorOverride(appearance, key)}
+							value={colorOverride(appearance, activeTheme.id, key)}
 							themeColor={activeTheme.colors[key]}
 							effective={colors[key]}
-							onCommit={(v) => onSectionChange(composeColorOverride(appearance, key, v))}
+							onCommit={(v) => onSectionChange(composeColorOverride(appearance, activeTheme.id, key, v))}
 						/>
 					))}
 				</div>
