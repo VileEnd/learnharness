@@ -13,6 +13,7 @@ import {
 	parseAgentSettingsBody,
 	parseModelsSettingsBody,
 	parseAppearanceSettingsBody,
+	STALE_APPEARANCE_ERROR,
 	parseGeneralSettingsBody,
 	parseCompactionSettingsBody,
 	parseGraphSettingsBody,
@@ -125,7 +126,6 @@ describe("parseAppearanceSettingsBody", () => {
 			{ theme: "catppuccin-mocha" },
 			{ colors: "red" },
 			{ colors: { accent: "#123456" } },
-			{ colors: { sepia: { accent: "#123456" } } },
 			{ colors: { ivory: "x" } },
 			{ colors: { default: { accent: "red" } } },
 			{ fontFamily: "" },
@@ -144,8 +144,13 @@ describe("parseAppearanceSettingsBody", () => {
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 100 } }));
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 900 } }));
 		assert.ok(parseAppearanceSettingsBody({ colors: { default: { background: "#abc" } } }).ok);
-		// v1's keys (mode, background, the emphasis inks) are ignored, not rejected
-		assert.deepEqual(parseAppearanceSettingsBody({ mode: "light", background: "#000000", mdRendering: { boldColor: "#ffffff" } }), { ok: true, settings: {} });
+		// A v1-shaped body (a page loaded before themes) is refused with a reload hint, never half-saved.
+		for (const stale of [{ background: "#000000" }, { mode: "dark" }, { mdRendering: { boldColor: "#ffffff" } }, { proseFontSize: 18, mdRendering: { italicColor: null } }]) {
+			assert.deepEqual(parseAppearanceSettingsBody(stale), { ok: false, error: STALE_APPEARANCE_ERROR }, JSON.stringify(stale));
+		}
+		assert.match(STALE_APPEARANCE_ERROR, /reload/);
+		// A newer build's theme id rides along verbatim (the record's unknown-keys rule).
+		assert.deepEqual(parseAppearanceSettingsBody({ colors: { sepia: { accent: "#123456", glow: 1 } } }), { ok: true, settings: { colors: { sepia: { accent: "#123456", glow: 1 } } } });
 		// null = "the theme's colour" — explicit, valid
 		assert.ok(parseAppearanceSettingsBody({ colors: { default: { background: null } }, fontFamily: null }).ok);
 	});

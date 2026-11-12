@@ -742,19 +742,25 @@ function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	// v1's `mode` (never enabled in the UI) is not read: the theme decides
 	// the mode. Dropped here like the graph's dead rungs.
 	if (isThemeChoice(raw.theme)) out.theme = raw.theme;
-	// Per-theme overrides: known theme ids and colour keys only, hex or null.
+	// Per-theme overrides: a known theme's set keeps its known colour keys,
+	// hex or null; an unknown theme id's set rides along verbatim.
 	if (raw.colors !== null && typeof raw.colors === "object" && !Array.isArray(raw.colors)) {
 		const colors: AppearanceColorOverrides = {};
 		const byTheme = raw.colors as Record<string, unknown>;
-		for (const id of THEME_IDS) {
-			const c = byTheme[id];
+		for (const [id, c] of Object.entries(byTheme)) {
+			if (!(THEME_IDS as readonly string[]).includes(id)) {
+				// A theme this build does not know (a newer build's): preserved
+				// verbatim, like every unknown key, never shown.
+				(colors as Record<string, unknown>)[id] = c;
+				continue;
+			}
 			if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
 			const own: ThemeColorOverrides = {};
 			for (const key of THEME_COLOR_KEYS) {
 				const v = (c as Record<string, unknown>)[key];
 				if (v !== undefined) own[key] = sanitizeHexOrNull(v);
 			}
-			colors[id] = own;
+			colors[id as (typeof THEME_IDS)[number]] = own;
 		}
 		out.colors = colors;
 	}

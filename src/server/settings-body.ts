@@ -258,14 +258,26 @@ function parseHexOrNull(value: unknown, field: string): { color?: string | null;
 	return { color: value };
 }
 
-/** appearance: { theme?, colors?: { default?, ivory? }, fontFamily?,
- *  proseFontSize?, sessionNameSerif?, mdRendering? }. v1's `background`,
- *  `mode` and `mdRendering.boldColor/italicColor` are ignored (their values
- *  live in colors.default since v2). */
+/** The answer to a v1-shaped appearance write: a page loaded before the
+ *  themes release still sends `background`, `mode` and the emphasis inks,
+ *  which the record no longer has (they live in colors.default). Refusing
+ *  beats saving the rest and silently dropping the colour edit. */
+export const STALE_APPEARANCE_ERROR =
+	"This page is out of date: reload it, then change the appearance again (colours are set per theme now).";
+
+/** appearance: { theme?, colors?: { <themeId>: { <colour>: hex|null } },
+ *  fontFamily?, proseFontSize?, sessionNameSerif?, mdRendering? }. A v1
+ *  key (`background`, `mode`, `mdRendering.boldColor/italicColor`) is a 400
+ *  asking for a reload. A colour set for a theme id this build does not
+ *  know (a newer build's) passes through untouched when it is an object. */
 export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<AppearanceSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
 	const settings: AppearanceSettings = {};
+	const md0 = asRecord(raw.mdRendering);
+	if (raw.background !== undefined || raw.mode !== undefined || md0?.boldColor !== undefined || md0?.italicColor !== undefined) {
+		return { ok: false, error: STALE_APPEARANCE_ERROR };
+	}
 	if (raw.theme !== undefined) {
 		if (!isThemeChoice(raw.theme)) {
 			return { ok: false, error: `theme must be one of: ${THEME_CHOICES.join(", ")}` };
@@ -277,11 +289,13 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 		if (!byTheme) return { ok: false, error: "colors must be an object of theme ids" };
 		const colors: AppearanceColorOverrides = {};
 		for (const id of Object.keys(byTheme)) {
-			if (!(THEME_IDS as readonly string[]).includes(id)) {
-				return { ok: false, error: `colors: unknown theme "${id}" (one of: ${THEME_IDS.join(", ")})` };
-			}
 			const c = asRecord(byTheme[id]);
-			if (!c) return { ok: false, error: `colors.${id} must be an object` };
+			if (!c) return { ok: false, error: `colors.${id} must be an object of colours` };
+			if (!(THEME_IDS as readonly string[]).includes(id)) {
+				// A newer build's theme: kept verbatim, like every unknown key.
+				(colors as Record<string, unknown>)[id] = c;
+				continue;
+			}
 			const own: ThemeColorOverrides = {};
 			for (const key of THEME_COLOR_KEYS) {
 				if (c[key] === undefined) continue;

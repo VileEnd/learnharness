@@ -144,12 +144,12 @@ describe("sanitizeUserSettings", () => {
 		assert.equal(low.appearance?.mdRendering?.headingWeight, 100);
 	});
 
-	it("invalid colors become null (the theme's colour), valid ones pass; unknown themes and keys drop", () => {
+	it("invalid colors become null (the theme's colour), valid ones pass; unknown keys of a known theme drop, unknown themes are preserved", () => {
 		const out = sanitizeUserSettings({
 			appearance: { colors: { default: { background: "blue", bold: "#f00", italic: 42, glow: "#fff" }, sepia: { text: "#000" }, ivory: "x" } },
 		});
 		assert.ok(out);
-		assert.deepEqual(out.appearance?.colors, { default: { background: null, bold: "#f00", italic: null } });
+		assert.deepEqual(out.appearance?.colors, { default: { background: null, bold: "#f00", italic: null }, sepia: { text: "#000" } }, "a newer build's theme rides along verbatim");
 	});
 
 	it("empty strings/whitespace fontFamily → null (Source Sans 3); wrong-type → null too (the default)", () => {
