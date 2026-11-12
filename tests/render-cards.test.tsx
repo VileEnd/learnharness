@@ -597,6 +597,19 @@ describe("probe-done card", () => {
 		}
 	});
 
+	it("lets the header wrap instead of truncating, and scrolls wide text inside its own block", () => {
+		const html = renderToStaticMarkup(<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+			strands: [{ strand: "Topic", assessment: String.raw`Wide $\frac{a}{b}$` }], summary: "Summary",
+		} }, output: { ok: true } } as never} />);
+		const { document } = parseHTML(`<html><body>${html}</body></html>`);
+		const heading = document.querySelector("summary span")!;
+		assert.ok(heading.textContent!.includes("Probe concluded"));
+		assert.ok(!heading.classList.contains("truncate"), "a narrow phone shows the whole heading");
+		const blocks = [...document.querySelectorAll("details .lh-prose")];
+		assert.equal(blocks.length, 3);
+		for (const block of blocks) for (const css of ["min-w-0", "max-w-full", "overflow-x-auto"]) assert.ok(block.classList.contains(css), css);
+	});
+
 	it("never puts refusal, rejected-input or partial-input notes behind a disclosure", () => {
 		const rejected = { assessment: { strands: [{ strand: "REJECTED_INPUT", assessment: "REJECTED_INPUT" }] } };
 		for (const part of [

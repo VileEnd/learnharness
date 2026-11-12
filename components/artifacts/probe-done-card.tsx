@@ -48,7 +48,7 @@ export function ProbeDoneCard({ part }: { part: { input?: unknown; output?: unkn
 	const heading = (
 		<>
 			<ClipboardCheckIcon className="size-3.5 shrink-0 text-primary" />
-			<span className="min-w-0 truncate">{refused ? "Assessment not filed yet" : "Probe concluded — your assessment"}</span>
+			<span className="min-w-0">{refused ? "Assessment not filed yet" : "Probe concluded — your assessment"}</span>
 		</>
 	);
 
@@ -70,6 +70,11 @@ export function ProbeDoneCard({ part }: { part: { input?: unknown; output?: unkn
 		);
 	}
 
+	// Each text block scrolls sideways inside itself when a formula or table is
+	// wider than the card (the card clips its corners, so overflow must stay in
+	// the block, never in the card).
+	const scrolls = "min-w-0 max-w-full overflow-x-auto";
+
 	// A completed assessment is a handoff artifact: collapsed by default
 	// (native disclosure, local to this mounted card), the full formatted
 	// input one tap away.
@@ -85,13 +90,13 @@ export function ProbeDoneCard({ part }: { part: { input?: unknown; output?: unkn
 			<div className="divide-y">
 				{strands.map((s, i) => (
 					<div key={i} className="px-3 py-2">
-						<ToolContentResponse className="text-sm font-medium">{s.strand}</ToolContentResponse>
-						<ToolContentResponse className="mt-0.5 text-sm text-muted-foreground">{s.assessment}</ToolContentResponse>
+						<ToolContentResponse className={`${scrolls} text-sm font-medium`}>{s.strand}</ToolContentResponse>
+						<ToolContentResponse className={`${scrolls} mt-0.5 text-sm text-muted-foreground`}>{s.assessment}</ToolContentResponse>
 					</div>
 				))}
 				{assessment?.summary && (
 					<div className="px-3 py-2">
-						<ToolContentResponse className="text-sm text-muted-foreground">{assessment.summary}</ToolContentResponse>
+						<ToolContentResponse className={`${scrolls} text-sm text-muted-foreground`}>{assessment.summary}</ToolContentResponse>
 					</div>
 				)}
 			</div>
