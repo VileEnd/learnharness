@@ -533,10 +533,58 @@ function withoutExternalReferences(svg: string): string {
 			return token.replace(/\s([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/g, (attr, name: string, raw: string) => {
 				if (name.split(":").pop() !== "href") return attr;
 				const value = raw.replace(/^["']|["']$/g, "").trim();
-				return value.startsWith("#") || /^data:image\//i.test(value) ? attr : "";
+				// A space, not nothing: deleting must never glue the neighbours together.
+				return value.startsWith("#") || /^data:image\//i.test(value) ? attr : " ";
 			});
 		},
 	);
+}
+
+/** The rule, applied to the exact text handed to resvg and tokenizing nothing:
+ *  every occurrence of `href`, optional whitespace, `=` anywhere in the text
+ *  (comments, CDATA and displayed text included) must be followed by a quoted
+ *  value that, trimmed, is empty, starts with "#", or is an inline image of a
+ *  known type (data:image/<type>; or data:image/<type>,). Returns the offset of
+ *  the `=` of each occurrence that breaks the rule. */
+function unacceptableHrefs(text: string): number[] {
+	const bad: number[] = [];
+	for (const match of text.matchAll(/href\s*=/gi)) {
+		const eq = match.index + match[0].length - 1;
+		const value = /^\s*(["'])([\s\S]*?)\1/.exec(text.slice(eq + 1))?.[2]?.trim();
+		const ok = value !== undefined && (value === "" || value.startsWith("#") || /^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml)[;,]/i.test(value));
+		if (!ok) bad.push(eq);
+	}
+	return bad;
+}
+
+const DOCTYPE_LITERAL = String.raw`(?:"[^<>\[\]"']*"|'[^<>\[\]"']*')`;
+const PLAIN_DOCTYPE = new RegExp(
+	String.raw`^\uFEFF?\s*(?:<\?xml[^<>]*\?>\s*)?<!DOCTYPE\s+[A-Za-z_:][\w:.-]*(?:\s+PUBLIC\s+${DOCTYPE_LITERAL}\s+${DOCTYPE_LITERAL}|\s+SYSTEM\s+${DOCTYPE_LITERAL})?\s*>`,
+	"i",
+);
+
+/** Last gate before resvg, on the exact string it will parse (so it holds
+ *  whatever the rewriting above did, and the tokenizer above and the XML
+ *  parser may disagree). Entities cannot be declared and a DOCTYPE may only be
+ *  one plain declaration at the start, so an attribute name can only appear
+ *  literally; then each unacceptable `href=` has its `=` turned into `&#61;`
+ *  (identical in text content and in another attribute's value, not
+ *  well-formed inside a tag, so the render fails there), and a final scan
+ *  throws if anything unacceptable is left. */
+function guardedRenderSource(text: string): string {
+	if (/<!(?:ENTITY|ATTLIST)/i.test(text)) throw new Error("SVG not rendered: remove the <!ENTITY …> / <!ATTLIST …> declarations; entities are not supported in figures");
+	const declared = /<!DOCTYPE/i.test(text);
+	let rest = text;
+	if (declared) {
+		const doctype = PLAIN_DOCTYPE.exec(text);
+		if (!doctype) throw new Error("SVG not rendered: remove the DOCTYPE (or keep only a plain <!DOCTYPE svg> / PUBLIC … / SYSTEM … line at the very start, with no [ … ] subset)");
+		rest = text.slice(doctype[0].length);
+		if (/<!DOCTYPE/i.test(rest)) throw new Error("SVG not rendered: remove the extra DOCTYPE; only one plain declaration at the start is allowed");
+	}
+	let out = text;
+	for (const eq of unacceptableHrefs(text).reverse()) out = `${out.slice(0, eq)}&#61;${out.slice(eq + 1)}`;
+	if (unacceptableHrefs(out).length > 0) throw new Error("SVG not rendered: an href may only point to #id or an inline data:image/ address");
+	return out;
 }
 
 async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buffer> {
@@ -551,7 +599,7 @@ async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buff
 	// opts override).
 	const { width } = svgViewport(svg, opts);
 	const { Resvg } = await import("@resvg/resvg-js");
-	const resvg = new Resvg(withoutExternalReferences(svgImageSource(svg)), {
+	const resvg = new Resvg(guardedRenderSource(withoutExternalReferences(svgImageSource(svg))), {
 		fitTo: { mode: "width", value: width },
 		font: { loadSystemFonts: true },
 		background: "#ffffff",

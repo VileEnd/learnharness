@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it, type TestContext } from "node:test";
+import { after, before, describe, it, type TestContext } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -161,8 +161,140 @@ describe("native renderSvg: no local files", () => {
 			"markup hidden in an entity": `<!DOCTYPE svg [<!ENTITY e "<image href='${file}' width='8' height='8'/>">]>&e;`,
 		})) {
 			const svg = body.startsWith("<!DOCTYPE") ? `${body.slice(0, body.indexOf("]>") + 2)}${SIZE}${body.slice(body.indexOf("]>") + 2)}</svg>` : `${SIZE}${body}</svg>`;
-			assert.equal(redPixels(await realHeadless.renderSvg(svg)), 0, `${name}: a local file must not be drawn`);
+			// Not drawn, or refused outright (entity declarations are refused).
+			const result = await realHeadless.renderSvg(svg).then(redPixels, () => 0);
+			assert.equal(result, 0, `${name}: a local file must not be drawn`);
 		}
 		t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 	});
+});
+
+// The reference guard must hold for the exact text resvg parses, so these
+// cases attack the rewrite itself: parser/tokenizer disagreements over
+// DOCTYPE literals and attribute removal that glues the neighbours together.
+describe("native renderSvg: reference guard holds for the parsed text", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-svg-guard-"));
+	const file = path.join(dir, "red.png");
+	const ROOT = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="16" height="16">';
+	const IMAGE = `<image href="${file}" width="16" height="16"/>`;
+	const doc = (before: string, body: string) => `${before}${ROOT}${body}</svg>`;
+	let dataUri = "";
+
+	/** Red pixels drawn, or -1 when the render fails (an acceptable outcome). */
+	async function red(svg: string): Promise<number> {
+		let png: Buffer;
+		try { png = await realHeadless.renderSvg(svg); } catch { return -1; }
+		const image = photon.PhotonImage.new_from_byteslice(png);
+		try {
+			const px = image.get_raw_pixels();
+			let n = 0;
+			for (let i = 0; i < px.length; i += 4) if (px[i]! > 200 && px[i + 1]! < 50) n++;
+			return n;
+		} finally { image.free(); }
+	}
+
+	before(async () => {
+		const png = await realHeadless.renderSvg('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#f00"/></svg>');
+		fs.writeFileSync(file, png);
+		dataUri = `data:image/png;base64,${png.toString("base64")}`;
+		assert.equal(await red(doc("", `<image href="${dataUri}" width="16" height="16"/>`)), 256, "the picture draws when named by an inline source");
+		const saved = photon.PhotonImage.new_from_byteslice(fs.readFileSync(file));
+		try { assert.equal(saved.get_width(), 16, "the temp file exists"); } finally { saved.free(); }
+	});
+
+	it("DOCTYPE literals that look like comment, CDATA or PI openers do not hide the image", async () => {
+		const cases: Array<[string, string]> = [
+			['<!DOCTYPE svg [<!ENTITY e "<!--">]>', "<!-- x -->"],
+			["<!DOCTYPE svg [<!ENTITY e '<!--'>]>", "<!-- x -->"],
+			['<!DOCTYPE svg [<!ENTITY e "<![CDATA[">]>', "<![CDATA[y]]>"],
+			['<!DOCTYPE svg [<!ENTITY e "<?">]>', "<?x y?>"],
+			['<!DOCTYPE svg [<!ENTITY e "a<!--b">]>', "<!---->"],
+			['<!DOCTYPE svg [<!ATTLIST g a CDATA "<!--">]>', "<!-- x -->"],
+			['<!DOCTYPE svg SYSTEM "<!--">', "<!-- x -->"],
+			['<!DOCTYPE svg PUBLIC "<!--" "x">', "<!-- x -->"],
+		];
+		for (const [before, after] of cases) assert.ok((await red(doc(before, IMAGE + after))) <= 0, `${before}`);
+	});
+
+	it("removing an attribute cannot glue its neighbours into a reference", async () => {
+		for (const body of [
+			`<image hre href="x"f="${file}" width="16" height="16"/>`,
+			`<image hre xlink:href="x"f="${file}" width="16" height="16"/>`,
+		]) assert.ok((await red(doc("", body))) <= 0, body);
+	});
+
+	it("an href spelled anywhere in the text, even where it is not an attribute, is not trusted", async () => {
+		for (const body of [`<!-- <image href="${file}"/> -->${IMAGE}`, `<![CDATA[ href="${file}" ]]>${IMAGE}`, `<image data-href="${file}" href="${file}" width="16" height="16"/>`]) {
+			assert.ok((await red(doc("", body))) <= 0, body);
+		}
+	});
+
+	it("a plain public DOCTYPE with an xml prolog still renders", async () => {
+		const before = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n';
+		assert.equal(await red(doc(before, '<rect width="16" height="16" fill="#f00"/>')), 256);
+	});
+
+	it("figures that merely show or select on href still render", async () => {
+		assert.ok(await red(doc("", '<rect width="16" height="16" fill="#f00"/><text x="1" y="8">&lt;a href="page.html"&gt;</text>')) > 0, "renders, text drawn over the red");
+		assert.equal(await red(doc("", '<style>a[href="x"] { fill: blue } a[href$=".pdf"] { fill: blue }</style><rect width="16" height="16" fill="#f00"/>')), 256);
+	});
+
+	it("same-document references and inline images still draw", async () => {
+		assert.equal(await red(doc("", '<defs><rect id="r" width="16" height="16" fill="#f00"/></defs><use href="#r"/>')), 256);
+		assert.equal(await red(doc("", '<defs><linearGradient id="h"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#f00"/></linearGradient><linearGradient id="g" xlink:href="#h"/></defs><rect width="16" height="16" fill="url(#g)"/>')), 256);
+		assert.equal(await red(doc("", `<pattern id="p" width="16" height="16" patternUnits="userSpaceOnUse"><image href="${dataUri}" width="16" height="16"/></pattern><rect width="16" height="16" fill="url(#p)"/>`)), 256);
+		assert.equal(await red(doc("", `<image xlink:href='${dataUri}' width="16" height="16"/>`)), 256);
+	});
+
+	it("a data: value that is not a well-formed inline image address draws nothing", async () => {
+		const rel = path.relative(process.cwd(), file);
+		for (const value of [`data:image/../../../../${file}`, `data:image/${rel}`, `data:text/plain,${file}`, `data:image/png${file}`]) {
+			assert.ok((await red(doc("", `<image href="${value}" width="16" height="16"/>`))) <= 0, value);
+		}
+	});
+
+	it("a percent-encoded inner SVG in a data: address cannot load the file either", async () => {
+		const inner = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><image href="${file}" width="16" height="16"/></svg>`);
+		assert.ok((await red(doc("", `<image href="data:image/svg+xml,${inner}" width="16" height="16"/>`))) <= 0);
+	});
+
+	it("seeded fuzz: no combination of fragments draws the file", async (t) => {
+		const seed = Number(process.env.LH_FUZZ_SEED ?? 20261112);
+		let state = seed >>> 0;
+		const rnd = () => { state = (state + 0x6d2b79f5) >>> 0; let x = Math.imul(state ^ (state >>> 15), 1 | state); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+		const pick = <T,>(items: readonly T[]) => items[Math.floor(rnd() * items.length)]!;
+		const images = [
+			IMAGE,
+			`<image xlink:href='${file}' width="16" height="16"/>`,
+			`<image hre href="x"f="${file}" width="16" height="16"/>`,
+			`<image hre xlink:href="x"f="${file}" width="16" height="16"/>`,
+			`<image href = "${file}" width="16" height="16"/>`,
+			`<image data-x=">" href="${file}" width="16" height="16"/>`,
+			`<image href="x" href="${file}" width="16" height="16"/>`,
+		];
+		const frags = ["<!--", "-->", "<![CDATA[", "]]>", "<?x", "?>", '"', "'", " ", "\n", "hre", "f=", 'href="x"', "xlink:", "<!---->", "<g>", "</g>", ">", "<", "&e;", "&#47;", "<!ENTITY e \"x\">", '<text x="1" y="8">', "</text>"];
+		// Balanced pieces, so that a good share of the inputs are well-formed and really render.
+		const balanced = ["<!-- c -->", "<![CDATA[y]]>", "<?x y?>", "<g/>", " ", "\n", 'href="x" ', '<!-- href="x" -->', '<text x="1" y="8">&lt;a href=&quot;p&quot;&gt;</text>'];
+		const befores = [
+			"", '<?xml version="1.0"?>\n',
+			'<!DOCTYPE svg [<!ENTITY e "<!--">]>', "<!DOCTYPE svg [<!ENTITY e '<!--'>]>", '<!DOCTYPE svg [<!ENTITY e "<![CDATA[">]>',
+			'<!DOCTYPE svg [<!ENTITY e "<?">]>', '<!DOCTYPE svg [<!ENTITY e "a<!--b">]>', '<!DOCTYPE svg [<!ATTLIST g a CDATA "<!--">]>',
+			'<!DOCTYPE svg SYSTEM "<!--">', '<!DOCTYPE svg PUBLIC "<!--" "x">', '<!DOCTYPE svg PUBLIC "a" "b">', "<!DOCTYPE svg>", '<!DOCTYPE svg [<!ENTITY e "x">]>',
+			`<!DOCTYPE svg [<!ENTITY p "${file}">]>`,
+		];
+		const started = Date.now();
+		const N = 3000;
+		let rendered = 0;
+		for (let i = 0; i < N; i++) {
+			const run = (n: number) => Array.from({ length: n }, () => pick(rnd() < 0.5 ? balanced : frags)).join("");
+			const svg = doc(pick(befores), run(Math.floor(rnd() * 3)) + pick(images) + run(Math.floor(rnd() * 3)) + (rnd() < 0.5 ? pick(["<!-- x -->", "<![CDATA[y]]>", "<?x y?>", "<!---->"]) : ""));
+			const drawn = await red(svg);
+			if (drawn >= 0) rendered++;
+			if (drawn > 0) assert.fail(`seed ${seed}, iteration ${i}: the file was drawn (${drawn} red pixels) for ${JSON.stringify(svg)}`);
+		}
+		assert.ok(rendered > N / 10, `the fuzz must mostly exercise renders that succeed, not only errors (${rendered}/${N}, seed ${seed})`);
+		t.diagnostic(`${N} inputs in ${Date.now() - started} ms, ${rendered} rendered, seed ${seed}`);
+	});
+
+	after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 });
