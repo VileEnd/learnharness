@@ -14,9 +14,9 @@
 		"node": ">=26"
 	},
 	"scripts": {
-		"dev": "next dev",
+		"dev": "next dev -H localhost",
 		"build": "next build",
-		"start": "next start",
+		"start": "next start -H localhost",
 		"test": "NODE_ENV=test tsx --import ./tests/setup.ts --test tests/*.test.ts tests/*.test.tsx",
 		"lint": "eslint .",
 		"typecheck": "tsc --noEmit",
