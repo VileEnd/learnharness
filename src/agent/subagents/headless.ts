@@ -2,14 +2,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { svgImageSource } from "../../core/svg-image-source.ts";
 import { guardedFetch, OutboundRefusedError, readCapped, withTimeout } from "../outbound.ts";
 import { standardFontsDir } from "./pdf-ops";
 
 /**
  * Verification engines for sub-agents: demos run in a system Chrome/
  * Chromium via puppeteer-core (the Docker image installs Chromium and sets
- * CHROME_PATH). SVGs use resvg (browser fallback); PDFs use pdfjs + Skia
- * (no browser). No Chromium is downloaded at runtime.
+ * CHROME_PATH). SVGs use only resvg (no browser, no fallback); PDFs use pdfjs
+ * + Skia (no browser). No Chromium is downloaded at runtime.
  *
  * Chrome resolution: CHROME_PATH first, then common macOS, Windows and
  * Linux install paths. `available()` is a cheap executable check; the
@@ -515,51 +516,22 @@ function crc32(buf: Buffer): number {
 }
 
 async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buffer> {
-	// NATIVE FIRST (Wave E stage 2, owner 2026-10-10): resvg rasterizes
-	// static SVG in-process — visual-maker SVGs never execute script, so a
-	// browser adds nothing but a process. White background mirrors the old
-	// Chrome page (html,body{background:#fff}); fitTo width mirrors
+	// Static native rasterization only: resvg draws in-process, so model-written
+	// SVG is never opened in a browser. The same two render-only repairs as the
+	// learner's display are applied first (svgImageSource), so a figure that
+	// displays fine also renders; the caller's source is not rewritten. A native
+	// error propagates to the visual-maker's revise/fail loop, with no Chrome
+	// fallback. White background mirrors the old Chrome page; fitTo width mirrors
 	// svgViewport semantics (attrs win, viewBox-only gets the 900 default,
-	// opts override). The browser path below stays as the fallback for
-	// exotic-SVG features resvg cannot parse — failures there used to be
-	// the ONLY path, so nothing regresses.
+	// opts override).
 	const { width } = svgViewport(svg, opts);
-	try {
-		const { Resvg } = await import("@resvg/resvg-js");
-		const resvg = new Resvg(svg, {
-			fitTo: { mode: "width", value: width },
-			font: { loadSystemFonts: true },
-			background: "#ffffff",
-		});
-		return providerSafePng(resvg.render().asPng());
-	} catch {
-		/* fall through to the browser path */
-	}
-	const dir = tempDir("lh-visual-");
-	const file = path.join(dir, "figure.html");
-	fs.writeFileSync(
-		file,
-		`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#fff}svg{display:block}</style></head><body>${svg}</body></html>`,
-		"utf-8",
-	);
-
-	const figureUrl = pathToFileURL(file).href;
-	return withBrowserPage(figureUrl, async (page) => {
-		const { width, height } = svgViewport(svg, opts);
-		await page.setViewport({ width, height });
-		await page.goto(figureUrl, { waitUntil: "load", timeout: 30_000 });
-		const shot = (await page.screenshot({ fullPage: true, type: "png" })) as Buffer;
-		// Chrome's raw split-IDAT PNG is canonicalized before it reaches a
-		// provider (see providerSafePng) — the visual-maker feeds this exact
-		// buffer back to the vision model as its only way to "look".
-		return providerSafePng(Buffer.from(shot));
-	}).finally(() => {
-		try {
-			fs.rmSync(dir, { recursive: true, force: true });
-		} catch {
-			/* best-effort cleanup */
-		}
+	const { Resvg } = await import("@resvg/resvg-js");
+	const resvg = new Resvg(svgImageSource(svg), {
+		fitTo: { mode: "width", value: width },
+		font: { loadSystemFonts: true },
+		background: "#ffffff",
 	});
+	return providerSafePng(resvg.render().asPng());
 }
 
 // ─── PDF page rasterization (pdfjs paints, Skia hosts) ─────────────────

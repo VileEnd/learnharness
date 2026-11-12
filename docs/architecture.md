@@ -190,7 +190,7 @@ flowchart LR
     subgraph DRIVEN["DRIVEN ADAPTERS — outbound"]
         FS["fs stores — src/store (data/)"]
         LLM["LLM engines — pi-ai, BYOK providers via piEngineFor"]
-        HEAD["headless Chrome — demo verify · SVG render"]
+        HEAD["headless Chrome — demo verify (SVG renders natively, in-process)"]
         DEEP["Deepgram STT — token-minting route, browser-side WebSocket"]
         WEB["web tools — keyed web search + Readability/Jina (researcher)"]
     end
