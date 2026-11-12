@@ -70,9 +70,10 @@ export function createAttributionService(deps: AttributionDeps): AttributionServ
 	// size, which grows with every merge) when tried. In memory: a restart retries.
 	const tried = new Map<string, number>();
 	const timers = new Map<string, ReturnType<typeof setTimeout>>();
-	const liveNodes = () => new Set(deps.graphStore.readNodes().map((n) => n.id));
-	const pendingItems = (record: ChatRecord) =>
-		unattributedItems(record, deps.learnerStore.readAttributions(), liveNodes(), deps.graphStore.readNodes());
+	const pendingItems = (record: ChatRecord) => {
+		const nodes = deps.graphStore.readNodes();
+		return unattributedItems(record, deps.learnerStore.readAttributions(), new Set(nodes.map((n) => n.id)), nodes);
+	};
 
 	async function run(chatId: string): Promise<number> {
 		try {

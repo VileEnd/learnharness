@@ -205,14 +205,19 @@ function checkVerdict(v: unknown, where: string): void {
 
 /** Validate an answer's SHAPE and kind against the pending tool before it is
  *  stored (grading stays in the browser, so correctness is never judged
- *  here). Fields are checked only when present, so older clients' answers
- *  still pass; what is present must be what `QuestionAnswerData` says. */
+ *  here). `kind`, `questionText` and `answers` are required; the other fields
+ *  are checked only when present, and must be what `QuestionAnswerData` says. */
 function checkAnswer(answer: unknown, tool: string, where: string): QuestionAnswerData {
 	if (!isRecord(answer)) throw new ChatInputError(`${where} requires the answer object`);
 	if (answer.kind !== toolQuestionKind(tool)) throw new ChatInputError(`${where}'s answer kind does not match the question`);
-	const a = answer;
+	const a = answer as Record<string, unknown> & { answers: unknown[] };
 	const bad = (field: string, want: string) => new ChatInputError(`${where}'s answer ${field} must be ${want}`);
-	for (const f of ["questionText", "text", "other", "thinking", "readingThinking", "note"]) {
+	// Required by QuestionAnswerData, and read without a guard by the transcript
+	// render (the answered card maps `answers`), so a stored answer without them
+	// would crash it. Every client builder sets both.
+	if (typeof a.questionText !== "string") throw bad("questionText", "a string");
+	if (!Array.isArray(a.answers)) throw bad("answers", "a list of {label, index}");
+	for (const f of ["text", "other", "thinking", "readingThinking", "note"]) {
 		if (a[f] !== undefined && typeof a[f] !== "string") throw bad(f, "a string");
 	}
 	for (const f of ["dontKnow", "correct", "dismissed", "gaveUp"]) {
@@ -224,11 +229,8 @@ function checkAnswer(answer: unknown, tool: string, where: string): QuestionAnsw
 	if (a.confidence !== undefined && (typeof a.confidence !== "number" || !(a.confidence >= 0 && a.confidence <= 100))) {
 		throw bad("confidence", "a number from 0 to 100");
 	}
-	if (a.answers !== undefined) {
-		const ok =
-			Array.isArray(a.answers) &&
-			a.answers.every((o) => isRecord(o) && typeof o.label === "string" && Number.isInteger(o.index) && (o.value === undefined || typeof o.value === "string"));
-		if (!ok) throw bad("answers", "a list of {label, index}");
+	if (!a.answers.every((o) => isRecord(o) && typeof o.label === "string" && Number.isInteger(o.index) && (o.value === undefined || typeof o.value === "string"))) {
+		throw bad("answers", "a list of {label, index}");
 	}
 	if (a.correctIndices !== undefined && !(Array.isArray(a.correctIndices) && a.correctIndices.every((i) => Number.isInteger(i)))) {
 		throw bad("correctIndices", "a list of integers");

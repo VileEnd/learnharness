@@ -35,6 +35,13 @@ describe("answer input validation", () => {
 		assert.throws(() => inputAppends({ messages: pose("exercise") }, answer(quizAnswer)), ChatInputError);
 	});
 
+	it("requires answers and questionText: a bare kind would crash the transcript render", () => {
+		for (const bare of [{ kind: "quiz" }, { kind: "quiz", dismissed: false }, { ...quizAnswer, answers: undefined }, { ...quizAnswer, questionText: undefined }]) {
+			assert.throws(() => inputAppends({ messages: pose("quiz") }, answer(bare)), ChatInputError, JSON.stringify(bare));
+		}
+		assert.throws(() => dismissAppends({ messages: pose("quiz") }, { type: "dismiss", toolCallId: "c1", answer: { kind: "quiz", dismissed: true } as never }), ChatInputError);
+	});
+
 	it("rejects malformed fields one by one", () => {
 		for (const bad of [{ answers: "nope" }, { answers: [{ label: 1, index: 1 }] }, { confidence: 9000 }, { confidence: "70" }, { correct: "yes" }, { answeredAt: "not a date" }, { dontKnow: "no" }, { thinking: 5 }]) {
 			assert.throws(() => inputAppends({ messages: pose("quiz") }, answer({ ...quizAnswer, ...bad })), ChatInputError, JSON.stringify(bad));

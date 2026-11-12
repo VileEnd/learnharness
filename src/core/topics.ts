@@ -59,7 +59,7 @@ export function addAliases(
 	const next: Record<string, string> = { ...table };
 	for (const [raw, canonical] of Object.entries(mapping)) {
 		const from = topicKey(raw);
-		const to = canonicalTopic(canonical, next); // follow an existing alias once
+		const to = canonicalTopic(canonical, next); // follow the target's own alias chain to its end
 		if (from === "" || topicKey(to) === "" || from === topicKey(to)) continue;
 		// Anything that pointed at `from` now points at its canonical label.
 		for (const [key, target] of Object.entries(next)) if (topicKey(target) === from) next[key] = to;
