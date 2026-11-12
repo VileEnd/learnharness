@@ -7,8 +7,11 @@ import { useEffect, useRef, type RefObject } from "react";
  * hosting component is mounted (every modal here is mounted only while open):
  *
  *   - focus moves inside: to the element marked `data-autofocus` (the cancel
- *     of a confirm), else the first tabbable control, else the surface itself;
- *     an element inside that already took focus (an `autoFocus` input) wins;
+ *     of a confirm; or the surface itself, when it carries the mark), else the
+ *     first tabbable control, else the surface itself; an element inside that
+ *     already took focus (an `autoFocus` input) wins. The surface takes focus
+ *     where the first control is a tooltip trigger (it would pop its tooltip
+ *     on every open); the first Tab then reaches that control;
  *   - Tab and Shift+Tab cycle inside the surface. They are claimed at the
  *     document level (the one-Esc law's layer) and moved by hand: the global
  *     Tab handler in keyboard-shortcuts.tsx suppresses native Tab on every
@@ -105,7 +108,7 @@ function release(el: Element) {
 function focusInitial(root: HTMLElement) {
 	const active = document.activeElement;
 	if (active && active !== document.body && root.contains(active)) return;
-	const target = root.querySelector<HTMLElement>("[data-autofocus]") ?? tabbablesIn(root)[0];
+	const target = root.hasAttribute("data-autofocus") ? null : (root.querySelector<HTMLElement>("[data-autofocus]") ?? tabbablesIn(root)[0]);
 	if (target) target.focus();
 	else {
 		if (!root.hasAttribute("tabindex")) root.setAttribute("tabindex", "-1");
@@ -161,16 +164,19 @@ function close(entry: Entry) {
 	if (opener && opener !== document.body && opener instanceof HTMLElement && document.contains(opener)) opener.focus();
 }
 
-/** Make the surface in `ref` modal for as long as the calling component is
- *  mounted. Call it from the component that renders the surface's root. */
-export function useModal(ref: RefObject<HTMLElement | null>): void {
+/** Make the surface in `ref` modal while `active` (default: as long as the
+ *  calling component is mounted, which is how most surfaces here work; pass
+ *  `open` for one that stays mounted and renders null when closed). Call it
+ *  from the component that renders the surface's root. */
+export function useModal(ref: RefObject<HTMLElement | null>, active = true): void {
 	// Captured while rendering, before an `autoFocus` inside can steal focus.
 	const opener = useRef<Element | null | undefined>(undefined);
-	if (opener.current === undefined) opener.current = typeof document === "undefined" ? null : document.activeElement;
+	if (!active) opener.current = undefined;
+	else if (opener.current === undefined) opener.current = typeof document === "undefined" ? null : document.activeElement;
 	useEffect(() => {
 		const root = ref.current;
-		if (!root) return;
+		if (!active || !root) return;
 		const entry = open(root, opener.current ?? null);
 		return () => close(entry);
-	}, [ref]);
+	}, [ref, active]);
 }

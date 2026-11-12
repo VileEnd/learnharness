@@ -24,6 +24,7 @@ import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { useModal } from "@/components/ui/use-modal";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
 import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
@@ -152,6 +153,8 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 
 	// ── the back gesture and Esc: one Esc, one action (minimise) ──
 	useBackDismiss(true, onMinimize);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useModal(dialogRef);
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
@@ -419,6 +422,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 
 	return (
 		<div
+			ref={dialogRef}
 			data-testid="canvas-workspace"
 			role="dialog"
 			aria-modal="true"
@@ -472,7 +476,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				)}
 				<span className="ml-auto" />
 				<HintsButton hints={hints} open={hintsOpen} onToggle={() => setHintsOpen((v) => !v)} />
-				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" onClick={onMinimize} className="rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" data-autofocus onClick={onMinimize} className="rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
 					<Minimize2Icon className="size-4" />
 				</button>
 			</div>

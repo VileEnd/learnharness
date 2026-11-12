@@ -11,12 +11,15 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 
-export const dom = parseHTML("<html><body></body></html>");
+export const dom = parseHTML("<!doctype html><html><body></body></html>");
 Object.assign(globalThis, {
 	window: dom.window,
 	document: dom.document,
 	Element: dom.window.Element,
+	Node: dom.window.Node,
 	HTMLElement: dom.window.HTMLElement,
+	HTMLInputElement: dom.window.HTMLInputElement,
+	HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
 	CustomEvent: dom.window.CustomEvent,
 	IS_REACT_ACT_ENVIRONMENT: true,
 	requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0),
@@ -24,14 +27,25 @@ Object.assign(globalThis, {
 });
 Object.assign(dom.window, { innerWidth: 1280, innerHeight: 800 });
 dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+Object.assign(dom.window, { getSelection: () => ({ rangeCount: 0, anchorNode: null }) });
+
+// linkedom lacks the `input` event, so React falls back to its IE path for
+// focused text fields (focusin -> attachEvent): inert stand-ins.
+Object.assign(dom.window.HTMLElement.prototype, { attachEvent() {}, detachEvent() {} });
 
 let active: Element | null = null;
 dom.window.HTMLElement.prototype.focus = function focus(this: HTMLElement) {
 	if (!this.isConnected || this.hasAttribute("disabled") || this.closest("[inert]")) return;
+	const previous = active;
 	active = this;
+	// React tracks the focused text field through focusin/focusout.
+	previous?.dispatchEvent(new dom.window.Event("focusout", { bubbles: true }));
+	this.dispatchEvent(new dom.window.Event("focusin", { bubbles: true }));
 };
 dom.window.HTMLElement.prototype.blur = function blur(this: HTMLElement) {
-	if (active === this) active = null;
+	if (active !== this) return;
+	active = null;
+	this.dispatchEvent(new dom.window.Event("focusout", { bubbles: true }));
 };
 Object.defineProperty(dom.document, "activeElement", {
 	configurable: true,
@@ -42,7 +56,9 @@ Object.defineProperty(dom.document, "activeElement", {
 export function press(target: Element, key: string, init: { shiftKey?: boolean; ctrlKey?: boolean } = {}) {
 	const event = new dom.window.Event("keydown", { bubbles: true, cancelable: true });
 	Object.assign(event, { key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init });
-	target.dispatchEvent(event);
+	act(() => {
+		target.dispatchEvent(event);
+	});
 	return event;
 }
 

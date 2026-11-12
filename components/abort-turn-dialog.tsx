@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { useModal } from "@/components/ui/use-modal";
 
 /**
  * The ESC-abort guard (owner, 2026-10-02): the global Esc → abort chain
@@ -67,8 +68,11 @@ export function AbortTurnBody({
 }) {
 	const backdropDismiss = useBackdropDismiss(onClose);
 	const copy = COPY[mode];
+	const ref = useRef<HTMLDivElement>(null);
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label={copy.title}
@@ -92,6 +96,7 @@ export function AbortTurnBody({
 					<button
 						type="button"
 						data-testid="abort-turn-cancel"
+						data-autofocus
 						onClick={onClose}
 						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
 					>

@@ -8,6 +8,7 @@ import { filterFolderPick, skippedNotice, type DocumentDecision, type DuplicateV
 import { createTaskQueue, fileForm, jsonOf, tooLargeReason } from "@/components/add-documents-queue";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { useModal } from "@/components/ui/use-modal";
 import { useActivity } from "@/components/activity-dock";
 
 /**
@@ -148,8 +149,11 @@ export function AddDocumentsBody({
 	const scanTotal = toImport.reduce((sum, e) => sum + (e.usd ?? 0), 0);
 	const started = results.filter((r) => r.outcome === "started").length;
 	const failed = results.filter((r) => r.outcome === "failed");
+	const ref = useRef<HTMLDivElement>(null);
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Add documents"

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { useModal } from "@/components/ui/use-modal";
 
 /** The 409 extraction_running line (owner phrasing, node interlude):
  *  the server's error names the extraction; the ACTIVITY DOCK is the
@@ -46,8 +47,11 @@ export function DeleteNodeBody({
 	onClose: () => void;
 	onRun: () => void;
 }) {
+	const ref = useRef<HTMLDivElement>(null);
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Delete node"
@@ -108,6 +112,7 @@ export function DeleteNodeBody({
 				<button
 					type="button"
 					data-testid="node-delete-cancel"
+					data-autofocus
 					onClick={onClose}
 					disabled={busy}
 					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"
@@ -164,7 +169,8 @@ export function DeleteNodeDialog({
 		}
 	}, [nodes]);
 
-	// Esc closes (claimed — a dialog Esc must not also abort a turn).
+	// Esc closes (claimed — a dialog Esc must not also abort a turn), but
+	// not while the delete runs: same guard as the backdrop and back gesture.
 	useEffect(() => {
 		if (!nodes || nodes.length === 0) return;
 		const onKeyDown = (e: KeyboardEvent) => {
@@ -174,12 +180,12 @@ export function DeleteNodeDialog({
 				// the earlier-registered global window listener.
 				e.preventDefault();
 				e.stopPropagation();
-				onClose();
+				if (!busy) onClose();
 			}
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [nodes, onClose]);
+	}, [nodes, busy, onClose]);
 
 	// Sequential full deaths — never parallel (the store's revision
 	// counter and the sweep must observe them in order). A failure STOPS

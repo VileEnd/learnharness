@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useBackDismiss } from "@/components/use-back-dismiss";
+import { useModal } from "@/components/ui/use-modal";
 
 /** What a delete takes: concepts only this document supports, and the shared
  *  ones (other documents or chats also support them) that stay. */
@@ -48,8 +49,11 @@ export function DeleteDocumentBody({
 	onClose: () => void;
 	onRun: () => void;
 }) {
+	const ref = useRef<HTMLDivElement>(null);
+	useModal(ref);
 	return (
 		<div
+			ref={ref}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Delete document"
@@ -79,6 +83,7 @@ export function DeleteDocumentBody({
 				<button
 					type="button"
 					data-testid="delete-document-cancel"
+					data-autofocus
 					onClick={onClose}
 					disabled={busy}
 					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:px-4"

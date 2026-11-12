@@ -65,6 +65,27 @@ describe("useModal", () => {
 		assert.equal(activeId(), "bare", "the surface itself when nothing inside is tabbable");
 	});
 
+	it("focuses the surface itself when it carries data-autofocus, and Tab then enters at either end", async () => {
+		function Marked() {
+			const ref = useRef<HTMLDivElement>(null);
+			useModal(ref);
+			return createPortal(
+				<div ref={ref} id="marked" role="dialog" aria-modal="true" data-autofocus>
+					<button id="m1" type="button">1</button>
+					<button id="m2" type="button">2</button>
+				</div>,
+				document.body,
+			);
+		}
+		await mount(<Page extra={<Marked />} />);
+		assert.equal(activeId(), "marked");
+		press(byId("marked"), "Tab");
+		assert.equal(activeId(), "m1");
+		byId("marked").focus();
+		press(byId("marked"), "Tab", { shiftKey: true });
+		assert.equal(activeId(), "m2");
+	});
+
 	it("keeps focus that an element inside already took (autoFocus)", async () => {
 		await mount(<Page />);
 		function Taker() {
@@ -220,6 +241,26 @@ describe("useModal", () => {
 		await rerender(<Page />);
 		assert.equal(activeId(), "opener", "not lost with the closed lower modal");
 		assert.equal(document.querySelectorAll("[inert]").length, 0);
+	});
+
+	it("a surface that stays mounted opens and closes with `active` (opener captured at each opening)", async () => {
+		function Stays({ open }: { open: boolean }) {
+			const ref = useRef<HTMLDivElement>(null);
+			useModal(ref, open);
+			return open ? createPortal(<div ref={ref} id="stays" role="dialog" aria-modal="true"><button id="s1" type="button">1</button></div>, document.body) : null;
+		}
+		await mount(<Page extra={<Stays open={false} />} />);
+		byId("opener").focus();
+		await rerender(<Page extra={<Stays open />} />);
+		assert.equal(activeId(), "s1");
+		assert.ok(byId("app").hasAttribute("inert"));
+		await rerender(<Page extra={<Stays open={false} />} />);
+		assert.equal(activeId(), "opener");
+		assert.equal(document.querySelectorAll("[inert]").length, 0);
+		byId("composer").focus();
+		await rerender(<Page extra={<Stays open />} />);
+		await rerender(<Page extra={<Stays open={false} />} />);
+		assert.equal(activeId(), "composer", "the second opening remembers its own opener");
 	});
 
 	it("only the topmost modal handles Tab", async () => {
