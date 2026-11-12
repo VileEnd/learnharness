@@ -369,13 +369,48 @@ function tempDir(prefix: string): string {
 // ─── Demo execution ──────────────────────────────────────────────────────────
 
 /** What a sandboxed frame throws when a demo touches browser storage. */
-const STORAGE_DENIED = /denied for this document|denied in this context|allow-same-origin|operation is insecure/i;
+const STORAGE_DENIED = /denied for this document|denied in this context|allow-same-origin|operation is insecure|CacheStorage/i;
 const STORAGE_HINT =
 	"The demo runs in a sandboxed frame with an opaque origin, where localStorage, sessionStorage, IndexedDB and cookies " +
 	"are unavailable and throw: keep state in JavaScript variables instead (or wrap any storage use in try/catch and carry on without it).";
 
-function withStorageHint(message: string): string {
-	return STORAGE_DENIED.test(message) ? `${message}\n${STORAGE_HINT}` : message;
+/** What a page sees when a secure-context API is missing: the API itself is
+ *  undefined, so the error names the missing function or the member read off it. */
+const SECURE_CONTEXT_MISSING =
+	/randomUUID is not a function|\bcaches is not defined|navigator\.clipboard|reading '(?:digest|encrypt|decrypt|sign|verify|importKey|generateKey|deriveKey|deriveBits|readText|writeText)'/;
+const SECURE_CONTEXT_HINT =
+	"The demo is verified without secure-context APIs: do not use crypto.randomUUID, crypto.subtle, navigator.clipboard or caches; " +
+	"generate ids with Math.random or a counter.";
+
+function withHints(message: string): string {
+	let out = message;
+	if (STORAGE_DENIED.test(message)) out += `\n${STORAGE_HINT}`;
+	if (SECURE_CONTEXT_MISSING.test(message)) out += `\n${SECURE_CONTEXT_HINT}`;
+	return out;
+}
+
+/** Longest a demo may take to finish loading. setContent's own timeout only
+ *  covers the lifecycle wait after the document is set, and setting it blocks
+ *  on the page's main thread (an endless loop while parsing would hold the job
+ *  for the 180 s protocol timeout), so the whole call is raced against this. */
+const DEMO_LOAD_TIMEOUT_MS = 30_000;
+
+async function loadWithinLimit(page: import("puppeteer-core").Page, html: string): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<never>((_, reject) => {
+		timer = setTimeout(
+			() => reject(new Error(`the page did not finish loading within ${DEMO_LOAD_TIMEOUT_MS / 1000} s (an endless loop while loading?)`)),
+			DEMO_LOAD_TIMEOUT_MS,
+		);
+	});
+	const load = page.setContent(html, { waitUntil: "load", timeout: DEMO_LOAD_TIMEOUT_MS });
+	// The loser may still reject later (the browser closes under it); that is not news.
+	load.catch(() => {});
+	try {
+		await Promise.race([load, expired]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRunResult> {
@@ -388,9 +423,9 @@ async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRun
 
 	await withBrowserPage(async (page) => {
 		page.on("console", (msg) => {
-			if (msg.type() === "error") consoleErrors.push(withStorageHint(msg.text()));
+			if (msg.type() === "error") consoleErrors.push(withHints(msg.text()));
 		});
-		page.on("pageerror", (err) => pageErrors.push(withStorageHint(err instanceof Error ? err.message : String(err))));
+		page.on("pageerror", (err) => pageErrors.push(withHints(err instanceof Error ? err.message : String(err))));
 		page.on("requestfailed", (req) => failedRequests.push(`${req.url()} (${req.failure()?.errorText ?? "failed"})`));
 		// Interception aborts a navigation to anything it can see; this is the
 		// second line, and it also sees what it cannot (a navigation to
@@ -407,15 +442,18 @@ async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRun
 
 		try {
 			// A new tab is on about:blank, which setContent keeps (its origin is
-			// opaque); the demo is written into it in memory, no file involved.
-			await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
+			// opaque); the demo is written into it in memory, no file involved. That
+			// page is not a secure context (the learner's frame inherits one from the
+			// https app), so crypto.randomUUID, crypto.subtle, navigator.clipboard and
+			// caches are absent here: deliberate, and hinted when a demo trips on them.
+			await loadWithinLimit(page, html);
 			await new Promise((resolve) => setTimeout(resolve, settleMs));
 			if (opts.probe) {
 				if (leftDemo || withoutHash(page.url()) !== "about:blank") {
 					pageErrors.push(
 						"probe not run: the page navigated away from the demo document. Verification blocks every navigation " +
-							"away from the demo, so a form submit, a link or a download link that navigates the page breaks it: " +
-							"keep the demo on one page (handle forms and links in script, without navigating).",
+							"away from the demo, so a form submit, a link, a download link or a page that reloads itself (`location.reload()`, " +
+							"`history.go(0)`, a meta refresh) breaks it: keep the demo on one page (handle forms and links in script, without navigating).",
 					);
 				} else {
 					try {

@@ -180,7 +180,7 @@ describe("demo browser against a real Chromium", { skip }, () => {
 			const result = await realHeadless.runDemo(html, { settleMs: 800, probe: "document.documentElement.innerText" });
 			assert.equal(result.ok, false, move);
 			assert.equal(result.probeResult, undefined, `${move}: ${JSON.stringify(result)}`);
-			assert.match(result.pageErrors.join("\n"), /probe not run: .*form submit, a link or a download link/, move);
+			assert.match(result.pageErrors.join("\n"), /probe not run: .*form submit, a link, a download link or a page that reloads itself/, move);
 		}
 	});
 
@@ -200,6 +200,69 @@ describe("demo browser against a real Chromium", { skip }, () => {
 		const result = await realHeadless.runDemo(html, { settleMs: 400, probe: "document.body.innerText" });
 		assert.equal(result.ok, true, JSON.stringify(result));
 		assert.equal(result.probeResult, "demo");
+	});
+
+	it("a demo that hangs while loading ends the verification at the load limit, not at the protocol timeout", { timeout: 60_000 }, async () => {
+		const started = Date.now();
+		const result = await realHeadless.runDemo(`<!doctype html><p>demo</p><script>while (true) {}</script>`, { settleMs: 200 });
+		assert.ok(Date.now() - started < 50_000, `took ${Date.now() - started} ms`);
+		assert.equal(result.ok, false);
+		assert.match(result.pageErrors.join("\n"), /did not finish loading within 30 s \(an endless loop while loading\?\)/);
+	});
+
+	it("a demo that needs a secure-context API fails with a hint it can act on", async () => {
+		const uses: Record<string, string> = {
+			"crypto.randomUUID": `crypto.randomUUID();`,
+			"crypto.subtle": `crypto.subtle.digest("SHA-256", new Uint8Array(1));`,
+			"navigator.clipboard": `navigator.clipboard.writeText("x");`,
+			"navigator.clipboard.readText": `navigator.clipboard.readText();`,
+			caches: `caches.open("c");`,
+		};
+		for (const [api, code] of Object.entries(uses)) {
+			const result = await realHeadless.runDemo(`<!doctype html><p>demo</p><script>${code}</script>`, { settleMs: 200 });
+			assert.equal(result.ok, false, api);
+			const errors = result.pageErrors.join("\n");
+			assert.match(errors, /without secure-context APIs/, `${api}: ${errors}`);
+			assert.match(errors, /crypto\.randomUUID, crypto\.subtle, navigator\.clipboard or caches/, `${api}: ${errors}`);
+		}
+	});
+
+	it("the probe-not-run message names a page that reloads itself", async () => {
+		const result = await realHeadless.runDemo(`<!doctype html><script>addEventListener("load", () => history.go(0));</script>`, { settleMs: 800, probe: "1" });
+		assert.equal(result.probeResult, undefined);
+		assert.match(result.pageErrors.join("\n"), /location\.reload\(\)`, `history\.go\(0\)`, a meta refresh/);
+	});
+
+	it("history.pushState to another path throws and the page stays the demo", async () => {
+		const html = `<!doctype html><p>demo</p><script>addEventListener("load", () => { try { history.pushState({}, "", "/other"); } catch (e) { window.pushError = e.name; } });</script>`;
+		const result = await realHeadless.runDemo(html, { settleMs: 400, probe: "({ text: document.body.innerText, pushError })" });
+		assert.deepEqual(result.probeResult, { text: "demo", pushError: "SecurityError" });
+	});
+
+	it("document.open and write rewrite the same document: the probe reads the rewritten page", async () => {
+		const html = `<!doctype html><p>demo</p><script>addEventListener("load", () => { document.open(); document.write("<p>rewritten</p>"); document.close(); });</script>`;
+		const result = await realHeadless.runDemo(html, { settleMs: 400, probe: "document.body.innerText" });
+		assert.equal(result.ok, true, JSON.stringify(result));
+		assert.equal(result.probeResult, "rewritten");
+	});
+
+	it("a nested frame that navigates the top page is refused and the probe does not run", async () => {
+		const html = `<!doctype html><p>demo</p><iframe srcdoc="<script>top.location = 'https://cdn.example.com/page';</script>"></iframe>`;
+		const result = await realHeadless.runDemo(html, { settleMs: 800, probe: "document.body.innerText" });
+		assert.equal(result.ok, false);
+		assert.equal(result.probeResult, undefined, JSON.stringify(result));
+		assert.match(result.pageErrors.join("\n"), /probe not run/);
+	});
+
+	it("a navigation fired from beforeunload is refused and the probe does not run", async () => {
+		const html = `<!doctype html><p>demo</p><script>
+			addEventListener("beforeunload", () => { location.href = "https://cdn.example.com/page"; });
+			addEventListener("load", () => { location.reload(); });
+		</script>`;
+		const result = await realHeadless.runDemo(html, { settleMs: 800, probe: "document.body.innerText" });
+		assert.equal(result.ok, false);
+		assert.equal(result.probeResult, undefined, JSON.stringify(result));
+		assert.match(result.pageErrors.join("\n"), /probe not run/);
 	});
 
 	it("a demo cannot fetch, frame or open a socket to the app's network, and public https still loads", async () => {
