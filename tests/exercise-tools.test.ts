@@ -19,7 +19,6 @@ import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
 import { PATHS } from "../config.ts";
 
-fs.mkdirSync(path.join(PATHS.root, "data"), { recursive: true });
 const createdChats: string[] = [];
 after(() => {
 	for (const id of createdChats) {

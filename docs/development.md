@@ -173,7 +173,7 @@ pricing-generation step: Pi AI's catalog and public calculator are the authority
 
 All deterministic, no LLM, no network (engines are injected — pi-ai's faux provider scripted per test; `globalThis.fetch` stubbed where transport matters):
 
-1. **Pure core units** — merger (via the real fs adapters, backup-and-restored), derivation, coverage, question grading, plan tree, phases, clusters, layout, tool-parts, prices.
+1. **Pure core units** — merger (via the real fs adapters, in a per-process temp data dir from the `tests/setup.ts` preload), derivation, coverage, question grading, plan tree, phases, clusters, layout, tool-parts, prices.
 2. **Server flows** — `handleChatRequest` driven end-to-end with scripted engines: persistence, liveness, steer claiming, the wake pipeline (409 retry, quiz deferral, idempotency), crash recovery, the data-dir seam (including a fresh child process).
 3. **Sub-agent loops** — researcher/demo-builder/visual-maker with fake headless APIs; the extraction pipeline end-to-end (audit drops, failure-checkpoints-nothing, single-flight, abort).
 4. **Render tests** — transcript, cards, docks, composer, sidebar, coverage via React server-side rendering.

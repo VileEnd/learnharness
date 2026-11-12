@@ -7,18 +7,16 @@
  * idempotency guarantees. No events ledger: quiz outcomes and
  * understanding observations are no longer formalized in the graph.
  *
- * Ledger isolation: PATHS is fixed at import time, so the five data/graph
- * ledgers are backed up and cleared before the suite and restored after
- * (try/finally-shaped: the after() hook always runs, even on failure).
- * The chat fixtures are real ChatRecords in the chat store (created and
- * deleted by this suite) — the merger reads exactly what production reads.
+ * Isolation: tests/setup.ts gives this process its own temp data dir, so the
+ * ledgers start empty. The chat fixtures are real ChatRecords in the chat
+ * store — the merger reads exactly what production reads.
  * The full LLM pipeline (extractor → auditor) is tested in
  * tests/extraction.test.ts with mock models.
  */
 
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import type { AuditVerdicts, GraphChain, GraphNode, SessionFindings } from "../src/core/contracts.ts";
 import type { QuestionAnswerData } from "../src/core/question-core.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
@@ -27,7 +25,7 @@ import { deriveView, getGraph, graphSnapshot, mergeFindings, type GraphDeps } fr
 import { coverageSlots } from "../src/core/coverage.ts";
 import { graphStore } from "../src/store/graph.ts";
 import { chatStore } from "../src/store/chats.ts";
-import { LEDGER_FILES, PATHS, sourcesFile } from "../config.ts";
+import { LEDGER_FILES, PATHS } from "../config.ts";
 
 /** The wired fs adapters, exactly what src/server/stores.ts passes in production. */
 const graphDeps = { chatStore, graphStore } as const satisfies GraphDeps;
@@ -39,39 +37,6 @@ function sessionSource(chatId: string): { foldedAt: string } {
 	const record = chatStore.getChat(chatId)!;
 	return { foldedAt: record.updatedAt };
 }
-
-// ─── ledger isolation (backup-and-clear of data/graph/*.jsonl) ──────────────
-
-const LEDGER_PATHS = [...Object.values(LEDGER_FILES), sourcesFile()];
-const backups: Array<{ file: string; bak: string }> = [];
-const createdChats: string[] = [];
-
-fs.mkdirSync(PATHS.graph, { recursive: true });
-for (const file of LEDGER_PATHS) {
-	if (fs.existsSync(file)) {
-		const bak = `${file}.w5test.bak`;
-		fs.renameSync(file, bak);
-		backups.push({ file, bak });
-	}
-}
-
-after(() => {
-	for (const file of LEDGER_PATHS) {
-		try {
-			fs.unlinkSync(file);
-		} catch {
-			/* nothing was written here */
-		}
-	}
-	for (const { file, bak } of backups) fs.renameSync(bak, file);
-	for (const id of createdChats) {
-		try {
-			fs.unlinkSync(`${PATHS.chats}/${id}.json`);
-		} catch {
-			/* already gone */
-		}
-	}
-});
 
 // ─── fixture builders ────────────────────────────────────────────────────────
 
@@ -156,7 +121,6 @@ function answer(over: Partial<QuestionAnswerData>): QuestionAnswerData {
  *  Tree-blind world: the plan tree is irrelevant to the merger — no tree. */
 function fixtureChat(title: string, messages: LhMessage[]) {
 	const chat = chatStore.createChat(title);
-	createdChats.push(chat.id);
 	chatStore.saveMessages(chat.id, messages);
 	return chatStore.getChat(chat.id)!;
 }
