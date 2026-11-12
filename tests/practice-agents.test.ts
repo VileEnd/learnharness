@@ -120,20 +120,30 @@ describe("the practice tool gating law", () => {
 		assert.equal(result.terminate, undefined);
 	});
 
-	it("THE BKT INCIDENT — a mid-turn conclude → pose pair works (the gate is turn-scoped, not record-frozen)", async () => {
+	it("THE BKT INCIDENT — the gate is turn-scoped, not record-frozen: a mid-turn conclude is seen by the same turn's pose", async () => {
 		// One turn, one toolset: the record froze at the write-ahead with
 		// the old problem active. The gates used to re-read that frozen
 		// record per execute, so the pose after a successful conclude
-		// always died on "a problem is already active" until the model
-		// gave up ("the problem slot is stuck").
+		// died on "a problem is already active" and the model gave up
+		// ("the problem slot is stuck"). The slot is free after a conclude
+		// again, but the pose still waits for the learner's go-ahead: the
+		// refusal says so, and says it is not a stuck slot.
 		const gate = createPracticeGate(ctxOf(activeProblemRecord()));
 		const tools = { problem: problemTool(gate), conclude: concludeTool(gate) };
 		const conclude = await tools.conclude.execute("call_c1", CONCLUDE_INPUT as never);
 		assert.equal(conclude.isError, undefined, "the conclude acks against the seeded record");
 		const pose = await tools.problem.execute("call_p2", PROBLEM_INPUT as never);
-		assert.equal(pose.isError, undefined, "the freed gate lets the next problem through — SAME turn");
-		const greedy = await tools.problem.execute("call_p3", PROBLEM_INPUT as never);
-		assert.equal(greedy.isError, true, "the gate re-arms on the successful pose");
+		assert.equal(pose.isError, true, "no next problem in the reply that concluded");
+		const [problem] = (pose.details as { problems: string[] }).problems;
+		assert.match(problem!, /already concluded a problem in this turn/);
+		assert.match(problem!, /go-ahead/);
+		assert.doesNotMatch(problem!, /already active/, "the slot is free; the model must not read this as a stuck slot");
+	});
+
+	it("a fresh turn's toolset (next turn) poses on a record with nothing active", async () => {
+		const next = await problemTool(createPracticeGate(ctxOf([]))).execute("call_p3", PROBLEM_INPUT as never);
+		assert.equal(next.isError, undefined);
+		assert.equal(next.terminate, true);
 	});
 });
 

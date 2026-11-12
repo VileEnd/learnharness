@@ -272,7 +272,9 @@ export function workResult(toolCallId: string): AgentToolResult<null> {
 }
 
 /** The conclude ack: NOT terminate — the turn continues so the same reply
- *  can reveal + pose the next problem. Text single-sourced in contracts
+ *  can speak its closing words; a `problem` in that reply is refused (the
+ *  practice gate's pause law), the next one waits for the learner's
+ *  go-ahead. Text single-sourced in contracts
  *  (CONCLUDE_ACK_TEXT — shared with the dismissal-synthesized pair). */
 export function concludeResult(): AgentToolResult<null> {
 	return {

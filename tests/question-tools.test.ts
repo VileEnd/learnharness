@@ -479,15 +479,15 @@ describe("tool descriptions carry mechanics only, no question-craft", () => {
 		assert.ok(shared.includes("asymmetry"), "the option craft moved here, not deleted");
 		assert.ok(shared.includes("TRANSCRIBED SPEECH"), "the dictation-leniency note lives here");
 	});
-	it("24-canvas-tools.md cites only real tool and field names", async () => {
-		const frag = await fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared/24-canvas-tools.md"), "utf-8");
+	it("the canvas fragments cite only real tool and field names", async () => {
+		const frag = (await Promise.all(["24-canvas-tools.md", "24-drawings.md"].map((f) => fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared", f), "utf-8")))).join("\n");
 		const known = new Set<string>(["20-question-tools", "grade", "question", "quiz", "explain", "exercise", "o1", "o2", "s1", "s2", "stroke", "C4", "B2-D3", "annotate", ...Object.keys(annotateInputObject.properties), "from", "to", "label"]);
 		const cited = [...frag.matchAll(/`([A-Za-z_0-9-]+)`/g)].map((m) => m[1]!);
 		assert.ok(cited.length >= 3, "the fragment cites names");
 		for (const name of cited) assert.ok(known.has(name) || name in workInputObject.properties, `\`${name}\` is not a real name`);
 	});
-	it("24-canvas-tools.md bans give-away hints in every language and ranks a transcription below the image", async () => {
-		const frag = await fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared/24-canvas-tools.md"), "utf-8");
+	it("the canvas fragments ban give-away hints in every language and rank a transcription below the image", async () => {
+		const frag = (await Promise.all(["24-canvas-tools.md", "24-drawings.md"].map((f) => fs.promises.readFile(path.join(PATHS.root, "src/agent/prompts/shared", f), "utf-8")))).join("\n");
 		assert.ok(frag.includes("A hint names the idea, never the equation to solve or the step to compute, and these bans hold in every language the session uses."));
 		assert.ok(frag.includes("A transcription, when present, is another model's reading of the drawing: the image and the structured text win over it."));
 	});

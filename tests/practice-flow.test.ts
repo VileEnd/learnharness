@@ -172,6 +172,41 @@ describe("practice flow (scripted model)", () => {
 		assert.equal(activeProblemOf(afterConclude), null);
 	});
 
+	it("a problem in the same turn as conclude is refused; the next turn's problem succeeds", async () => {
+		const chat = createPracticeChat("Test: practice pause");
+		const { engine } = scripted([
+			// Turn 1: the opening pose.
+			() => fauxAssistantMessage([fauxToolCall("problem", POSE, { id: "call-p1" })], { stopReason: "toolUse" }),
+			// Turn 2: conclude, then (against the prompt) a second problem in the same reply …
+			() => fauxAssistantMessage([fauxToolCall("conclude", CONCLUDE, { id: "call-c1" })], { stopReason: "toolUse" }),
+			() => fauxAssistantMessage([fauxToolCall("problem", POSE, { id: "call-p-early" })], { stopReason: "toolUse" }),
+			// … which is refused, so the model closes in words.
+			() => fauxAssistantMessage([fauxText("Clean proof. Say when you want the next one.")]),
+			// Turn 3: after the learner's go-ahead the pose goes through.
+			() => fauxAssistantMessage([fauxToolCall("problem", POSE, { id: "call-p2" })], { stopReason: "toolUse" }),
+		]);
+		const factory = practiceFactory(chat.id, engine);
+
+		await drainTurn(post(chat.id, { type: "text", text: "practice group theory" }), factory);
+		await drainTurn(post(chat.id, { type: "thinking", problemCallId: "call-p1", text: "|G|=p; <x> has order dividing p" }), factory);
+
+		const afterPause = chatStore.getChat(chat.id)!.messages;
+		const resultOf = (id: string) =>
+			afterPause.find((m) => (m as ToolResultMessage).role === "toolResult" && (m as ToolResultMessage).toolCallId === id) as
+				| (LhMessage & ToolResultMessage)
+				| undefined;
+		assert.equal(resultOf("call-c1")?.isError, false, "the conclude went through");
+		const early = resultOf("call-p-early");
+		assert.equal(early?.isError, true, "the same-turn problem is refused");
+		const refusal = (early!.content[0] as { text: string }).text;
+		assert.match(refusal, /already concluded/);
+		assert.match(refusal, /go-ahead/);
+		assert.equal(activeProblemOf(afterPause), null, "no problem is active during the pause");
+
+		await drainTurn(post(chat.id, { type: "next" }), factory);
+		assert.equal(activeProblemOf(chatStore.getChat(chat.id)!.messages)?.toolCallId, "call-p2", "the next turn poses as before");
+	});
+
 	it("a working-trace submission keeps the problem active", async () => {
 		const chat = createPracticeChat("Test: practice nudge");
 		const { engine, calls } = scripted([

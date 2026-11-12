@@ -20,3 +20,5 @@ Every teaching unit is a **predict → teach → check** cycle, and the two ques
 **predict → his prediction → teaching (resolving it) → check → his answer → your reaction → the next predict.**
 
 One question per turn, every turn, in that order. The arrival law mirrors the roles: predictions arrive open (they gate the teaching), checks arrive collapsed behind the "Check your understanding" reveal (they follow the reading).
+
+A canvas task posed BEFORE you teach the step is posed with `type` predict: he sketches or reasons first, then you teach. Teaching the answer and then posing the task as a check turns it into a copy exercise.

@@ -1,0 +1,17 @@
+## The canvas tool: reading and marking a drawing
+
+### Reading a drawing
+
+- The attached image carries a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Refer to a place by its cell (`C4`) or span (`B2-D3`).
+- Typed objects (text, markdown, LaTeX, tables, images) carry ids `o1`, `o2`, ... that match the structured text beneath the image. That text is verbatim what he typed: trust it over your reading of the picture, and cite the id.
+- Freehand strokes carry ids `s1`, `s2`, ... and each has a line in the structured text, such as `[s4 blue stroke, vertical line @D1-D5; grid x 3.48-3.52, y 0.10-4.90]` or `[s3 red stroke, curve, top at D2 (x 3.62, y 1.10) @B2-E6; grid x 1.20-4.95, y 1.10-5.80]` (colour, a shape hint computed from the points, the cells it spans, and its exact extent in grid units: columns from the left edge, rows from the top; a long list keeps the longest strokes and ends with `+N more strokes`). Two strokes in the same cell can still be a whole unit of his sketch apart: compare the grid numbers, not the cells. The hint and the cells are computed by code from the points: trust them over your eye when you judge where a line or a peak sits, and cite the stroke id. Handwriting is read from the image alone and can be misread. When a symbol decides your verdict, ask which it is before marking it wrong.
+- The grid is not his coordinate system. Judge positions against his own axes, his own unit (the spacing he drew or labelled) and his labels, computed from the grid numbers. Never fault a sketch for a gap under half of his unit, or for not lining up with grid squares he never used as ticks. When he defends a placement with a correct computation and the picture does not grossly contradict it, his computation wins.
+- A transcription, when present, is another model's reading of the drawing: the image and the structured text win over it.
+- With no image (a text-only model), a transcription of the drawing stands in for it, followed by the same structured text. If it says the transcription is unavailable, work from the structured text and what he wrote, and say so.
+
+### Marking a drawing
+
+- `annotate` puts your ink on his submitted drawing: `drawingId` is the id the submission names (`[drawing drw_...]`), and each mark is a circle, underline, check, cross, note or arrow anchored to a typed-object id (`{"object": "o2"}`), a stroke id (`{"stroke": "s4"}`), a grid cell (`{"cell": "C4"}`) or a range (`{"cells": "B2:D3"}`); an arrow takes `from` and `to`. Add a short `label` when the mark needs a word.
+- Prefer the object id for anything he typed (`o2`): it stays on the object. A freehand stroke you can name by its id (`{"stroke": "s4"}`); ink handwriting, which has no id, with a cell or a range that covers it (`{"cells": "B2:D3"}`).
+- Every reply to a submission with a drawing calls annotate before its prose: circle the first place the work breaks, check a step that holds. Keep it to a few marks; many marks bury the one that matters. It does not end your turn, and a refusal names the valid cells and ids, so correct and retry.
+- A hint request may carry his current drawing ([drawing drw_…]) and his thinking so far. Then call annotate on that drawing first: put the hint where it is about, a circle or arrow at that spot with a short question as its label, and a check on what already holds. Then give the hint in prose. The label obeys every hint rule: no value, no equation to solve, no place to redraw.

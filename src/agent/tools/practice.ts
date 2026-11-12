@@ -3,10 +3,12 @@
  * practice agent's ENTIRE toolset — `problem` (pose: terminates the turn;
  * the commitment rides the call's arguments, hidden from the learner UI)
  * and `conclude` (end the problem: normal result, the turn continues so
- * the same reply can reveal + pose the next). The gating law (owner
- * ruling): an agent cannot pose while a problem is active and cannot
- * conclude with nothing active — activeProblemOf is the single fold both
- * gates read.
+ * the same reply can speak its closing words, but never pose the next
+ * problem: that waits for the learner's go-ahead). The gating law (owner
+ * ruling): an agent cannot pose while a problem is active, cannot
+ * conclude with nothing active, and cannot pose in the turn that
+ * concluded — activeProblemOf is the fold the first two read, the
+ * turn-scoped gate the third.
  *
  * Mechanics-only descriptions (the doctrine ruling, 2026-10-04): the tool
  * descriptions carry WHAT to pass and WHAT happens — the theory, the
@@ -72,13 +74,18 @@ export interface PracticeToolContext {
  *  this closure — the intra-turn truth the record cannot hold yet. */
 export interface PracticeGate {
 	problemActive: boolean;
+	/** `conclude` ran in THIS turn: the pause law (the next problem waits for
+	 *  the learner's go-ahead, which arrives as the next turn) is enforced here,
+	 *  not only in the prompt. Turn-scoped like problemActive: a new turn builds
+	 *  a new gate, so the next turn's `problem` is unaffected. */
+	concludedThisTurn: boolean;
 }
 
 /** Seed the turn's gate from the record (result-aware activeProblemOf —
  *  only a cleanly-posed problem counts). */
 export function createPracticeGate(ctx: PracticeToolContext): PracticeGate {
 	const record = ctx.chatStore.getChat(ctx.chatId);
-	return { problemActive: record ? activeProblemOf(record.messages) !== null : false };
+	return { problemActive: record ? activeProblemOf(record.messages) !== null : false, concludedThisTurn: false };
 }
 
 // ─── problem: the pose ───────────────────────────────────────────────────────
@@ -176,6 +183,16 @@ export function problemTool(
 			return { ...(healed as Record<string, unknown>), target: normalized } as never;
 		},
 		execute: async (_toolCallId, input) => {
+			// The pause: a problem already concluded in this turn is not followed by
+			// the next one in the same reply. The slot is free, so say what the
+			// model must do instead (never "stuck").
+			if (gate.concludedThisTurn) {
+				return invalidInputResult("problem", [
+					"you already concluded a problem in this turn — the next problem is posed only on the learner's go-ahead " +
+						"(a Next problem message, or their own words asking for it). Say your closing words and end your turn; " +
+						"do not call problem again in this reply",
+				]);
+			}
 			if (gate.problemActive) {
 				return invalidInputResult("problem", [
 					"a problem is already active — call conclude on it before posing the next one",
@@ -274,6 +291,7 @@ export function concludeTool(gate: PracticeGate): AgentTool<typeof concludeInput
 				return invalidInputResult("conclude", ["no active problem to conclude — pose one first"]);
 			}
 			gate.problemActive = false;
+			gate.concludedThisTurn = true;
 			return concludeResult();
 		},
 	};
