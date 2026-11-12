@@ -52,6 +52,12 @@ export interface ChatStore {
 	/** Persist the full native message list (the record IS the agent
 	 * state — Wave B, owner-approved 2026-09-26). */
 	saveMessages(id: string, messages: LhMessage[]): void;
+	/** Read-modify-write the message list in ONE synchronous section (no
+	 *  await between the read and the write): `update` gets the messages as
+	 *  they are on disk now and returns the list to persist, or null to
+	 *  leave the record untouched. True when it wrote. For a writer whose
+	 *  input was computed across an await (compaction's model call). */
+	updateMessages(id: string, update: (messages: LhMessage[]) => LhMessage[] | null): boolean;
 	/** Persist the session plan tree (plan tools call this in execute). */
 	saveTree(id: string, tree: PlanTree): void;
 	/** Append one usage entry to the record's turn log (the money channel,
@@ -243,7 +249,9 @@ export interface AuthStore {
 	/** Set one VAR (atomic write, mode 0600 always, other vars preserved). */
 	setAuthVar(name: string, value: string): void;
 	/** Remove one VAR if present (absent = no-op, still a silent success).
-	 *  set/delete throw for the custom endpoint's two reserved names. */
+	 *  set/delete throw for the custom endpoint's two reserved names, and
+	 *  when the file exists but is not a JSON object (a write over it would
+	 *  erase every other entry); other entries, string or not, survive. */
 	deleteAuthVar(name: string): void;
 	/** The custom endpoint's key and binding from ONE strict read: absent
 	 *  file = both undefined; unreadable, non-object, malformed binding or a

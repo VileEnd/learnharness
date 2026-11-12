@@ -8,6 +8,7 @@
  */
 
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -211,6 +212,26 @@ describe("pdf", () => {
 		const [b] = await service.importFiles([pdf("b.pdf", "e")]);
 		assert.deepEqual([b!.outcome, b!.code], ["failed", "openrouter_key_missing"]);
 		assert.match(b!.error!, /PDF scanning needs an OpenRouter key/);
+	});
+
+	it("polling a long scan does not pile abort listeners onto its signal", async () => {
+		const side = sidecar(ocrMarkdown("Long scan", prose(60)));
+		const listeners: number[] = [];
+		let n = 0;
+		const ocr: Partial<OcrClient> = {
+			...side.ocr,
+			job: async () => {
+				const rows = (globalThis as { __lhDocumentScans?: Map<string, { controller: AbortController }> }).__lhDocumentScans!;
+				listeners.push(EventEmitter.getEventListeners([...rows.values()][0]!.controller.signal, "abort").length);
+				const done = ++n >= 10;
+				return { id: "job1", status: done ? "done" : "running", strategy: "ocr", usd: 0, files: [{ name: "scan.pdf", sha256: "x", status: done ? "done" : "running", pages: 4, done_pages: 0, failed_pages: [], markdown: done ? "scan.md" : null, title: null, summary: null, topics: [], cost_usd: 0, error: null }] };
+			},
+		};
+		const { service } = harness({ ocr });
+		const [t] = await service.importFiles([pdf("long.pdf", "g")]);
+		await t!.completion;
+		assert.equal(listeners.length, 10);
+		assert.ok(Math.max(...listeners) <= 1, `listeners per poll: ${listeners.join(",")}`);
 	});
 
 	it("aborting the scan row stops the job and reports it", async () => {

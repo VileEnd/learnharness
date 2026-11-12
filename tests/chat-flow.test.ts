@@ -30,6 +30,8 @@ import { createTeacherTools } from "../src/agent/tools.ts";
 import { handleChatInput, handleChatRequest } from "../src/server/chat-handler.ts";
 import { effectiveSettings } from "../src/server/stores.ts";
 import { isTurnRunning } from "../src/server/turn-liveness.ts";
+import { compactionInFlight, ensureCompacted, kickCompaction } from "../src/server/compaction.ts";
+import { subscribe } from "../src/core/events.ts";
 import { deliverJobResult, registerLiveAgent, setTurnRunner, steerLiveChat, unregisterLiveAgent } from "../src/server/jobs.ts";
 import { SessionModel } from "../components/session-core.ts";
 import { buildSubagentSteer } from "../src/core/contracts.ts";
@@ -995,6 +997,120 @@ describe("mid-turn navigation (turn liveness + write-ahead)", () => {
 		assert.equal(saved2.messages.length, 4, "full turn persisted as usual at finish");
 		assert.equal(projectView(saved2.messages).length, 2, "the projection groups the answered quiz + reaction");
 		assert.equal(isTurnRunning(chat.id), false, "registry cleared at finish");
+	});
+
+	it("a turn waits for a compaction already running on its chat", async () => {
+		const { engine } = scriptedTeacher(defaultLesson);
+		const chat = createConfiguredChat("Test: compaction gate");
+		createdChats.push(chat.id);
+		const big = (label: string) => newUserMessage(`${label}: ${"x".repeat(100 * 1024)}`);
+		chatStore.saveMessages(chat.id, [big("m1"), big("m2"), big("m3"), newUserMessage("recent")]);
+		let entered!: () => void;
+		let release!: () => void;
+		const summaryStarted = new Promise<void>((resolve) => (entered = resolve));
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+		const compaction = ensureCompacted(
+			{
+				chatStore,
+				engine: { model: { provider: "faux", id: "test" } } as never,
+				modelId: "faux:test",
+				kind: "teach",
+				thresholdTokens: 40_000,
+				systemPromptTokens: 100,
+				summarize: async () => {
+					entered();
+					await gate;
+					return { summary: "SUMMARY", usage };
+				},
+			},
+			chat.id,
+		);
+		await summaryStarted;
+
+		let built = false;
+		const turn = drainTurn(post(chat.id, { type: "text", text: "go on" }), (opts) => {
+			built = true;
+			return agentFactory(engine)!(opts);
+		});
+		for (let i = 0; i < 30 && !built; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.equal(built, false, "no agent is built while the chat's compaction runs");
+		release();
+		await compaction;
+		await turn;
+		assert.equal(built, true);
+	});
+
+	it("a compaction kicked while the turn is in its gate still holds the claim until it ends", async () => {
+		const { engine } = scriptedTeacher(defaultLesson);
+		const chat = createConfiguredChat("Test: compaction kicked mid-gate");
+		createdChats.push(chat.id);
+		const big = (label: string) => newUserMessage(`${label}: ${"x".repeat(100 * 1024)}`);
+		chatStore.saveMessages(chat.id, [big("m1"), big("m2"), big("m3"), newUserMessage("recent")]);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+		const deps = {
+			chatStore,
+			engine: { model: { provider: "faux", id: "test" } } as never,
+			modelId: "faux:test",
+			kind: "teach" as const,
+			thresholdTokens: 40_000,
+			systemPromptTokens: 100,
+			summarize: async () => {
+				await gate;
+				return { summary: "SUMMARY", usage };
+			},
+		};
+		// The handler reads the chat once and runs from there into its gate
+		// without an await, so this marks "the request is inside the gate".
+		let reachedGate!: () => void;
+		const inGate = new Promise<void>((resolve) => (reachedGate = resolve));
+		const getChat = chatStore.getChat;
+		chatStore.getChat = (id) => {
+			if (id === chat.id) reachedGate();
+			return getChat(id);
+		};
+		let compactingAtClaim: boolean | undefined;
+		const off = subscribe((e) => {
+			if (e.type === "turn-started" && (e as { chatId?: string }).chatId === chat.id) compactingAtClaim = compactionInFlight(chat.id);
+		});
+		try {
+			const turn = drainTurn(post(chat.id, { type: "text", text: "go on" }), agentFactory(engine));
+			await inGate;
+			chatStore.getChat = getChat;
+			// The previous turn's settle kick, landing while this request is in its gate.
+			kickCompaction(() => deps, chat.id);
+			assert.equal(compactionInFlight(chat.id), true);
+			setTimeout(release, 50);
+			await turn;
+			assert.equal(compactingAtClaim, false, "the turn claims only once no compaction is in flight");
+		} finally {
+			chatStore.getChat = getChat;
+			off();
+			release();
+		}
+	});
+
+	it("an agent that fails to build releases the turn claim", async () => {
+		const chat = createConfiguredChat("Test: build failure");
+		createdChats.push(chat.id);
+		const changed: string[] = [];
+		const off = subscribe((e) => {
+			if (e.type === "record-changed") changed.push((e as { chatId?: string }).chatId ?? "");
+		});
+		let res: Response;
+		try {
+			res = await handleChatRequest(post(chat.id, { type: "text", text: "hello" }), () => {
+				throw new Error("agent construction failed");
+			});
+		} finally {
+			off();
+		}
+		assert.equal(res.status, 500);
+		assert.equal(isTurnRunning(chat.id), false, "the chat is not left in flight");
+		assert.equal(chatStore.getChat(chat.id)!.messages.length, 1, "the input was saved before the failure");
+		assert.ok(changed.includes(chat.id), "open views are told to refetch the saved input");
 	});
 });
 

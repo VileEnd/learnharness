@@ -15,6 +15,7 @@
  */
 
 import type { GraphStore } from "../core/ports.ts";
+import { registryKey } from "../core/tenant-context.ts";
 import { canonicalizeAndStoreTopics, canonicalTopics, knownTopics } from "../core/topics.ts";
 
 /** Nodes per cheap-model call. A node is name + statement (~40 tokens), so a chunk
@@ -62,7 +63,9 @@ export interface TopicBackfill {
 }
 
 export function createTopicBackfill(deps: TopicBackfillDeps): TopicBackfill {
-	let current: { pending: number; completion: Promise<BackfillResult> } | null = null;
+	// One process serves every user: the running pass is per tenant (registryKey),
+	// so one user's pass never answers, or blocks, another's.
+	const running = new Map<string, { pending: number; completion: Promise<BackfillResult> }>();
 
 	function untagged() {
 		const tagged = new Set(deps.graph.readTopics().map((r) => r.nodeId));
@@ -110,16 +113,18 @@ export function createTopicBackfill(deps: TopicBackfillDeps): TopicBackfill {
 
 	return {
 		start() {
+			const key = registryKey("topic-backfill");
+			const current = running.get(key);
 			if (current) return { pending: current.pending, running: true, completion: current.completion };
 			const nodes = untagged();
 			if (nodes.length === 0) return { pending: 0, running: false };
 			const withRow = deps.activityRow ?? ((_title, fn) => fn(() => {}, new AbortController().signal));
 			const completion = withRow(`Tagging topics · 0/${nodes.length}`, (setTitle, signal) => run(nodes, setTitle, signal)).finally(
 				() => {
-					current = null;
+					running.delete(key);
 				},
 			);
-			current = { pending: nodes.length, completion };
+			running.set(key, { pending: nodes.length, completion });
 			return { pending: nodes.length, running: false, completion };
 		},
 	};

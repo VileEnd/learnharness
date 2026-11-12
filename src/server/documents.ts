@@ -661,8 +661,10 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 					};
 				}
 				await new Promise<void>((resolve, reject) => {
-					const t = setTimeout(resolve, pollMs);
-					controller.signal.addEventListener("abort", () => { clearTimeout(t); reject(controller.signal.reason); }, { once: true });
+					// The listener goes when the wait ends, or a long scan stacks one per poll.
+					const onAbort = () => { clearTimeout(t); reject(controller.signal.reason); };
+					const t = setTimeout(() => { controller.signal.removeEventListener("abort", onAbort); resolve(); }, pollMs);
+					controller.signal.addEventListener("abort", onAbort, { once: true });
 				});
 			}
 		} finally {
@@ -735,6 +737,10 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			// The model was slow: the document may be gone (deleted) or renamed meanwhile.
 			const current = store.getMeta(id);
 			if (!current) return { ok: false, outcome: "failed", error: "No such document" };
+			// Or replaced/rebuilt: a description of the old text must not land on the new one.
+			if (store.readMarkdown(id) !== markdown) {
+				return { ok: false, outcome: "failed", error: "The document changed while it was being described, so nothing was saved." };
+			}
 			const next: DocumentMeta = {
 				...current,
 				title: current.titleSet ? current.title : described.title,

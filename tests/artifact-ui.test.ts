@@ -83,6 +83,33 @@ describe("POST /api/chats/:id/artifact-ui", () => {
 		saved = getChat(chat.id)!.messages as [{ details: { ui?: { inverted?: boolean } } }];
 		assert.equal(saved[0]!.details.ui?.inverted, false, "and toggles back off");
 	});
+
+	it("keeps a message written while the request body was still arriving", async () => {
+		const chat = createChat("Artifact UI slow body");
+		const steer = buildSubagentSteerFn(
+			{ id: "js", kind: "demo", toolCallId: "cs" },
+			{ title: "T", html: "<p>x</p>", tested: true },
+		);
+		saveMessages(chat.id, [steer as never]);
+		let release!: () => void;
+		const body = new ReadableStream<Uint8Array>({
+			async start(controller) {
+				await new Promise<void>((resolve) => (release = resolve));
+				controller.enqueue(new TextEncoder().encode(JSON.stringify({ input: { messageId: steer.id, inverted: true } })));
+				controller.close();
+			},
+		});
+		const pending = POST(new Request("http://x/api", { method: "POST", body, duplex: "half" } as RequestInit), {
+			params: Promise.resolve({ id: chat.id }),
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		saveMessages(chat.id, [steer as never, { id: "late", role: "user", content: "meanwhile" }]);
+		release();
+		assert.equal((await pending).status, 200);
+		const saved = getChat(chat.id)!.messages as { id: string; details?: { ui?: { inverted?: boolean } } }[];
+		assert.deepEqual(saved.map((m) => m.id), [steer.id, "late"], "the concurrent write is kept");
+		assert.equal(saved[0]!.details?.ui?.inverted, true);
+	});
 });
 
 after(() => {

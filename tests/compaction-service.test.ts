@@ -302,4 +302,70 @@ describe("the compaction service", () => {
 		assert.ok(activeCompactionOf(chatStore.getChat(chatId)!.messages));
 		assert.equal(summarizeCalls, before + 1);
 	});
+
+	it("a message written during the summary call survives, with the marker after it", async () => {
+		const chatId = overThresholdChat("compact: concurrent append");
+		const deps = depsOf(chatId, 40_000);
+		const late = newUserMessage("written while the summary ran");
+		await ensureCompacted(
+			{
+				...deps,
+				summarize: async (prompt, engine) => {
+					const record = chatStore.getChat(chatId)!;
+					chatStore.saveMessages(chatId, [...record.messages, late]);
+					return deps.summarize!(prompt, engine);
+				},
+			},
+			chatId,
+		);
+		const messages = chatStore.getChat(chatId)!.messages;
+		assert.ok(messages.some((m) => m.id === late.id), "the concurrent write is kept");
+		assert.ok(activeCompactionOf(messages), "the marker landed");
+		assert.equal(messages.at(-1)!.id, activeCompactionOf(messages)!.id, "the marker follows the concurrent write");
+	});
+
+	it("a chat deleted during the summary call ends the compaction quietly", async () => {
+		const chatId = overThresholdChat("compact: deleted meanwhile");
+		const deps = depsOf(chatId, 40_000);
+		const errors: unknown[][] = [];
+		const orig = console.error;
+		console.error = (...args: unknown[]) => void errors.push(args);
+		try {
+			await ensureCompacted(
+				{
+					...deps,
+					summarize: async (prompt, engine) => {
+						chatStore.deleteChat(chatId);
+						return deps.summarize!(prompt, engine);
+					},
+				},
+				chatId,
+			);
+		} finally {
+			console.error = orig;
+		}
+		assert.deepEqual(errors, [], "a deleted chat is not a failed compaction");
+		assert.equal(chatStore.getChat(chatId), null);
+	});
+
+	it("a summarised message changed during the summary call → no marker, no usage", async () => {
+		const chatId = overThresholdChat("compact: concurrent edit");
+		const deps = depsOf(chatId, 40_000);
+		const edited = newUserMessage("rewritten while the summary ran");
+		await ensureCompacted(
+			{
+				...deps,
+				summarize: async (prompt, engine) => {
+					const [, ...rest] = chatStore.getChat(chatId)!.messages;
+					chatStore.saveMessages(chatId, [edited, ...rest]);
+					return deps.summarize!(prompt, engine);
+				},
+			},
+			chatId,
+		);
+		const record = chatStore.getChat(chatId)!;
+		assert.equal(record.messages[0]!.id, edited.id, "the concurrent write is kept");
+		assert.equal(activeCompactionOf(record.messages), null, "a summary of text that changed is not checkpointed");
+		assert.equal((record.turns ?? []).length, 0, "no usage for an abandoned compaction");
+	});
 });

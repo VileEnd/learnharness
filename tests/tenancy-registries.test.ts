@@ -111,3 +111,30 @@ test("recoverStaleJobs throttles per tenant", () => {
 		chatStore.listChats = orig;
 	}
 });
+
+test("topic backfill state is per tenant", async () => {
+	const { createTopicBackfill } = await import("../src/server/topic-backfill.ts");
+	const node = (id: string) => ({ id, name: id, statement: `${id} statement`, aliases: [], createdAt: "2026-10-01T00:00:00.000Z", provenance: [{ chatId: "chat_x", messageId: "" }] });
+	runAsTenant(A, () => graphStore.appendNode(node("a1")));
+	runAsTenant(B, () => {
+		graphStore.appendNode(node("b1"));
+		graphStore.appendNode(node("b2"));
+	});
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	const backfill = createTopicBackfill({
+		graph: graphStore,
+		tagOpen: async () => {
+			await gate;
+			return [];
+		},
+		applyTopicRows: async () => 0,
+	});
+	const a = runAsTenant(A, () => backfill.start());
+	assert.deepEqual([a.pending, a.running], [1, false]);
+	const b = runAsTenant(B, () => backfill.start());
+	assert.deepEqual([b.pending, b.running], [2, false], "B starts its own pass, not A's");
+	assert.equal(runAsTenant(A, () => backfill.start()).running, true, "A's second call joins A's pass");
+	release();
+	await Promise.all([a.completion, b.completion]);
+});

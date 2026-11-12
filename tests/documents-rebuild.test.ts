@@ -75,6 +75,7 @@ function harness(over: {
 	oldConcepts?: number;
 	/** Concepts each default extraction finds. */
 	finds?: number;
+	describe?: () => Promise<{ title: string; summary: string; topics: string[] }>;
 } = {}) {
 	const extracted: NotesImportInput[] = [];
 	const retired: [string, string][] = [];
@@ -92,7 +93,7 @@ function harness(over: {
 			for (let i = 0; i < finds; i++) graph.appendNode(node(`new_${i}`, input.id!));
 			return { nodes: finds, chains: 0 };
 		},
-		describe: async () => ({ title: "Described", summary: "s", topics: ["OS"] }),
+		describe: over.describe ?? (async () => ({ title: "Described", summary: "s", topics: ["OS"] })),
 		ocr: createOcrClient({ baseUrl: () => undefined }),
 		notify: () => {},
 		retireSource: (oldId, newId) => {
@@ -532,6 +533,24 @@ describe("deleting a document", () => {
 		assert.equal(documentStore.getMeta(OLD_ID), null);
 		assert.equal(stores.graphStore.readNodes().some((n) => n.id === "route_only"), false);
 		assert.equal((await del()).status, 404);
+	});
+});
+
+describe("re-describing a document", () => {
+	it("saves nothing over text that was replaced during its model call", async () => {
+		seedOldImport();
+		const replaced = nw("v2");
+		const h = harness({
+			describe: async () => {
+				// A Replace lands while the model describes the old text.
+				documentStore.save({ ...documentStore.getMeta(OLD_ID)!, ...fingerprint(replaced) }, replaced);
+				return { title: "Described", summary: "about the old text", topics: ["OS"] };
+			},
+		});
+		const done = await h.service.redescribe(OLD_ID);
+		assert.equal(done.ok, false);
+		assert.equal(documentStore.readMarkdown(OLD_ID), replaced, "the replaced text stays");
+		assert.equal(documentStore.getMeta(OLD_ID)!.summary, "s", "no description of the old text over the new one");
 	});
 });
 
