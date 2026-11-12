@@ -88,6 +88,24 @@ describe("v1 → v2 (themes): v1's colours move into Default's own overrides", (
 		assert.equal(vars["--lh-ink-strong"], "#ff8800");
 	});
 
+	it("the committed v1 fixture (written by the v1 store) migrates: colours into Default only, the rest kept", () => {
+		fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+		fs.copyFileSync(new URL("./fixtures/settings-v1/settings.json", import.meta.url), settingsFile());
+		const out = readSettings();
+		assert.ok(out);
+		assert.equal(out.version, 2);
+		assert.deepEqual(out.appearance, {
+			fontFamily: "Georgia",
+			proseFontSize: 18,
+			sessionNameSerif: false,
+			mdRendering: { headingWeight: 700 },
+			colors: { default: { background: "#101820", surface: "#182028", border: "#3f474f", bold: "#ff8800", italic: "#66aaff" } },
+		});
+		assert.deepEqual(out.agent, { tools: { explain: false }, quizMechanic: "mixed", turnSpendCapUsd: 1 });
+		assert.deepEqual(out.compaction, { thresholdTokens: 50000 });
+		assert.deepEqual(themeVars(IVORY_THEME, out.appearance), themeVars(IVORY_THEME), "Ivory is untouched");
+	});
+
 	it("Ivory starts clean: nothing migrated reaches the light theme", () => {
 		writeRaw({ version: 1, appearance: { background: "#101820", mdRendering: { boldColor: "#ff8800" } } });
 		const out = readSettings();
