@@ -422,8 +422,9 @@ describe("the compaction service", () => {
 		const env: Record<string, string | undefined> = process.env;
 		const originalNodeEnv = env.NODE_ENV;
 		env.NODE_ENV = "development";
+		const errors: unknown[][] = [];
 		const orig = console.error;
-		console.error = () => {};
+		console.error = (...args: unknown[]) => void errors.push(args);
 		try {
 			await ensureCompacted(deps, chatId);
 		} finally {
@@ -434,6 +435,54 @@ describe("the compaction service", () => {
 		assert.equal(seen?.aborted, true, "the provider request saw the abort");
 		assert.equal(compactionInFlight(chatId), false);
 		assert.equal(JSON.stringify(chatStore.getChat(chatId)), before, "nothing is checkpointed");
+		assert.equal(errors.length, 1, "exactly the one expected error");
+		assert.match(String(errors[0]![0]), /compaction failed/);
+		assert.match(String(errors[0]![1]), /did not finish within 20 ms/);
+	});
+
+	it("a summary that returns after its bound writes nothing, and a second compaction runs beside it", async () => {
+		const chatId = overThresholdChat("compact: late summary");
+		const before = JSON.stringify(chatStore.getChat(chatId));
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		let late: Promise<unknown> | undefined;
+		let lateSawAbort: boolean | undefined;
+		const base = depsOf(chatId, 40_000);
+		const deps: CompactionDeps = {
+			...base,
+			summaryTimeoutMs: 20,
+			summarize: (prompt, engine, signal) => {
+				if (late) return base.summarize!(prompt, engine);
+				late = (async () => {
+					await gate; // ignores its signal
+					lateSawAbort = signal?.aborted;
+					return { summary: "LATE SUMMARY", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+				})();
+				return late as ReturnType<NonNullable<CompactionDeps["summarize"]>>;
+			},
+		};
+		const errors: unknown[][] = [];
+		const orig = console.error;
+		console.error = (...args: unknown[]) => void errors.push(args);
+		try {
+			await ensureCompacted(deps, chatId); // the first call times out
+			assert.equal(compactionInFlight(chatId), false);
+			assert.equal(JSON.stringify(chatStore.getChat(chatId)), before, "timed out: untouched");
+			// The first call is still pending: a second compaction starts and commits beside it.
+			await ensureCompacted(deps, chatId);
+			const afterSecond = chatStore.getChat(chatId)!;
+			assert.match(activeCompactionOf(afterSecond.messages)!.content, /SUMMARY #/);
+			release();
+			await late;
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.equal(lateSawAbort, true, "the late call had been aborted");
+			assert.deepEqual(chatStore.getChat(chatId), afterSecond, "the late result is dropped");
+			assert.equal(afterSecond.messages.filter((m) => m.role === "custom" && m.customType === "compaction").length, 1);
+		} finally {
+			console.error = orig;
+		}
+		assert.equal(errors.length, 1, "only the timeout is logged");
+		assert.match(String(errors[0]![1]), /did not finish within 20 ms/);
 	});
 });
 
