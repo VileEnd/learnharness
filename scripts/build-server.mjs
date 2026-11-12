@@ -74,10 +74,12 @@ for (const extra of ["dist"]) {
 }
 
 // 3) Sanity: the runtime-read prompt assets must be present (the teacher
-//    agent reads them from disk at request time).
+//    agent reads them from disk at request time, and so does GET /sw.js).
 for (const asset of [
 	path.join("src", "agent", "system-prompt.md"),
 	path.join("src", "agent", "prompts", "teacher", "20-teaching.md"),
+	// GET /sw.js reads the worker source at request time.
+	path.join("src", "server", "pwa", "sw.js"),
 ]) {
 	if (!exists(path.join(STANDALONE, asset))) {
 		console.error(`[build-server] prompt asset missing from the trace: ${asset}`);

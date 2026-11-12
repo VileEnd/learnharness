@@ -20,6 +20,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { okJson } from "@/components/ok-json";
 import { FACTORY_SETTINGS, type AppearanceSettings } from "@/src/core";
 
 /** The resolved, fully-concrete appearance view (delta + factory merged). */
@@ -159,8 +160,8 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
 	useEffect(() => {
 		let alive = true;
 		fetch("/api/settings")
-			.then((r) => r.json())
-			.then((body: { settings?: Record<string, unknown> }) => {
+			.then((r) => okJson<{ settings?: Record<string, unknown> }>(r))
+			.then((body) => {
 				if (!alive) return;
 				// The record arrives sanitized server-side; the appearance
 				// slice is unknown-shaped here, so it goes through the same

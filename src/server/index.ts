@@ -79,3 +79,4 @@ export { claudeCodeEnabled, conversationCacheRetention } from "./policy.ts";
 export { cacheRetentionAdminPut, cacheRetentionAdminView } from "./cache-retention.ts";
 // The admin-managed custom endpoint (upstream port 6): the route handlers only; the key-bearing runtime view stays server-internal.
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
+export * from "./pwa.ts";

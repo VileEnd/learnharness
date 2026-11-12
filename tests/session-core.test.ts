@@ -860,6 +860,135 @@ describe("truncated stream recovery", () => {
 	});
 });
 
+describe("lost-stream recovery (recoverLostStream and the bounded retry)", () => {
+	const truncated = () => sseResponse({ type: "message_start", message: { role: "assistant", content: [{ type: "text", text: "partial" }] } });
+	const completed = () => sseResponse({ type: "message_start", message: { role: "assistant", content: [{ type: "text", text: "complete" }] } }, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "complete" }], stopReason: "stop" } }, "[DONE]");
+
+	/** A manual timer: tests fire the pending retry themselves. */
+	function manualTimer() {
+		const jobs: { fn: () => void; ms: number; cancelled: boolean; fired: boolean }[] = [];
+		return {
+			jobs,
+			schedule: (fn: () => void, ms: number) => {
+				const job = { fn, ms, cancelled: false, fired: false };
+				jobs.push(job);
+				return () => { job.cancelled = true; };
+			},
+			pending: () => jobs.filter((j) => !j.cancelled && !j.fired),
+			async fire() {
+				const job = jobs.find((j) => !j.cancelled && !j.fired);
+				assert.ok(job, "a retry is pending");
+				job.fired = true;
+				job.fn();
+				await new Promise((r) => setTimeout(r, 0)); // let the reattach settle
+			},
+		};
+	}
+
+	/** A session whose network goes down right after the first stream truncates. */
+	function dropsMidStream() {
+		const timer = manualTimer();
+		const net = { down: false };
+		let streams = 0;
+		const base = dietFetch({ stream: () => { if (++streams === 1) { net.down = true; return truncated(); } return completed(); } });
+		/** The banner text at every state change (undefined = no banner). */
+		const banners: (string | undefined)[] = [];
+		const m = model({
+			schedule: timer.schedule,
+			recoveryBackoffMs: [10, 20],
+			onChange: () => void banners.push(m.getState().error?.message),
+			fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+				if (net.down && String(input) !== "/api/chat") throw new TypeError("synthetic offline");
+				return base(input, init);
+			}) as typeof globalThis.fetch,
+		});
+		return { m, net, timer, banners };
+	}
+
+	it("a mid-stream drop whose recovery attempt also fails still arms recoverLostStream", async () => {
+		const { m, net } = dropsMidStream();
+		await m.send({ type: "text", text: "go" });
+		assert.equal(m.status, "error");
+		assert.equal(m.getState().error?.message, "The connection dropped before the turn completed.");
+		net.down = false; // back online; the turn finished server-side
+		m.recoverLostStream();
+		await new Promise((r) => setTimeout(r, 0));
+		assert.equal(m.status, "ready");
+		assert.equal(m.getState().error, null);
+		assert.equal(m.getState().messages.at(-1)!.parts.at(-1)!.text, "complete");
+	});
+
+	it("retries the reattach on a bounded backoff and gives up after the last step", async () => {
+		const { m, timer } = dropsMidStream();
+		await m.send({ type: "text", text: "go" });
+		assert.deepEqual(timer.pending().map((j) => j.ms), [10]);
+		await timer.fire(); // still offline: the next step arms
+		assert.equal(m.status, "error");
+		assert.deepEqual(timer.pending().map((j) => j.ms), [20]);
+		await timer.fire(); // still offline: the schedule is exhausted
+		assert.equal(m.status, "error");
+		assert.equal(timer.pending().length, 0, "bounded: no further retry");
+	});
+
+	it("failed automatic retries keep the approved banner and never show the browser's fetch text or flicker", async () => {
+		const { m, timer, banners } = dropsMidStream();
+		await m.send({ type: "text", text: "go" });
+		const dropped = "The connection dropped before the turn completed.";
+		assert.equal(m.getState().error?.message, dropped);
+		banners.length = 0;
+		await timer.fire();
+		await timer.fire();
+		assert.equal(m.status, "error");
+		assert.equal(m.getState().error?.message, dropped);
+		assert.ok(banners.length > 0);
+		assert.ok(banners.every((b) => b === dropped), `banner was ${JSON.stringify([...new Set(banners)])}`);
+	});
+
+	it("a retry that reconnects reattaches, clears the error and stops retrying", async () => {
+		const { m, net, timer } = dropsMidStream();
+		await m.send({ type: "text", text: "go" });
+		net.down = false;
+		await timer.fire();
+		assert.equal(m.status, "ready");
+		assert.equal(m.getState().error, null);
+		assert.equal(timer.pending().length, 0);
+	});
+
+	it("a new send and stop() both cancel the pending retry", async () => {
+		const a = dropsMidStream();
+		await a.m.send({ type: "text", text: "go" });
+		assert.equal(a.timer.pending().length, 1);
+		a.net.down = false;
+		await a.m.send({ type: "text", text: "again" });
+		assert.equal(a.timer.pending().length, 0, "send cancels it");
+
+		const b = dropsMidStream();
+		await b.m.send({ type: "text", text: "go" });
+		assert.equal(b.timer.pending().length, 1);
+		b.m.stop();
+		assert.equal(b.timer.pending().length, 0, "teardown cancels it");
+	});
+
+	it("a send whose POST never landed is NOT retried or reattached", async () => {
+		const calls: string[] = [];
+		const timer = manualTimer();
+		const m = model({
+			schedule: timer.schedule,
+			fetch: (async (input: RequestInfo | URL) => {
+				calls.push(String(input));
+				throw new TypeError("synthetic offline");
+			}) as typeof globalThis.fetch,
+		});
+		await m.send({ type: "text", text: "never delivered" });
+		assert.equal(m.status, "error");
+		m.recoverLostStream();
+		await new Promise((r) => setTimeout(r, 0));
+		assert.equal(m.status, "error", "the unsent message is not silently dropped");
+		assert.deepEqual(calls, ["/api/chat"], "no record or stream fetch");
+		assert.equal(timer.jobs.length, 0, "no retry armed");
+	});
+});
+
 describe("automatic continuation after recovery failure", () => {
 	const question = { ...assistantMsg("question", ""), content: [{ type: "toolCall", id: "q1", name: "quiz", arguments: { question: "Q?" } }] } as LhMessage;
 	const answer = buildAnswer({ id: "q1", kind: "quiz", question: "Q?", mode: "single-select", options: [], createdAt: "fixture" }, { dontKnow: true });

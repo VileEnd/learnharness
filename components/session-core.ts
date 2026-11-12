@@ -52,6 +52,21 @@ export interface SessionModelDeps {
 	/** Injectable retry timing (tests). */
 	pollMs?: number;
 	waitMaxMs?: number;
+	/** Injectable timer for the lost-stream retry: runs `fn` after `ms` and
+	 *  returns its cancel. Defaults to setTimeout/clearTimeout. */
+	schedule?: (fn: () => void, ms: number) => () => void;
+	/** Waits before each automatic reattach attempt while the stream is lost;
+	 *  its length is the retry bound. */
+	recoveryBackoffMs?: readonly number[];
+}
+
+/** Waits before each automatic reattach of a lost stream (bounded). */
+export const STREAM_RECOVERY_BACKOFF_MS: readonly number[] = [2_000, 5_000, 15_000, 30_000];
+
+function defaultSchedule(fn: () => void, ms: number): () => void {
+	const t = setTimeout(fn, ms);
+	(t as { unref?: () => void }).unref?.(); // Node: never hold a process open
+	return () => clearTimeout(t);
 }
 
 /** A local optimistic id (never a server stamp — absorption and the
@@ -252,6 +267,8 @@ export class SessionModel {
 	private steerQueueValue: SteerQueueItem[] = [];
 	private readonly pollMs: number;
 	private readonly waitMaxMs: number;
+	private readonly schedule: (fn: () => void, ms: number) => () => void;
+	private readonly recoveryBackoffMs: readonly number[];
 	private onReattachSettled?: () => void;
 	/** The hook's re-render trigger (set by the adapter). */
 	onChange?: () => void;
@@ -300,6 +317,8 @@ export class SessionModel {
 		this.fetch = opts.fetch ?? ((...args) => globalThis.fetch(...args));
 		this.pollMs = opts.pollMs ?? TURN_POLL_MS;
 		this.waitMaxMs = opts.waitMaxMs ?? TURN_WAIT_MAX_MS;
+		this.schedule = opts.schedule ?? defaultSchedule;
+		this.recoveryBackoffMs = opts.recoveryBackoffMs ?? STREAM_RECOVERY_BACKOFF_MS;
 		this.onChange = opts.onChange;
 		this.canvasCapable = opts.canvasCapable ?? (() => false);
 		this.onReattachSettled = opts.onReattachSettled;
@@ -350,10 +369,19 @@ export class SessionModel {
 		if (status === "submitted") this.liveFailureId = null;
 		this.statusValue = status;
 		this.readyRef = status === "ready";
+		if (status === "ready" || status === "streaming") {
+			this.recoveryAttempts = 0;
+			if (this.bannerHeld) {
+				this.bannerHeld = false;
+				this.errorValue = null;
+				this.streamLost = false;
+			}
+		}
 		this.onChange?.();
 	}
 
 	private setError(message: string | null, plain = false): void {
+		this.bannerHeld = false;
 		this.errorValue = message === null ? null : plain ? { message, plain } : { message };
 		if (message === null) this.streamLost = false;
 		if (message !== null) this.automaticContinuationBlocked = true;
@@ -364,15 +392,50 @@ export class SessionModel {
 	 *  app, a Wi-Fi hop) — the turn itself runs on server-side. */
 	private streamLost = false;
 
+	/** The pending automatic reattach (cancels it), and how many have run. */
+	private cancelRecoveryRetry: (() => void) | null = null;
+	private recoveryAttempts = 0;
+
+	private clearRecoveryRetry(): void {
+		this.cancelRecoveryRetry?.();
+		this.cancelRecoveryRetry = null;
+	}
+
+	/** While the stream is lost, reattach on a bounded backoff instead of
+	 *  waiting for one browser event. Each failed attempt re-arms the next. */
+	private armRecoveryRetry(): void {
+		this.clearRecoveryRetry();
+		const wait = this.recoveryBackoffMs[this.recoveryAttempts];
+		if (wait === undefined) return;
+		this.cancelRecoveryRetry = this.schedule(() => {
+			this.cancelRecoveryRetry = null;
+			this.recoveryAttempts++;
+			this.reattachLostStream();
+		}, wait);
+	}
+
+	/** The approved banner stays up while a reattach is attempted (cleared
+	 *  once the stream is back), so a failed attempt never swaps it for the
+	 *  browser's own fetch text and the banner does not flicker per attempt. */
+	private bannerHeld = false;
+
+	private reattachLostStream(): void {
+		if (this.statusValue !== "error" || !this.streamLost) return;
+		this.bannerHeld = true;
+		// allowRecovery=false: transport failures map to STREAM_DROPPED.
+		void this.resumeStream(true, false);
+	}
+
 	/** RESUME (installed app on a phone, 2026-10-25): back in the foreground
 	 *  or online again after the stream was lost — re-attach through the
 	 *  normal reattach path instead of leaving the error banner up. Only the
 	 *  stream phase qualifies: a send whose POST never landed is NOT retried
-	 *  here (the refetch would silently drop the unsent message). */
+	 *  here (the refetch would silently drop the unsent message). A browser
+	 *  event restarts the bounded automatic retry from its first step. */
 	recoverLostStream(): void {
-		if (this.statusValue !== "error" || !this.streamLost) return;
-		this.setError(null);
-		void this.resumeStream(true);
+		this.clearRecoveryRetry();
+		this.recoveryAttempts = 0;
+		this.reattachLostStream();
 	}
 
 	/** The 409 identity-retry fetch (the Wave B contract): the event was
@@ -602,6 +665,7 @@ export class SessionModel {
 	 * through the SAME consume path.
 	 */
 	async resumeStream(refetchRecordFirst = true, allowRecovery = true): Promise<void> {
+		this.clearRecoveryRetry();
 		this.consumeAbort?.abort();
 		const controller = new AbortController();
 		this.consumeAbort = controller;
@@ -679,9 +743,12 @@ export class SessionModel {
 				this.tail = this.tail.filter(m => !this.unconfirmedAnswers.has(m.id));
 				this.unconfirmedAnswers.clear();
 			});
-			this.streamLost = err instanceof TypeError;
+			// A StreamReadError is a transport loss too (a failed recovery
+			// attempt wraps its fetch failure in one), so it arms recovery.
+			this.streamLost = err instanceof TypeError || err instanceof StreamReadError;
 			this.setError(!allowRecovery && err instanceof StreamReadError ? STREAM_DROPPED : (err as Error).message);
 			this.setStatus("error");
+			if (this.streamLost) this.armRecoveryRetry();
 		}
 	}
 
@@ -700,6 +767,8 @@ export class SessionModel {
 		if (input.type === "answer" && questionKey !== undefined &&
 			(subject?.key !== questionKey || subject.toolCallId !== input.toolCallId)) return false;
 		const expectedKey = questionKey ?? (input.type === "answer" && subject?.toolCallId === input.toolCallId ? subject.key : undefined);
+		this.clearRecoveryRetry();
+		this.recoveryAttempts = 0;
 		this.consumeAbort?.abort();
 		const controller = new AbortController();
 		this.consumeAbort = controller;
@@ -985,6 +1054,7 @@ export class SessionModel {
 	/** Local detach: cancel the consume, keep the partial tail. The page's
 	 *  settle watch adopts the record when the server turn finishes. */
 	stop(): void {
+		this.clearRecoveryRetry();
 		this.consumeAbort?.abort();
 		this.consumeAbort = null;
 		this.streamingIds = new Set();

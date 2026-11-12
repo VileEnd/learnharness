@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
+import { okJson } from "@/components/ok-json";
 import { Composer } from "@/components/composer";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
@@ -281,7 +282,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 			return;
 		}
 		void fetch("/api/graph")
-			.then((r) => r.json() as Promise<GraphSnapshot>)
+			.then((r) => okJson<GraphSnapshot>(r))
 			.then((snap) => {
 				setSnapshot(snap);
 				setPickerOpen(true);

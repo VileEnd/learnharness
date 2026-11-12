@@ -2,6 +2,7 @@
 
 import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChatSession } from "@/components/session";
+import { okJson } from "@/components/ok-json";
 import { visibleQueuedSteers } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -22,6 +23,7 @@ import { Separator } from "@/components/ui/separator";
 import { AnsweredCard } from "@/components/answered-card";
 import { artifactRenderers } from "@/components/artifacts";
 import { SubagentSteerCard } from "@/components/artifacts/steer-card";
+import { PartBoundary } from "@/components/part-boundary";
 import { ChatSessionComposer } from "@/components/composer";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
@@ -688,7 +690,7 @@ export function Chat({
 	useSettingsSaved((section) => {
 		if (section !== "models") return;
 		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings?: { models?: ModelsSettings } | null; configured?: unknown } | null>)
+			.then((r) => okJson<{ settings?: { models?: ModelsSettings } | null; configured?: unknown } | null>(r))
 			// The server's `configured` wins when present (a restricted user
 			// needs only their policy's slots); else the record's three slots.
 			.then((body) => setConfigured(typeof body?.configured === "boolean" ? body.configured : slotsConfigured(body?.settings?.models)))
@@ -919,10 +921,12 @@ export function Chat({
 	 * when nothing is active; the two never overlap). */
 	useEnterSubmits(sendNext);
 
-	const syncFromServer = useCallback(async () => {
+	const syncFromServer = useCallback(async (stillWanted?: () => boolean) => {
 		const res = await fetch(`/api/chats/${chatId}`);
 		if (!res.ok) return;
 		const record = (await res.json()) as { messages?: LhMessage[]; turns?: TurnUsage[]; pricing?: SessionPricing; turnError?: string };
+		// The caller's conditions can change while the fetch is in flight.
+		if (stillWanted && !stillWanted()) return;
 		if (Array.isArray(record.turns)) setTurns(record.turns);
 		setPricing(record.pricing);
 		if (!Array.isArray(record.messages)) return;
@@ -1251,7 +1255,18 @@ export function Chat({
 		}, 250);
 	});
 	// Reconnect catch-up: events missed while the channel was down.
-	useServerResync(() => fetchJobsRef.current());
+	useServerResync((reconnect) => {
+		fetchJobsRef.current();
+		// A turn-settled missed while the channel was down leaves an idle (or
+		// errored) chat on a stale record: catch it up. The window's first open
+		// missed nothing (the page just rendered the record). A running turn
+		// owns its view and settles itself, and a send that starts while the
+		// fetch is in flight must not have its optimistic tail swapped out, so
+		// the status is checked again before the record is adopted. statusRef
+		// is declared further down; the handler only runs after render.
+		const idle = () => statusRef.current === "ready" || statusRef.current === "error";
+		if (reconnect && idle()) void syncFromServer(idle);
+	});
 	useEffect(
 		() => () => {
 			if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
@@ -1552,7 +1567,7 @@ export function Chat({
 									// and centered like the teacher's artifacts (contracts.ts "THE ASYNC
 									// PROTOCOL" §4). Key fallback: legacy transcripts (pre id-hygiene)
 									// can still hold empty ids — the index keeps keys unique for them.
-									<SubagentSteerCard key={m.id || `m-${mi}`} message={m} />
+									<PartBoundary key={m.id || `m-${mi}`} render={() => <SubagentSteerCard message={m} />} />
 								) : m.role === "user" && m.parts.some((p) => p.type === "data-probe-handoff") ? (
 								// The probe→teach handoff wake (custom-message scheme): the
 								// PLANNING DIVIDER IS the seam (owner ruling 2026-09-26 — it
@@ -1572,37 +1587,39 @@ export function Chat({
 								// without this hoist a data-only message read as an
 								// EMPTY bubble (owner report, 2026-10-04).
 								<Fragment key={m.id || `m-${mi}`}>
-									{m.parts.map((part, pi) => {
-										switch (part.type) {
-											case "data-graph-context":
-												return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
-											case "data-compaction":
-												return <CompactionMomentDivider key={pi} data={part.data as CompactionDividerData} />;
-											case "data-compaction-cut":
-												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
-											case "data-practice-thinking":
-												return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} chatId={chatId} />;
-											case "data-work-submission":
-												return <WorkSubmissionCard key={pi} data={part.data as WorkSubmissionData} chatId={chatId} />;
-											case "data-work-dismissed":
-												return <WorkDismissedLine key={pi} />;
-											case "data-practice-next":
-												// The learner's move-on signal (owner round 16): a compact
-												// centered mono-caps line — chrome, the dismissal register.
-												return (
-													<div
-														key={pi}
-														data-testid="practice-next-line"
-														className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
-													>
-														<ArrowRightIcon className="size-3" />
-														Next problem
-													</div>
-												);
-											default:
-												return null;
-										}
-									})}
+									{m.parts.map((part, pi) => (
+										<PartBoundary key={pi} resetKey={part.type} render={() => {
+											switch (part.type) {
+												case "data-graph-context":
+													return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
+												case "data-compaction":
+													return <CompactionMomentDivider key={pi} data={part.data as CompactionDividerData} />;
+												case "data-compaction-cut":
+													return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
+												case "data-practice-thinking":
+													return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} chatId={chatId} />;
+												case "data-work-submission":
+													return <WorkSubmissionCard key={pi} data={part.data as WorkSubmissionData} chatId={chatId} />;
+												case "data-work-dismissed":
+													return <WorkDismissedLine key={pi} />;
+												case "data-practice-next":
+													// The learner's move-on signal (owner round 16): a compact
+													// centered mono-caps line — chrome, the dismissal register.
+													return (
+														<div
+															key={pi}
+															data-testid="practice-next-line"
+															className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
+														>
+															<ArrowRightIcon className="size-3" />
+															Next problem
+														</div>
+													);
+												default:
+													return null;
+											}
+										}} />
+									))}
 								</Fragment>
 							) : (
 									<Fragment key={m.id || `m-${mi}`}>
@@ -1663,104 +1680,106 @@ export function Chat({
 									) : (
 									<Message from="assistant" className="max-w-full">
 									<MessageContent className="w-full">
-											{m.parts.map((part, pi) => {
-												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
-												// The step boundary where teaching begins (round 8): when
-												// the teach flip happens in a LATER step, its PhaseDivider
-												// replaces this boundary's plain hairline.
-												const teachBoundary =
-													m.role === "assistant" &&
-													mi > 0 &&
-													phases[mi] === "teach" &&
-													phases[mi - 1] !== "teach" &&
-													teachStepIndex(m.parts) === pi;
-												// A tool call that errored BACK TO THE AGENT (validation
-												// failure, malformed args) is invisible work — the agent
-												// reads the error and retries. Owner ruling 2026-09-26:
-												// surface the retry loop as one quiet line, any tool,
-												// instead of silence (question tools used to render null,
-												// so a flailing quiz loop read as a stall). Aborts are
-												// terminal — nothing retries — so they stay silent.
-												if (
-													part.state === "output-error" &&
-													part.type.startsWith("tool-") &&
-													part.errorText !== "Operation aborted"
-												) {
-													return (
-														<SystemLine key={`retry-${pi}`} testId="tool-retry">
-															Retrying…
-														</SystemLine>
-													);
-												}
-												switch (part.type) {
-													case "failed-attempt":
-														return <FailedAttempt key={part.id || pi} parts={(part.parts as LhViewPartLike[] | undefined) ?? []} />;
-													case "text": {
-														const sourceId = textPartMessageId(part.id);
-														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
+											{m.parts.map((part, pi) => (
+												<PartBoundary key={pi} resetKey={`${part.type}:${part.state ?? ""}`} render={() => {
+													const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
+													// The step boundary where teaching begins (round 8): when
+													// the teach flip happens in a LATER step, its PhaseDivider
+													// replaces this boundary's plain hairline.
+													const teachBoundary =
+														m.role === "assistant" &&
+														mi > 0 &&
+														phases[mi] === "teach" &&
+														phases[mi - 1] !== "teach" &&
+														teachStepIndex(m.parts) === pi;
+													// A tool call that errored BACK TO THE AGENT (validation
+													// failure, malformed args) is invisible work — the agent
+													// reads the error and retries. Owner ruling 2026-09-26:
+													// surface the retry loop as one quiet line, any tool,
+													// instead of silence (question tools used to render null,
+													// so a flailing quiz loop read as a stall). Aborts are
+													// terminal — nothing retries — so they stay silent.
+													if (
+														part.state === "output-error" &&
+														part.type.startsWith("tool-") &&
+														part.errorText !== "Operation aborted"
+													) {
 														return (
-															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
-																<MessageResponse>{part.text}</MessageResponse>
-															</div>
+															<SystemLine key={`retry-${pi}`} testId="tool-retry">
+																Retrying…
+															</SystemLine>
 														);
 													}
-													case "reasoning":
-														return (
-															<Reasoning key={pi} isStreaming={status === "streaming" && isLastPart} className="mb-2">
-																<ReasoningTrigger />
-																<ReasoningContent>{part.text ?? ""}</ReasoningContent>
-															</Reasoning>
-														);
-													case "step-start":
-														if (teachBoundary)
-															return <PhaseDivider key={`teach-step-${pi}`} phase="teach" />;
-														return pi > 0 ? <Separator key={pi} className="my-3" /> : null;
-													case "data-plan-block":
-														// The plan in the chat (wave 4): a frozen snapshot
-														// block — rendered as carried, never re-derived.
-														return (
-															<PlanBlock
-																key={pi}
-																data={part.data as PlanBlockData}
-																onOpen={() => setPlanOpen(true)}
-															/>
-														);
-													case "tool-quiz":
-													case "tool-probe":
-													case "tool-ask_user_question":
-													case "tool-explain":
-													case "tool-recall":
-													case "tool-exercise":
-													case "tool-assess": {
-														// Pending/streaming questions live in the dock, not the
-														// transcript; answered ones render as graded records.
-														if (part.state === "output-available") {
+													switch (part.type) {
+														case "failed-attempt":
+															return <FailedAttempt key={part.id || pi} parts={(part.parts as LhViewPartLike[] | undefined) ?? []} />;
+														case "text": {
+															const sourceId = textPartMessageId(part.id);
+															const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
 															return (
-																<AnsweredCard key={pi} answer={part.output as QuestionAnswerData} input={part.input} />
+																<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
+																	<MessageResponse>{part.text}</MessageResponse>
+																</div>
 															);
 														}
-														return null;
-													}
-													default: {
-														// A tool call being WRITTEN (owner, streaming round 2026-10-01):
-														// input-streaming spans the whole execution, and the live card —
-														// spinner + shimmered activity label, the input watchable on expand
-														// — replaces the retired transcript bottom line. On settling, the
-														// registry's card takes over below.
-														if (part.type.startsWith("tool-") && part.state === "input-streaming") {
-															return <LiveToolCard key={pi} part={part as ArtifactPartProps["part"]} />;
+														case "reasoning":
+															return (
+																<Reasoning key={pi} isStreaming={status === "streaming" && isLastPart} className="mb-2">
+																	<ReasoningTrigger />
+																	<ReasoningContent>{part.text ?? ""}</ReasoningContent>
+																</Reasoning>
+															);
+														case "step-start":
+															if (teachBoundary)
+																return <PhaseDivider key={`teach-step-${pi}`} phase="teach" />;
+															return pi > 0 ? <Separator key={pi} className="my-3" /> : null;
+														case "data-plan-block":
+															// The plan in the chat (wave 4): a frozen snapshot
+															// block — rendered as carried, never re-derived.
+															return (
+																<PlanBlock
+																	key={pi}
+																	data={part.data as PlanBlockData}
+																	onOpen={() => setPlanOpen(true)}
+																/>
+															);
+														case "tool-quiz":
+														case "tool-probe":
+														case "tool-ask_user_question":
+														case "tool-explain":
+														case "tool-recall":
+														case "tool-exercise":
+														case "tool-assess": {
+															// Pending/streaming questions live in the dock, not the
+															// transcript; answered ones render as graded records.
+															if (part.state === "output-available") {
+																return (
+																	<AnsweredCard key={pi} answer={part.output as QuestionAnswerData} input={part.input} />
+																);
+															}
+															return null;
 														}
-														// Artifact extension point (contracts.ts): job
-														// parts and future artifacts render via the
-														// registry — add renderers there, not here.
-														if (part.type.startsWith("tool-")) {
-															const Renderer = artifactRenderers[part.type.slice("tool-".length)];
-															if (Renderer) return <Renderer key={pi} part={part as ArtifactPartProps["part"]} />;
+														default: {
+															// A tool call being WRITTEN (owner, streaming round 2026-10-01):
+															// input-streaming spans the whole execution, and the live card —
+															// spinner + shimmered activity label, the input watchable on expand
+															// — replaces the retired transcript bottom line. On settling, the
+															// registry's card takes over below.
+															if (part.type.startsWith("tool-") && part.state === "input-streaming") {
+																return <LiveToolCard key={pi} part={part as ArtifactPartProps["part"]} />;
+															}
+															// Artifact extension point (contracts.ts): job
+															// parts and future artifacts render via the
+															// registry — add renderers there, not here.
+															if (part.type.startsWith("tool-")) {
+																const Renderer = artifactRenderers[part.type.slice("tool-".length)];
+																if (Renderer) return <Renderer key={pi} part={part as ArtifactPartProps["part"]} />;
+															}
+															return null;
 														}
-														return null;
 													}
-												}
-											})}
+												}} />
+											))}
 										</MessageContent>
 									</Message>
 									)}

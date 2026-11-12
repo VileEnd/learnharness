@@ -2,7 +2,7 @@
 
 /**
  * The installed-app runtime (browser-only self-hosting, 2026-10-25):
- * registers the service worker (public/sw.js — offline screen, cached
+ * registers the service worker (src/server/pwa/sw.js, served at /sw.js — offline screen, cached
  * static assets, push notifications) and offers the reload when a new
  * version has been deployed. Production only: in `next dev` a worker would
  * cache the dev server's chunks.

@@ -16,6 +16,7 @@ import { useServerEvent, useServerResync } from "@/components/server-events";
 import { useSettingsDialog } from "@/components/settings/settings-dialog.tsx";
 import { debounced } from "@/components/usage/debounced.ts";
 import { Hint } from "@/components/ui/hint";
+import { okJson } from "@/components/ok-json";
 import { costLabel, formatUsd } from "@/components/usage-format";
 import type { UsageMonthView } from "@/src/core";
 
@@ -38,7 +39,7 @@ export function useUsageMonth(): UsageMonthView | null {
 	const [usage, setUsage] = useState<UsageMonthView | null>(null);
 	const refresh = useCallback(() => {
 		fetch("/api/usage")
-			.then((res) => res.json() as Promise<UsageMonthView>)
+			.then((res) => okJson<UsageMonthView>(res))
 			.then(setUsage)
 			.catch(() => {});
 	}, []);
