@@ -657,6 +657,50 @@ function GraphSettingsControl({
 	);
 }
 
+/** Fetch the derived graph. A non-OK response is a failure, never a snapshot. */
+export async function loadGraphSnapshot(groupBy: string): Promise<GraphSnapshot> {
+	const res = await fetch(`/api/graph?groupBy=${groupBy}`);
+	if (!res.ok) throw new Error(`The graph request failed (${res.status}).`);
+	return (await res.json()) as GraphSnapshot;
+}
+
+/** What the home shows where the canvas would be: loading, failed (retry),
+ *  or truly empty. Exported pure for the SSR pins. */
+export function GraphPlaceholder({ state, onRetry }: { state: "loading" | "failed" | "empty"; onRetry: () => void }) {
+	return (
+		<div className="flex h-full w-full items-center justify-center px-4">
+			<div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
+				<WaypointsIcon className="size-10 opacity-40" strokeWidth={1.25} />
+				<div className="text-lg font-medium text-foreground">Knowledge graph</div>
+				{state === "loading" && (
+					<p role="status" className="max-w-sm text-sm">
+						Loading your graph…
+					</p>
+				)}
+				{state === "failed" && (
+					<>
+						<p role="alert" className="max-w-sm text-sm">
+							The graph could not be loaded.
+						</p>
+						<button
+							type="button"
+							data-testid="graph-retry"
+							onClick={onRetry}
+							className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+						>
+							Try again
+						</button>
+					</>
+				)}
+				{state === "empty" && (
+					// The empty graph keeps the first action clear without zero-valued statistics.
+					<p className="max-w-sm text-sm">Start a session or add documents to build your graph.</p>
+				)}
+			</div>
+		</div>
+	);
+}
+
 /** The top-chrome actions row's body (empty-graph chrome wave, owner
  *  2026-09-25): Import Notes renders ALWAYS (graph enabled) — it's the
  *  one action that works on an empty graph, the entry point itself;
@@ -805,6 +849,9 @@ export function GraphView({
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
+	// The load failed with nothing to show yet (a refetch failure keeps the
+	// snapshot it has). Null snapshot without this is "still loading".
+	const [loadFailed, setLoadFailed] = useState(false);
 	const [selected, setSelected] = useState<Selection | null>(null);
 	const cardRef = useCardPlacement(selected, containerRef);
 	// The latest snapshot for the renderer's click callbacks (they are
@@ -922,12 +969,16 @@ export function GraphView({
 		let cancelled = false;
 		// The grouping rides the request, so a switch applies at once (the
 		// saved copy follows, debounced).
-		fetch(`/api/graph?groupBy=${settings.groupBy}`)
-			.then((res) => res.json() as Promise<GraphSnapshot>)
+		loadGraphSnapshot(settings.groupBy)
 			.then((data) => {
-				if (!cancelled) setSnapshot(data);
+				if (cancelled) return;
+				setSnapshot(data);
+				setLoadFailed(false);
 			})
-			.catch((err) => console.error("[graph] fetch failed:", err));
+			.catch((err) => {
+				console.error("[graph] fetch failed:", err);
+				if (!cancelled) setLoadFailed(true);
+			});
 		return () => {
 			cancelled = true;
 		};
@@ -1297,16 +1348,13 @@ export function GraphView({
 	return (
 		<div className="relative h-full w-full">
 			{isEmpty ? (
-				// The empty graph keeps the first action clear without zero-valued statistics.
-				<div className="flex h-full w-full items-center justify-center px-4">
-					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
-						<WaypointsIcon className="size-10 opacity-40" strokeWidth={1.25} />
-						<div className="text-lg font-medium text-foreground">Knowledge graph</div>
-						<p className="max-w-sm text-sm">
-							Start a session or add documents to build your graph.
-						</p>
-					</div>
-				</div>
+				<GraphPlaceholder
+					state={snapshot !== null ? "empty" : loadFailed ? "failed" : "loading"}
+					onRetry={() => {
+						setLoadFailed(false);
+						setRefreshTick((t) => t + 1);
+					}}
+				/>
 			) : (
 				<div ref={containerRef} className="@container relative h-full w-full">
 					{/* The knowledge key: under the sidebar toggle (top-left), clear of
