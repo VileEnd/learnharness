@@ -34,8 +34,8 @@ docker build -t learnharness:local .
 cd deploy && cp .env.example .env && docker compose up -d --build
 
 # the production VM (home Proxmox VM 104): OpenTofu + NixOS, see docs/self-hosting.md §1
-deploy/proxmox/tofu.sh plan|apply        # needs ~/.config/learnharness/proxmox.env (token + state passphrase)
-nix run github:NixOS/nixpkgs/nixos-26.05#nixos-rebuild -- switch --flake ./deploy/nixos#learnharness --target-host root@learnharness.fritz.box
+deploy/proxmox/tofu.sh plan|apply        # needs ~/.config/learnharness/proxmox.env (token + state passphrase), site.env and site/
+deploy/nixos/rebuild.sh switch --target-host root@learnharness.fritz.box   # needs ~/.config/learnharness/site/site.nix (hostnames, endpoint, root key)
 ssh root@learnharness.fritz.box systemctl restart learnharness-stack   # redeploy the app from main
 ```
 

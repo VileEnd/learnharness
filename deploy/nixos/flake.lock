@@ -18,8 +18,21 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "site": "site"
       }
+    },
+    "site": {
+      "flake": false,
+      "locked": {
+        "path": "./site.example",
+        "type": "path"
+      },
+      "original": {
+        "path": "./site.example",
+        "type": "path"
+      },
+      "parent": []
     }
   },
   "root": "root",

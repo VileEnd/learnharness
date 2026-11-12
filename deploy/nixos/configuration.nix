@@ -25,16 +25,12 @@
 
   # Public names with publicly trusted certificates (Let's Encrypt via the
   # Cloudflare DNS challenge); the A records point at the LAN address
-  # (deploy/proxmox/dns.tf). Nothing is reachable from the internet.
-  services.learnharness = {
-    host = "learnharness.home.moyjak.com";
-    authSite = "auth.home.moyjak.com";
-    authUrl = "https://auth.home.moyjak.com";
-    tls = "cloudflare";
-  };
+  # (deploy/proxmox/dns.tf). Nothing is reachable from the internet. The
+  # names themselves are in the site file (site.example/site.nix).
+  services.learnharness.tls = "cloudflare";
 
   # Remote access from outside: WireGuard on this VM, devices from Settings →
-  # Users, endpoint vpn.moyjak.com:51820 (DDNS). docs/self-hosting.md.
+  # Users, endpoint from the site file, port 51820 (DDNS). docs/self-hosting.md.
   services.learnharness.wireguard.enable = true;
 
   services.openssh = {
@@ -45,9 +41,7 @@
       PermitRootLogin = "prohibit-password";
     };
   };
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiDNkqEwOkoseC8Aqw8PirEL4NsNYMT9xOW7HskpscG vileend"
-  ];
+  # The root authorized key is in the site file.
 
   # The image build (npm ci + next build) and Keycloak share 4 GB of RAM.
   zramSwap.enable = true;

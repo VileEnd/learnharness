@@ -23,7 +23,7 @@
 - **Self-protection.** An admin cannot remove their own admin flag. That request gets `409 {error:"self_demotion"}`.
 - **WireGuard values:**
   - Subnet `10.66.0.0/24`. The server is `10.66.0.1`. Peers get `10.66.0.2`–`10.66.0.254`. The lowest free address is assigned, and an address held by any peer, revoked or not, is never reused.
-  - Port `51820/udp`. Endpoint `vpn.moyjak.com:51820`. `PersistentKeepalive = 25`.
+  - Port `51820/udp`. Endpoint `vpn.example.com:51820`. `PersistentKeepalive = 25`.
 - **Files** live in `<globalDataRoot()>/wireguard/`:
   - `server.json` `{publicKey, endpoint, allowedIps}`, written by the host.
   - `peers.json` `{version:1, peers:[{id, userId, name, publicKey, presharedKey, ip, createdAt, revokedAt?}]}`, written by the app with temp-file-then-rename at mode 0600.
@@ -185,12 +185,12 @@
     - the client `learnharness-admin-api` (confidential, `serviceAccountsEnabled=true`, `standardFlowEnabled=false`, `directAccessGrantsEnabled=false`), with its secret set to `$KC_ADMIN_API_SECRET`;
     - the service account user `service-account-learnharness-admin-api` holding the `realm-management` client roles `view-users`, `query-users`, `query-groups` and `manage-users` (via `add-roles --cclientid realm-management`).
   - Every step is idempotent: a get before each create.
-- Create: `deploy/nixos/wireguard.nix` (imported in `flake.nix` modules). Options: `services.learnharness.wireguard.{enable, endpoint ? "vpn.moyjak.com", port ? 51820, ddnsName ? "vpn.moyjak.com", ddnsZone ? "moyjak.com"}`, enabled in `configuration.nix`.
+- Create: `deploy/nixos/wireguard.nix` (imported in `flake.nix` modules). Options: `services.learnharness.wireguard.{enable, endpoint ? "vpn.example.com", port ? 51820, ddnsName ? "vpn.example.com", ddnsZone ? "example.com"}`, enabled in `configuration.nix`.
   - **Interface:**
     - `networking.wireguard.interfaces.wg0`: `ips = ["10.66.0.1/24"]`, `listenPort = 51820`, `privateKeyFile = "/var/lib/learnharness/wg/private"`, `generatePrivateKeyFile = true`, and no static peers.
     - `networking.firewall.allowedUDPPorts = [ 51820 ]`.
   - **Applier:** `systemd.services.learnharness-wg-apply` (oneshot, root) runs `python3 ${./wg-apply.py}` with the data dir `/var/lib/learnharness/volumes/learnharness/data/global/wireguard` and the wg private key path. `systemd.paths.learnharness-wg-apply` triggers it with `PathChanged=` on `peers.json`. `systemd.timers.learnharness-wg-status` triggers it every minute with `--status-only`.
-  - **DDNS:** `systemd.services.learnharness-ddns` and a timer that runs every 5 minutes. It reads `CLOUDFLARE_API_TOKEN` from `secrets.env`, finds the zone id by name, and upserts an A record `vpn.moyjak.com` (`proxied:false`, ttl 300) to `curl -4 https://api.ipify.org`. It does nothing when the record is unchanged.
+  - **DDNS:** `systemd.services.learnharness-ddns` and a timer that runs every 5 minutes. It reads `CLOUDFLARE_API_TOKEN` from `secrets.env`, finds the zone id by name, and upserts an A record `vpn.example.com` (`proxied:false`, ttl 300) to `curl -4 https://api.ipify.org`. It does nothing when the record is unchanged.
   - **Isolation:** `networking.firewall.extraCommands`, plus matching `extraStopCommands` deletes. All rules are inserted, idempotent, and commented:
     - INPUT from wg0: allow tcp 80/443 only. Insert at the top of `nixos-fw`: `-i wg0 -p tcp -m multiport --dports 80,443 -j nixos-fw-accept`, then `-i wg0 -j nixos-fw-refuse`. The wg0 address 10.66.0.1 must not get SSH.
     - Docker-published ports reached from wg0, in `DOCKER-USER` (create the chain if missing):
@@ -198,9 +198,9 @@
       - `-i wg0 -p tcp -m conntrack --ctorigdstport` not 80/443 → DROP.
     - Egress to the LAN, from the host (OUTPUT) and from containers (DOCKER-USER, `-i docker+ / br-+`):
       - established/related → ACCEPT;
-      - the gateway `192.168.178.1` udp/tcp 53 and udp 123 → ACCEPT;
+      - the gateway `192.0.2.1` udp/tcp 53 and udp 123 → ACCEPT;
       - `-d 192.168.0.0/16`, `-d 10.0.0.0/8` except `10.66.0.0/24`, `-d 172.16.0.0/12` (host OUTPUT only, NOT container-to-container), all with ctstate NEW → REJECT.
-    - Make the LAN gateway an option: `services.learnharness.wireguard.lanGateway ? "192.168.178.1"`.
+    - Make the LAN gateway an option: `services.learnharness.wireguard.lanGateway ? "192.0.2.1"`.
   - **`server.json`:** the applier writes it on every run (0644), with:
     - `publicKey` from `wg pubkey < private`;
     - `endpoint` = `"${endpoint}:${port}"`;
@@ -244,11 +244,11 @@
    - `server.json` exists;
    - `wg show wg0`;
    - the DDNS record resolves.
-4. From the LAN, `curl -sI https://learnharness.home.moyjak.com` returns 302 (login). On the VM, `curl --max-time 3 http://192.168.178.1` fails while `curl https://api.ipify.org` works. Both checks also run from inside the app container.
+4. From the LAN, `curl -sI https://learnharness.home.example.com` returns 302 (login). On the VM, `curl --max-time 3 http://192.0.2.1` fails while `curl https://api.ipify.org` works. Both checks also run from inside the app container.
 5. As admin, use the UI to create a test user and a device, then revoke them.
 6. User steps:
    - the FRITZ!Box port forward;
    - scan the QR on the phone with mobile data;
    - the app loads after login;
-   - `http://192.168.178.1` is unreachable from the phone.
+   - `http://192.0.2.1` is unreachable from the phone.
 7. Tag v0.32.0 and publish the release.

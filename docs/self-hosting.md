@@ -16,11 +16,11 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
 
 | | App | Keycloak |
 |---|---|---|
-| This deployment | `https://learnharness.home.moyjak.com` | `https://auth.home.moyjak.com` |
+| This deployment | `https://learnharness.home.example.com` | `https://auth.home.example.com` |
 
 - **The records:** both names are public DNS records (Cloudflare, **DNS only**) pointing at the VM's **LAN** address. They resolve anywhere but only work at home. OpenTofu manages them in `deploy/proxmox/dns.tf`; the address is the variable `lan_ipv4`.
-- **The router:** it must allow public names that resolve to private addresses. On the FRITZ!Box, go to Heimnetz → Netzwerk → Netzwerkeinstellungen → **DNS-Rebind-Schutz** and add `home.moyjak.com`. The UniFi gateway needs no exception unless you turn on its own rebinding protection.
-- **Hostname settings:** they're NixOS options (`services.learnharness.*` in `deploy/nixos/configuration.nix`), or `deploy/.env` on a manual host.
+- **The router:** it must allow public names that resolve to private addresses. On the FRITZ!Box, go to Heimnetz → Netzwerk → Netzwerkeinstellungen → **DNS-Rebind-Schutz** and add `home.example.com`. The UniFi gateway needs no exception unless you turn on its own rebinding protection.
+- **Hostname settings:** they're NixOS options (`services.learnharness.*` in the site file `~/.config/learnharness/site/site.nix`, see section 1), or `deploy/.env` on a manual host.
 - **Without a domain:** use `CADDY_TLS=internal` with any local names, for example `learnharness.fritz.box` with Keycloak on `:8443`, and trust Caddy's root once per device (section 3).
 
 ## 1. Create the VM (OpenTofu + NixOS)
@@ -30,7 +30,7 @@ The VM is declared in code. `deploy/proxmox/` is OpenTofu, which creates VM 104 
 **One-time setup on the workstation (WSL):**
 - `~/.config/learnharness/proxmox.env` (mode 600, never committed):
   ```bash
-  export PROXMOX_VE_ENDPOINT=https://192.168.178.67:8006/
+  export PROXMOX_VE_ENDPOINT=https://<proxmox-host>:8006/
   export PROXMOX_VE_API_TOKEN=terraform@pve!tofu=<secret>   # pveum user token add terraform@pve tofu --privsep 0 (role PVEAdmin on /)
   export PROXMOX_VE_INSECURE=true
   export TF_VAR_state_passphrase=<random>                   # back this up: it decrypts the committed state
@@ -38,6 +38,17 @@ The VM is declared in code. `deploy/proxmox/` is OpenTofu, which creates VM 104 
 - With `CADDY_TLS=cloudflare`, add the Cloudflare token to the same file as `export CLOUDFLARE_API_TOKEN=…`; OpenTofu uses it for the DNS records. Put it on the VM too, so Caddy can use it. Run this in your own terminal; it prompts without echoing:
   ```bash
   ssh -t root@learnharness.fritz.box 'umask 077; read -rsp "Cloudflare token: " t; echo; sed -i "/^CLOUDFLARE_API_TOKEN=/d" /var/lib/learnharness/secrets.env; echo "CLOUDFLARE_API_TOKEN=$t" >> /var/lib/learnharness/secrets.env'
+  ```
+- `~/.config/learnharness/site/site.nix` (never committed): this deployment's site values as a NixOS module: the hostnames, the WireGuard endpoint, DDNS name and zone, the LAN gateway and the root SSH key. Start from the template and replace every value:
+  ```bash
+  install -D -m 0644 deploy/nixos/site.example/site.nix ~/.config/learnharness/site/site.nix
+  ```
+  `deploy/nixos/rebuild.sh` and `deploy/proxmox/tofu.sh` hand it to the flake (`--override-input site`, directory overridable with `LEARNHARNESS_SITE`). Without it the flake only has the in-repo example and refuses to evaluate, as it does while any value is still a placeholder or the root key list is empty (the error names each one), so a plain `nixos-rebuild --flake ./deploy/nixos#learnharness` cannot deploy placeholders.
+- `~/.config/learnharness/site.env` (never committed): the OpenTofu site values, which `tofu.sh` reads after `proxmox.env`:
+  ```bash
+  TF_VAR_cloudflare_zone_id=<zone id>
+  TF_VAR_lan_ipv4=192.0.2.10
+  TF_VAR_dns_names='["learnharness.home.example.com","auth.home.example.com"]'
   ```
 - Nix must be allowed to build VM disk images (KVM):
   ```bash
@@ -57,9 +68,9 @@ deploy/proxmox/tofu.sh apply      # uploads the NixOS image, creates and starts 
 - **The OpenTofu state** is committed to the repo, encrypted with `TF_VAR_state_passphrase`. If the passphrase is lost, `tofu import proxmox_virtual_environment_vm.learnharness pve/104` re-adopts the VM.
 - **The image only bootstraps the VM.** `prevent_destroy` protects the VM, and rebuilt images never replace its disk.
 
-**Change the machine** (NixOS options, packages, hostnames). Edit `deploy/nixos/`, then:
+**Change the machine** (NixOS options, packages, hostnames). Edit `deploy/nixos/` or the site file, then:
 ```bash
-nix run nixpkgs#nixos-rebuild -- switch --flake ./deploy/nixos#learnharness --target-host root@learnharness.fritz.box
+deploy/nixos/rebuild.sh switch --target-host root@learnharness.fritz.box
 ```
 
 **Update the app** to the latest `main`:
@@ -90,7 +101,7 @@ The CA stays the same when hostnames change, so you only do this once per device
 
 ## 4. Create users (Keycloak)
 
-1. Open `https://auth.home.moyjak.com/admin` and log in with `KC_ADMIN_USER` / `KC_ADMIN_PASSWORD`. On the NixOS VM: `ssh root@learnharness.fritz.box cat /var/lib/learnharness/secrets.env`.
+1. Open `https://auth.home.example.com/admin` and log in with `KC_ADMIN_USER` / `KC_ADMIN_PASSWORD`. On the NixOS VM: `ssh root@learnharness.fritz.box cat /var/lib/learnharness/secrets.env`.
 2. Switch to the realm **learnharness**.
 3. For each person: go to Users → *Create new user* and set a username and email. Under *Credentials*, set a password (*Temporary* off if you like). Under *Groups*, join **learnharness**.
 
@@ -100,7 +111,7 @@ To switch users, use **Sign out** at the bottom of the sidebar (under "Signed in
 
 ## 5. Use it
 
-- Open `https://learnharness.home.moyjak.com` and log in.
+- Open `https://learnharness.home.example.com` and log in.
 - Add your provider API key under Settings → Providers, then pick the strong, cheap, and vision models.
 - **Install as an app:**
   - Chrome or Edge: use the install icon in the address bar.
@@ -195,18 +206,18 @@ The admin can add one OpenAI-compatible endpoint (a local Ollama or LM Studio, v
   services.learnharness.wireguard.lanAllow = [ "<lan-ip>:11434" ];
   ```
 
-  Then deploy with `nix run github:NixOS/nixpkgs/nixos-26.05#nixos-rebuild -- switch --flake ./deploy/nixos#learnharness --target-host root@<vm-host>`, and enter the base URL `http://<lan-ip>:11434/v1` in Settings → Providers. Entries are `"<ipv4>:<port>"` only (strict IPv4, port 1-65535; no hostnames, ranges or wildcards; anything else fails the build) and open TCP to that one address and port for the VM and its containers. WireGuard devices still can't reach the LAN. The server must listen on the LAN (Ollama: `OLLAMA_HOST=0.0.0.0`).
+  Then deploy with `deploy/nixos/rebuild.sh switch --target-host root@<vm-host>`, and enter the base URL `http://<lan-ip>:11434/v1` in Settings → Providers. Entries are `"<ipv4>:<port>"` only (strict IPv4, port 1-65535; no hostnames, ranges or wildcards; anything else fails the build) and open TCP to that one address and port for the VM and its containers. WireGuard devices still can't reach the LAN. The server must listen on the LAN (Ollama: `OLLAMA_HOST=0.0.0.0`).
 - **Give the model a large context.** An unpinned model is assumed to have an 8192-token window, and conversations are compacted when they come within 16384 tokens of the window, so such a model would compress on every turn (the teacher prompt alone is about 14k tokens). Start Ollama with a larger context, above 32768, e.g. `OLLAMA_CONTEXT_LENGTH=65536`, and pin the same context for each model in the editor (Settings → Providers → Models). The editor warns on any model whose context is too small.
 
 ## Remote access (WireGuard)
 
-Away from home, devices reach LearnHarness through a WireGuard tunnel that ends **on the VM**, not on the router. A tunnel can reach only the app: Caddy on 80/443, through which Keycloak's login still applies. It can't reach SSH, the VM's other ports, or anything else on the LAN. The client config sends only the VM's LAN address (`AllowedIPs = <VM LAN IP>/32`) through the tunnel. The usual names (`learnharness.home.moyjak.com`, `auth.home.moyjak.com`) already point there, so links, logins and certificates are the same as at home.
+Away from home, devices reach LearnHarness through a WireGuard tunnel that ends **on the VM**, not on the router. A tunnel can reach only the app: Caddy on 80/443, through which Keycloak's login still applies. It can't reach SSH, the VM's other ports, or anything else on the LAN. The client config sends only the VM's LAN address (`AllowedIPs = <VM LAN IP>/32`) through the tunnel. The usual names (`learnharness.home.example.com`, `auth.home.example.com`) already point there, so links, logins and certificates are the same as at home.
 
 **On the VM** (`deploy/nixos/wireguard.nix`, `services.learnharness.wireguard.enable`):
 - `wg0` is `10.66.0.1/24` on UDP 51820. The server key is generated once into `/var/lib/learnharness/wg/private` and never enters a container.
-- `vpn.moyjak.com` is an A record that a 5-minute timer (`learnharness-ddns`) keeps on the WAN IPv4, using `CLOUDFLARE_API_TOKEN` from `secrets.env` (the same token as for the certificates).
+- `vpn.example.com` is an A record that a 5-minute timer (`learnharness-ddns`) keeps on the WAN IPv4, using `CLOUDFLARE_API_TOKEN` from `secrets.env` (the same token as for the certificates).
 - `learnharness-wg-apply` reads the devices the app wrote (`data/global/wireguard/peers.json`), skips invalid entries and applies the rest with `wg syncconf`. It runs on every change and once a minute. It also writes `server.json` (public key, endpoint, the VM's current LAN IP) and `status.json` (last handshake per device) for the app.
-- **LAN isolation:** the VM and its containers may not open new connections into private IPv4 ranges. The exceptions are the LAN gateway's DNS/NTP (`lanGateway`, default `192.168.178.1`) and replies to connections that LAN devices open. Limits: IPv4 only (the VM host itself can still reach LAN hosts over IPv6; the containers have no IPv6), and containers may still reach `172.16.0.0/12`, because Docker's own networks live there. A local model server can be opened with `lanAllow` (exactly one `ip:port`; see Custom model provider). Access from home is unchanged: 22, 80, 443 and 8443 from the LAN, SSH and deploys from WSL. Logs: `journalctl -u learnharness-wg-apply -u learnharness-ddns`.
+- **LAN isolation:** the VM and its containers may not open new connections into private IPv4 ranges. The exceptions are the LAN gateway's DNS/NTP (`lanGateway`, set in the site file) and replies to connections that LAN devices open. Limits: IPv4 only (the VM host itself can still reach LAN hosts over IPv6; the containers have no IPv6), and containers may still reach `172.16.0.0/12`, because Docker's own networks live there. A local model server can be opened with `lanAllow` (exactly one `ip:port`; see Custom model provider). Access from home is unchanged: 22, 80, 443 and 8443 from the LAN, SSH and deploys from WSL. Logs: `journalctl -u learnharness-wg-apply -u learnharness-ddns`.
 
 **FRITZ!Box (once):** Internet → Freigaben → Portfreigabe → the `learnharness` device → new share: UDP 51820 → 51820, IPv4.
 
@@ -258,14 +269,14 @@ Back up the volumes (app data and keys, Caddy CA, Keycloak database; **not** `vo
 
 ## Move-day switch
 
-When the UniFi gateway takes over the LAN (`<network migration plan>`), the VM moves to **10.20.1.70**. The hostnames and certificates stay the same; only the DNS records change:
+When the UniFi gateway takes over the LAN (`<network migration plan>`), the VM moves to **192.0.2.70**. The hostnames and certificates stay the same; only the DNS records change:
 
-1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC (`BC:24:11:B3:41:E1`).
-2. **Point the records at the new address:** run `deploy/proxmox/tofu.sh apply -var lan_ipv4=10.20.1.70`, or change the default in `variables.tf` and commit it.
+1. **UniFi:** add a DHCP reservation `.70` for the VM's MAC (`deploy/proxmox/tofu.sh output mac`).
+2. **Point the records at the new address:** run `deploy/proxmox/tofu.sh apply -var lan_ipv4=192.0.2.70`, or change `TF_VAR_lan_ipv4` in `~/.config/learnharness/site.env`.
 3. That's it. Keycloak, redirect URIs and devices are unaffected; the TTL is 5 minutes.
 
 With WireGuard enabled there are two more steps:
-- Set `services.learnharness.wireguard.lanGateway` in `deploy/nixos/configuration.nix` to the new gateway, then `nixos-rebuild switch`. Until you do, the VM's DNS queries to the new gateway are refused, because isolation only lets the configured gateway through.
+- Set `services.learnharness.wireguard.lanGateway` in the site file (`~/.config/learnharness/site/site.nix`) to the new gateway, then `deploy/nixos/rebuild.sh switch --target-host root@learnharness.fritz.box`. Until you do, the VM's DNS queries to the new gateway are refused, because isolation only lets the configured gateway through.
 - Re-create the WireGuard devices marked **outdated** (see Remote access (WireGuard)).
 
 With `CADDY_TLS=internal` and local names instead, change the hostnames (NixOS options or `deploy/.env`), update the Keycloak client's redirect URI, web origin and post-logout URI to the new app host, and restart the stack.

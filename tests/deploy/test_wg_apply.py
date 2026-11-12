@@ -50,7 +50,8 @@ class DryRun(unittest.TestCase):
             private = Path(d, "private")
             private.write_text(key(9) + "\n")
             out = subprocess.run(
-                [sys.executable, "-I", "-B", str(SCRIPT), "--dir", d, "--private-key", str(private), "--dry-run"],
+                [sys.executable, "-I", "-B", str(SCRIPT), "--dir", d, "--private-key", str(private),
+                 "--endpoint", "vpn.example.com:51820", "--dry-run"],
                 capture_output=True, text=True, check=True,
             ).stdout
             self.assertEqual(out.count("[Peer]"), 1)
@@ -58,6 +59,17 @@ class DryRun(unittest.TestCase):
             self.assertNotIn("PrivateKey = x", out)
             self.assertIn(f"PublicKey = {KEY_A}\nPresharedKey = {PSK}\nAllowedIPs = 10.66.0.2/32", out)
             self.assertEqual(sorted(os.listdir(d)), ["peers.json", "private"])  # dry run writes nothing
+
+
+class Arguments(unittest.TestCase):
+    def test_the_endpoint_has_no_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            res = subprocess.run(
+                [sys.executable, "-I", "-B", str(SCRIPT), "--dir", d, "--private-key", str(Path(d, "private"))],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(res.returncode, 2)
+            self.assertIn("--endpoint", res.stderr)
 
 
 class OpenDir(unittest.TestCase):
@@ -106,11 +118,11 @@ class Parsers(unittest.TestCase):
         })
 
     def test_allowed_ips_from_the_default_route(self):
-        route = "default via 192.168.178.1 dev ens18 proto dhcp src 192.168.178.20 metric 1002\n"
-        addr = "2: ens18    inet 192.168.178.20/24 brd 192.168.178.255 scope global dynamic noprefixroute ens18\\       valid_lft 860000sec preferred_lft 860000sec\n"
+        route = "default via 192.0.2.1 dev ens18 proto dhcp src 192.0.2.20 metric 1002\n"
+        addr = "2: ens18    inet 192.0.2.20/24 brd 192.0.2.255 scope global dynamic noprefixroute ens18\\       valid_lft 860000sec preferred_lft 860000sec\n"
         mod = load()
         self.assertEqual(mod.default_dev(route), "ens18")
-        self.assertEqual(mod.first_inet(addr), "192.168.178.20")
+        self.assertEqual(mod.first_inet(addr), "192.0.2.20")
 
 
 if __name__ == "__main__":

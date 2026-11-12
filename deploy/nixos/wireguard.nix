@@ -199,9 +199,11 @@ in
 {
   options.services.learnharness.wireguard = {
     enable = lib.mkEnableOption "WireGuard remote access to LearnHarness (wg0, peers from the app)";
+    # endpoint, ddnsName, ddnsZone and lanGateway have no defaults: the site
+    # file sets them (site.example/site.nix).
     endpoint = lib.mkOption {
       type = lib.types.str;
-      default = "vpn.moyjak.com";
+      example = "vpn.example.com";
       description = "Public name clients connect to (written to server.json as endpoint:port).";
     };
     port = lib.mkOption {
@@ -211,17 +213,17 @@ in
     };
     ddnsName = lib.mkOption {
       type = lib.types.str;
-      default = "vpn.moyjak.com";
+      example = "vpn.example.com";
       description = "A record kept on the WAN IPv4 (Cloudflare, CLOUDFLARE_API_TOKEN in secrets.env).";
     };
     ddnsZone = lib.mkOption {
       type = lib.types.str;
-      default = "moyjak.com";
+      example = "example.com";
       description = "Cloudflare zone holding ddnsName.";
     };
     lanGateway = lib.mkOption {
       type = lib.types.str;
-      default = "192.168.178.1";
+      example = "192.0.2.1";
       description = "The LAN router: the one LAN address the VM may query for DNS and NTP.";
     };
     lanAllow = lib.mkOption {
