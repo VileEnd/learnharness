@@ -50,6 +50,20 @@
 	--border: #434343;
 	--input: #434343;
 	--ring: #8d8d8d;
+	/* Status tokens (themes step 1, port of upstream's --lh-error/success/
+	   warning): the colours Tailwind's red-500 / green-500 / amber-500
+	   resolve to, so the dark look is unchanged. A theme sets these three;
+	   components use text-error, bg-success/15, border-warning/50 … and never
+	   a fixed palette class (tests/status-tokens.test.ts). --lh-success-strong
+	   is green-600, the filled "next problem" button.
+	   NOTE: two error-ish tokens exist: --destructive (the old red-400) and
+	   --lh-error (the old red-500); themes step 2 must define BOTH per theme.
+	   The markdown renderer's own red classes (Streamdown, found by the
+	   @source scan) are third-party and belong to step 3. */
+	--lh-error: oklch(0.637 0.237 25.331);
+	--lh-success: oklch(0.723 0.219 149.579);
+	--lh-success-strong: oklch(0.627 0.194 149.214);
+	--lh-warning: oklch(0.769 0.188 70.08);
 	/* Emphasis inks default to the REGULAR TEXT COLOR (owner ruling,
 	   appearance wave 2026-09-26 — the old #ee928c/#6fa9d6 factory
 	   emphasis colors are gone). Explicit overrides land via the
@@ -88,6 +102,20 @@
 	--border: #434343;
 	--input: #434343;
 	--ring: #8d8d8d;
+	/* Status tokens (themes step 1, port of upstream's --lh-error/success/
+	   warning): the colours Tailwind's red-500 / green-500 / amber-500
+	   resolve to, so the dark look is unchanged. A theme sets these three;
+	   components use text-error, bg-success/15, border-warning/50 … and never
+	   a fixed palette class (tests/status-tokens.test.ts). --lh-success-strong
+	   is green-600, the filled "next problem" button.
+	   NOTE: two error-ish tokens exist: --destructive (the old red-400) and
+	   --lh-error (the old red-500); themes step 2 must define BOTH per theme.
+	   The markdown renderer's own red classes (Streamdown, found by the
+	   @source scan) are third-party and belong to step 3. */
+	--lh-error: oklch(0.637 0.237 25.331);
+	--lh-success: oklch(0.723 0.219 149.579);
+	--lh-success-strong: oklch(0.627 0.194 149.214);
+	--lh-warning: oklch(0.769 0.188 70.08);
 	/* Same emphasis ruling as the block above: unset = text color. */
 	--lh-ink-strong: var(--foreground);
 	--lh-ink-italic: var(--foreground);
@@ -167,6 +195,10 @@
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
+	--color-error: var(--lh-error);
+	--color-success: var(--lh-success);
+	--color-success-strong: var(--lh-success-strong);
+	--color-warning: var(--lh-warning);
 }
 
 * {

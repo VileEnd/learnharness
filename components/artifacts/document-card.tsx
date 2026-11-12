@@ -87,11 +87,11 @@ export function DocumentCard({ part }: ArtifactPartProps) {
 	return (
 		<details data-testid="document-card" data-tool={tool} className="group my-1 w-full max-w-2xl select-none">
 			<summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
-				<span className={`min-w-0 truncate ${failed ? "text-red-500" : ""}`}>{documentSummary(tool, p.input, details)}</span>
+				<span className={`min-w-0 truncate ${failed ? "text-error" : ""}`}>{documentSummary(tool, p.input, details)}</span>
 				<ChevronRight className="size-3 shrink-0 opacity-50 transition-transform group-open:rotate-90" />
 			</summary>
 			<div className="mt-2 space-y-2 rounded-xl border bg-card p-3 text-xs">
-				{typeof p.errorText === "string" && <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-red-500">{p.errorText}</pre>}
+				{typeof p.errorText === "string" && <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-error">{p.errorText}</pre>}
 				{details?.kind === "search" && (
 					<>
 						{details.note && <p className="text-muted-foreground">{details.note}</p>}

@@ -85,8 +85,8 @@ export function ItemInput({
 					"lh-input min-w-0 rounded-md border bg-background/60 px-2 py-1 text-sm outline-none transition-colors focus:border-primary/60",
 					width,
 					compact && "w-full pr-6",
-					mark === "true" && "border-green-500/60 bg-green-500/10",
-					mark === "false" && "border-red-500/60 bg-red-500/10",
+					mark === "true" && "border-success/60 bg-success/10",
+					mark === "false" && "border-error/60 bg-error/10",
 				)}
 			/>
 			{suffix && <span className="text-sm text-muted-foreground">{suffix}</span>}
@@ -94,7 +94,7 @@ export function ItemInput({
 				<span
 					aria-hidden
 					data-mark={item.correct ? "check" : "x"}
-					className={cn("flex shrink-0", compact && "pointer-events-none absolute right-1.5 top-2", item.correct ? "text-green-500" : "text-red-500")}
+					className={cn("flex shrink-0", compact && "pointer-events-none absolute right-1.5 top-2", item.correct ? "text-success" : "text-error")}
 				>
 					<GlyphMark kind={item.correct ? "check" : "x"} className="size-3.5" />
 				</span>
