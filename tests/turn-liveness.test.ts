@@ -1,17 +1,17 @@
 /**
  * Turn liveness registry unit tests (src/server/turn-liveness.ts): one turn
  * per chat, ever — begin/end round trip, double-begin rejection, restart
- * after end. The 30-minute stale-eviction TTL is not tested (it is a leak
- * guard, not a behavior). The lifecycle-emitter pins ride the same seams:
+ * after end. The 30-minute stale-eviction TTL is pinned only where it must
+ * NOT fire: a turn whose run is still registered. The lifecycle-emitter pins ride the same seams:
  * turn-started on the accepted begin only, turn-settled on the live end
  * only, and the registry already consistent when the listener runs.
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import { beginTurn, endTurn, isTurnRunning } from "../src/server/turn-liveness.ts";
 import { subscribe, type ServerEvent } from "../src/core/events.ts";
-import { rememberTurnFailure, settledTurnResponse } from "../src/server/turn-runs.ts";
+import { registerTurn, rememberTurnFailure, settledTurnResponse, unregisterTurn } from "../src/server/turn-runs.ts";
 
 describe("turn liveness registry", () => {
 	it("retains a late-attach failure notice until the next accepted begin", async () => {
@@ -34,6 +34,24 @@ describe("turn liveness registry", () => {
 		assert.equal(isTurnRunning(id), false, "cleared at finish");
 		assert.equal(beginTurn(id), true, "a new turn may start after the last ended");
 		endTurn(id);
+	});
+
+	it("a turn older than the 30-minute guard still blocks while its run is registered", () => {
+		const id = "chat_liveness_long_turn";
+		mock.timers.enable({ apis: ["Date"], now: 0 });
+		try {
+			assert.equal(beginTurn(id), true);
+			registerTurn(id, { subscribe: () => new ReadableStream(), abort: () => {} });
+			mock.timers.tick(31 * 60_000);
+			assert.equal(isTurnRunning(id), true, "a long turn that really runs keeps the chat");
+			assert.equal(beginTurn(id), false, "no second turn beside it");
+			unregisterTurn(id);
+			assert.equal(isTurnRunning(id), false, "with no run behind it the stale entry is evicted");
+		} finally {
+			unregisterTurn(id);
+			endTurn(id);
+			mock.timers.reset();
+		}
 	});
 });
 

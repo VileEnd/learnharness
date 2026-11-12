@@ -17,11 +17,12 @@
  * stale flags to clean up — a crashed turn recovers via the write-ahead
  * record + mount continuation on the next visit. The TTL is a leak guard for
  * the pathological case where onFinish never fires (it runs even on aborts);
- * chat turns are minutes at most, so 30 minutes is far on the safe side.
+ * chat turns are minutes at most, so 30 minutes is far on the safe side. It
+ * evicts only an entry with no run registered behind it (isTurnRunning).
  */
 
 import { emit } from "../core/events.ts";
-import { clearTurnFailure } from "./turn-runs.ts";
+import { clearTurnFailure, runningTurn } from "./turn-runs.ts";
 
 interface LhGlobal {
 	__lhTurnRegistry?: Map<string, number>;
@@ -62,6 +63,11 @@ export function endTurn(chatId: string): void {
 }
 
 /** True while the chat's turn is in flight; lazily evicts stale entries.
+ * An entry past the TTL is stale only when no run is registered for the
+ * chat (turn-runs.ts): a turn that really runs that long (a slow local
+ * model, a hung provider stream) keeps the chat, so a second turn cannot
+ * start beside it and overwrite its abort handle. Such a turn ends through
+ * its own settle or the remote abort.
  * The eviction path is DELIBERATELY event-free: it is a leak guard for a
  * turn whose onFinish never fired (itself pathological), it runs lazily
  * from a read, and emitting from a read is a side-effect smell. Silence
@@ -69,7 +75,7 @@ export function endTurn(chatId: string): void {
 export function isTurnRunning(chatId: string): boolean {
 	const since = inFlight.get(chatId);
 	if (since === undefined) return false;
-	if (Date.now() - since > MAX_TURN_MS) {
+	if (Date.now() - since > MAX_TURN_MS && runningTurn(chatId) === undefined) {
 		inFlight.delete(chatId);
 		return false;
 	}
