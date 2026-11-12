@@ -64,9 +64,8 @@ describe("Nova-3 dictation language contract", () => {
 			assert.equal(parseDictationSettingsBody(value).ok, false);
 		}
 		for (const dictation of [null, [], "pl", { language: "xx" }, { language: 3 }]) {
-			const record = sanitizeUserSettings({ version: 1, dictation, general: { autoUpdate: false } });
+			const record = sanitizeUserSettings({ version: 1, dictation });
 			assert.equal(resolveSettings(record).dictation.language, undefined);
-			assert.equal(record?.general?.autoUpdate, false);
 		}
 	});
 });

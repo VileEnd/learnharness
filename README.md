@@ -12,7 +12,7 @@
   <a href="docs/self-hosting.md">Self-hosting</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="docs/development.md">Documentation</a> ·
-  <a href="https://github.com/amosblomqvist/learnharness/issues">Issues</a>
+  <a href="https://github.com/VileEnd/learnharness/issues">Issues</a>
 </p>
 
 LearnHarness uses AI agents to plan and teach lessons from your current understanding to your goal. It builds a detailed picture of what you understand and how you reason. That picture is updated as you learn.
@@ -42,7 +42,7 @@ Future teaching sessions can read the graph instead of starting from scratch. Pr
 
 ## Run it (self-hosted, in the browser)
 
-This fork runs LearnHarness as a **browser-only app in Docker** on your own server, behind a Keycloak login, reachable from any device on your network. It can be installed as an app (PWA). There is no desktop app.
+This fork runs LearnHarness as a **browser-only app in Docker** on your own server, behind a Keycloak login, reachable from any device on your network. It can be installed as an app (PWA). There is no desktop app. It is a fork of [amosblomqvist/learnharness](https://github.com/amosblomqvist/learnharness), the upstream project this work builds on.
 
 ```bash
 git clone https://github.com/VileEnd/learnharness.git && cd learnharness/deploy
@@ -71,7 +71,7 @@ npm test           # deterministic, no LLM, no network
 
 See the [development guide](docs/development.md), [architecture](docs/architecture.md), and [self-hosting guide](docs/self-hosting.md).
 
-Questions, bug reports, and feature requests: [GitHub Issues](https://github.com/amosblomqvist/learnharness/issues).
+Questions, bug reports, and feature requests: [GitHub Issues](https://github.com/VileEnd/learnharness/issues).
 
 ## License
 

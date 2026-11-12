@@ -43,7 +43,7 @@ import {
 	type UserSettings,
 } from "@/src/core";
 import { useAppearance } from "./appearance.tsx";
-import { SettingsGroup, SettingsSection, SettingsRow, Toggle } from "./controls.tsx";
+import { SettingsGroup, SettingsSection, SettingsRow } from "./controls.tsx";
 import { DictationLanguageSetting } from "@/components/dictation-language";
 import { AgentSection } from "./agent-section.tsx";
 import { NotificationsRow } from "./notifications-row.tsx";
@@ -83,10 +83,6 @@ export const DialogContext = createContext<{ open: (section?: string, row?: stri
 /** AppShell-level mount: the sidebar row and the mod+, chord call this.
  *  `open(section)` lands the dialog on a specific section (the first-run
  *  setup flow deep-links to Keys when no provider key exists yet). */
-/** The auto-update row's hint (tooltip wave): honest user language — no
- *  stream vocabulary. Exported for the copy pin (tooltip-mechanism test). */
-export const AUTO_UPDATE_HINT = "Automatic updates arrive in an upcoming release";
-
 export function SettingsDialogProvider({
 	children,
 }: {
@@ -395,19 +391,6 @@ export function SettingsDialogBody({
 									title="General"
 									testid="section-general"
 								>
-									<SettingsRow
-										label="Auto-update"
-										hint={AUTO_UPDATE_HINT}
-										testid="row-auto-update"
-									>
-										<Toggle
-											checked={record.general?.autoUpdate ?? true}
-											label="auto update"
-											onChange={(on) =>
-												void write("general", { autoUpdate: on })
-											}
-										/>
-									</SettingsRow>
 									<NotificationsRow />
 									<SettingsGroup label="Dictation" testid="group-dictation-settings">
 										<DictationLanguageSetting />

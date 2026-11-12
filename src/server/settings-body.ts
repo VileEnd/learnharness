@@ -99,18 +99,11 @@ function asRecord(body: unknown): Record<string, unknown> | null {
 	return body as Record<string, unknown>;
 }
 
-/** general: { autoUpdate?: boolean } */
+/** general: no fields; unknown keys dropped */
 export function parseGeneralSettingsBody(body: unknown): SettingsBodyResult<GeneralSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
-	const settings: GeneralSettings = {};
-	if (raw.autoUpdate !== undefined) {
-		if (typeof raw.autoUpdate !== "boolean") {
-			return { ok: false, error: "autoUpdate must be a boolean" };
-		}
-		settings.autoUpdate = raw.autoUpdate;
-	}
-	return { ok: true, settings };
+	return { ok: true, settings: {} };
 }
 
 /** agent.models: only the six known background roles; each override's

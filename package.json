@@ -3,10 +3,17 @@
 	"version": "0.76.0",
 	"license": "AGPL-3.0-only",
 	"author": {
-		"name": "Amos Blomqvist",
-		"email": "255718537+amosblomqvist@users.noreply.github.com"
+		"name": "VileEnd",
+		"url": "https://github.com/VileEnd"
 	},
-	"homepage": "https://github.com/amosblomqvist/learnharness",
+	"homepage": "https://github.com/VileEnd/learnharness",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/VileEnd/learnharness.git"
+	},
+	"bugs": {
+		"url": "https://github.com/VileEnd/learnharness/issues"
+	},
 	"description": "An agent harness for learning: adaptive teaching, practice, and a persistent knowledge graph.",
 	"type": "module",
 	"private": true,
