@@ -124,6 +124,39 @@ function lastSuccessfulPlanInit(parts: LhViewPart[]): number {
 	return idx;
 }
 
+/** Structural equality over plain data (strings, numbers, arrays, plain
+ *  objects); identical references short-circuit, so equal-by-reference
+ *  payloads (tool outputs carried through from the record) cost nothing.
+ *  Anything else compares by identity, which can only miss a reuse. */
+function sameData(a: unknown, b: unknown): boolean {
+	if (Object.is(a, b)) return true;
+	if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+	if (Array.isArray(a)) {
+		return Array.isArray(b) && a.length === b.length && a.every((v, i) => sameData(v, b[i]));
+	}
+	if (Array.isArray(b)) return false;
+	const pa = Object.getPrototypeOf(a);
+	if ((pa !== Object.prototype && pa !== null) || Object.getPrototypeOf(b) !== pa) return false;
+	const ka = Object.keys(a);
+	if (ka.length !== Object.keys(b).length) return false;
+	return ka.every((k) => Object.hasOwn(b, k) && sameData((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/** Keep the previous projection's objects wherever the new projection is
+ *  equal to them: a streamed chunk changes the live tail only, so every
+ *  settled view message (and the whole list when nothing changed) keeps its
+ *  identity and memoised rows can skip re-rendering. Pure. */
+export function shareView(prev: readonly LhViewMessage[], next: LhViewMessage[]): LhViewMessage[] {
+	if (prev.length === 0) return next;
+	const byId = new Map<string, LhViewMessage>();
+	for (const m of prev) if (m.id !== "" && !byId.has(m.id)) byId.set(m.id, m);
+	const shared = next.map((m, i) => {
+		const old = prev[i]?.id === m.id ? prev[i] : byId.get(m.id);
+		return old !== undefined && sameData(old, m) ? old : m;
+	});
+	return shared.length === prev.length && shared.every((m, i) => m === prev[i]) ? (prev as LhViewMessage[]) : shared;
+}
+
 /** Project the native record (+ live turn working list) into the client's
  *  view messages. Pure: the same input always projects to the same list. */
 export function projectView(messages: readonly LhMessage[], live?: LiveTurnState): LhViewMessage[] {

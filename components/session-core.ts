@@ -30,6 +30,7 @@ import {
 	newWorkDismissedMarker,
 	newWorkSubmission,
 	projectView,
+	shareView,
 	type ChatInput,
 	type LhMarkerMessage,
 	type LhMessage,
@@ -329,6 +330,9 @@ export class SessionModel {
 		this.onReattachSettled = fn;
 	}
 
+	/** The last projection: settled messages keep their identity across chunks (shareView). */
+	private lastView: LhViewMessage[] = [];
+
 	getState(): SessionState {
 		const live =
 			this.statusValue === "submitted" || this.statusValue === "streaming"
@@ -345,7 +349,7 @@ export class SessionModel {
 				? { message: latest.errorMessage ?? "An error occurred." }
 				: null;
 		return {
-			messages: projectView(messages, live),
+			messages: this.lastView = shareView(this.lastView, projectView(messages, live)),
 			nativeMessages: messages,
 			hasConfirmedConversation: this.base.some(m => m.role === "user" || m.role === "assistant"),
 			contextTokens: measuredContextTokens(messages, this.incompleteUsageIds),
