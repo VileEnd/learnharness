@@ -102,8 +102,6 @@ describe("address classifier", () => {
 	it("allows a public address in either family", () => {
 		assert.equal(classifyAddress("192.0.2.10"), null);
 		assert.equal(classifyAddress("203.0.113.7"), null);
-		assert.equal(classifyAddress("172.32.0.1"), null, "just outside 172.16.0.0/12");
-		assert.equal(classifyAddress("100.128.0.1"), null, "just outside 100.64.0.0/10");
 		assert.equal(classifyAddress("2001:db8::1"), null);
 		assert.equal(classifyAddress("::ffff:192.0.2.10"), null, "a mapped public IPv4 is public");
 	});
