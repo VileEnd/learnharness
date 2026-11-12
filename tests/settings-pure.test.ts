@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appearanceVars, derivedPalette, resolveAppearance, staleVarNames } from "../components/settings/appearance.tsx";
+import { appearanceTypeVars, resolveAppearance } from "../src/core";
 import {
 	PROMPT_IN_USE_HINT,
 	composePromptSwitch,
@@ -26,8 +26,9 @@ import { setupStage } from "../components/setup-dialog.tsx";
 describe("resolveAppearance — delta over factory", () => {
 	it("absent everything = the factory view", () => {
 		const a = resolveAppearance(undefined);
-		assert.equal(a.mode, "dark");
+		assert.equal(a.theme, "default");
 		assert.equal(a.background, null);
+		assert.deepEqual(a.colors, {});
 		assert.equal(a.fontFamily, null);
 		assert.equal(a.proseFontSize, 16);
 		assert.equal(a.sessionNameSerif, true);
@@ -35,53 +36,22 @@ describe("resolveAppearance — delta over factory", () => {
 	});
 
 	it("explicit deltas win field-by-field", () => {
-		const a = resolveAppearance({ proseFontSize: 20, fontFamily: "Iowan Old Style" });
+		const a = resolveAppearance({ proseFontSize: 20, fontFamily: "Iowan Old Style", theme: "ivory" });
 		assert.equal(a.proseFontSize, 20);
 		assert.equal(a.fontFamily, "Iowan Old Style");
+		assert.equal(a.theme, "ivory");
 		assert.equal(a.background, null);
 	});
 });
 
-describe("derivedPalette — the dark curve keeps today's relationships", () => {
-	it("the factory background reproduces today's palette EXACTLY", () => {
-		assert.deepEqual(derivedPalette("#141414"), {
-			"--background": "#141414",
-			"--card": "#1c1c1c",
-			"--popover": "#1c1c1c",
-			"--secondary": "#1c1c1c",
-			"--muted": "#1c1c1c",
-			"--accent": "#2a2a2a",
-			"--border": "#434343",
-			"--input": "#434343",
-			"--primary-foreground": "#141414",
-		});
-	});
-
-	it("an off-factory background shifts every surface with it (clamped at 255)", () => {
-		const p = derivedPalette("#f0f0f0");
-		assert.equal(p["--background"], "#f0f0f0");
-		assert.equal(p["--card"], "#f8f8f8"); // 240 + 8 per channel
-		assert.equal(p["--border"], "#ffffff", "240 + 47 clamps to 255 on every channel");
-	});
-
-	it("3-digit hex expands", () => {
-		assert.equal(derivedPalette("#abc")["--card"], "#b2c3d4"); // aa bb cc each +8
-	});
-});
-
-describe("appearanceVars — the mapping the provider applies", () => {
+describe("appearanceTypeVars — the type knobs the provider applies", () => {
 	it("factory appearance: only the always-applied tokens move", () => {
-		const vars = appearanceVars(resolveAppearance(undefined));
-		assert.equal(vars["--lh-prose-size"], "16px");
-		assert.equal(vars["--lh-heading-weight"], "900");
-		assert.equal(vars["--font-prose"], undefined, "no font override at factory");
-		assert.equal(vars["--font-title"], undefined, "CMU stays");
-		assert.equal(vars["--background"], undefined, "factory palette untouched");
-		assert.equal(vars["--lh-ink-strong"], undefined, "default ink");
+		const vars = appearanceTypeVars(resolveAppearance(undefined));
+		assert.deepEqual(vars, { "--lh-prose-size": "16px", "--lh-heading-weight": "900" });
 	});
 
 	it("JetBrains Mono renders from the bundled face when it is not installed", () => {
-		const vars = appearanceVars(resolveAppearance({ fontFamily: "JetBrains Mono" }));
+		const vars = appearanceTypeVars(resolveAppearance({ fontFamily: "JetBrains Mono" }));
 		assert.equal(
 			vars["--font-prose"],
 			`"JetBrains Mono", var(--font-jetbrains), var(--font-sans3), ui-sans-serif, system-ui, sans-serif`,
@@ -90,13 +60,13 @@ describe("appearanceVars — the mapping the provider applies", () => {
 
 	it("a family named like an inherited Object member is not treated as bundled", () => {
 		for (const name of ["constructor", "toString", "__proto__"]) {
-			const vars = appearanceVars(resolveAppearance({ fontFamily: name }));
+			const vars = appearanceTypeVars(resolveAppearance({ fontFamily: name }));
 			assert.equal(vars["--font-prose"], `"${name}", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`);
 		}
 	});
 
-	it("full delta: every knob lands on its token", () => {
-		const vars = appearanceVars(
+	it("full delta: every knob lands on its token; colours are not type knobs", () => {
+		const vars = appearanceTypeVars(
 			resolveAppearance({
 				background: "#101820",
 				fontFamily: "Georgia",
@@ -105,56 +75,12 @@ describe("appearanceVars — the mapping the provider applies", () => {
 				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
 			}),
 		);
-		assert.equal(vars["--background"], "#101820");
-		assert.equal(vars["--card"], "#182028", "raised +8 per channel: 10→18, 18→20, 20→28");
-		assert.equal(vars["--font-prose"], `"Georgia", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`);
-		assert.equal(vars["--lh-prose-size"], "18px");
-		assert.equal(vars["--font-title"], "var(--font-prose)", "serif off → titles follow the prose font");
-		assert.equal(vars["--lh-heading-weight"], "700");
-		assert.equal(vars["--lh-ink-strong"], "#ff0000");
-		assert.equal(vars["--lh-ink-italic"], "#00ff00");
-	});
-
-	it("sessionNameSerif false alone: titles move, nothing else does", () => {
-		const vars = appearanceVars(resolveAppearance({ sessionNameSerif: false }));
-		assert.equal(vars["--font-title"], "var(--font-prose)");
-		assert.equal(Object.keys(vars).length, 3, "prose-size, heading-weight, font-title only");
-	});
-});
-
-describe("staleVarNames — the removal half of application (owner repro: resets never reverted)", () => {
-	it("a full delta applied, then factory: every delta-only name goes stale", () => {
-		const fullDelta = appearanceVars(
-			resolveAppearance({
-				background: "#101820",
-				fontFamily: "Georgia",
-				sessionNameSerif: false,
-				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
-			}),
-		);
-		const applied = Object.keys(fullDelta);
-		const factory = appearanceVars(resolveAppearance(undefined));
-		const stale = staleVarNames(applied, factory);
-		assert.ok(stale.includes("--background"));
-		assert.ok(stale.includes("--font-prose"));
-		assert.ok(stale.includes("--font-title"), "serif toggle back ON must clear the title override");
-		assert.ok(stale.includes("--lh-ink-strong"));
-		assert.ok(stale.includes("--lh-ink-italic"));
-		assert.ok(!stale.includes("--lh-prose-size"), "always-applied tokens never go stale");
-		assert.ok(!stale.includes("--lh-heading-weight"), "always-applied tokens never go stale");
-	});
-
-	it("an empty background commit (null = factory) frees the palette vars", () => {
-		const withBg = appearanceVars(resolveAppearance({ background: "#101010" }));
-		const emptied = appearanceVars(resolveAppearance({ background: null }));
-		const stale = staleVarNames(Object.keys(withBg), emptied);
-		assert.ok(stale.includes("--background"));
-		assert.ok(stale.includes("--card"), "the derived palette follows the background out");
-		assert.equal(emptied["--background"], undefined);
-	});
-
-	it("no previous applications → nothing stale", () => {
-		assert.deepEqual(staleVarNames([], appearanceVars(resolveAppearance(undefined))), []);
+		assert.deepEqual(vars, {
+			"--font-prose": `"Georgia", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`,
+			"--lh-prose-size": "18px",
+			"--font-title": "var(--font-prose)",
+			"--lh-heading-weight": "700",
+		});
 	});
 });
 

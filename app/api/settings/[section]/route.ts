@@ -31,7 +31,7 @@
  * lands here.
  */
 
-import type { AgentSettings, ChatSettings, ModelsSettings } from "@/src/core";
+import { CURRENT_SETTINGS_VERSION, type AgentSettings, type ChatSettings, type ModelsSettings } from "@/src/core";
 import {
 	SETTINGS_SECTIONS,
 	allSegmentPaths,
@@ -135,7 +135,7 @@ export const PUT = withTenant(async (request: Request, ctx: { params: Promise<{ 
 	// Read-modify-write ONE section of the record; everything else rides
 	// along untouched (other sections, unknown keys — sanitize preserves).
 	// The raw record, never the policy-overlaid read view (the overlay must not reach the disk).
-	const record = settingsStore.readSettings() ?? { version: 1 };
+	const record = settingsStore.readSettings() ?? { version: CURRENT_SETTINGS_VERSION };
 	const next = { ...record, [section]: sectionOut };
 	writeSettingsRecord(next);
 	return Response.json({ settings: next });

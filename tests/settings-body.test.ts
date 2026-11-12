@@ -101,8 +101,9 @@ describe("parseAgentSettingsBody", () => {
 describe("parseAppearanceSettingsBody", () => {
 	it("parses every field; hex-or-null colors; clamps happen at sanitize, rejects here", () => {
 		const r = parseAppearanceSettingsBody({
-			mode: "light",
+			theme: "system",
 			background: "#ffffff",
+			colors: { accent: "#123456", text: null },
 			fontFamily: "Some Font",
 			proseFontSize: 20,
 			sessionNameSerif: false,
@@ -110,8 +111,9 @@ describe("parseAppearanceSettingsBody", () => {
 		});
 		assert.ok(r.ok);
 		assert.deepEqual(r.settings, {
-			mode: "light",
+			theme: "system",
 			background: "#ffffff",
+			colors: { accent: "#123456", text: null },
 			fontFamily: "Some Font",
 			proseFontSize: 20,
 			sessionNameSerif: false,
@@ -121,7 +123,10 @@ describe("parseAppearanceSettingsBody", () => {
 
 	it("rejects bad enums, ranges, and colors — with specific messages, never clamps", () => {
 		const cases: unknown[] = [
-			{ mode: "sepia" },
+			{ theme: "sepia" },
+			{ theme: "catppuccin-mocha" },
+			{ colors: "red" },
+			{ colors: { accent: "red" } },
 			{ background: "blue" },
 			{ background: 42 },
 			{ fontFamily: "" },
@@ -141,7 +146,9 @@ describe("parseAppearanceSettingsBody", () => {
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 100 } }));
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 900 } }));
 		assert.ok(parseAppearanceSettingsBody({ background: "#abc" }));
-		// null = "the mode's default" — explicit, valid
+		// v1's never-enabled mode key is ignored, not rejected
+		assert.deepEqual(parseAppearanceSettingsBody({ mode: "light" }), { ok: true, settings: {} });
+		// null = "the theme's colour" — explicit, valid
 		assert.ok(parseAppearanceSettingsBody({ background: null, fontFamily: null }));
 	});
 

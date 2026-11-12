@@ -19,6 +19,7 @@ import {
 	composeFontFamily,
 	installedFontFamilies,
 } from "../components/settings/appearance-section";
+import { DEFAULT_THEME } from "../src/core";
 
 describe("fontMenuResults — the DEFAULT row is a candidate, never a ghost pick", () => {
 	const families = ["Arial", "CMU Serif", "Georgia", "Helvetica Neue", "Menlo"];
@@ -140,17 +141,22 @@ describe("the emphasis-ink factory ruling (globals.css)", () => {
 		assert.ok(!css.includes("--lh-ink-italic: #6fa9d6"), "italic factory is not the old blue");
 	});
 
-	it("both blocks default the inks to the regular text color", () => {
+	it("Default's inks are the regular text color (themes step 2: the theme sets them)", () => {
+		assert.equal(DEFAULT_THEME.colors.bold, DEFAULT_THEME.colors.text);
+		assert.equal(DEFAULT_THEME.colors.italic, DEFAULT_THEME.colors.text);
 		const css = fs.readFileSync("app/globals.css", "utf-8");
-		assert.equal((css.match(/--lh-ink-strong: var\(--foreground\)/g) ?? []).length, 2, "both theme blocks");
-		assert.equal((css.match(/--lh-ink-italic: var\(--foreground\)/g) ?? []).length, 2, "both theme blocks");
+		assert.match(css, /--foreground: #e6e6e6;[\s\S]*--lh-ink-strong: #e6e6e6;[\s\S]*--lh-ink-italic: #e6e6e6;/, "Default block");
 	});
 
-	it("the appearance rows' empty-state labels say 'same as text'", () => {
+	it("the appearance rows' empty-state labels name the theme's ink (Default: the text colour)", () => {
 		const html = renderToStaticMarkup(
 			<AppearanceSection appearance={undefined} onSectionChange={() => {}} />,
 		);
-		assert.equal((html.match(/Empty = same as text/g) ?? []).length, 2, "bold + italic rows");
+		for (const row of ["row-color-bold", "row-color-italic"]) {
+			const at = html.indexOf(`data-testid="${row}"`);
+			assert.ok(at >= 0, row);
+			assert.ok(html.slice(at, at + 400).includes("Empty = #e6e6e6"), row);
+		}
 		assert.ok(!html.includes("#ee928c"));
 		assert.ok(!html.includes("#6fa9d6"));
 	});

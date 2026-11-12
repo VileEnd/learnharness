@@ -12,7 +12,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { isHexColor, type ChatSettings } from "../core";
+import { COLOR_OVERRIDE_KEYS, isHexColor, isThemeChoice, THEME_CHOICES, type AppearanceColorOverrides, type ChatSettings } from "../core";
 import type {
 	AgentSettings,
 	QuizMechanic,
@@ -258,22 +258,34 @@ function parseHexOrNull(value: unknown, field: string): { color?: string | null;
 	return { color: value };
 }
 
-/** appearance: { mode?, background?, fontFamily?, proseFontSize?,
+/** appearance: { theme?, background?, colors?, fontFamily?, proseFontSize?,
  *  sessionNameSerif?, mdRendering? } */
 export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<AppearanceSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
 	const settings: AppearanceSettings = {};
-	if (raw.mode !== undefined) {
-		if (raw.mode !== "dark" && raw.mode !== "light") {
-			return { ok: false, error: "mode must be \"dark\" or \"light\"" };
+	if (raw.theme !== undefined) {
+		if (!isThemeChoice(raw.theme)) {
+			return { ok: false, error: `theme must be one of: ${THEME_CHOICES.join(", ")}` };
 		}
-		settings.mode = raw.mode;
+		settings.theme = raw.theme;
 	}
 	if (raw.background !== undefined) {
 		const parsed = parseHexOrNull(raw.background, "background");
 		if (parsed.error) return { ok: false, error: parsed.error };
 		settings.background = parsed.color ?? null;
+	}
+	if (raw.colors !== undefined) {
+		const c = asRecord(raw.colors);
+		if (!c) return { ok: false, error: "colors must be an object" };
+		const colors: AppearanceColorOverrides = {};
+		for (const key of COLOR_OVERRIDE_KEYS) {
+			if (c[key] === undefined) continue;
+			const parsed = parseHexOrNull(c[key], `colors.${key}`);
+			if (parsed.error) return { ok: false, error: parsed.error };
+			colors[key] = parsed.color ?? null;
+		}
+		settings.colors = colors;
 	}
 	if (raw.fontFamily !== undefined) {
 		if (raw.fontFamily !== null && (typeof raw.fontFamily !== "string" || !raw.fontFamily.trim())) {

@@ -33,10 +33,14 @@ import type { ModelRole } from "../../config.ts";
 import type { ChatSettings } from "./contracts/chat.ts";
 import { isSearchEngineId, type SearchEngineId } from "./search.ts";
 import { isDictationLanguage, type DictationLanguage } from "./dictation.ts";
+import { COLOR_OVERRIDE_KEYS, isThemeChoice, type AppearanceColorOverrides, type ThemeChoice } from "./themes.ts";
 
 /** The schema version this code understands. Bump ONLY for breaking shape
- *  changes (a field renamed/meaning changed); pure additions never bump. */
-export const CURRENT_SETTINGS_VERSION = 1;
+ *  changes (a field renamed/meaning changed); pure additions never bump.
+ *  2 (themes, 2026-11-12): `appearance.background` stopped deriving the
+ *  raised surfaces and edges from itself and became a plain override of the
+ *  theme's background; v1 records migrate on read (src/store/settings.ts). */
+export const CURRENT_SETTINGS_VERSION = 2;
 
 /** The background-agent roles whose models the Agent settings expose.
  *  The conversation pair (prober/teacher) stays out — chat-controlled via
@@ -399,19 +403,24 @@ export interface MdRenderingSettings {
 	/** Heading font weight (100–900, default 900). CSS resolves the nearest
 	 *  available weight of the chosen font — no font introspection needed. */
 	headingWeight?: number;
-	/** Color for **bold** spans (default #ffffff). */
+	/** Color for **bold** spans (null = the theme's bold colour). */
 	boldColor?: string | null;
-	/** Color for *italic* spans (default #ffffff). */
+	/** Color for *italic* spans (null = the theme's italic colour). */
 	italicColor?: string | null;
 }
 
-/** Appearance settings — mode, colors, type, markdown emphasis. */
+/** Appearance settings — theme, colour overrides, type, markdown emphasis. */
 export interface AppearanceSettings {
-	/** "dark" | "light" (default dark). */
-	mode?: "dark" | "light";
-	/** The one user-chosen color; everything else derives per-mode in code.
-	 *  null = the mode's default background. */
+	/** The theme choice (core/themes.ts): "default" (dark), "ivory" (light)
+	 *  or "system" (Ivory while the device is light, Default otherwise).
+	 *  Absent = "default". Replaces v1's never-enabled `mode` key. */
+	theme?: ThemeChoice;
+	/** The background override (null = the theme's). Kept at its pre-theme
+	 *  key; since v2 it no longer derives the other surfaces. */
 	background?: string | null;
+	/** Per-colour overrides on top of the theme (null/absent = the theme's),
+	 *  kept across theme switches. Bold/italic live in mdRendering. */
+	colors?: AppearanceColorOverrides;
 	/** The main reading font (everything that is Source Sans 3 today), by
 	 *  name — user-chosen from installed fonts. null = Source Sans 3. */
 	fontFamily?: string | null;
@@ -546,8 +555,9 @@ export interface FactorySettings {
 	general: Required<GeneralSettings>;
 	dictation: DictationSettings;
 	appearance: {
-		mode: "dark" | "light";
+		theme: ThemeChoice;
 		background: string | null;
+		colors: AppearanceColorOverrides;
 		fontFamily: string | null;
 		proseFontSize: number;
 		sessionNameSerif: boolean;
@@ -567,8 +577,9 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	general: {},
 	dictation: {},
 	appearance: {
-		mode: "dark",
-		background: null, // the dark default (#141414) lives in the mode's derivation curve
+		theme: "default",
+		background: null, // null = the active theme's background
+		colors: {}, // no overrides: every colour is the theme's
 		fontFamily: null, // Source Sans 3
 		proseFontSize: 16,
 		sessionNameSerif: true,
@@ -738,8 +749,18 @@ function sanitizeMdRendering(raw: unknown): MdRenderingSettings {
 
 function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	const out: AppearanceSettings = {};
-	if (raw.mode === "dark" || raw.mode === "light") out.mode = raw.mode;
+	// v1's `mode` (never enabled in the UI) is not read: the theme decides
+	// the mode. Dropped here like the graph's dead rungs.
+	if (isThemeChoice(raw.theme)) out.theme = raw.theme;
 	if (raw.background !== undefined) out.background = sanitizeHexOrNull(raw.background);
+	if (raw.colors !== null && typeof raw.colors === "object" && !Array.isArray(raw.colors)) {
+		const colors: AppearanceColorOverrides = {};
+		const c = raw.colors as Record<string, unknown>;
+		for (const key of COLOR_OVERRIDE_KEYS) {
+			if (c[key] !== undefined) colors[key] = sanitizeHexOrNull(c[key]);
+		}
+		out.colors = colors;
+	}
 	if (raw.fontFamily !== undefined) {
 		out.fontFamily = typeof raw.fontFamily === "string" && raw.fontFamily.trim() ? raw.fontFamily : null;
 	}

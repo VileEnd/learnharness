@@ -19,7 +19,7 @@ import {
 
 describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 	it("pins the owner-decided defaults", () => {
-		assert.equal(CURRENT_SETTINGS_VERSION, 1);
+		assert.equal(CURRENT_SETTINGS_VERSION, 2);
 		assert.deepEqual(FACTORY_SETTINGS.general, {});
 		// wave 7 collapse: the master switch ONLY + the extraction-UX
 		// redesign's chunk budget (2026-09-24); doubled to 8192 with the
@@ -28,13 +28,14 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		// + the digest budget (audit B4, owner 2026-11-12: 8000 after review)
 		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 });
 		const a = FACTORY_SETTINGS.appearance;
-		assert.equal(a.mode, "dark");
-		assert.equal(a.background, null); // the mode's own default, not a factory hex
+		assert.equal(a.theme, "default");
+		assert.equal(a.background, null); // the theme's own background, not a factory hex
+		assert.deepEqual(a.colors, {}); // no overrides
 		assert.equal(a.fontFamily, null); // Source Sans 3
 		assert.equal(a.proseFontSize, 16);
 		assert.equal(a.sessionNameSerif, true);
 		assert.equal(a.mdRendering.headingWeight, 900);
-		assert.equal(a.mdRendering.boldColor, null); // white
+		assert.equal(a.mdRendering.boldColor, null); // the theme's bold
 		assert.equal(a.mdRendering.italicColor, null);
 	});
 
@@ -72,8 +73,9 @@ describe("sanitizeUserSettings", () => {
 				cheap: { thinkingLevel: "medium" },
 			},
 			appearance: {
-				mode: "light",
+				theme: "system",
 				background: "#ffffff",
+				colors: { surface: "#eeeeee", error: null },
 				fontFamily: "Some Font",
 				proseFontSize: 18,
 				sessionNameSerif: false,
@@ -102,7 +104,7 @@ describe("sanitizeUserSettings", () => {
 		const out = sanitizeUserSettings({
 			general: { autoUpdate: "yes" },
 			agent: { tools: { research: "no" }, prompts: { "system-prompt.md": 1 }, models: { researcher: "fast" } },
-			appearance: { mode: "sepia", sessionNameSerif: "true" },
+			appearance: { theme: "sepia", mode: "light", sessionNameSerif: "true" },
 			graph: { enabled: 0 },
 		});
 		assert.ok(out);
