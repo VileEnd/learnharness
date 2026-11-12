@@ -14,6 +14,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { settingsFile } from "../config.ts";
 import { readSettings, writeSettings } from "../src/store/settings.ts";
+import { DEFAULT_THEME, themeVars } from "../src/core";
 
 afterEach(() => {
 	fs.rmSync(settingsFile(), { force: true });
@@ -55,5 +56,45 @@ describe("the settings store", () => {
 		fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
 		fs.writeFileSync(settingsFile(), "{not json", "utf-8");
 		assert.equal(readSettings(), null);
+	});
+});
+
+describe("v1 → v2 (themes): a custom background keeps its whole derived palette", () => {
+	const writeRaw = (record: unknown) => {
+		fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+		fs.writeFileSync(settingsFile(), JSON.stringify(record), "utf-8");
+	};
+
+	it("v1 background → background + surface (+8) and border (+47); the screen is what v1 derived", () => {
+		writeRaw({ version: 1, appearance: { background: "#101820", mode: "light", proseFontSize: 18 } });
+		const out = readSettings();
+		assert.ok(out);
+		assert.equal(out.version, 2);
+		assert.deepEqual(out.appearance, {
+			background: "#101820",
+			proseFontSize: 18,
+			colors: { surface: "#182028", border: "#3f474f" },
+		});
+		// v1's derivedPalette: surfaces +8, hover +22, edges +47 per channel.
+		const vars = themeVars(DEFAULT_THEME, out.appearance);
+		assert.equal(vars["--background"], "#101820");
+		assert.equal(vars["--card"], "#182028");
+		assert.equal(vars["--accent"], "#262e36");
+		assert.equal(vars["--border"], "#3f474f");
+		assert.equal(vars["--primary-foreground"], "#101820");
+	});
+
+	it("clamps like v1 did, and an unstamped file reads as v1", () => {
+		writeRaw({ appearance: { background: "#f0f0f0" } });
+		const out = readSettings();
+		assert.equal(out?.version, 2);
+		assert.deepEqual(out?.appearance?.colors, { surface: "#f8f8f8", border: "#ffffff" });
+	});
+
+	it("no background: only the stamp moves; a v2 record is never migrated again", () => {
+		writeRaw({ version: 1, appearance: { background: null }, graph: { enabled: false } });
+		assert.deepEqual(readSettings(), { version: 2, appearance: { background: null }, graph: { enabled: false } });
+		writeRaw({ version: 2, appearance: { background: "#101820" } });
+		assert.deepEqual(readSettings()?.appearance, { background: "#101820" });
 	});
 });
