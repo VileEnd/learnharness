@@ -198,6 +198,11 @@ export interface ToolExecuteContext {
  * toPiTool pipeline for every server-side tool. Question tools do NOT use
  * this: their placeholder is instant (questionResult below) and their
  * refinement checks run before it.
+ *
+ * INVARIANT: a tool body that awaits must go through serverExecute. The
+ * guard rejects shortly after an abort, so the run ends through agent_end;
+ * the tool bodies outside it are all synchronous. That is why nothing can
+ * write after the forced settle of an aborted turn (ui-stream.ts) today.
  */
 export function serverExecute<P extends TSchema>(
 	toolName: string,

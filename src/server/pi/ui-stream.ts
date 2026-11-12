@@ -1,4 +1,5 @@
 import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { ToolCallIdUniquifier } from "./call-ids.ts";
 
 /**
@@ -119,8 +120,80 @@ export interface PiTurnHandle {
 	subscribe(): ReadableStream<Uint8Array>;
 	/** The remote kill — the ONLY way a running turn dies early: sawAbort +
 	 *  agent.abort(); the loop's agent_end does the rest (the settle seam
-	 *  persists the partial transcript to every listener). */
+	 *  persists the partial transcript to every listener). A run that has
+	 *  not ended within abortSettleGraceMs is settled the same way without it. */
 	abort(): void;
+}
+
+/** How long an aborted run may take to reach agent_end by itself before the
+ *  runner settles it. A cooperative run ends well within it (a provider
+ *  stream cancels sub-second; server tools hard-reject 250 ms after the
+ *  abort); a tool that ignores its signal never ends, and its handle would
+ *  hold the chat (sends and deletion answer 409) until restart. */
+const ABORT_SETTLE_GRACE_MS = 5_000;
+/** Test seam (the toolTimeoutMs idiom). */
+export const abortSettleGraceMs = { current: ABORT_SETTLE_GRACE_MS };
+
+/** A finished call's tool_execution_end, kept by the provider's raw call id. */
+type EndedCall = Extract<AgentEvent, { type: "tool_execution_end" }>;
+
+/** What an honoured abort leaves in the record that a forced settle must add
+ *  itself, in the engine's own shapes (pi-agent-core's agent-loop): a result
+ *  for each call of the stuck batch that has no result message, and the
+ *  partial reply the views watched (state.streamingMessage), to be stamped
+ *  aborted. A call that already finished (a parallel batch emits its result
+ *  messages only once every call is done) gets its real result, built from
+ *  its tool_execution_end as createToolResultMessage builds it; a call still
+ *  running or never started gets "Operation aborted" (createErrorToolResult).
+ *  The batch is the assistant message holding a pending call, so history
+ *  from earlier turns is never touched. */
+function abortedTail(
+	state: Agent["state"],
+	ended: ReadonlyMap<string, EndedCall>,
+): { results: ToolResultMessage[]; partial: AssistantMessage | undefined } {
+	const results: ToolResultMessage[] = [];
+	const callsOf = (m: AgentMessage): ToolCall[] =>
+		(m as { role?: string }).role === "assistant"
+			? (m as AssistantMessage).content.filter((block): block is ToolCall => block.type === "toolCall")
+			: [];
+	const messages = state.messages;
+	const batch = state.pendingToolCalls.size > 0
+		? messages.findLastIndex((m) => callsOf(m).some((call) => state.pendingToolCalls.has(call.id)))
+		: -1;
+	if (batch !== -1) {
+		const answered = new Set(
+			messages.slice(batch + 1).flatMap((m) => ((m as { role?: string }).role === "toolResult" ? [(m as ToolResultMessage).toolCallId] : [])),
+		);
+		for (const call of callsOf(messages[batch]!)) {
+			if (answered.has(call.id)) continue;
+			const end = state.pendingToolCalls.has(call.id) ? undefined : ended.get(call.id);
+			if (end) {
+				results.push({
+					role: "toolResult",
+					toolCallId: call.id,
+					toolName: call.name,
+					content: end.result?.content ?? [],
+					details: end.result?.details,
+					usage: end.result?.usage,
+					isError: end.isError,
+					...(end.durationMs === undefined ? {} : { durationMs: end.durationMs }),
+					timestamp: Date.now(),
+				});
+				continue;
+			}
+			results.push({
+				role: "toolResult",
+				toolCallId: call.id,
+				toolName: call.name,
+				content: [{ type: "text", text: "Operation aborted" }],
+				details: {},
+				isError: true,
+				timestamp: Date.now(),
+			});
+		}
+	}
+	const streaming = state.streamingMessage as { role?: string } | undefined;
+	return { results, partial: streaming?.role === "assistant" ? (streaming as AssistantMessage) : undefined };
 }
 
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
@@ -151,9 +224,6 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// relative order of concurrent keys stays chronological).
 	const pending = new Map<string, TurnWireEvent>();
 	const subscribers = new Set<PiTurnSubscriber>();
-	// Views attached when the stream closed (closeAll empties the set before
-	// the settle seam runs).
-	let viewersAtClose = 0;
 
 	const coalesceKey = (event: TurnWireEvent): string | null => {
 		if (event.type === "message_update") return "message";
@@ -211,12 +281,17 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 		// Never holds the process (or the test runner) open for a straggler.
 		(flushTimer as { unref?: () => void }).unref?.();
 	};
+	// The current batch's finished calls (raw ids; abortedTail reads them on a
+	// forced settle). A new assistant message starts a new batch.
+	const endedCalls = new Map<string, EndedCall>();
+	// The forced settle after an abort (armed by abort(), cleared at close).
+	let forceTimer: ReturnType<typeof setTimeout> | undefined;
 	const closeAll = () => {
 		if (settled) return;
 		// Order to the very end: the last pending snapshot precedes [DONE].
 		flushPending();
+		clearTimeout(forceTimer);
 		settled = true;
-		viewersAtClose = subscribers.size;
 		for (const sub of subscribers) sub.done();
 		subscribers.clear();
 	};
@@ -230,10 +305,23 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// suppressing the fresh per-turn re-seed). Our app mints no system
 	// messages of its own (the prompt is composed per turn), so dropping
 	// the role wholesale is exact; revisit if prompt-updates ever land.
-	const settleWith = () => {
+	// `forced`: the run never reached agent_end (an ignored abort), so the
+	// record also takes what an honoured abort would have left (abortedTail).
+	const settleWith = (forced = false) => {
 		try {
-			const settled_ = [...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system");
-			onFinish((uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_, sawAbort, viewersAtClose);
+			const tail = forced ? abortedTail(agent.state, endedCalls) : { results: [], partial: undefined };
+			const settled_ = [
+				...[...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system"),
+				...tail.results,
+				...(tail.partial ? [tail.partial] : []),
+			];
+			let final = (uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_;
+			// The partial is remapped as the views saw it, then stamped aborted.
+			if (tail.partial) final = [...final.slice(0, -1), { ...(final.at(-1) as AssistantMessage), stopReason: "aborted" }];
+			// The views still attached: every settle path runs this before
+			// closeAll, which empties the set.
+			const viewers = subscribers.size;
+			onFinish(final, sawAbort, viewers);
 		} catch (err) {
 			console.error("[turn] settlement failed:", err);
 			try { onSettleFailure?.(err, reportedErrorText); }
@@ -247,6 +335,8 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 
 	const handle = (event: AgentEvent) => {
 		if (settled) return;
+		if (event.type === "message_start" && (event.message as { role?: string }).role === "assistant") endedCalls.clear();
+		if (event.type === "tool_execution_end") endedCalls.set(event.toolCallId, event);
 		// THE LACAN FIX: ids uniquify HERE, before any view — the one seam
 		// every consumer downstream shares. No uniquifier → verbatim.
 		const uniqued = uniquifier ? uniquifier.event(event) : event;
@@ -342,6 +432,17 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 			if (settled) return;
 			sawAbort = true;
 			agent.abort();
+			// A run whose tool ignores the signal never reaches agent_end. After
+			// the grace, settle it the way agent_end would (the settle seam with
+			// the state as it stands, then close every view). `settled` then
+			// drops everything the stuck run emits later, so a late agent_end
+			// or loop failure can neither settle again nor write.
+			forceTimer ??= setTimeout(() => {
+				if (settled) return;
+				console.warn("[turn] the aborted run did not end within the grace period; settling it");
+				settleWith(true);
+				closeAll();
+			}, abortSettleGraceMs.current);
 		},
 	};
 }
