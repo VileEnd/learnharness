@@ -2,7 +2,8 @@
  * linkedom with the two things the modal tests need that it lacks: a focus
  * model (focus(), document.activeElement) that behaves like a browser for
  * inert, disabled and removed elements, and keydown dispatch. The model is
- * this file's assumption about browsers (HTML "focusable area" rules); real
+ * this file's assumption about browsers (HTML "focusable area" rules: a bare
+ * div refuses focus(), disabled and inert elements too); real
  * focus, inert and Tab order are not verified here.
  */
 import React, { act } from "react";
@@ -34,8 +35,10 @@ Object.assign(dom.window, { getSelection: () => ({ rangeCount: 0, anchorNode: nu
 Object.assign(dom.window.HTMLElement.prototype, { attachEvent() {}, detachEvent() {} });
 
 let active: Element | null = null;
+/** Like a browser: only these take focus (a bare div does not; one with a tabindex does). */
+const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [tabindex], [contenteditable=""], [contenteditable="true"]';
 dom.window.HTMLElement.prototype.focus = function focus(this: HTMLElement) {
-	if (!this.isConnected || this.hasAttribute("disabled") || this.closest("[inert]")) return;
+	if (!this.isConnected || this.hasAttribute("disabled") || this.closest("[inert]") || !this.matches(FOCUSABLE)) return;
 	const previous = active;
 	active = this;
 	// React tracks the focused text field through focusin/focusout.

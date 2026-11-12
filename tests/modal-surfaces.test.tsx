@@ -81,7 +81,11 @@ async function checkSurface(kind: Kind, surface: () => React.ReactNode, rootTest
 	assert.ok(root, `${rootTestId} is open`);
 	assert.equal(testId(), focusTestId, "focus moved to the right control");
 	if (kind === "portal") assert.ok(byId("app").hasAttribute("inert"), "the app is inert");
-	else assert.ok(byId("scroller").hasAttribute("inert") && byId("page").hasAttribute("inert"), "the rest of the session is inert");
+	else {
+		assert.ok(byId("scroller").hasAttribute("inert"), "the rest of the session area is inert");
+		assert.ok(!byId("page").hasAttribute("inert") && !byId("area").hasAttribute("inert"), "the sidebar / top bar stay live");
+	}
+	if (focusTestId === rootTestId) assert.equal(root.getAttribute("tabindex"), "-1", "a root takes focus only through tabindex");
 	const e = press(document.activeElement!, "Tab");
 	assert.ok(e.defaultPrevented && root.contains(document.activeElement), "Tab stays inside");
 	press(document.activeElement!, "Tab", { shiftKey: true });
@@ -112,6 +116,10 @@ describe("modal surfaces are wired to the shared behaviour", () => {
 	it("add documents: lands on Close", async () => {
 		await checkSurface("portal", () => <AddDocumentsDialog open onClose={noop} onImported={noop} />, "add-documents-dialog", "add-documents-close");
 	});
+	it("a portalled dialog makes the sidebar (everything outside it) inert, unlike the in-session overlays", async () => {
+		await mount(<App portal={<AbortTurnDialog mode="turn" onClose={noop} onConfirm={noop} />} />);
+		assert.ok(byId("app").hasAttribute("inert"));
+	});
 	it("setup: lands on the dialog (its Close button is a tooltip trigger)", async () => {
 		await checkSurface("portal", () => <SetupDialog open onClose={noop} onDone={noop} />, "setup-dialog", "setup-dialog");
 	});
@@ -137,12 +145,12 @@ describe("modal surfaces are wired to the shared behaviour", () => {
 	it("plan popup: lands on the popup", async () => {
 		await checkSurface("inline", () => <PlanPopup messages={[]} onClose={noop} />, "plan-popup", "plan-popup");
 	});
-	it("canvas workspace: lands on Minimise", async () => {
+	it("canvas workspace: lands on the workspace", async () => {
 		await checkSurface(
 			"inline",
 			() => <CanvasWorkspace chatId="c1" callId="k1" question="Draw it" onSubmit={noop} onMinimize={noop} />,
 			"canvas-workspace",
-			"canvas-minimize",
+			"canvas-workspace",
 		);
 	});
 	it("settings: lands on the dialog, inert behind, focus back on the button that opened it", async () => {
@@ -216,5 +224,38 @@ describe("the question dock behind a modal", () => {
 		document.body.appendChild(modal);
 		assert.equal(press(document.body, "Tab").defaultPrevented, false, "with a modal open the dock leaves Tab alone");
 		modal.remove();
+	});
+});
+
+describe("Enter while a modal is open", () => {
+	const quiz = { question: "Pick one", options: [{ label: "a" }, { label: "b" }], correctAnswer: "a", explanation: "Because." };
+	const answered = async (onSubmit: () => void) => {
+		await mount(<QuestionDock toolName="probe" toolCallId="q2" input={quiz} expanded dictationClaim={false} onExpand={noop} onSubmit={onSubmit} />);
+		await click(document.querySelector('[role="radio"]')!);
+	};
+
+	it("does not submit a dock behind a root-focused modal, and still does with none open", async () => {
+		let submitted = 0;
+		await answered(() => submitted++);
+		press(document.body, "Enter");
+		assert.equal(submitted, 1, "baseline: Enter submits the selected answer from anywhere");
+		submitted = 0;
+		const modal = document.createElement("div");
+		modal.setAttribute("aria-modal", "true");
+		modal.setAttribute("tabindex", "-1");
+		document.body.appendChild(modal);
+		const e = press(modal, "Enter");
+		assert.equal(submitted, 0, "Enter inside the modal does not reach the dock outside it");
+		assert.equal(e.defaultPrevented, false);
+		modal.remove();
+	});
+
+	it("the canvas workspace, itself modal, keeps submitting: Enter right after opening does not minimise", async () => {
+		let minimised = 0;
+		await mount(<App inline={<CanvasWorkspace chatId="c1" callId="k1" question="Draw it" onSubmit={noop} onMinimize={() => minimised++} />} />);
+		assert.equal(testId(), "canvas-workspace");
+		const e = press(document.activeElement!, "Enter");
+		assert.equal(minimised, 0);
+		assert.ok(e.defaultPrevented, "the workspace's own Enter-submits listener took it");
 	});
 });

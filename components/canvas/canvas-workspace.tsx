@@ -154,7 +154,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	// ── the back gesture and Esc: one Esc, one action (minimise) ──
 	useBackDismiss(true, onMinimize);
 	const dialogRef = useRef<HTMLDivElement>(null);
-	useModal(dialogRef);
+	useModal(dialogRef, true, "session");
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
@@ -413,7 +413,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			setBusy(false);
 		}
 	};
-	useEnterSubmits(() => void submit());
+	useEnterSubmits(() => void submit(), dialogRef);
 
 	const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as const);
 	useEffect(() => engineRef.current?.refresh(), [theme]);
@@ -423,6 +423,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	return (
 		<div
 			ref={dialogRef}
+			data-autofocus
 			data-testid="canvas-workspace"
 			role="dialog"
 			aria-modal="true"
@@ -476,7 +477,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 				)}
 				<span className="ml-auto" />
 				<HintsButton hints={hints} open={hintsOpen} onToggle={() => setHintsOpen((v) => !v)} />
-				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" data-autofocus onClick={onMinimize} className="rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" onClick={onMinimize} className="rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
 					<Minimize2Icon className="size-4" />
 				</button>
 			</div>

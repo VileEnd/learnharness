@@ -41,7 +41,8 @@ describe("accessible names of controls that had none", () => {
 	it("the graph canvas has a name and fallback text pointing to the Chains table", () => {
 		const html = renderToStaticMarkup(createElement(GraphCanvas, { canvasRef: { current: null } }));
 		assert.ok(/<canvas[^>]*role="img"/.test(html), html);
-		assert.ok(/<canvas[^>]*aria-label="Knowledge graph/.test(html), html);
+		// role=img hides the children, so the pointer lives in the name itself.
+		assert.ok(/<canvas[^>]*aria-label="Knowledge graph[^"]*Chains table/.test(html), html);
 		assert.ok(/<canvas[^>]*>[^<]*Chains table[^<]*<\/canvas>/.test(html), "fallback text inside the canvas");
 	});
 });

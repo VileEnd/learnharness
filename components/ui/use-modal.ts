@@ -19,7 +19,11 @@ import { useEffect, useRef, type RefObject } from "react";
  *     happen behind a modal;
  *   - everything else in the app is `inert` (the siblings of the surface and
  *     of each of its ancestors, up to <body>). Counted per element, so with
- *     several modals open the page stays inert until the LAST one closes;
+ *     several modals open the page stays inert until the LAST one closes.
+ *     A surface mounted inside the session area (plan popup, diagram focus,
+ *     canvas workspace) passes `"session"`: by the owner's design those do
+ *     not cover the app chrome, so only its siblings inside that area go
+ *     inert and the sidebar and top bar stay live;
  *   - on close, focus returns to the element that had it at open, if it is
  *     still in the document. A modal closed out of order hands the opener of
  *     the ones above it on, so focus never lands behind a modal that remains.
@@ -39,6 +43,8 @@ const NEVER_INERT = new Set(["SCRIPT", "STYLE", "LINK", "TEMPLATE", "NOSCRIPT", 
 /** The tabbable controls inside `root`, in document order. */
 export function tabbablesIn(root: Element): HTMLElement[] {
 	return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => {
+		// A `tabindex` qualifies any element, a disabled control included.
+		if (el.hasAttribute("disabled") || el.closest("fieldset[disabled]")) return false;
 		if (Number.parseInt(el.getAttribute("tabindex") ?? "0", 10) < 0) return false;
 		if (el.closest("[inert], [hidden]")) return false;
 		// Layout-less environments (no getClientRects) count everything as shown.
@@ -128,17 +134,24 @@ function onKeyDown(e: KeyboardEvent) {
 	e.preventDefault();
 	e.stopPropagation();
 	const items = tabbablesIn(top.root);
-	const current = target && top.root.contains(target) ? target : null;
-	const next = nextTabTarget(items, current, e.shiftKey);
-	if (next) next.focus();
-	else {
-		if (!top.root.hasAttribute("tabindex")) top.root.setAttribute("tabindex", "-1");
-		top.root.focus();
+	// A candidate that refuses focus (the page changed under us) must not
+	// stall the trap: try the one after it, at most once around.
+	let candidate = nextTabTarget(items, target && top.root.contains(target) ? target : null, e.shiftKey);
+	for (let tries = 0; candidate && tries < items.length; tries++) {
+		candidate.focus();
+		if (document.activeElement === candidate) return;
+		candidate = nextTabTarget(items, candidate, e.shiftKey);
 	}
+	if (!top.root.hasAttribute("tabindex")) top.root.setAttribute("tabindex", "-1");
+	top.root.focus();
 }
 
-function open(root: HTMLElement, opener: Element | null): Entry {
-	const entry: Entry = { root, opener, held: outsiders(root) };
+/** Where the inert reaches: the whole app, or only the area the surface sits in. */
+export type ModalScope = "app" | "session";
+
+function open(root: HTMLElement, opener: Element | null, scope: ModalScope): Entry {
+	const held = scope === "session" ? Array.from(root.parentElement?.children ?? []).filter((el) => el !== root && !NEVER_INERT.has(el.tagName)) : outsiders(root);
+	const entry: Entry = { root, opener, held };
 	if (stack.length === 0) document.addEventListener("keydown", onKeyDown);
 	stack.push(entry);
 	for (const el of entry.held) hold(el);
@@ -168,7 +181,7 @@ function close(entry: Entry) {
  *  calling component is mounted, which is how most surfaces here work; pass
  *  `open` for one that stays mounted and renders null when closed). Call it
  *  from the component that renders the surface's root. */
-export function useModal(ref: RefObject<HTMLElement | null>, active = true): void {
+export function useModal(ref: RefObject<HTMLElement | null>, active = true, scope: ModalScope = "app"): void {
 	// Captured while rendering, before an `autoFocus` inside can steal focus.
 	const opener = useRef<Element | null | undefined>(undefined);
 	if (!active) opener.current = undefined;
@@ -176,7 +189,7 @@ export function useModal(ref: RefObject<HTMLElement | null>, active = true): voi
 	useEffect(() => {
 		const root = ref.current;
 		if (!active || !root) return;
-		const entry = open(root, opener.current ?? null);
+		const entry = open(root, opener.current ?? null, scope);
 		return () => close(entry);
-	}, [ref, active]);
+	}, [ref, active, scope]);
 }

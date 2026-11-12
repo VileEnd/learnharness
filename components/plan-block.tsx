@@ -762,7 +762,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 	// The back gesture (Android back, iOS edge swipe) closes the overlay.
 	useBackDismiss(true, onClose);
 	const dialogRef = useRef<HTMLDivElement>(null);
-	useModal(dialogRef);
+	useModal(dialogRef, true, "session");
 
 	// Esc closes — claimed at the DOCUMENT level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): a surfaced layer's Esc is exactly one

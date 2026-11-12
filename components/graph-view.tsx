@@ -669,7 +669,7 @@ export async function loadGraphSnapshot(groupBy: string): Promise<GraphSnapshot>
 /** The home graph's one canvas. Exported pure for the name pin. */
 export function GraphCanvas({ canvasRef }: { canvasRef: React.RefObject<HTMLCanvasElement | null> }) {
 	return (
-		<canvas ref={canvasRef} role="img" aria-label="Knowledge graph" className="block h-full w-full touch-none">
+		<canvas ref={canvasRef} role="img" aria-label="Knowledge graph. Open the Chains table for a keyboard-accessible list of its nodes." className="block h-full w-full touch-none">
 			The knowledge graph is drawn on a canvas. Open the Chains table for a keyboard-accessible list of the same
 			nodes and chains.
 		</canvas>

@@ -118,6 +118,47 @@ describe("useModal", () => {
 		assert.equal(activeId(), "m-c", "and going forward");
 	});
 
+	it("never lands on a disabled control that has a tabindex, and moves on from one that refuses focus", async () => {
+		await mount(<Page />);
+		function Odd() {
+			const ref = useRef<HTMLDivElement>(null);
+			useModal(ref);
+			return createPortal(
+				<div ref={ref} role="dialog" aria-modal="true">
+					<button id="o1" type="button">1</button>
+					<button id="o-dis" type="button" tabIndex={0} disabled>x</button>
+					<button id="o-stuck" type="button">2</button>
+					<button id="o3" type="button">3</button>
+				</div>,
+				document.body,
+			);
+		}
+		await rerender(<Page extra={<Odd />} />);
+		byId("o-stuck").focus = () => {};
+		press(byId("o1"), "Tab");
+		assert.equal(activeId(), "o3", "skipped the disabled control and the one that would not take focus");
+	});
+
+	it("session scope: only the siblings inside the area go inert, not the chrome around it", async () => {
+		function Inline() {
+			const ref = useRef<HTMLDivElement>(null);
+			useModal(ref, true, "session");
+			return <div ref={ref} id="inline" role="dialog" aria-modal="true"><button id="inline-x" type="button">x</button></div>;
+		}
+		const tree = (on: boolean) => (
+			<>
+				<nav id="sidebar"><button id="nav-btn" type="button">nav</button></nav>
+				<section id="area"><div id="scroller" />{on ? <Inline /> : null}</section>
+			</>
+		);
+		await mount(tree(false));
+		await rerender(tree(true));
+		assert.ok(byId("scroller").hasAttribute("inert"));
+		assert.ok(!byId("sidebar").hasAttribute("inert") && !byId("area").hasAttribute("inert"));
+		await rerender(tree(false));
+		assert.equal(document.querySelectorAll("[inert]").length, 0);
+	});
+
 	it("claims Tab before the global handler (no thinking-level cycle behind a modal)", async () => {
 		await mount(<Page />);
 		let windowSaw = 0;

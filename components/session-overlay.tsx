@@ -116,7 +116,7 @@ export function MermaidOverlay({
 	// The back gesture (Android back, iOS edge swipe) closes the overlay.
 	useBackDismiss(true, onClose);
 	const dialogRef = useRef<HTMLDivElement>(null);
-	useModal(dialogRef);
+	useModal(dialogRef, true, "session");
 
 	// Esc closes — claimed at the document level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): one Esc, one action; the window chain
