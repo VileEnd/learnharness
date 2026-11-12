@@ -282,7 +282,7 @@ export async function fulfilThroughGuard(
 /** Only what Chromium needs from the environment: never the server's own
  *  (provider keys, admin secrets). HOME and the XDG dirs point at the
  *  throwaway profile. */
-const CHROME_ENV_KEYS = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "FONTCONFIG_FILE", "FONTCONFIG_PATH", "SYSTEMROOT", "WINDIR"];
+export const CHROME_ENV_KEYS = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "FONTCONFIG_FILE", "FONTCONFIG_PATH", "SYSTEMROOT", "WINDIR"];
 
 function chromeEnv(profile: string): Record<string, string> {
 	const env: Record<string, string> = { HOME: profile, XDG_CONFIG_HOME: profile, XDG_CACHE_HOME: profile };
@@ -292,6 +292,28 @@ function chromeEnv(profile: string): Record<string, string> {
 	}
 	return env;
 }
+
+/** Chromium's launch flags. scripts/smoke-demo-runtime.mjs launches the
+ *  image's Chromium with a copy of these and of CHROME_ENV_KEYS (it cannot
+ *  import this module); tests/demo-runtime-payload.test.ts keeps the two
+ *  equal. */
+export const CHROME_ARGS = [
+	"--disable-gpu",
+	// Chromium's own sandbox needs user namespaces the container does not
+	// provide, so it stays off; the lockdown in this module is what confines
+	// the page.
+	"--no-sandbox",
+	"--disable-dev-shm-usage",
+	// No route for Chromium itself: every http(s) request the page makes is
+	// intercepted and fetched by this process through the outbound guard, so
+	// Chromium never needs the network. This catches what interception
+	// cannot see (WebSockets, popups).
+	"--proxy-server=http://0.0.0.0:0",
+	"--proxy-bypass-list=<-loopback>",
+	"--host-resolver-rules=MAP * ~NOTFOUND",
+	// WebRTC may not send UDP around the (dead) proxy.
+	"--webrtc-ip-handling-policy=disable_non_proxied_udp",
+];
 
 async function withBrowserPage<T>(
 	documentUrl: string,
@@ -315,23 +337,7 @@ async function withBrowserPage<T>(
 			...(executablePath ? { executablePath } : { channel: "chrome" as const }),
 			userDataDir: profile,
 			env: chromeEnv(profile),
-			args: [
-				"--disable-gpu",
-				// Chromium's own sandbox needs user namespaces the container does
-				// not provide, so it stays off; the lockdown above and below is
-				// what confines the page.
-				"--no-sandbox",
-				"--disable-dev-shm-usage",
-				// No route for Chromium itself: every http(s) request the page
-				// makes is intercepted and fetched by this process through the
-				// outbound guard, so Chromium never needs the network. This
-				// catches what interception cannot see (WebSockets, popups).
-				"--proxy-server=http://0.0.0.0:0",
-				"--proxy-bypass-list=<-loopback>",
-				"--host-resolver-rules=MAP * ~NOTFOUND",
-				// WebRTC may not send UDP around the (dead) proxy.
-				"--webrtc-ip-handling-policy=disable_non_proxied_udp",
-			],
+			args: [...CHROME_ARGS],
 		});
 		try {
 			const page = await browser.newPage();
