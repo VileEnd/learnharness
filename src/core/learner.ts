@@ -31,6 +31,8 @@ import type {
 	GraphChain,
 	LearnerSnapshot,
 } from "./contracts.ts";
+import { resolveTargetId } from "./chains.ts";
+import type { GraphNode } from "./contracts/graph.ts";
 import { coverageOf } from "./coverage.ts";
 import { healGradeArguments } from "./grade-heal.ts";
 import { PRACTICE_CONCLUDE_TOOL, problemInputForConclude, WORK_TOOLS, workSubmissionsOf, type LhMessage } from "./native-messages.ts";
@@ -288,8 +290,25 @@ const PRACTICE_RESULT: Record<(typeof PRACTICE_OUTCOMES)[number], EvidenceResult
 	movedOn: "failed",
 };
 
-/** Every graded item of one chat, in transcript order. */
-export function gradedItems(chat: ChatRecord): GradedItem[] {
+/** The concept nodes tags are resolved against (ids and names). */
+export type TagNodes = ReadonlyArray<Pick<GraphNode, "id" | "name">>;
+
+/** Every graded item of one chat, in transcript order. The recorded tags are
+ *  what the model wrote (the persisted call keeps a name as a name: the
+ *  argument normaliser only heals the copy that validates), so with `nodes`
+ *  each tag is resolved to its node id like the call-time check does, and a
+ *  tag that resolves to nothing is dropped: the item then counts as untagged
+ *  and attribution can pick it up. Without `nodes` the tags stay raw. */
+export function gradedItems(chat: ChatRecord, nodes?: TagNodes): GradedItem[] {
+	const items = rawGradedItems(chat);
+	if (!nodes) return items;
+	return items.map((item) => ({
+		...item,
+		tags: [...new Set(item.tags.flatMap((t) => resolveTargetId(t, nodes) ?? []))],
+	}));
+}
+
+function rawGradedItems(chat: ChatRecord): GradedItem[] {
 	const calls = toolCallsOf(chat.messages);
 	const results = cleanResults(chat.messages);
 	const grades = gradesOf(calls, results);
@@ -396,6 +415,7 @@ export function deriveEvidence(
 	chats: readonly ChatRecord[],
 	attributions: readonly AttributionRow[],
 	nodeIds: ReadonlySet<string>,
+	nodes?: TagNodes,
 ): EvidenceEvent[] {
 	const linked = new Map<string, string[]>();
 	for (const row of attributions) {
@@ -404,7 +424,7 @@ export function deriveEvidence(
 	}
 	const events: EvidenceEvent[] = [];
 	for (const chat of chats) {
-		for (const item of gradedItems(chat)) {
+		for (const item of gradedItems(chat, nodes)) {
 			const ids = [...new Set([...item.tags, ...(linked.get(attributionKey(chat.id, item.toolCallId)) ?? [])])].filter((id) =>
 				nodeIds.has(id),
 			);
@@ -432,11 +452,16 @@ export function deriveEvidence(
  *  and never attributed. With `liveNodes`, a row whose concepts have all left
  *  the graph no longer counts, so the answer gets linked again; the ledger stays
  *  append-only, and deriveEvidence already ignores concepts that are gone. */
-export function unattributedItems(chat: ChatRecord, attributions: readonly AttributionRow[], liveNodes?: ReadonlySet<string>): GradedItem[] {
+export function unattributedItems(
+	chat: ChatRecord,
+	attributions: readonly AttributionRow[],
+	liveNodes?: ReadonlySet<string>,
+	nodes?: TagNodes,
+): GradedItem[] {
 	if (chat.kind === "practice") return [];
 	const counts = (r: AttributionRow) => !liveNodes || r.conceptIds.length === 0 || r.conceptIds.some((id) => liveNodes.has(id));
 	const done = new Set(attributions.filter(counts).map((r) => attributionKey(r.chatId, r.toolCallId)));
-	return gradedItems(chat).filter(
+	return gradedItems(chat, nodes).filter(
 		(item) => item.kind !== "practice" && item.tags.length === 0 && !done.has(attributionKey(chat.id, item.toolCallId)),
 	);
 }

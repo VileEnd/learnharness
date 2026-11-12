@@ -22,6 +22,6 @@ export function buildLearnerSnapshot(
 ): LearnerSnapshot {
 	const nodeIds = [...new Set(graph.nodes.map((n) => n.id))];
 	const chats = deps.chatStore.listChats().flatMap((c) => deps.chatStore.getChat(c.id) ?? []);
-	const events = deriveEvidence(chats, deps.learnerStore.readAttributions(), new Set(nodeIds));
+	const events = deriveEvidence(chats, deps.learnerStore.readAttributions(), new Set(nodeIds), graph.nodes);
 	return deriveLearnerState(events, graph.chains, nodeIds, now);
 }
