@@ -331,12 +331,12 @@ export function PolicyFields({
 				</button>
 			</div>
 			{blocked && (
-				<p role="alert" data-testid={`${idPrefix}-unpriced-blocked`} className="text-red-500">
+				<p role="alert" data-testid={`${idPrefix}-unpriced-blocked`} className="text-error">
 					A user with a monthly limit cannot use a custom model without rates ({heldUnpriced.join(", ")}). Remove it or clear the limit.
 				</p>
 			)}
 			{error && (
-				<p role="alert" data-testid={`${idPrefix}-save-error`} className="text-red-500">
+				<p role="alert" data-testid={`${idPrefix}-save-error`} className="text-error">
 					Couldn&apos;t save: {error}
 				</p>
 			)}
@@ -373,7 +373,7 @@ function UserPolicyEditor({
 					<button type="button" className={btnCls} disabled={busy} onClick={() => onSave({ useDefaults: true })}>
 						Save
 					</button>
-					{error && <p role="alert" data-testid={`user-${userId}-save-error`} className="mt-1 text-xs text-red-500">Couldn&apos;t save: {error}</p>}
+					{error && <p role="alert" data-testid={`user-${userId}-save-error`} className="mt-1 text-xs text-error">Couldn&apos;t save: {error}</p>}
 				</div>
 			) : (
 				<PolicyFields value={own ?? policy.defaults} catalog={catalog} busy={busy} idPrefix={`user-${userId}`} onSave={onSave} saveLabel="Save" error={error} />
@@ -444,7 +444,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 	return (
 		<div data-testid="section-users" className="flex flex-col gap-4">
 			{p.error && (
-				<p role="alert" data-testid="users-error" className="rounded-sm border border-red-500/40 px-3 py-2 text-xs text-red-500">
+				<p role="alert" data-testid="users-error" className="rounded-sm border border-error/40 px-3 py-2 text-xs text-error">
 					{errorMessage(p.error)}
 				</p>
 			)}
@@ -484,7 +484,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 				</Panel>
 			)}
 			{p.saveError && (
-				<p role="alert" data-testid="policy-error" className="rounded-sm border border-red-500/40 px-3 py-2 text-xs text-red-500">
+				<p role="alert" data-testid="policy-error" className="rounded-sm border border-error/40 px-3 py-2 text-xs text-error">
 					Couldn&apos;t save: {p.saveError}
 				</p>
 			)}
@@ -539,7 +539,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 										</span>
 									)}
 									{reached && (
-										<span data-testid={`user-limit-${u.id}`} className="rounded-sm border border-red-500/50 px-1.5 text-xs text-red-500">
+										<span data-testid={`user-limit-${u.id}`} className="rounded-sm border border-error/50 px-1.5 text-xs text-error">
 											limit reached
 										</span>
 									)}
@@ -554,7 +554,7 @@ export function UsersSectionView(p: UsersSectionViewProps) {
 												<span className="text-sm">{d.name}</span>
 												<span className="text-muted-foreground">{d.ip}</span>
 												<span className="text-muted-foreground">last seen {lastSeen(d.latestHandshake, p.now)}</span>
-												{d.stale && <span className="rounded-sm border border-amber-500/50 px-1.5 text-amber-500">outdated — re-create</span>}
+												{d.stale && <span className="rounded-sm border border-warning/50 px-1.5 text-warning">outdated — re-create</span>}
 												<button type="button" className={`${btnCls} ml-auto`} disabled={p.busy} onClick={() => p.onRevoke(d.id)}>
 													Revoke
 												</button>

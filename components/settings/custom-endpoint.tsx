@@ -211,7 +211,7 @@ export function CustomEndpointEditor({
 	return (
 		<div data-testid="custom-endpoint-editor" className="flex flex-col gap-2 rounded-sm px-1 py-1.5">
 			{status.corrupt && (
-				<p role="alert" data-testid="custom-corrupt" className="text-xs text-red-500">
+				<p role="alert" data-testid="custom-corrupt" className="text-xs text-error">
 					{customErrorMessage("custom_provider_corrupt")}
 				</p>
 			)}
@@ -287,13 +287,13 @@ export function CustomEndpointEditor({
 						onClick={() => setConfirmDisconnect(true)}
 						disabled={busy}
 						data-testid="custom-disconnect"
-						className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-red-500 hover:underline"
+						className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
 					>
 						Disconnect
 					</button>
 				)}
 				{cfg && confirmDisconnect && (
-					<span data-testid="custom-disconnect-confirm" className="flex items-center gap-2 text-xs text-red-500">
+					<span data-testid="custom-disconnect-confirm" className="flex items-center gap-2 text-xs text-error">
 						Disconnect and delete the key and all model settings?
 						<button
 							type="button"
@@ -314,7 +314,7 @@ export function CustomEndpointEditor({
 				)}
 			</div>
 			{error && (
-				<p role="alert" data-testid="custom-error" className="text-xs text-red-500">
+				<p role="alert" data-testid="custom-error" className="text-xs text-error">
 					{error.message}
 					{error.code === "stale" && (
 						<button type="button" onClick={onReload} data-testid="custom-reload" className="ml-2 underline underline-offset-2">
@@ -387,12 +387,12 @@ export function CustomEndpointEditor({
 									)}
 								</div>
 								{ctx <= LOW_CONTEXT_TOKENS && (
-									<p data-testid={`custom-lowcontext-${m.id}`} className="text-[11px] text-amber-500">
+									<p data-testid={`custom-lowcontext-${m.id}`} className="text-[11px] text-warning">
 										Context {ctx} is so small that the conversation would be compressed on almost every turn. Raise the context in the backend and pin the same value here.
 									</p>
 								)}
 								{unpriced && (
-									<p data-testid={`custom-unpriced-${m.id}`} className="text-[11px] text-amber-500">
+									<p data-testid={`custom-unpriced-${m.id}`} className="text-[11px] text-warning">
 										No rates: set rates to offer this to users with a spending limit.
 									</p>
 								)}
@@ -467,7 +467,7 @@ export function CustomEndpointSection({ isAdmin }: { isAdmin: boolean }) {
 				</span>
 			</button>
 			{failed && (
-				<p role="alert" data-testid="custom-load-error" className="px-1 text-xs text-red-500">
+				<p role="alert" data-testid="custom-load-error" className="px-1 text-xs text-error">
 					Could not load the custom endpoint.
 					<button type="button" onClick={() => void reload()} className="ml-2 underline underline-offset-2">
 						Retry

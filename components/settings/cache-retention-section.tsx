@@ -40,7 +40,7 @@ export function CacheRetentionSectionView({
 				</ThinSelect>
 			</div>
 			{error && (
-				<p role="alert" data-testid="cache-retention-error" className="text-xs text-red-500">
+				<p role="alert" data-testid="cache-retention-error" className="text-xs text-error">
 					{error}
 				</p>
 			)}

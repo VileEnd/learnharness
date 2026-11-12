@@ -325,7 +325,7 @@ export function PromptTextEditor({
 					<button
 						type="button"
 						onClick={onDelete}
-						className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-red-500 hover:underline"
+						className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
 					>
 						Delete
 					</button>

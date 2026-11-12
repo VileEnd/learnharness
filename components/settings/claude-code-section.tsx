@@ -49,7 +49,7 @@ export function ClaudeCodeSectionView({
 				</p>
 			)}
 			{error && (
-				<p role="alert" data-testid="claude-code-error" className="text-xs text-red-500">
+				<p role="alert" data-testid="claude-code-error" className="text-xs text-error">
 					{error}
 				</p>
 			)}

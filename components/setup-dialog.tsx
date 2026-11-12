@@ -214,7 +214,7 @@ export function SetupKeysBody({
 					</div>
 				)}
 				{error && (
-					<p role="alert" data-testid="setup-key-error" className="text-xs text-red-400">
+					<p role="alert" data-testid="setup-key-error" className="text-xs text-destructive">
 						{error}
 					</p>
 				)}
@@ -611,7 +611,7 @@ export function SetupDialog({
 							>
 								{saving ? "Saving…" : "Save models"}
 							</button>
-							{error && <p className="text-xs text-red-400">{error}</p>}
+							{error && <p className="text-xs text-destructive">{error}</p>}
 						</div>
 					</div>
 				)}

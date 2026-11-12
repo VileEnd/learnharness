@@ -187,7 +187,7 @@ export function AddDocumentsBody({
 								: "Nothing was added."}
 						</p>
 						{failed.map((r) => (
-							<p key={r.index} role="alert" className="break-words text-xs text-red-400">
+							<p key={r.index} role="alert" className="break-words text-xs text-destructive">
 								{r.name}: {r.error}
 							</p>
 						))}
@@ -331,7 +331,7 @@ function EntryRow({
 					{entry.state === "checking" ? (
 						<div className="text-xs text-muted-foreground">Checking…</div>
 					) : problem ? (
-						<div role="alert" className="break-words text-xs text-red-400">
+						<div role="alert" className="break-words text-xs text-destructive">
 							{problem}
 						</div>
 					) : verdict ? (
