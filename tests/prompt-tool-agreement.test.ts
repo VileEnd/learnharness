@@ -85,7 +85,7 @@ function canvasCitations(role: "teacher" | "prober" | "practice"): string[] {
 	const cited: string[] = [];
 	for (const fragment of CANVAS_FRAGMENTS) {
 		if (!composed.has(fragment)) continue;
-		cited.push(...promptText(fragment).matchAll(/`([A-Za-z_0-9:-]+)`/g).map((m) => m[1]!));
+		cited.push(...Array.from(promptText(fragment).matchAll(/`([A-Za-z_0-9:-]+)`/g), (m) => m[1]!));
 	}
 	return cited;
 }
