@@ -36,12 +36,14 @@ import {
 	describedByFrontMatter,
 	documentIdFor,
 	fingerprint,
+	hasContent,
 	legacySourceIds,
 	normalizeText,
 	normalizeTopics,
 	parseFrontMatter,
 	sha256Hex,
 } from "../core/documents.ts";
+import type { Fingerprint } from "../core/documents.ts";
 import { isNowebFile, isRawNoweb, nowebToMarkdown } from "../core/noweb.ts";
 import { FACTORY_SETTINGS, isPolicyRefusal, ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
 import type { NotesImportInput } from "../agent/subagents/extraction.ts";
@@ -263,9 +265,16 @@ const stem = (name: string) => name.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, 
 const asSummary = ({ minhash: _sketch, ...rest }: DocumentMeta): DocumentSummary => rest;
 
 /** Candidate = what the identity layer derives from markdown. */
-function candidateOf(markdown: string, pdfSha256?: string) {
-	const fp = fingerprint(markdown);
+function candidateOf(markdown: string, pdfSha256?: string, fp: Fingerprint = fingerprint(markdown)) {
 	return { ...fp, ...(pdfSha256 ? { pdfSha256 } : {}) };
+}
+
+/** What classifying a text file already worked out. The import that follows
+ *  reuses it: decoding and fingerprinting a large text again would cost its
+ *  whole size in memory again, each time. */
+interface Derived {
+	markdown: string;
+	fp: Fingerprint;
 }
 
 export function createDocumentService(deps: DocumentServiceDeps) {
@@ -291,15 +300,15 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 			: { empty: { sourceId: source.id, importedAt: source.importedAt } };
 	}
 
-	async function checkOne(file: IncomingFile, index: number, metas: DocumentMeta[]): Promise<CheckResult> {
-		const result = await classifyOne(file, index, metas);
+	async function checkOne(file: IncomingFile, index: number, metas: DocumentMeta[], derived?: { value?: Derived }): Promise<CheckResult> {
+		const result = await classifyOne(file, index, metas, derived);
 		if (result.error || result.verdict.status !== "new") return result;
 		const { legacy, empty } = legacyOf(file.name, metas);
 		if (legacy) return { ...result, verdict: { status: "legacy", legacy } };
 		return empty ? { ...result, legacyEmpty: empty } : result;
 	}
 
-	async function classifyOne(file: IncomingFile, index: number, metas: DocumentMeta[]): Promise<CheckResult> {
+	async function classifyOne(file: IncomingFile, index: number, metas: DocumentMeta[], derived?: { value?: Derived }): Promise<CheckResult> {
 		if (isPdf(file.bytes)) {
 			const pdfSha256 = sha256Hex(file.bytes);
 			const byBytes = metas.find((m) => m.pdfSha256 === pdfSha256);
@@ -318,8 +327,10 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		}
 		const text = documentText(file);
 		if (text === null) return { index, name: file.name, kind: "markdown", verdict: { status: "new" }, error: "Not a text or PDF file." };
-		if (normalizeText(text) === "") return { index, name: file.name, kind: "markdown", verdict: { status: "new" }, error: "The file is empty." };
-		return { index, name: file.name, kind: "markdown", verdict: classify(metas, candidateOf(text)) };
+		if (!hasContent(text)) return { index, name: file.name, kind: "markdown", verdict: { status: "new" }, error: "The file is empty." };
+		const fp = fingerprint(text);
+		if (derived) derived.value = { markdown: text, fp };
+		return { index, name: file.name, kind: "markdown", verdict: classify(metas, candidateOf(text, undefined, fp)) };
 	}
 
 	async function knownScan(pdfSha256: string): Promise<OcrKnown | null> {
@@ -362,9 +373,11 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		pages?: number;
 		ocr?: DocumentMeta["ocr"];
 		sourceId?: string;
+		/** The markdown's fingerprint when the caller already has it. */
+		fp?: Fingerprint;
 	}): DocumentMeta {
 		const prior = store.getMeta(args.id);
-		const fp = fingerprint(args.markdown);
+		const fp = args.fp ?? fingerprint(args.markdown);
 		const stamp = now();
 		return {
 			id: args.id,
@@ -554,18 +567,18 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		return verdict.of && (decision === "replace" || verdict.status === "duplicate") ? verdict.of.id : undefined;
 	}
 
-	async function importMarkdown(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined, attachTo?: string): Promise<ImportTicket> {
-		const markdown = documentText(file);
-		if (markdown === null || normalizeText(markdown) === "") {
+	async function importMarkdown(file: IncomingFile, index: number, verdict: DuplicateVerdict, decision: DocumentDecision | undefined, attachTo?: string, derived?: Derived): Promise<ImportTicket> {
+		const markdown = derived?.markdown ?? documentText(file);
+		if (markdown === null || !hasContent(markdown)) {
 			return { index, name: file.name, outcome: "failed", error: markdown === null ? "Not a text or PDF file." : "The file is empty." };
 		}
-		const fp = fingerprint(markdown);
+		const fp = derived?.fp ?? fingerprint(markdown);
 		const id = targetOf(verdict, decision) ?? freshId({ contentHash: fp.contentHash });
 		const prior = attachTo ? undefined : store.getMeta(id) ?? undefined;
 		if (prior && busyWith(prior)) return { index, name: file.name, outcome: "failed", docId: id, error: BUSY };
 		const described = await describeText(markdown, file.name);
 		const description = { ...described, topics: await canonicalizeTopics(normalizeTopics(described.topics)) };
-		const meta = buildMeta({ id, markdown, description, filename: file.name, origin: "markdown", sourceId: attachTo });
+		const meta = buildMeta({ id, markdown, description, filename: file.name, origin: "markdown", sourceId: attachTo, fp });
 		store.save(meta, markdown);
 		const completion = settle(() => (attachTo ? adopt(meta) : extractStored(meta, file.name, markdown, prior)), meta.title);
 		return { index, name: file.name, outcome: "started", docId: meta.id, title: meta.title, completion };
@@ -693,7 +706,8 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 					tickets.push({ index, name: file.name, outcome: "failed", error: "PDF files are added through Add documents." });
 					continue;
 				}
-				const checked = await checkOne(file, index, metas);
+				const derived: { value?: Derived } = {};
+				const checked = await checkOne(file, index, metas, derived);
 				if (checked.error) {
 					tickets.push({ index, name: file.name, outcome: "failed", error: checked.error });
 					continue;
@@ -712,7 +726,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 				tickets.push(
 					checked.kind === "pdf"
 						? await importPdf(file, index, checked.verdict, decision, attachTo)
-						: await importMarkdown(file, index, checked.verdict, decision, attachTo),
+						: await importMarkdown(file, index, checked.verdict, decision, attachTo, derived.value),
 				);
 			} catch (err) {
 				const f = failureOf(err);
