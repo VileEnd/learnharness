@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueuedSteersBody } from "../components/queued-steers.tsx";
 import { visibleQueuedSteers } from "../components/session-core.ts";
+import { serializeCitation } from "../src/core/citations.ts";
 
 describe("QueuedSteersBody (the quiet queue above the composer)", () => {
 	it("renders one truncated right-aligned line per queued steer — no background, no container chrome", () => {
@@ -27,6 +28,13 @@ describe("QueuedSteersBody (the quiet queue above the composer)", () => {
 		assert.match(html, /muted-foreground\/60/, "quiet, roughly half opacity");
 		assert.doesNotMatch(html, /bg-|border|rounded/, "no background, no container");
 		assert.match(html, /also cover Venus/, "the text rides the line");
+	});
+
+	it("shows a queued tutor quote as its short label, never as the raw link", () => {
+		const link = serializeCitation({ version: 1, chatId: "chat_1", messageId: "a1", text: "the derivatives multiply", start: 0, end: 24, prefix: "", suffix: "", comment: "why a product?" });
+		const html = renderToStaticMarkup(<QueuedSteersBody steers={[{ id: "steer_q", text: `${link} thanks` }]} />);
+		assert.match(html, /« why a product\? » thanks/);
+		assert.doesNotMatch(html, /lh-citation|chat_1/);
 	});
 
 	it("empty queue renders nothing", () => {

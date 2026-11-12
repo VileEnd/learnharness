@@ -135,14 +135,63 @@ export function citationLabel(c: TutorCitation): string {
 	return preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
 }
 
+/** Where a link is literal text, not a citation: fenced code, inline code
+ *  spans (a backtick run closed by a run of the same length). */
+function codeRanges(text: string): Array<[number, number]> {
+	const ranges: Array<[number, number]> = [];
+	let open: { char: string; length: number; start: number } | null = null;
+	let offset = 0;
+	for (const line of text.split("\n")) {
+		const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+		if (open) {
+			if (fence && fence[1]![0] === open.char && fence[1]!.length >= open.length && line.slice(fence[0].length).trim() === "") {
+				ranges.push([open.start, offset + line.length]);
+				open = null;
+			}
+		} else if (fence) open = { char: fence[1]![0]!, length: fence[1]!.length, start: offset };
+		offset += line.length + 1;
+	}
+	if (open) ranges.push([open.start, text.length]);
+	const inFence = (at: number) => ranges.some(([start, end]) => at >= start && at < end);
+	const runs = [...text.matchAll(/`+/g)].filter((run) => !inFence(run.index!));
+	for (let i = 0; i < runs.length; i++) {
+		const run = runs[i]!;
+		const close = runs.findIndex((other, j) => j > i && other[0].length === run[0].length);
+		if (close === -1) continue;
+		ranges.push([run.index!, runs[close]!.index! + run[0].length]);
+		i = close;
+	}
+	return ranges;
+}
+
+/** Only a link in ordinary text counts: one inside code, or escaped by a
+ *  backslash, stays the literal text the learner wrote. */
 export function collectCitations(text: string): CitationOccurrence[] {
 	const found: CitationOccurrence[] = [];
 	if (!text.includes("lh-citation://")) return found; // the common case: no regex scan
+	let code: Array<[number, number]> | null = null;
 	for (const match of text.matchAll(LINK)) {
+		const start = match.index!;
+		let slashes = 0;
+		while (text[start - 1 - slashes] === "\\") slashes++;
+		if (slashes % 2 === 1) continue;
+		code ??= codeRanges(text);
+		if (code.some(([from, to]) => start >= from && start < to)) continue;
 		const citation = parseCitationHref(match[1]!);
-		if (citation) found.push({ citation, source: match[0], start: match.index!, end: match.index! + match[0].length });
+		if (citation) found.push({ citation, source: match[0], start, end: start + match[0].length });
 	}
 	return found;
+}
+
+/** A queue line or other one-line place: each citation as its short label. */
+export function citationsToLabels(text: string): string {
+	let out = "";
+	let cursor = 0;
+	for (const occurrence of collectCitations(text)) {
+		out += `${text.slice(cursor, occurrence.start)}« ${citationLabel(occurrence.citation)} »`;
+		cursor = occurrence.end;
+	}
+	return out + text.slice(cursor);
 }
 
 // ─── checking a citation against the record ─────────────────────────────────
@@ -185,8 +234,16 @@ function escapeJson(json: string): string {
 	return json.replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 }
 
+/** The block the model trusts as verified tutor material is written only by
+ *  the expansion below; a hand-typed tag in learner text loses its angle
+ *  bracket so it can never open or close that block. */
+function neutraliseFraming(text: string): string {
+	return text.replace(/<(\/?tutor_citations)/gi, "&lt;$1");
+}
+
 /** The wire form: [tutor-quote-N] markers inline, one delimited JSON block after. */
-export function expandCitationsForModel(text: string, check: CitationCheck): string {
+export function expandCitationsForModel(input: string, check: CitationCheck): string {
+	const text = neutraliseFraming(input);
 	const found = collectCitations(text);
 	if (found.length === 0) return text;
 	const ids = new Map<string, string>();

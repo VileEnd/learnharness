@@ -11,6 +11,8 @@
  * against the message ids. A steer parked server-side (stranded behind a
  * question) keeps its line — an honest "waiting for the next run".
  */
+import { citationsToLabels } from "@/src/core";
+
 export interface QueuedSteerLine {
 	id: string;
 	text: string;
@@ -22,15 +24,19 @@ export function QueuedSteersBody({ steers }: { steers: QueuedSteerLine[] }) {
 	if (steers.length === 0) return null;
 	return (
 		<div className="flex flex-col items-end gap-0.5 pb-1 pr-4" data-testid="queued-steers">
-			{steers.map((s) => (
-				<span
-					key={s.id}
-					title={s.text}
-					className="block max-w-[240px] truncate font-ui text-[11px] text-muted-foreground/60"
-				>
-					{s.text}
-				</span>
-			))}
+			{steers.map((s) => {
+				// A tutor quote reads as its short label, never as its raw link.
+				const line = citationsToLabels(s.text);
+				return (
+					<span
+						key={s.id}
+						title={line}
+						className="block max-w-[240px] truncate font-ui text-[11px] text-muted-foreground/60"
+					>
+						{line}
+					</span>
+				);
+			})}
 		</div>
 	);
 }

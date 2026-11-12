@@ -1019,9 +1019,18 @@ export function recordCitationLookup(messages: readonly LhMessage[]): CitationSo
 	return (messageId) => {
 		if (!index) {
 			index = new Map();
+			// The SAME exclusions the transcript applies (projectView), so the
+			// server and the browser agree on what the learner could quote:
+			// failed send_to_user prose and hidden repeats are not quotable.
+			const failed = failedOutputCallIds(messages);
+			const redundant = redundantTextBlocks(messages);
+			const hintReplies = hintReplyMessages(messages);
 			for (const m of messages) {
 				if ((m as { role?: string }).role !== "assistant") continue;
-				const text = userFacingTextOf((m as { content: unknown }).content).map((t) => stripInternalLabels(t)).join("\n\n");
+				const text = userFacingTextOf((m as { content: unknown }).content, failed, redundant)
+					.map((t) => stripInternalLabels(t, hintReplies.has(m)))
+					.filter((t) => t.trim() !== "")
+					.join("\n\n");
 				const before = index.get(m.id);
 				index.set(m.id, before === undefined ? text : `${before}\n\n${text}`);
 			}
