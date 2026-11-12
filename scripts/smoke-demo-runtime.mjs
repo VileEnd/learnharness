@@ -2,8 +2,10 @@
  * Import the demo dependency graph from ONLY a standalone payload. With --browser,
  * also launch the system Chromium (CHROME_PATH, as the demo builder does) with
  * the demo builder's flags and minimal environment, check the flags arrived
- * intact, drive one interactive page through it, and prove the network
- * backstop: a page's WebSocket and popup never reach a loopback listener.
+ * intact, drive one interactive page through it (loaded in memory, as the demo
+ * builder loads a demo: opaque origin, no browser storage, no local file), and
+ * prove the network backstop: a page's WebSocket and popup never reach a
+ * loopback listener.
  * No server, model, keys, app UI, or production diagnostic route needed.
  *
  * node scripts/smoke-demo-runtime.mjs --standalone <dir> [--runtime <node binary>] [--browser]
@@ -156,22 +158,38 @@ async function browserProbe(puppeteer) {
 
 		const page = await browser.newPage();
 		const failures = [];
-		page.on("console", (msg) => { if (msg.type() === "error") failures.push(msg.text()); });
+		let canaryRefused = false; // Chromium logs the refused file: fetch as a console error: expected here.
+		page.on("console", (msg) => {
+			if (msg.type() !== "error") return;
+			if (/Not allowed to load local resource/.test(msg.text())) canaryRefused = true;
+			else failures.push(msg.text());
+		});
 		page.on("pageerror", (err) => failures.push(String(err)));
 		page.on("requestfailed", (req) => failures.push(`failed request: ${req.url()}`));
 		await page.setRequestInterception(true);
 		page.on("request", (req) => {
-			if (/^(file:|about:|data:)/.test(req.url())) void req.continue();
+			if (/^(about:|data:)/.test(req.url())) void req.continue();
 			else { failures.push(`unexpected network request: ${req.url()}`); void req.abort(); }
 		});
-		const html = path.join(home, "demo.html");
-		fs.writeFileSync(html, '<!doctype html><meta charset="utf-8"><button id="increment">Increment</button><output id="count">0</output><script>document.querySelector("#increment").onclick = () => { document.querySelector("#count").textContent = "1"; };</script>');
-		await page.goto(pathToFileURL(html).href, { waitUntil: "load", timeout: 10_000 });
+		// A canary file the page must not be able to read, and the demo itself,
+		// loaded the way the demo builder loads it: into the blank tab, in memory.
+		const canary = path.join(home, "canary.txt");
+		fs.writeFileSync(canary, "CANARY-DO-NOT-READ");
+		await page.setContent(`<!doctype html><meta charset="utf-8"><button id="increment">Increment</button><output id="count">0</output><script>
+			document.querySelector("#increment").onclick = () => { document.querySelector("#count").textContent = "1"; };
+			window.report = { canary: "not tried", storage: "not tried" };
+			fetch(${JSON.stringify(pathToFileURL(canary).href)}).then((r) => r.text()).then((t) => { report.canary = t; }, () => { report.canary = "blocked"; });
+			try { localStorage.setItem("k", "v"); report.storage = "stored"; } catch { report.storage = "denied"; }
+		</script>`, { waitUntil: "load", timeout: 10_000 });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		assert.equal(await page.evaluate(() => location.origin), "null", "the in-memory page must have an opaque origin");
+		assert.deepEqual(await page.evaluate(() => window.report), { canary: "blocked", storage: "denied" }, "the in-memory page read a local file or used browser storage");
+		assert.ok(canaryRefused, "Chromium did not refuse the page's read of the canary file");
 		assert.equal(await page.$eval("#count", (element) => element.textContent), "0");
 		await page.click("#increment");
 		assert.equal(await page.$eval("#count", (element) => element.textContent), "1");
 		assert.deepEqual(failures, [], "demo console/page/network errors");
-		console.log(`[smoke-demo-runtime] ${executablePath}: JS button 0 → 1, clean console/page`);
+		console.log(`[smoke-demo-runtime] ${executablePath}: in-memory page, origin null, canary file and storage blocked, JS button 0 → 1, clean console/page`);
 		await backstopProbe(browser, home);
 	} finally {
 		await browser.close().catch(() => {});
@@ -192,14 +210,12 @@ async function backstopProbe(browser, home) {
 	try {
 		const { port } = listener.address();
 		const page = await browser.newPage();
-		const html = path.join(home, "backstop.html");
-		fs.writeFileSync(html, `<!doctype html><meta charset="utf-8"><script>
+		await page.setContent(`<!doctype html><meta charset="utf-8"><script>
 			try { new WebSocket("ws://127.0.0.1:${port}/ws"); } catch {}
 			try { new WebSocket("ws://localhost:${port}/ws"); } catch {}
 			window.open("http://127.0.0.1:${port}/popup");
 			fetch("http://127.0.0.1:${port}/fetch").catch(() => {});
-		</script>`);
-		await page.goto(pathToFileURL(html).href, { waitUntil: "load", timeout: 10_000 });
+		</script>`, { waitUntil: "load", timeout: 10_000 });
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
 		assert.equal(connections, 0, "a demo page reached a loopback listener: the Chromium network backstop is not in effect");
 		console.log("[smoke-demo-runtime] network backstop: WebSocket, popup and fetch to loopback all blocked");

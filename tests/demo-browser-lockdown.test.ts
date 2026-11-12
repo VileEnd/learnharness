@@ -33,32 +33,28 @@ afterEach(() => {
 });
 
 describe("demo request decision", () => {
-	const doc = "file:///tmp/lh-demo-x/demo.html";
-
-	it("lets the demo file, data: and blob: through and fetches http(s) through the guard", () => {
-		assert.equal(demoRequestDecision(doc, doc, true), "continue");
-		assert.equal(demoRequestDecision(`${doc}#section`, doc, true), "continue");
-		assert.equal(demoRequestDecision("data:text/javascript,1", doc, false), "continue");
-		assert.equal(demoRequestDecision("blob:null/0b6c2f0e-0000-4000-8000-000000000000", doc, false), "continue");
-		assert.equal(demoRequestDecision("https://cdn.example.com/lib.js", doc, false), "fetch");
-		assert.equal(demoRequestDecision("http://cdn.example.com/lib.js", doc, false), "fetch");
+	it("lets data: and blob: through and fetches http(s) through the guard", () => {
+		assert.equal(demoRequestDecision("data:text/javascript,1", false), "continue");
+		assert.equal(demoRequestDecision("blob:null/0b6c2f0e-0000-4000-8000-000000000000", false), "continue");
+		assert.equal(demoRequestDecision("https://cdn.example.com/lib.js", false), "fetch");
+		assert.equal(demoRequestDecision("http://cdn.example.com/lib.js", false), "fetch");
 	});
 
-	it("aborts other files, other schemes and any main-frame navigation away from the demo", () => {
+	it("aborts files, other schemes and every main-frame navigation (the demo is in memory, never a request)", () => {
 		for (const url of [
 			"file:///etc/hostname",
 			"file:///tmp/lh-demo-x/",
-			"file:///tmp/lh-demo-x/other.html",
+			"file:///tmp/lh-demo-x/demo.html",
 			"ftp://example.com/x",
 			"chrome://version",
 			"view-source:https://example.com/",
 			"ws://example.com/",
 		]) {
-			assert.equal(demoRequestDecision(url, doc, false), "abort", url);
+			assert.equal(demoRequestDecision(url, false), "abort", url);
 		}
-		assert.equal(demoRequestDecision("https://example.com/", doc, true), "abort");
-		assert.equal(demoRequestDecision("file:///etc/hostname", doc, true), "abort");
-		assert.equal(demoRequestDecision("data:text/html,x", doc, true), "abort");
+		for (const url of ["https://example.com/", "file:///etc/hostname", "data:text/html,x", "about:blank"]) {
+			assert.equal(demoRequestDecision(url, true), "abort", url);
+		}
 	});
 });
 
@@ -138,7 +134,72 @@ describe("demo browser against a real Chromium", { skip }, () => {
 			probe: "document.documentElement.innerText",
 		});
 		assert.ok(!JSON.stringify(result).includes(secret.marker), JSON.stringify(result));
-		assert.match(result.pageErrors.join("\n"), /probe not run: .*form submit, a link or a download link/);
+		// From a blank in-memory page Chromium refuses the file: navigation itself
+		// (a console error); the page stays the demo, and verification fails.
+		assert.equal(result.ok, false);
+		assert.match(result.consoleErrors.join("\n"), /Not allowed to load local resource/);
+	});
+
+	it("a demo that uses browser storage fails verification, as it fails in the learner's sandboxed frame", async () => {
+		const uses: Record<string, string> = {
+			localStorage: `localStorage.setItem("k", "v");`,
+			sessionStorage: `sessionStorage.setItem("k", "v");`,
+			cookie: `document.cookie = "k=v";`,
+			indexedDB: `indexedDB.open("db");`,
+		};
+		for (const [api, code] of Object.entries(uses)) {
+			const result = await realHeadless.runDemo(`<!doctype html><p>demo</p><script>${code}</script>`, { settleMs: 200 });
+			assert.equal(result.ok, false, `${api}: ${JSON.stringify(result)}`);
+			const errors = result.pageErrors.join("\n");
+			assert.match(errors, /opaque origin/, `${api}: ${errors}`);
+			assert.match(errors, /localStorage, sessionStorage, IndexedDB and cookies/, `${api}: ${errors}`);
+		}
+	});
+
+	it("a demo that guards its storage use still passes, and runs on an opaque origin", async () => {
+		const html = `<!doctype html><p>demo</p><script>
+			window.saved = "none";
+			try { localStorage.setItem("k", "v"); window.saved = "stored"; } catch { window.saved = "unavailable"; }
+		</script>`;
+		const result = await realHeadless.runDemo(html, { settleMs: 200, probe: "({ origin: location.origin, saved })" });
+		assert.equal(result.ok, true, JSON.stringify(result));
+		assert.deepEqual(result.probeResult, { origin: "null", saved: "unavailable" });
+	});
+
+	it("a demo that navigates the top page anywhere, or reloads it, is refused and never probed", async () => {
+		const moves = [
+			`location.href = "about:blank";`,
+			`location.reload();`,
+			`location.href = "https://cdn.example.com/page";`,
+			`top.location = "https://cdn.example.com/page";`,
+			`document.head.innerHTML += '<meta http-equiv="refresh" content="0;url=https://cdn.example.com/page">';`,
+			`const f = document.createElement("form"); f.action = "https://cdn.example.com/post"; document.body.appendChild(f); f.submit();`,
+		];
+		for (const move of moves) {
+			const html = `<!doctype html><p>demo</p><script>addEventListener("load", () => { ${move} });</script>`;
+			const result = await realHeadless.runDemo(html, { settleMs: 800, probe: "document.documentElement.innerText" });
+			assert.equal(result.ok, false, move);
+			assert.equal(result.probeResult, undefined, `${move}: ${JSON.stringify(result)}`);
+			assert.match(result.pageErrors.join("\n"), /probe not run: .*form submit, a link or a download link/, move);
+		}
+	});
+
+	it("a navigation Chromium refuses by itself from the blank page (data:, file:) fails verification and leaves the demo in place", async () => {
+		const secret = tempSecret();
+		for (const target of ["data:text/html,<p>other</p>", secret.url]) {
+			const html = `<!doctype html><p>demo</p><script>addEventListener("load", () => { location.href = ${JSON.stringify(target)}; });</script>`;
+			const result = await realHeadless.runDemo(html, { settleMs: 800, probe: "document.documentElement.innerText" });
+			assert.equal(result.ok, false, target);
+			assert.equal(result.probeResult, "demo", target);
+			assert.ok(!JSON.stringify(result).includes(secret.marker), target);
+		}
+	});
+
+	it("a demo that only changes its hash is not a navigation away", async () => {
+		const html = `<!doctype html><p>demo</p><script>addEventListener("load", () => { location.hash = "#section"; });</script>`;
+		const result = await realHeadless.runDemo(html, { settleMs: 400, probe: "document.body.innerText" });
+		assert.equal(result.ok, true, JSON.stringify(result));
+		assert.equal(result.probeResult, "demo");
 	});
 
 	it("a demo cannot fetch, frame or open a socket to the app's network, and public https still loads", async () => {
