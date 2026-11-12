@@ -272,7 +272,7 @@ def main(argv=None):
     ap.add_argument("--private-key", required=True, help="the server's private key file")
     ap.add_argument("--interface", default="wg0")
     ap.add_argument("--listen-port", type=int, default=51820)
-    ap.add_argument("--endpoint", default="vpn.moyjak.com:51820", help="host:port written to server.json")
+    ap.add_argument("--endpoint", required=True, help="host:port written to server.json")
     ap.add_argument("--status-only", action="store_true", help="refresh server.json and status.json, leave peers alone")
     ap.add_argument("--dry-run", action="store_true", help="print the syncconf file and change nothing")
     a = ap.parse_args(argv)
