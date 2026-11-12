@@ -686,16 +686,32 @@ describe("visual maker (fake model + fake headless)", () => {
 		assert.equal(result.notes, "Looked at the native render.");
 	});
 
-	it("refuses an unverified final SVG when its final render throws", async () => {
+	it("feeds a failing final render back to the model, which fixes it and is verified", async () => {
 		const headless = fakeHeadless({ renderFailures: 1 });
+		const model = scriptedModel([
+			{ toolCalls: [{ toolCallId: "w1", toolName: "write_svg", input: { svg: "<svg>broken" } }] },
+			{ text: "Done without looking." },
+			{ toolCalls: [{ toolCallId: "w2", toolName: "write_svg", input: { svg: SVG_1 } }] },
+			{ toolCalls: [{ toolCallId: "r2", toolName: "render_svg", input: {} }] },
+			{ text: "Fixed after the render error." },
+		]);
+		const result = await runVisualMaker({ brief: "b" }, { engine: model, headless });
+		assert.equal(result.svg, SVG_1);
+		assert.equal(result.notes, "Fixed after the render error.");
+		assert.deepEqual(headless.svgRenders, ["<svg>broken", SVG_1]);
+	});
+
+	it("refuses an unverified final SVG whose render keeps failing once the iteration limit is reached", async () => {
+		const headless = fakeHeadless({ renderFailures: 5 });
 		const model = scriptedModel([
 			{ toolCalls: [{ toolCallId: "w1", toolName: "write_svg", input: { svg: SVG_1 } }] },
 			{ text: "Done without looking." },
+			{ text: "Still done." },
 		]);
-		const result = await runVisualMaker({ brief: "b" }, { engine: model, headless });
+		const result = await runVisualMaker({ brief: "b" }, { engine: model, headless, maxIterations: 3 });
 		assert.equal(result.svg, "");
 		assert.match(result.notes ?? "", /^FAILED: rendering the final SVG failed — XML parse error/);
-		assert.equal(headless.svgRenders.length, 1);
+		assert.equal(headless.svgRenders.length, 2, "rendered again after the model's second finish");
 	});
 
 	it("write → render → look → finish delivers the svg with notes", async () => {

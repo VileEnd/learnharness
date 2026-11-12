@@ -515,18 +515,43 @@ function crc32(buf: Buffer): number {
 	return ~c >>> 0;
 }
 
+/** resvg resolves an <image>/<feImage> href from the local filesystem (absolute
+ *  paths, and relative ones against the working directory) and exposes no
+ *  option to stop it. The render goes back to the model as "what the figure
+ *  looks like", so model-written markup must not pull a local file into it,
+ *  and the learner's <img> view never loads one. Every href-named attribute
+ *  (any element, any namespace prefix: the XML parser resolves prefixes, so
+ *  the element name is not a safe filter) survives only as a same-document
+ *  "#id" or an inline data:image/ source; anything else is removed. Entity
+ *  references and other spellings fail the allow-list and are dropped too.
+ *  Applied to the render input only, after the display repairs. */
+function withoutExternalReferences(svg: string): string {
+	return svg.replace(
+		/<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<\?[\s\S]*?(?:\?>|$)|<\/?[a-zA-Z](?:[^<>"']|"[^"]*"|'[^']*')*>/g,
+		(token) => {
+			if (!/^<[a-zA-Z]/.test(token)) return token;
+			return token.replace(/\s([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/g, (attr, name: string, raw: string) => {
+				if (name.split(":").pop() !== "href") return attr;
+				const value = raw.replace(/^["']|["']$/g, "").trim();
+				return value.startsWith("#") || /^data:image\//i.test(value) ? attr : "";
+			});
+		},
+	);
+}
+
 async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buffer> {
 	// Static native rasterization only: resvg draws in-process, so model-written
 	// SVG is never opened in a browser. The same two render-only repairs as the
 	// learner's display are applied first (svgImageSource), so a figure that
-	// displays fine also renders; the caller's source is not rewritten. A native
+	// displays fine also renders; the caller's source is not rewritten. Local
+	// file references are then stripped (withoutExternalReferences). A native
 	// error propagates to the visual-maker's revise/fail loop, with no Chrome
 	// fallback. White background mirrors the old Chrome page; fitTo width mirrors
 	// svgViewport semantics (attrs win, viewBox-only gets the 900 default,
 	// opts override).
 	const { width } = svgViewport(svg, opts);
 	const { Resvg } = await import("@resvg/resvg-js");
-	const resvg = new Resvg(svgImageSource(svg), {
+	const resvg = new Resvg(withoutExternalReferences(svgImageSource(svg)), {
 		fitTo: { mode: "width", value: width },
 		font: { loadSystemFonts: true },
 		background: "#ffffff",

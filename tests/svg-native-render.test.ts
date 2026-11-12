@@ -1,6 +1,9 @@
 /** Static native SVG rendering, bounded render-only repairs, and native
  * failures that never dispatch a browser or system Chrome. */
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
@@ -115,5 +118,51 @@ describe("native renderSvg (resvg only)", () => {
 		assert.equal(f.w, 300);
 		// A blank 300x100 white PNG is ~300 bytes; glyphs push it well past.
 		assert.ok(png.length > 1000, `text rendered (png ${png.length} bytes > 1000)`);
+	});
+});
+
+// resvg loads any local file an <image>/<feImage> names, and the render goes
+// back to the model as its figure, so only inline data:image/ sources may draw.
+describe("native renderSvg: no local files", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-svg-files-"));
+	const SIZE = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8">';
+	const redPng = async () => realHeadless.renderSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#f00"/></svg>`);
+	const redPixels = (png: Buffer) => {
+		const image = photon.PhotonImage.new_from_byteslice(png);
+		try {
+			const px = image.get_raw_pixels();
+			let n = 0;
+			for (let i = 0; i < px.length; i += 4) if (px[i]! > 200 && px[i + 1]! < 50) n++;
+			return n;
+		} finally { image.free(); }
+	};
+	const drawn = async (body: string) => redPixels(await realHeadless.renderSvg(`${SIZE}${body}</svg>`));
+
+	it("draws an inline data:image/png and nothing from a local file", async (t) => {
+		const png = await redPng();
+		const file = path.join(dir, "red.png");
+		fs.writeFileSync(file, png);
+		const rel = path.relative(process.cwd(), file);
+		const data = `data:image/png;base64,${png.toString("base64")}`;
+		const img = (href: string, attr = "href") => `<image ${attr}="${href}" width="8" height="8"/>`;
+		assert.equal(await drawn(img(data)), 64, "an inline data:image is still drawn");
+		assert.equal(await drawn(img(data, "xlink:href")), 64);
+		for (const [name, body] of Object.entries({
+			absolute: img(file),
+			"absolute xlink": img(file, "xlink:href"),
+			relative: img(rel),
+			"file url": img(`file://${file}`),
+			"entity-encoded path": img(file.replace("/", "&#47;")),
+			"other namespace prefix": `<s:image xmlns:s="http://www.w3.org/2000/svg" xmlns:q="http://www.w3.org/1999/xlink" q:href="${file}" width="8" height="8"/>`,
+			"in a pattern": `<pattern id="p" width="8" height="8" patternUnits="userSpaceOnUse">${img(file)}</pattern><rect width="8" height="8" fill="url(#p)"/>`,
+			"nested inline svg": `<svg width="8" height="8">${img(file)}</svg>`,
+			feImage: `<filter id="f"><feImage href="${file}"/></filter><rect width="8" height="8" filter="url(#f)"/>`,
+			"entity declared in a doctype": `<!DOCTYPE svg [<!ENTITY p "${file}">]>${img("&p;")}`,
+			"markup hidden in an entity": `<!DOCTYPE svg [<!ENTITY e "<image href='${file}' width='8' height='8'/>">]>&e;`,
+		})) {
+			const svg = body.startsWith("<!DOCTYPE") ? `${body.slice(0, body.indexOf("]>") + 2)}${SIZE}${body.slice(body.indexOf("]>") + 2)}</svg>` : `${SIZE}${body}</svg>`;
+			assert.equal(redPixels(await realHeadless.renderSvg(svg)), 0, `${name}: a local file must not be drawn`);
+		}
+		t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 	});
 });
