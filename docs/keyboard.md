@@ -28,6 +28,15 @@ second pillar of input).
   navigation abandoned). Shift+Tab cycles the thinking level — also
   while typing in a field (modifier combos are the only keys that fire
   from typing surfaces; bare keys never do).
+- **Modal surfaces are the exception to the Tab rule.** Every `aria-modal`
+  surface (settings, the confirms, add documents, the plan and diagram
+  focus, the canvas workspace, the signed-out screen) uses
+  `components/ui/use-modal.ts`: focus moves in on open (Cancel in a
+  confirm), Tab and Shift+Tab cycle inside the surface (claimed at the
+  document level, so Shift+Tab does not cycle the thinking level behind
+  it), the rest of the app is `inert` until the last open surface closes,
+  and focus returns to the opener. The question dock's row keys stand
+  down while one is open.
 - **Esc priority chain**: topmost popover → cheat sheet → cancel
   dictation (DISCARD — the transcript flush is Cmd+D/Stop only, owner
   round) → abort turn (local stream only — a server-side wake turn has
