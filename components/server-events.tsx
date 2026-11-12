@@ -64,7 +64,8 @@ const STALE_AFTER_HIDDEN_MS = 15_000;
  *  dispatch is safe). */
 export function createNotifyHub() {
 	const byType = new Map<string, Set<(data: never) => void>>();
-	const resyncs = new Set<() => void>();
+	const resyncs = new Set<(reconnect: boolean) => void>();
+	let opens = 0;
 	return {
 		subscribe<K extends ServerEventType>(type: K, cb: (payload: ServerEvents[K]) => void) {
 			const set = byType.get(type) ?? new Set<(data: never) => void>();
@@ -77,7 +78,7 @@ export function createNotifyHub() {
 		 *  have missed events while disconnected; refetch". A consumer that
 		 *  mounts while ALREADY open gets no fire (it missed nothing by
 		 *  birth); its own mount fetch is its initial truth. */
-		onResync(cb: () => void) {
+		onResync(cb: (reconnect: boolean) => void) {
 			resyncs.add(cb);
 			return () => resyncs.delete(cb);
 		},
@@ -103,9 +104,11 @@ export function createNotifyHub() {
 			}
 		},
 		fireOpen() {
+			// The window's first open is not a reconnect: nothing was missed.
+			const reconnect = opens++ > 0;
 			for (const cb of [...resyncs]) {
 				try {
-					cb();
+					cb(reconnect);
 				} catch (err) {
 					console.error("[events] resync handler failed:", err);
 				}
@@ -186,13 +189,13 @@ export function useServerEvent<K extends ServerEventType>(type: K, cb: (payload:
 
 /** Refetch truth on every (re)connect of the window's channel — the
  *  self-heal seam for EventSource reconnects and dev-server restarts. */
-export function useServerResync(cb: () => void): void {
+export function useServerResync(cb: (reconnect: boolean) => void): void {
 	const hub = useContext(EventsContext);
 	if (!hub) throw new Error("useServerResync requires <ServerEventsProvider>");
 	const cbRef = useRef(cb);
 	cbRef.current = cb;
 	useEffect(() => {
-		const off = hub.onResync(() => cbRef.current());
+		const off = hub.onResync((reconnect) => cbRef.current(reconnect));
 		return () => {
 			off();
 		};

@@ -67,6 +67,17 @@ describe("notify hub + wireSource (the client channel wiring)", () => {
 		assert.equal(resyncs, 2);
 	});
 
+	it("resync tells the first open from a reconnect", () => {
+		const hub = createNotifyHub();
+		const src = fakeSource();
+		wireSource(src, hub);
+		const seen: boolean[] = [];
+		hub.onResync((reconnect) => seen.push(reconnect));
+		src.open();
+		src.open();
+		assert.deepEqual(seen, [false, true]);
+	});
+
 	it("a throwing handler never breaks its neighbors (the bus's isolation law)", () => {
 		const hub = createNotifyHub();
 		const src = fakeSource();
