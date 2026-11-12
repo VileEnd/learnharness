@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -38,6 +39,7 @@ cache = Cache(os.environ.get("CACHE_DIR") or ROOT / ".cache")
 MAX_BYTES = 200 * 1024 * 1024  # per PDF
 MAX_PAGES = 1000              # per PDF
 JOB_TTL = 3600                # seconds a finished job stays in memory; the disk stays the source of truth
+OUT_MAX_AGE = 7 * 86400       # seconds an unfinished run's output (no job.json: crashed or restarted mid-run) is kept
 # Shared by every run on this server, so starting a second run does not double the load on the providers.
 POOL = ThreadPoolExecutor(CFG["pipeline"].get("workers", 16))
 OCR_GATE = threading.BoundedSemaphore(CFG["pipeline"].get("ocr_workers", 6))  # Mistral OCR rate-limits early
@@ -186,6 +188,25 @@ def prune_jobs():
             jobs.pop(job_id, None)
 
 
+def prune_output():
+    """Remove the output of runs that never completed (no job.json) and were last touched more than OUT_MAX_AGE
+    ago. A run still going in this process is never touched; finished runs go only through DELETE /api/jobs/{id}."""
+    cutoff = time.time() - OUT_MAX_AGE
+    try:
+        dirs = [p for p in OUT.iterdir() if p.is_dir()]
+    except OSError:
+        return
+    for d in dirs:
+        try:
+            if (d / "job.json").exists() or jobs.get(d.name, {}).get("running"):
+                continue
+            newest = max([d.stat().st_mtime, *(p.stat().st_mtime for p in d.rglob("*"))])
+            if newest < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            continue  # vanished under us, or unreadable: the next sweep decides
+
+
 def get_job(job_id):
     """A job from this server's memory, or a finished run still on disk (e.g. from before a restart)."""
     prune_jobs()
@@ -274,10 +295,16 @@ def launch(job, items, client):
     threading.Thread(target=work, daemon=True).start()
 
 
+@app.on_event("startup")
+def sweep_output_on_startup():
+    prune_output()
+
+
 @app.post("/api/run")
 async def api_run(files: list[UploadFile], strategy: str = Form(None),
                   x_openrouter_key: str | None = Header(None)):
     prune_jobs()
+    await run_in_threadpool(prune_output)
     client = make_client(x_openrouter_key)
     cfg = with_strategy(strategy or CFG["pipeline"].get("strategy", "ocr+vision"))
     uploads, folders = [], []
@@ -341,6 +368,19 @@ def by_sha(sha256: str):
 def job_status(job_id: str):
     job = get_job(job_id)
     return live_view(job_id, job) if "files" in job else disk_view(job_id, job["dir"])
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str):
+    """Remove a run's output (its document was deleted or replaced). 404 for an unknown run, 409 while it is running."""
+    if not re.fullmatch(r"[\w-]+", job_id) or not (OUT / job_id).is_dir():
+        raise HTTPException(404, "unknown job")
+    if jobs.get(job_id, {}).get("running"):
+        raise HTTPException(409, "This run is still going; delete it when it has finished.")
+    jobs.pop(job_id, None)
+    shutil.rmtree(OUT / job_id, ignore_errors=True)
+    _index["root"] = None  # the by-sha index is rebuilt from what is left on disk
+    return {"deleted": job_id}
 
 
 @app.get("/api/jobs/{job_id}/events")

@@ -202,6 +202,54 @@ describe("pdf", () => {
 		assert.equal(documentStore.getMeta(t!.docId!)!.ocr?.costUsd, 0.5);
 	});
 
+	it("deleting a scanned document asks the sidecar to drop its output; a sidecar that is down does not block the delete", async () => {
+		const side = sidecar(ocrMarkdown("Scanned lecture", prose(100)));
+		const discarded: string[] = [];
+		let down = false;
+		const ocr = { ...side.ocr, discard: async (job: string) => { discarded.push(job); if (down) throw new Error("unreachable"); } };
+		const { service } = harness({ ocr });
+		const [t] = await service.importFiles([pdf("lecture.pdf", "del1")]);
+		await t!.completion;
+		assert.deepEqual(service.remove(t!.docId!).ok, true);
+		await new Promise((r) => setImmediate(r));
+		assert.deepEqual(discarded, ["job1"]);
+
+		down = true;
+		const [u] = await service.importFiles([pdf("lecture2.pdf", "del2")]);
+		await u!.completion;
+		assert.equal(service.remove(u!.docId!).ok, true, "the delete does not wait for, or fail with, the sidecar");
+		await new Promise((r) => setImmediate(r));
+		assert.equal(documentStore.getMeta(u!.docId!), null);
+	});
+
+	it("replacing a scanned document drops the output of the scan it replaced, not one another document still uses", async () => {
+		const side = sidecar(ocrMarkdown("Scanned lecture", prose(100)));
+		const discarded: string[] = [];
+		let n = 0;
+		const ocr = { ...side.ocr, start: async () => `job${++n}`, discard: async (job: string) => { discarded.push(job); } };
+		const { service } = harness({ ocr });
+		const file = pdf("lecture.pdf", "rep1");
+		const [first] = await service.importFiles([file]);
+		await first!.completion;
+		const [again] = await service.importFiles([file], ["replace"]);
+		await again!.completion;
+		assert.equal(again!.docId, first!.docId);
+		assert.equal(documentStore.getMeta(first!.docId!)!.ocr?.job, "job2");
+		assert.deepEqual(discarded, ["job1"]);
+	});
+
+	it("the client drops a job with DELETE: gone already is fine, a refusal throws", async () => {
+		const calls: string[] = [];
+		const status = { current: 200 };
+		const client = createOcrClient({ baseUrl: () => "http://ocr.invalid", fetch: async (url, init) => { calls.push(`${init?.method} ${url}`); return new Response("{}", { status: status.current }); } });
+		await client.discard("job/1");
+		status.current = 404;
+		await client.discard("job1");
+		status.current = 409;
+		await assert.rejects(client.discard("job1"), /HTTP 409/);
+		assert.equal(calls[0], "DELETE http://ocr.invalid/api/jobs/job%2F1");
+	});
+
 	it("refuses clearly without OCR_URL, and without an OpenRouter key", async () => {
 		const none = harness();
 		const [a] = await none.service.importFiles([pdf("a.pdf", "d")]);

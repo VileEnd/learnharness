@@ -451,6 +451,15 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 	const conceptsOf = (sourceId: string): number =>
 		new Set<string>(deps.graph?.readNodes().filter((n) => n.provenance.some((pt) => pt.chatId === sourceId)).map((n) => n.id)).size;
 
+	/** Drop a scan's output from the sidecar once nothing references it: a side
+	 *  channel, contained (a sidecar that is down costs a leftover, never the
+	 *  delete or the import). `keep` = the job the document now stands on. */
+	function discardScan(job: string | undefined, keep?: string): void {
+		if (!job || job === keep || !ocr.configured()) return;
+		if (store.listMetas().some((m) => m.ocr?.job === job)) return; // another document reuses this conversion
+		void ocr.discard(job).catch((err: unknown) => console.warn(`[documents] could not drop OCR output ${job}:`, err instanceof Error ? err.message : err));
+	}
+
 	/** Documents being rebuilt or replaced right now (by registry key). */
 	const rebuilding = new Set<string>();
 
@@ -580,6 +589,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		const description = { ...described, topics: await canonicalizeTopics(normalizeTopics(described.topics)) };
 		const meta = buildMeta({ id, markdown, description, filename: file.name, origin: "markdown", sourceId: attachTo, fp });
 		store.save(meta, markdown);
+		discardScan(prior?.ocr?.job);
 		const completion = settle(() => (attachTo ? adopt(meta) : extractStored(meta, file.name, markdown, prior)), meta.title);
 		return { index, name: file.name, outcome: "started", docId: meta.id, title: meta.title, completion };
 	}
@@ -636,6 +646,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 				sourceId: attachTo,
 			});
 			store.save(meta, markdown);
+			discardScan(prior?.ocr?.job, meta.ocr?.job);
 			return attachTo ? adopt(meta) : extractStored(meta, file.name, markdown, prior);
 		}, stem(file.name));
 		return { index, name: file.name, outcome: "started", docId: targetId ?? documentIdFor({ pdfSha256 }), title: stem(file.name), completion };
@@ -834,6 +845,7 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 		// The graph first: a document without concepts is a fine place to retry from, concepts without a document are not.
 		deps.deleteSource?.(meta.sourceId);
 		store.remove(id);
+		discardScan(meta.ocr?.job);
 		emit("activity-changed", {});
 		void Promise.resolve()
 			.then(() => deps.onRebuilt?.())

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import time
 
 import pytest
@@ -117,3 +118,43 @@ def test_too_big_or_too_long_pdfs_are_rejected(client, monkeypatch):
 
 def test_naming_prompt_does_not_contain_the_file_name():
     assert "{source}" not in NAME_PROMPT and ".pdf" not in NAME_PROMPT
+
+
+def test_deleting_a_job_removes_its_output_and_its_by_sha_entry(client):
+    pdf = make_pdf([{"text": "x" * 80}])
+    job, _ = run_job(client, pdf)
+    sha = hashlib.sha256(pdf).hexdigest()
+    assert client.get(f"/api/by-sha/{sha}").status_code == 200
+    assert (main.OUT / job).is_dir()
+    assert client.delete(f"/api/jobs/{job}").status_code == 200
+    assert not (main.OUT / job).exists()
+    assert client.get(f"/api/jobs/{job}").status_code == 404
+    assert client.get(f"/api/by-sha/{sha}").status_code == 404
+    assert client.delete(f"/api/jobs/{job}").status_code == 404  # already gone
+    assert client.delete("/api/jobs/..").status_code in (404, 405)  # never a path outside out/
+
+
+def test_a_running_job_is_not_deleted(client):
+    (main.OUT / "20260101-000000-abcd").mkdir(parents=True)
+    main.jobs["20260101-000000-abcd"] = {"dir": main.OUT / "20260101-000000-abcd", "running": True, "events": []}
+    assert client.delete("/api/jobs/20260101-000000-abcd").status_code == 409
+    assert (main.OUT / "20260101-000000-abcd").is_dir()
+
+
+def test_output_of_jobs_that_never_completed_is_pruned_after_the_bound(client):
+    now = time.time()
+    old = now - main.OUT_MAX_AGE - 60
+    made = {}
+    for name, marker, mtime in [("stale-unfinished", False, old), ("stale-finished", True, old),
+                                ("fresh-unfinished", False, now), ("stale-running", False, old)]:
+        d = main.OUT / name
+        (d / "pdf").mkdir(parents=True)
+        (d / "pdf" / "page.png").write_bytes(b"x")
+        if marker:
+            (d / "job.json").write_text("{}")
+        for p in [*d.rglob("*"), d]:
+            os.utime(p, (mtime, mtime))
+        made[name] = d
+    main.jobs["stale-running"] = {"dir": made["stale-running"], "running": True, "events": []}
+    main.prune_output()
+    assert sorted(p.name for p in main.OUT.iterdir()) == ["fresh-unfinished", "stale-finished", "stale-running"]
