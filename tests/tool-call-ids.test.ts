@@ -103,6 +103,41 @@ describe("tools see the id the record uses", () => {
 		parts.forEach((p, i) => assert.ok(p.text.includes(`job ${spawned[i]!.id}`), `part ${p.id} acknowledges its own job`));
 	});
 
+	it("distinct provider ids behave exactly as before: stored and named unchanged", async () => {
+		const chat = newChat("Test: unique ids");
+		const spawned: JobRecord[] = [];
+		const call = (id: string, tool: "research" | "work") =>
+			fauxAssistantMessage([fauxToolCall(tool, tool === "work" ? WORK : RESEARCH, { id })], { stopReason: "toolUse" });
+		await turn(chat.id, engineOf([call("toolu_a", "research"), call("toolu_b", "research"), call("toolu_c", "work")]), spawned, "go");
+
+		assert.deepEqual(spawned.map((j) => j.toolCallId), ["toolu_a", "toolu_b"], "jobs keep the provider's ids");
+		assert.deepEqual(callsOf(chat.id, "research").map((p) => p.id), ["toolu_a", "toolu_b"]);
+		const [pose] = callsOf(chat.id, "work");
+		assert.equal(pose?.id, "toolu_c");
+		assert.ok(pose!.text.includes('question "toolu_c"'), pose!.text);
+	});
+
+	it("two calls with different raw ids in one response, both already in the record, each get their own job", async () => {
+		const chat = newChat("Test: reused ids, parallel");
+		const spawned: JobRecord[] = [];
+		const both = () =>
+			fauxAssistantMessage(
+				[fauxToolCall("research", RESEARCH, { id: "call_a" }), fauxToolCall("research", { question: "A second question?" }, { id: "call_b" })],
+				{ stopReason: "toolUse" },
+			);
+		await turn(chat.id, engineOf([both(), fauxAssistantMessage([fauxText("Waiting.")])]), spawned, "first");
+		await turn(chat.id, engineOf([both(), fauxAssistantMessage([fauxText("Waiting again.")])]), spawned, "second");
+
+		assert.equal(spawned.length, 4, "every dispatch spawned its own job");
+		const parts = callsOf(chat.id, "research");
+		assert.deepEqual(parts.map((p) => p.id).sort(), ["call_a", "call_a~2", "call_b", "call_b~2"]);
+		for (const p of parts) {
+			const job = spawned.find((j) => j.toolCallId === p.id);
+			assert.ok(job, `a job is keyed by ${p.id}`);
+			assert.ok(p.text.includes(`job ${job.id}`), `part ${p.id} acknowledges its own job`);
+		}
+	});
+
 	it("the canvas ack names the id the record holds", async () => {
 		const chat = newChat("Test: reused ids, canvas");
 		const spawned: JobRecord[] = [];

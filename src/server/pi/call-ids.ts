@@ -70,6 +70,8 @@ export class ToolCallIdUniquifier {
 	 *  tool_execution events (which fire after its message_end but before
 	 *  the next message_start). */
 	private epoch: Map<string, string> | null = null;
+	/** resolve() warns about an unminted id once per instance. */
+	private warnedUnresolved = false;
 
 	constructor(usedIds: Iterable<string>) {
 		for (const id of usedIds) this.seen.add(id);
@@ -79,9 +81,21 @@ export class ToolCallIdUniquifier {
 	 *  a tool's `execute` must key on. Valid from the assistant message's
 	 *  message_end (every one of its tool executions starts after it, before
 	 *  the next message_start), so it resolves in the current epoch. An id
-	 *  this turn never saw passes through unchanged. */
+	 *  this turn never saw passes through unchanged. Two tool calls with the
+	 *  same raw id inside ONE response share one minted id (the table is keyed
+	 *  by raw id), so two dispatches in that response would still collapse
+	 *  into one job; no provider is known to do this. */
 	resolve(orig: string): string {
-		return this.epoch?.get(orig) ?? orig;
+		const mapped = this.epoch?.get(orig);
+		if (mapped !== undefined) return mapped;
+		// A response is in progress yet this id was never minted: a tool would
+		// key on the provider's id, the bug this seam exists to prevent. Never
+		// fail the tool over it; say so once.
+		if (this.epoch && !this.warnedUnresolved) {
+			this.warnedUnresolved = true;
+			console.warn(`[call-ids] tool call id "${orig}" has no minted id in the current response; the tool keeps the provider's id`);
+		}
+		return orig;
 	}
 
 	/** Keep `orig` if never used; otherwise mint an unused `${orig}~n`. */
