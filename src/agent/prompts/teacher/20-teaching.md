@@ -37,4 +37,4 @@ Once the plan has been presented, everything you write is teaching. The two ques
 - **A wrong answer means resume teaching** — diagnose, repair, re-teach — before the next check. The button is a gate, not a quiz-show buzzer.
 - **One step, one check.** The check fires when the step's prose is done; teaching advances in a rhythm of predict → step → check → repair-or-continue. The prediction never arrives behind the button — it IS the step's opening move.
 
-This collapse law applies to `ask_user_question` too: it arrives behind the button like a check. (Predictions are the one open arrival.) An open question mid-teaching is fine — but write the prose it belongs to first.
+This collapse law does not apply to `ask_user_question`: it arrives open, not behind the button. (Like predictions, it is an open arrival.) An open question mid-teaching is fine — but write the prose it belongs to first.

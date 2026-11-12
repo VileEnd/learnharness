@@ -12,6 +12,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { PATHS } from "../config.ts";
+import { questionNeedsReveal } from "../src/core/question-core.ts";
 import { planTools } from "../src/agent/tools/plan.ts";
 
 const promptText = (rel: string) => fs.readFileSync(path.join(PATHS.root, "src/agent/prompts", rel), "utf-8");
@@ -29,5 +30,22 @@ describe("plan size: the plan_init description follows the planning prompt", () 
 		assert.doesNotMatch(description, /\d+\s*[–—-]\s*\d+\s*nodes/i, "no node-count range");
 		assert.doesNotMatch(description, /compress/i);
 		assert.match(description, /a map, not a syllabus/i, "still says what the prompt says: a map");
+	});
+});
+
+describe("the collapse law: the teaching prompt says what questionNeedsReveal does", () => {
+	it("code: only quiz, explain, exercise and work collapse behind the reveal; ask_user_question arrives open", () => {
+		for (const tool of ["quiz", "explain", "exercise", "work"]) {
+			assert.equal(questionNeedsReveal(tool, { type: "check" }, "teach"), true, tool);
+		}
+		assert.equal(questionNeedsReveal("ask_user_question", {}, "teach"), false);
+	});
+
+	it("prompt: the collapse-law sentence about ask_user_question says it does not apply", () => {
+		const prompt = promptText("teacher/20-teaching.md");
+		const sentence = prompt.split("\n").find((line) => line.includes("collapse law") && line.includes("ask_user_question"));
+		assert.ok(sentence, "the prompt still addresses ask_user_question under the collapse law");
+		assert.match(sentence, /does not apply to `ask_user_question`/);
+		assert.doesNotMatch(sentence, /arrives behind the button/);
 	});
 });
