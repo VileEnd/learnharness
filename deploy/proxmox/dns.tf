@@ -3,7 +3,7 @@
 # network; they exist so Let's Encrypt (DNS challenge) can issue certificates
 # every device trusts. Not proxied — Cloudflare never sees the traffic.
 resource "cloudflare_dns_record" "learnharness" {
-  for_each = toset(["learnharness.home.moyjak.com", "auth.home.moyjak.com"])
+  for_each = toset(var.dns_names)
 
   zone_id = var.cloudflare_zone_id
   name    = each.value

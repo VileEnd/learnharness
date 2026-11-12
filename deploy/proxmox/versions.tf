@@ -37,5 +37,5 @@ terraform {
 # PROXMOX_VE_API_TOKEN, PROXMOX_VE_INSECURE) — see tofu.sh.
 provider "proxmox" {}
 
-# CLOUDFLARE_API_TOKEN from the environment (Zone → DNS → Edit, moyjak.com).
+# CLOUDFLARE_API_TOKEN from the environment (Zone → DNS → Edit, the site's zone).
 provider "cloudflare" {}

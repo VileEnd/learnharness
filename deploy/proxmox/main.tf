@@ -1,8 +1,8 @@
 # The LearnHarness VM on the home Proxmox (docs/self-hosting.md).
 #
 # The NixOS image only BOOTSTRAPS the VM: every later system change goes
-# through `nixos-rebuild switch --flake deploy/nixos#learnharness
-# --target-host root@learnharness.fritz.box`. Hence the ignore_changes
+# through `deploy/nixos/rebuild.sh switch --target-host
+# root@learnharness.fritz.box`. Hence the ignore_changes
 # below — a rebuilt image must never replace the disk (and the data on it).
 
 resource "proxmox_virtual_environment_file" "nixos_image" {

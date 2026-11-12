@@ -22,13 +22,16 @@ variable "vm_id" {
 }
 
 variable "cloudflare_zone_id" {
-  description = "Cloudflare zone of moyjak.com."
+  description = "Cloudflare zone id of the domain the public names are in (site.env)."
   type        = string
-  default     = "d58d4cd5f04aa75599f11795072ff40f"
 }
 
 variable "lan_ipv4" {
-  description = "The VM's LAN address the public names point at (DNS only, LAN-reachable). 10.20.1.70 after the UniFi move day."
+  description = "The VM's LAN address the public names point at (DNS only, LAN-reachable) (site.env)."
   type        = string
-  default     = "192.168.178.175"
+}
+
+variable "dns_names" {
+  description = "The public names of the app and Keycloak, e.g. [\"learnharness.example.com\", \"auth.example.com\"] (site.env)."
+  type        = list(string)
 }
