@@ -328,10 +328,7 @@ export const ROLE_SLOT: Readonly<Record<ModelRole, ModelSlotName>> = {
 
 /** General settings — app-level behavior. Version DISPLAY and plans login
  *  live outside the record (package.json / auth.json) by owner decision. */
-export interface GeneralSettings {
-	/** Auto-update the app (default ON). Mechanism ships in a later wave. */
-	autoUpdate?: boolean;
-}
+export type GeneralSettings = Record<string, never>;
 
 /** The quizzing mechanic: Mixed holds both instruments (quiz + explain,
  *  probe + recall), Multiple choice only the quiz, Free recall only the recall. */
@@ -551,7 +548,7 @@ export interface FactorySettings {
 
 export const FACTORY_SETTINGS: FactorySettings = {
 	version: CURRENT_SETTINGS_VERSION,
-	general: { autoUpdate: true },
+	general: {},
 	dictation: {},
 	appearance: {
 		mode: "dark",
@@ -594,11 +591,9 @@ function sanitizeHexOrNull(value: unknown): string | null {
 const boolOrDrop = (value: unknown): boolean | undefined =>
 	typeof value === "boolean" ? value : undefined;
 
-function sanitizeGeneral(raw: Record<string, unknown>): GeneralSettings {
-	const out: GeneralSettings = {};
-	const autoUpdate = boolOrDrop(raw.autoUpdate);
-	if (autoUpdate !== undefined) out.autoUpdate = autoUpdate;
-	return out;
+/** No general fields remain; a stored `autoUpdate` (desktop era) is ignored. */
+function sanitizeGeneral(_raw: Record<string, unknown>): GeneralSettings {
+	return {};
 }
 
 const THINKING_LEVELS: readonly ThinkingLevel[] = [

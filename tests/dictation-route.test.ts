@@ -12,20 +12,20 @@ const { readSettings, writeSettings } = await import("../src/store/settings.ts")
 
 it("the section route persists language independently, clears it with {}, and rejects unsupported values without writing", async () => {
 	const { PUT } = await import("../app/api/settings/[section]/route.ts");
-	writeSettings({ version: 1, general: { autoUpdate: false } });
+	writeSettings({ version: 1, general: {} });
 	const putBody = (body: unknown) => PUT(new Request("http://localhost/api/settings/dictation", {
 		method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 	}), { params: Promise.resolve({ section: "dictation" }) });
 	assert.equal((await putBody({ language: "pl" })).status, 200);
-	const saved = { version: 1, dictation: { language: "pl" }, general: { autoUpdate: false } };
+	const saved = { version: 1, dictation: { language: "pl" }, general: {} };
 	assert.deepEqual(readSettings(), saved);
 	assert.equal((await putBody({ language: "unsupported" })).status, 400);
 	assert.deepEqual(readSettings(), saved);
 	const general = await PUT(new Request("http://localhost/api/settings/general", {
-		method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoUpdate: true }),
+		method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
 	}), { params: Promise.resolve({ section: "general" }) });
 	assert.equal(general.status, 200);
-	assert.deepEqual(readSettings(), { ...saved, general: { autoUpdate: true } }, "auto-update cannot erase dictation language");
+	assert.deepEqual(readSettings(), saved, "general cannot erase dictation language");
 	assert.equal((await putBody({})).status, 200);
 	assert.equal(readSettings()?.dictation?.language, undefined, "{} returns to the default");
 });
