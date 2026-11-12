@@ -55,7 +55,11 @@
 	   resolve to, so the dark look is unchanged. A theme sets these three;
 	   components use text-error, bg-success/15, border-warning/50 … and never
 	   a fixed palette class (tests/status-tokens.test.ts). --lh-success-strong
-	   is green-600, the filled "next problem" button. */
+	   is green-600, the filled "next problem" button.
+	   NOTE: two error-ish tokens exist: --destructive (the old red-400) and
+	   --lh-error (the old red-500); themes step 2 must define BOTH per theme.
+	   The markdown renderer's own red classes (Streamdown, found by the
+	   @source scan) are third-party and belong to step 3. */
 	--lh-error: oklch(0.637 0.237 25.331);
 	--lh-success: oklch(0.723 0.219 149.579);
 	--lh-success-strong: oklch(0.627 0.194 149.214);
@@ -103,7 +107,11 @@
 	   resolve to, so the dark look is unchanged. A theme sets these three;
 	   components use text-error, bg-success/15, border-warning/50 … and never
 	   a fixed palette class (tests/status-tokens.test.ts). --lh-success-strong
-	   is green-600, the filled "next problem" button. */
+	   is green-600, the filled "next problem" button.
+	   NOTE: two error-ish tokens exist: --destructive (the old red-400) and
+	   --lh-error (the old red-500); themes step 2 must define BOTH per theme.
+	   The markdown renderer's own red classes (Streamdown, found by the
+	   @source scan) are third-party and belong to step 3. */
 	--lh-error: oklch(0.637 0.237 25.331);
 	--lh-success: oklch(0.723 0.219 149.579);
 	--lh-success-strong: oklch(0.627 0.194 149.214);
