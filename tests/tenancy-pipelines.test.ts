@@ -45,6 +45,7 @@ const { isTurnRunning } = await import("../src/server/turn-liveness.ts");
 const { runningTurn } = await import("../src/server/turn-runs.ts");
 
 const chatsRoute = await import("../app/api/chats/route.ts");
+const chatTurnRoute = await import("../app/api/chat/route.ts");
 const chatRoute = await import("../app/api/chats/[id]/route.ts");
 const chatSettingsRoute = await import("../app/api/chats/[id]/settings/route.ts");
 const chatStreamRoute = await import("../app/api/chats/[id]/stream/route.ts");
@@ -85,7 +86,8 @@ const get = (user: string, url = "http://example.com/x") => new Request(url, { h
 const send = (user: string, method: string, body: unknown, url = "http://example.com/x") =>
 	new Request(url, { method, headers: headersOf(user, { "content-type": "application/json" }), body: JSON.stringify(body) });
 
-/** POST /api/chat's own wrapper around the real handler, with the faux engine seam. */
+/** POST /api/chat's wrapper around the real handler, with the faux engine seam: only for turns that
+ *  must run an engine. Requests that must be refused before any agent exists use the real route. */
 const chatPost = withTenant((req: Request) => handleChatRequest(req, agentFactory));
 
 function waitFor(cond: () => boolean, what: string, timeoutMs = 8000): Promise<void> {
@@ -183,6 +185,8 @@ const S = {
 	idsB: {} as Record<string, string>,
 };
 const extractedAs: string[] = [];
+/** Files the scenario writes under data/global: the admin's policy only. */
+const SHARED_FILES = ["admin.json"];
 
 before(() => {
 	// A document extraction that writes one concept for its source, like the real pipeline's merge.
@@ -393,7 +397,7 @@ describe("two users through the real routes", () => {
 		await notFound(await chatRoute.PUT(send(B, "PUT", { title: "mine now" }), ctx({ id: S.chatA })), "rename chat");
 		await notFound(await chatSettingsRoute.PUT(send(B, "PUT", { canvas: true }), ctx({ id: S.chatA })), "chat settings");
 		await notFound(await chatStreamRoute.GET(get(B), ctx({ id: S.chatA })), "chat stream");
-		await notFound(await chatPost(send(B, "POST", { chatId: S.chatA, input: { type: "text", text: "hi" } })), "turn on A's chat");
+		await notFound(await chatTurnRoute.POST(send(B, "POST", { chatId: S.chatA, input: { type: "text", text: "hi" } })), "turn on A's chat");
 		const del = await chatRoute.DELETE(send(B, "DELETE", {}, "http://example.com/x?mode=preserve-graph"), ctx({ id: S.chatA }));
 		assert.ok(del.status === 404, `delete chat should be 404, got ${del.status}`);
 
@@ -414,6 +418,15 @@ describe("two users through the real routes", () => {
 		const hitsB = await json(await docSearchRoute.GET(get(B, "http://example.com/x?q=photosynthesis3")));
 		assert.ok(hitsA.hits.length > 0, "A finds their own document");
 		assert.deepEqual(hitsB.hits, [], "B's search over their (empty) library finds nothing");
+
+		// Positive controls: the same reads succeed for A, so B's 404s are about ownership.
+		assert.deepEqual((await json(await drawingRoute.GET(get(A), ctx({ id: S.chatA, drawingId: S.drawingA })))).scene, SCENE);
+		const assetRes = await assetRoute.GET(get(A), ctx({ id: S.chatA, assetId: S.assetA }));
+		assert.equal(assetRes.status, 200);
+		assert.equal(assetRes.headers.get("content-type"), "image/png");
+		const draftRes = await draftRoute.GET(get(A), ctx({ id: S.chatA, callId: "call_a1" }));
+		assert.equal(draftRes.status, 200);
+		assert.equal((await json(draftRes)).rev, 1);
 
 		// Drawing, asset, draft: through A's chat id, and through B's own chat id.
 		for (const chatId of [S.chatA, S.chatB]) {
@@ -462,7 +475,7 @@ describe("two users through the real routes", () => {
 
 		// B's view of A's chat while the turn runs: not found, and the abort touches nothing.
 		assert.equal((await chatRoute.GET(get(B), ctx({ id: S.chatA }))).status, 404);
-		assert.equal((await chatPost(send(B, "POST", { chatId: S.chatA, input: { type: "text", text: "me too" } }))).status, 404);
+		assert.equal((await chatTurnRoute.POST(send(B, "POST", { chatId: S.chatA, input: { type: "text", text: "me too" } }))).status, 404);
 		const stopTurn = await abortRoute.POST(send(B, "POST", { kind: "turn", id: S.chatA }));
 		assert.equal(stopTurn.status, 409);
 		assert.deepEqual(await json(stopTurn), { ok: false, reason: "not_running" });
@@ -504,11 +517,15 @@ describe("two users through the real routes", () => {
 		}
 		assert.ok(treeB.some((f) => f.includes(S.chatB)), "B's chat is under B");
 
-		// Nothing A produced landed in the shared tree either (only config-like shared files may live there).
+		// The shared tree holds exactly what this suite legitimately writes there (a per-user file
+		// landing in it fails even if it carries none of the labelled ids), and no id of either user.
 		const global = filesUnder(path.join(dir, "global"));
+		assert.deepEqual(global.map((f) => path.relative(path.join(dir, "global"), f)), SHARED_FILES);
 		for (const file of global) {
 			const body = fs.readFileSync(file);
-			for (const [label, id] of Object.entries(S.idsA)) assert.ok(!body.includes(id) && !file.includes(id), `global file ${path.relative(dir, file)} holds A's ${label}`);
+			for (const [label, id] of Object.entries({ ...S.idsA, ...Object.fromEntries(Object.entries(S.idsB).map(([k, v]) => [`B ${k}`, v])), userA: A, userB: B })) {
+				assert.ok(!body.includes(id) && !file.includes(id), `global file ${path.relative(dir, file)} holds ${label}`);
+			}
 		}
 	});
 
