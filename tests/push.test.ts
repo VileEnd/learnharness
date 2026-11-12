@@ -3,11 +3,14 @@
  * LH_DATA_DIR (set before any config-loading import, hence the dynamic
  * imports), and notify() builds the right payload per event kind, prunes
  * dead subscriptions on 404/410, and never throws. The sender is injected,
- * so nothing here touches a network.
+ * so nothing here touches a network. Endpoints pass the outbound guard: https
+ * only, public hosts only, checked at registration and again at send time
+ * (the host lookup is injected).
  */
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import * as https from "node:https";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, describe, it } from "node:test";
@@ -17,8 +20,16 @@ process.env.LH_DATA_DIR = TMP_DATA;
 
 const { pushStore } = await import("../src/store/push.ts");
 const { notify, pushPublicKey, subscribe, unsubscribe } = await import("../src/server/push.ts");
+const { outboundOverride } = await import("../src/agent/outbound.ts");
+
+// Every name resolves to a documentation address (public to the guard),
+// except the one that rebinds to loopback.
+outboundOverride.current = {
+	lookup: async (host) => [{ address: host === "rebind.example.com" ? "127.0.0.1" : "192.0.2.10", family: 4 }],
+};
 
 after(() => {
+	outboundOverride.current = undefined;
 	fs.rmSync(TMP_DATA, { recursive: true, force: true });
 });
 
@@ -49,8 +60,8 @@ describe("push store", () => {
 
 describe("notify", () => {
 	it("sends one payload per event kind to every device", async () => {
-		subscribe({ endpoint: "https://push.example/a", keys: key }, "A");
-		subscribe({ endpoint: "https://push.example/b", keys: key }, "B");
+		await subscribe({ endpoint: "https://push.example/a", keys: key }, "A");
+		await subscribe({ endpoint: "https://push.example/b", keys: key }, "B");
 		const sent: { endpoint: string; payload: unknown }[] = [];
 		const send = async (sub: { endpoint: string }, payload: string) => void sent.push({ endpoint: sub.endpoint, payload: JSON.parse(payload) });
 
@@ -84,5 +95,43 @@ describe("notify", () => {
 		assert.deepEqual(pushStore.listSubscriptions().map((s) => s.endpoint), ["https://push.example/b"]);
 		unsubscribe("https://push.example/b");
 		assert.deepEqual(pushStore.listSubscriptions(), []);
+	});
+
+	it("skips and forgets a stored endpoint that is not a public https host", async () => {
+		pushStore.saveSubscription({ endpoint: "https://127.0.0.1:3000/x", keys: key, createdAt: "t", label: "planted" });
+		pushStore.saveSubscription({ endpoint: "https://push.example/ok", keys: key, createdAt: "t", label: "ok" });
+		const sent: string[] = [];
+		await notify({ kind: "turn", chatId: "c1", title: "x" }, async (sub) => void sent.push(sub.endpoint));
+		assert.deepEqual(sent, ["https://push.example/ok"]);
+		assert.deepEqual(pushStore.listSubscriptions().map((s) => s.endpoint), ["https://push.example/ok"]);
+		unsubscribe("https://push.example/ok");
+	});
+});
+
+describe("push endpoint guard", () => {
+	it("refuses a non-https or non-public endpoint at registration", async () => {
+		for (const endpoint of [
+			"http://push.example/x",
+			"https://10.0.0.1/x",
+			"https://[::1]/x",
+			"https://keycloak:8080/x",
+			"https://push.internal/x",
+			"https://rebind.example.com/x",
+		]) {
+			await assert.rejects(async () => subscribe({ endpoint, keys: key }, "x"), endpoint);
+		}
+		assert.deepEqual(pushStore.listSubscriptions(), []);
+	});
+
+	it("the sender's connection refuses a host that resolves to a private address", async () => {
+		const { pushAgent } = await import("../src/server/push.ts");
+		for (const url of ["https://rebind.example.com/x", "https://127.0.0.1:1/x"]) {
+			const err = await new Promise<Error>((resolve) => {
+				const req = https.request(url, { agent: pushAgent(), method: "POST" }, () => resolve(new Error("connected")));
+				req.on("error", resolve);
+				req.end();
+			});
+			assert.equal(err.name, "OutboundRefusedError", `${url}: ${err.message}`);
+		}
 	});
 });

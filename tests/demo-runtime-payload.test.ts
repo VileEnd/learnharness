@@ -6,7 +6,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { formatProbeError, probeEnv } from "../scripts/smoke-demo-runtime.mjs";
+import { CHROME_ARGS, CHROME_ENV_KEYS, chromeEnv, formatProbeError, probeEnv } from "../scripts/smoke-demo-runtime.mjs";
+import { CHROME_ARGS as APP_CHROME_ARGS, CHROME_ENV_KEYS as APP_CHROME_ENV_KEYS } from "../src/agent/subagents/headless.ts";
 
 const script = fileURLToPath(new URL("../scripts/smoke-demo-runtime.mjs", import.meta.url));
 
@@ -103,5 +104,12 @@ describe("demo standalone dependency gate", () => {
 		assert.equal(env.LH_IGNORE_ENV_KEYS, "1");
 		assert.equal(env.HOME, "/scratch");
 		assert.equal(original.API_KEY, "fake");
+	});
+
+	it("launches Chromium exactly as the demo builder does: same flags, same minimal environment", () => {
+		assert.deepEqual(CHROME_ARGS, APP_CHROME_ARGS);
+		assert.deepEqual(CHROME_ENV_KEYS, APP_CHROME_ENV_KEYS);
+		const env = chromeEnv({ PATH: "/bin", LANG: "C.UTF-8", OPENROUTER_API_KEY: "fake", LH_DATA_DIR: "/real" }, "/scratch/profile");
+		assert.deepEqual(env, { HOME: "/scratch/profile", XDG_CONFIG_HOME: "/scratch/profile", XDG_CACHE_HOME: "/scratch/profile", PATH: "/bin", LANG: "C.UTF-8" });
 	});
 });

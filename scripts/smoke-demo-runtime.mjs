@@ -1,7 +1,9 @@
 /**
  * Import the demo dependency graph from ONLY a standalone payload. With --browser,
- * also launch the system Chromium (CHROME_PATH, as the demo builder does) and
- * drive one interactive page through it.
+ * also launch the system Chromium (CHROME_PATH, as the demo builder does) with
+ * the demo builder's flags and minimal environment, check the flags arrived
+ * intact, drive one interactive page through it, and prove the network
+ * backstop: a page's WebSocket and popup never reach a loopback listener.
  * No server, model, keys, app UI, or production diagnostic route needed.
  *
  * node scripts/smoke-demo-runtime.mjs --standalone <dir> [--runtime <node binary>] [--browser]
@@ -11,9 +13,39 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire, registerHooks } from "node:module";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+/**
+ * The demo builder's Chromium launch flags and environment allowlist: copies
+ * of CHROME_ARGS and CHROME_ENV_KEYS in src/agent/subagents/headless.ts (this
+ * script runs alone in the image and cannot import the app's TypeScript);
+ * tests/demo-runtime-payload.test.ts keeps the copies equal.
+ */
+export const CHROME_ARGS = [
+	"--disable-gpu",
+	"--no-sandbox",
+	"--disable-dev-shm-usage",
+	"--proxy-server=http://0.0.0.0:0",
+	"--proxy-bypass-list=<-loopback>",
+	"--host-resolver-rules=MAP * ~NOTFOUND",
+	"--webrtc-ip-handling-policy=disable_non_proxied_udp",
+];
+export const CHROME_ENV_KEYS = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "FONTCONFIG_FILE", "FONTCONFIG_PATH", "SYSTEMROOT", "WINDIR"];
+
+/** The demo builder's chromeEnv: only the allowlisted keys, HOME and the XDG
+ *  dirs on the profile. @param {Record<string, string | undefined>} env @param {string} profile @returns {Record<string, string>} */
+export function chromeEnv(env, profile) {
+	/** @type {Record<string, string>} */
+	const out = { HOME: profile, XDG_CONFIG_HOME: profile, XDG_CACHE_HOME: profile };
+	for (const key of CHROME_ENV_KEYS) {
+		const value = env[key];
+		if (value !== undefined) out[key] = value;
+	}
+	return out;
+}
 
 /** @param {Record<string, string | undefined>} env @param {string} home @returns {Record<string, string | undefined>} */
 export function probeEnv(env, home) {
@@ -103,14 +135,25 @@ async function browserProbe(puppeteer) {
 	const executablePath = process.env.CHROME_PATH;
 	assert.ok(executablePath, "--browser requires CHROME_PATH (the image's Chromium)");
 	const home = process.env.HOME;
+	const profile = path.join(home, "browser-profile");
+	fs.mkdirSync(profile, { recursive: true });
 	const browser = await puppeteer.launch({
 		headless: true,
 		executablePath,
-		userDataDir: path.join(home, "browser-profile"),
-		// The same flags the demo builder launches with (src/agent/subagents/headless.ts).
-		args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+		userDataDir: profile,
+		// The demo builder's flags and minimal environment
+		// (src/agent/subagents/headless.ts), so the image proves its Chromium
+		// (a shell wrapper on Debian) starts with exactly these.
+		env: chromeEnv(process.env, profile),
+		args: CHROME_ARGS,
 	});
 	try {
+		// Every flag must arrive verbatim (the wrapper must pass "MAP * ~NOTFOUND" through intact).
+		const session = await browser.target().createCDPSession();
+		const { arguments: launched } = await session.send("Browser.getBrowserCommandLine");
+		await session.detach().catch(() => {});
+		for (const flag of CHROME_ARGS) assert.ok(launched.includes(flag), `Chromium did not receive ${flag}: ${launched.join(" ")}`);
+
 		const page = await browser.newPage();
 		const failures = [];
 		page.on("console", (msg) => { if (msg.type() === "error") failures.push(msg.text()); });
@@ -129,8 +172,39 @@ async function browserProbe(puppeteer) {
 		assert.equal(await page.$eval("#count", (element) => element.textContent), "1");
 		assert.deepEqual(failures, [], "demo console/page/network errors");
 		console.log(`[smoke-demo-runtime] ${executablePath}: JS button 0 → 1, clean console/page`);
+		await backstopProbe(browser, home);
 	} finally {
 		await browser.close().catch(() => {});
+	}
+}
+
+/** The network backstop the demo builder relies on for what request
+ *  interception cannot see: a page with no interception at all opens a
+ *  WebSocket, a popup and a fetch to a loopback listener, and the listener
+ *  must see no connection. Loopback only, no external network. */
+async function backstopProbe(browser, home) {
+	let connections = 0;
+	const listener = net.createServer((socket) => {
+		connections++;
+		socket.destroy();
+	});
+	await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+	try {
+		const { port } = listener.address();
+		const page = await browser.newPage();
+		const html = path.join(home, "backstop.html");
+		fs.writeFileSync(html, `<!doctype html><meta charset="utf-8"><script>
+			try { new WebSocket("ws://127.0.0.1:${port}/ws"); } catch {}
+			try { new WebSocket("ws://localhost:${port}/ws"); } catch {}
+			window.open("http://127.0.0.1:${port}/popup");
+			fetch("http://127.0.0.1:${port}/fetch").catch(() => {});
+		</script>`);
+		await page.goto(pathToFileURL(html).href, { waitUntil: "load", timeout: 10_000 });
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+		assert.equal(connections, 0, "a demo page reached a loopback listener: the Chromium network backstop is not in effect");
+		console.log("[smoke-demo-runtime] network backstop: WebSocket, popup and fetch to loopback all blocked");
+	} finally {
+		listener.close();
 	}
 }
 

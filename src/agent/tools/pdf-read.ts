@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
+import { guardedFetch, OutboundRefusedError, readCapped, withTimeout } from "../outbound.ts";
 import { pdfExtract, pdfInfo, pdfProbe, pdfSearch } from "../subagents/pdf-ops.ts";
 
 /**
@@ -17,6 +18,10 @@ import { pdfExtract, pdfInfo, pdfProbe, pdfSearch } from "../subagents/pdf-ops.t
  * (the researcher can never read outside it). pdf_render is deliberately
  * absent: the researcher's model slot has no vision — visual reading of
  * math-heavy pages stays the pdf job's job.
+ *
+ * The download goes through the outbound guard (outbound.ts): public
+ * addresses only, redirects re-checked, the size cap counted while the body
+ * streams, and the tool's abort signal reaches the socket.
  *
  * Tool contract (the web.ts law): NEVER throw into the agent loop — every
  * failure path returns a clear error STRING the researcher can adapt to.
@@ -102,7 +107,7 @@ export function createPdfReadTools(dir: string): Record<string, AgentTool<any>> 
 				"(short ≤10 pages, medium ≤40, long), and flagged (math/image-heavy) pages. " +
 				"Then read it with pdf_extract / pdf_search. Use when web_fetch reports a URL is a PDF.",
 			parameters: pdfFetchInput,
-			execute: serverExecute("web_fetch_pdf", pdfFetchInput, async ({ url }): Promise<PdfFetchSummary | string> => {
+			execute: serverExecute("web_fetch_pdf", pdfFetchInput, async ({ url }, ctx): Promise<PdfFetchSummary | string> => {
 				try {
 					const parsed = new URL(url);
 					if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
@@ -111,23 +116,24 @@ export function createPdfReadTools(dir: string): Record<string, AgentTool<any>> 
 					return `web_fetch_pdf failed: invalid URL "${url}"`;
 				}
 				try {
-					const resp = await fetch(url, {
+					const { response: resp } = await guardedFetch(url, {
 						headers: {
 							"User-Agent": USER_AGENT,
 							Accept: "application/pdf,application/octet-stream,*/*",
 						},
-						signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+						signal: withTimeout(ctx.signal, FETCH_TIMEOUT_MS),
 					});
-					if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+					if (!resp.ok) {
+						await resp.body?.cancel().catch(() => {});
+						throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+					}
 					const contentType = resp.headers.get("content-type") ?? "";
 					if (!/application\/pdf/i.test(contentType) && !/\.pdf(\?|$)/i.test(parsedPathname(url))) {
+						await resp.body?.cancel().catch(() => {});
 						throw new Error(`Not a PDF (content-type ${contentType.split(";")[0] || "unknown"})`);
 					}
-					const declared = Number(resp.headers.get("content-length") ?? 0);
-					if (declared > MAX_PDF_BYTES) throw new Error("PDF too large (over 25 MB)");
-					const bytes = new Uint8Array(await resp.arrayBuffer());
+					const bytes = await readCapped(resp, MAX_PDF_BYTES, "PDF too large (over 25 MB)");
 					if (bytes.length === 0) throw new Error("Empty response");
-					if (bytes.length > MAX_PDF_BYTES) throw new Error("PDF too large (over 25 MB)");
 					const filePath = path.join(dir, pdfFileName(url));
 					await fs.writeFile(filePath, bytes);
 					try {
@@ -147,6 +153,7 @@ export function createPdfReadTools(dir: string): Record<string, AgentTool<any>> 
 					};
 					return summary;
 				} catch (err) {
+					if (err instanceof OutboundRefusedError) return `web_fetch_pdf failed for ${url}: ${err.message} — only public web documents can be fetched`;
 					return `web_fetch_pdf failed for ${url}: ${err instanceof Error ? err.message : String(err)}`;
 				}
 			}),

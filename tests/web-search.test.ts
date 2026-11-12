@@ -6,12 +6,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createWebTools } from "../src/agent/tools/web.ts";
+import { outboundOverride } from "../src/agent/outbound.ts";
 import { jobTools } from "../src/agent/tools/jobs.ts";
 import { runResearcherAgent } from "../src/agent/subagents/researcher.ts";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
 import type { JobStore } from "../src/core/ports.ts";
 import type { JobRecord } from "../src/core/contracts.ts";
 import type { SearchHit, SearchProvider } from "../src/core/search.ts";
+
+/** Every host resolves to a documentation address (public to the guard). */
+const publicLookup = async () => [{ address: "192.0.2.10", family: 4 as const }];
 
 function stubProvider(hits: SearchHit[] = [{ title: "t", url: "https://e.com/", snippet: "s" }]): SearchProvider {
 	return {
@@ -93,15 +97,17 @@ describe("web_search on the injected port (web.ts)", () => {
 		// URL.protocol is \"https:\" WITH the colon; the colon-less comparison
 		// ported from the py harness (urlparse().scheme has none) made the
 		// gate throw for every valid URL — the tool never fetched a page in
-		// its life (owner-reported via OpenRouter logs). This pin stubs fetch
-		// so the happy path runs hermetically: a VALID url must REACH the
-		// fetch stage.
+		// its life (owner-reported via OpenRouter logs). This pin stubs the
+		// outbound transport so the happy path runs hermetically: a VALID url
+		// must REACH the fetch stage.
 		const { web_fetch } = createWebTools(() => null);
-		const realFetch = globalThis.fetch;
-		globalThis.fetch = (async () =>
-			new Response("A plain text page with enough content to matter for the test.", {
-				headers: { "content-type": "text/plain" },
-			})) as typeof fetch;
+		outboundOverride.current = {
+			lookup: publicLookup,
+			fetch: async () =>
+				new Response("A plain text page with enough content to matter for the test.", {
+					headers: { "content-type": "text/plain" },
+				}),
+		};
 		try {
 			const ok = await web_fetch!.execute!("c-ok", { url: "https://example.com/page" });
 			assert.ok(
@@ -113,7 +119,7 @@ describe("web_search on the injected port (web.ts)", () => {
 			const ftp = await web_fetch!.execute!("c-ftp", { url: "ftp://example.com/file" });
 			assert.match(String(ftp.details), /invalid URL/, "non-http(s) schemes still rejected");
 		} finally {
-			globalThis.fetch = realFetch;
+			outboundOverride.current = undefined;
 		}
 	});
 });
@@ -173,13 +179,15 @@ describe("keyless researcher loop", () => {
 			});
 			const faux = createFauxCore({});
 			faux.setResponses(steps);
-			const realFetch = globalThis.fetch;
 			const fetched: string[] = [];
-			globalThis.fetch = (async (input) => {
-				fetched.push(String(input));
-				assert.equal(String(input), url, "only the supplied URL is fetched");
-				return new Response("Synthetic verified source content", { headers: { "content-type": "text/plain" } });
-			}) as typeof fetch;
+			outboundOverride.current = {
+				lookup: publicLookup,
+				fetch: async (req) => {
+					fetched.push(req.url.href);
+					assert.equal(req.url.href, url, "only the supplied URL is fetched");
+					return new Response("Synthetic verified source content", { headers: { "content-type": "text/plain" } });
+				},
+			};
 			try {
 				assert.equal(await runResearcherAgent(`Verify ${url}`, {
 					engine: { model: faux.getModel(), streamFn: faux.streamSimple },
@@ -187,7 +195,7 @@ describe("keyless researcher loop", () => {
 				}), brief);
 				assert.deepEqual(fetched, [url]);
 			} finally {
-				globalThis.fetch = realFetch;
+				outboundOverride.current = undefined;
 			}
 		});
 	}

@@ -7,6 +7,7 @@ import { openRouterEmbedder } from "../src/server/doc-index.ts";
 import { createOcrClient } from "../src/server/ocr-client.ts";
 import { exaProvider, tavilyProvider } from "../src/server/search.ts";
 import { createWebTools } from "../src/agent/tools/web.ts";
+import { outboundOverride } from "../src/agent/outbound.ts";
 
 let lines: RequestLogLine[] = [];
 const collect = () => {
@@ -134,15 +135,21 @@ describe("search", () => {
 		collect();
 		await tavilyProvider("k", async () => json({ results: [] }), "chat1").search("q", 3);
 		const realFetch = globalThis.fetch;
-		// A page Readability cannot read falls back to the Jina reader, which fails.
+		// A page Readability cannot read (served through the outbound guard's
+		// transport) falls back to the Jina reader, which fails.
+		outboundOverride.current = {
+			lookup: async () => [{ address: "192.0.2.10", family: 4 }],
+			fetch: async () => new Response("<html><body></body></html>", { headers: { "content-type": "text/html" } }),
+		};
 		globalThis.fetch = (async (url: string) =>
 			String(url).startsWith("https://r.jina.ai/")
 				? new Response("down", { status: 503 })
-				: new Response("<html><body></body></html>", { headers: { "content-type": "text/html" } })) as typeof fetch;
+				: new Response("unexpected", { status: 500 })) as typeof fetch;
 		try {
 			await createWebTools(() => null, "chat1").web_fetch!.execute!("t1", { url: "https://example.com/" });
 		} finally {
 			globalThis.fetch = realFetch;
+			outboundOverride.current = undefined;
 		}
 		assert.deepEqual(lines.map((l) => [l.provider, l.chatId]), [["tavily", "chat1"], ["jina", "chat1"]]);
 	});

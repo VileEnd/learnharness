@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import { recordRequest } from "../request-log.ts";
+import { guardedFetch, OutboundRefusedError, readCapped, withTimeout } from "../outbound.ts";
 import { categoryOf, truncateError } from "../../core/usage.ts";
 // The search-hit shape lives in the core port since the search wave
 // (2026-09-20); this alias keeps callers churn-free.
@@ -27,6 +28,11 @@ import TurndownService from "turndown";
  * silent fallback (owner decision): provider absent → search is honestly
  * unavailable, and the composition root drops the research dispatch tool on
  * the same signal (the jobTools seam, src/agent/tools/jobs.ts).
+ *
+ * OUTBOUND GUARD (2026-11-12 audit): the URL comes from the model, which
+ * reads untrusted pages, so web_fetch goes through outbound.ts — public
+ * addresses only, every redirect hop re-checked, the body capped while it
+ * streams, and the tool's abort signal reaches the socket.
  *
  * Tool contract: NEVER throw into the agent loop — missing provider and
  * every failure path return a clear error STRING as the tool output, so the
@@ -54,8 +60,10 @@ function truncate(text: string): string {
 }
 
 /** Jina Reader fallback for JS-rendered pages (no deps — plain fetch).
- *  Its request-log line carries the chat the research runs for. */
-async function fetchViaJina(url: string, chatId?: string): Promise<string | null> {
+ *  Its request-log line carries the chat the research runs for. Jina's
+ *  host is fixed and public, so this one call skips the outbound guard;
+ *  it is only reached for a URL the guard already let through. */
+async function fetchViaJina(url: string, chatId?: string, signal?: AbortSignal): Promise<string | null> {
 	const startedAt = Date.now();
 	const log = (outcome: "ok" | "error", error?: string) =>
 		recordRequest({
@@ -73,13 +81,14 @@ async function fetchViaJina(url: string, chatId?: string): Promise<string | null
 	try {
 		const res = await fetch(`https://r.jina.ai/${url}`, {
 			headers: { Accept: "text/markdown", "X-No-Cache": "true" },
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+			signal: withTimeout(signal, FETCH_TIMEOUT_MS),
 		});
 		if (!res.ok) {
 			log("error", `HTTP ${res.status}`);
+			await res.body?.cancel().catch(() => {});
 			return null;
 		}
-		const content = await res.text();
+		const content = new TextDecoder().decode(await readCapped(res, MAX_RESPONSE_BYTES));
 		log("ok");
 		const marker = "Markdown Content:";
 		const start = content.indexOf(marker);
@@ -102,35 +111,40 @@ function htmlToMarkdown(html: string): { title: string; content: string } | null
 	return { title: article.title ?? "", content: markdown };
 }
 
-async function fetchAndExtract(url: string, chatId?: string): Promise<string> {
-	const resp = await fetch(url, {
+async function fetchAndExtract(url: string, chatId?: string, signal?: AbortSignal): Promise<string> {
+	const { response: resp, url: finalUrl } = await guardedFetch(url, {
 		headers: {
 			"User-Agent": USER_AGENT,
 			Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 			"Accept-Language": "en-US,en;q=0.9",
 		},
-		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		signal: withTimeout(signal, FETCH_TIMEOUT_MS),
 	});
-	if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+	if (!resp.ok) {
+		await resp.body?.cancel().catch(() => {});
+		throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+	}
 
 	// Final URL after redirects + status — the researcher's only way to
 	// tell a real page from a 200-served error body (owner-reported
 	// "ill-formed request" case: the SITE answered, we just relayed it).
-	const sourceLine = `Source: ${resp.url || url} (HTTP ${resp.status})`;
+	const sourceLine = `Source: ${finalUrl} (HTTP ${resp.status})`;
 
 	const contentType = resp.headers.get("content-type") ?? "";
 	if (contentType.includes("application/pdf")) {
+		await resp.body?.cancel().catch(() => {});
 		// Pointer, not dead-end (researcher PDF wave, 2026-10-07): the
 		// researcher's web_fetch_pdf tool downloads + triages PDFs.
 		return `web_fetch: this URL is a PDF document — call web_fetch_pdf on it to download and read it.`;
 	}
 	if (/image\/|audio\/|video\/|zip|octet-stream/.test(contentType)) {
+		await resp.body?.cancel().catch(() => {});
 		throw new Error(`Unsupported content type: ${contentType.split(";")[0]}`);
 	}
-	const length = Number(resp.headers.get("content-length") ?? 0);
-	if (length > MAX_RESPONSE_BYTES) throw new Error("Response too large");
 
-	const text = await resp.text();
+	// Counted while it streams: an undeclared or lying length cannot slip
+	// past the cap.
+	const text = new TextDecoder().decode(await readCapped(resp, MAX_RESPONSE_BYTES));
 	if (!contentType.includes("html")) return `${sourceLine}\n\n${truncate(text)}`; // plain text / markdown / code
 
 	const extracted = htmlToMarkdown(text);
@@ -139,7 +153,7 @@ async function fetchAndExtract(url: string, chatId?: string): Promise<string> {
 		return header + truncate(extracted.content);
 	}
 	// Readability failed — likely JS-rendered. Try Jina Reader.
-	const jina = await fetchViaJina(url, chatId);
+	const jina = await fetchViaJina(url, chatId, signal);
 	if (jina) return truncate(jina);
 	throw new Error("Could not extract readable content (the page may be JavaScript-rendered)");
 }
@@ -193,7 +207,7 @@ export function createWebTools(
 				"Fetch a web page and extract its readable content as markdown (Readability). " +
 				"Handles HTML pages and plain text; JS-rendered pages fall back to a reader service.",
 			parameters: webFetchInput,
-			execute: serverExecute("web_fetch", webFetchInput, async ({ url }): Promise<string> => {
+			execute: serverExecute("web_fetch", webFetchInput, async ({ url }, ctx): Promise<string> => {
 				try {
 					const parsed = new URL(url);
 					// URL.protocol carries a TRAILING COLON ("https:", WHATWG) — the
@@ -206,8 +220,9 @@ export function createWebTools(
 					return `web_fetch failed: invalid URL "${url}"`;
 				}
 				try {
-					return await fetchAndExtract(url, chatId);
+					return await fetchAndExtract(url, chatId, ctx.signal);
 				} catch (err) {
+					if (err instanceof OutboundRefusedError) return `web_fetch failed for ${url}: ${err.message} — only public web pages can be fetched`;
 					return `web_fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}`;
 				}
 			}),
