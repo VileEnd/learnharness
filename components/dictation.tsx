@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
-import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
+import { deepgramListenUrl, policyRefusalCopy, type DictationLanguage } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 export { isDictationActive } from "@/components/dictation-state";
@@ -172,13 +172,14 @@ function useCanManageKeys(): boolean | null {
  *  DEEPGRAM_API_KEY) is the route's ONLY 503 — the raw message is
  *  dev-speak, so the error becomes the short client-authored line
  *  (zero-keys wave, owner 2026-09-25). */
-async function mintFreshToken(): Promise<string> {
-	const res = await fetch("/api/stt/token");
+export async function mintFreshToken(request: typeof fetch = (...args) => fetch(...args)): Promise<string> {
+	const res = await request("/api/stt/token");
 	if (!res.ok) {
 		if (res.status === 503) throw new Error(DICTATION_KEYLESS);
 		// An error page (proxy, auth redirect) is not JSON: fall back to the status.
 		const body = (await res.json().catch(() => null)) as { message?: string } | null;
-		throw new Error(body?.message ?? `token route ${res.status}`);
+		// An over-cap user's 403 is the shared policy envelope (`error`, not `message`).
+		throw new Error(policyRefusalCopy(body) ?? body?.message ?? `token route ${res.status}`);
 	}
 	const data = (await res.json()) as { token?: string; message?: string };
 	if (!data.token) throw new Error(data.message ?? "token route returned no token");
