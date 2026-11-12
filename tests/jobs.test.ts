@@ -46,6 +46,7 @@ import {
 import { composeInstructions, createTeacherAgent } from "../src/agent/teacher-agent.ts";
 import { createTeacherTools } from "../src/agent/tools.ts";
 import { webTools } from "../src/agent/tools/web.ts";
+import { outboundOverride } from "../src/agent/outbound.ts";
 import { handleChatRequest } from "../src/server/chat-handler.ts";
 import { runningTurn } from "../src/server/turn-runs.ts";
 import {
@@ -641,12 +642,14 @@ describe("research runner (async protocol §3)", () => {
 		const delivery = fakeDeliver();
 		const runner = createJobRunner({ chatStore, jobStore, deliver: delivery.deliver, searchProvider: () => null });
 		const fetched: string[] = [];
-		const realFetch = globalThis.fetch;
-		globalThis.fetch = (async (source) => {
-			fetched.push(String(source));
-			assert.equal(String(source), url);
-			return new Response("Synthetic verified source content", { headers: { "content-type": "text/plain" } });
-		}) as typeof fetch;
+		outboundOverride.current = {
+			lookup: async () => [{ address: "192.0.2.10", family: 4 }],
+			fetch: async (req) => {
+				fetched.push(req.url.href);
+				assert.equal(req.url.href, url);
+				return new Response("Synthetic verified source content", { headers: { "content-type": "text/plain" } });
+			},
+		};
 		researchModelOverride.current = fauxEngine([
 			fauxAssistantMessage([fauxToolCall("web_fetch", { url }, { id: "keyless-fetch" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText(brief)]),
@@ -655,7 +658,7 @@ describe("research runner (async protocol §3)", () => {
 			await runner.runJob(job.id);
 		} finally {
 			researchModelOverride.current = undefined;
-			globalThis.fetch = realFetch;
+			outboundOverride.current = undefined;
 		}
 		assert.deepEqual(fetched, [url]);
 		const done = jobStore.getJob(job.id)!;
