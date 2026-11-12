@@ -52,6 +52,12 @@ export interface ChatStore {
 	/** Persist the full native message list (the record IS the agent
 	 * state — Wave B, owner-approved 2026-09-26). */
 	saveMessages(id: string, messages: LhMessage[]): void;
+	/** Read-modify-write the message list in ONE synchronous section (no
+	 *  await between the read and the write): `update` gets the messages as
+	 *  they are on disk now and returns the list to persist, or null to
+	 *  leave the record untouched. True when it wrote. For a writer whose
+	 *  input was computed across an await (compaction's model call). */
+	updateMessages(id: string, update: (messages: LhMessage[]) => LhMessage[] | null): boolean;
 	/** Persist the session plan tree (plan tools call this in execute). */
 	saveTree(id: string, tree: PlanTree): void;
 	/** Append one usage entry to the record's turn log (the money channel,

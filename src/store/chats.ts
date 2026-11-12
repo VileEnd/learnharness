@@ -137,6 +137,21 @@ function saveMessages(id: string, messages: LhMessage[]): void {
 	writeChat(record);
 }
 
+/** saveMessages over the messages on disk NOW: read, update and write with
+ *  no await in between, so a write that landed while the caller awaited is
+ *  the input, never overwritten. `update` returning null writes nothing.
+ *  SILENT like saveMessages. */
+function updateMessages(id: string, update: (messages: LhMessage[]) => LhMessage[] | null): boolean {
+	const record = getChat(id);
+	if (!record) throw new Error(`Chat not found: ${id}`);
+	const next = update(record.messages);
+	if (next === null) return false;
+	record.messages = next;
+	record.updatedAt = new Date().toISOString();
+	writeChat(record);
+	return true;
+}
+
 /** Append one usage entry to the record's turn log — idempotent per
  * turn id: each REQUEST carries its own id, so a replay of the same turn's
  * persist appends once, while continuation turns (which share a response
@@ -217,6 +232,7 @@ export const chatStore: ChatStore = {
 	getChat,
 	listChats,
 	saveMessages,
+	updateMessages,
 	saveTree,
 	saveSettings,
 	renameChat,

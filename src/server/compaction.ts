@@ -234,7 +234,20 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 			at: new Date().toISOString(),
 		};
 		const marker = newCompactionMarker(trimmed, details);
-		deps.chatStore.saveMessages(chatId, [...messages, marker]);
+		// The summary call took seconds: the record may have moved meanwhile
+		// (a dismissal, an artifact-ui toggle). Append to the record as it is
+		// NOW, and only while what was summarised is still its unchanged
+		// prefix with the kept boundary in place; otherwise the summary
+		// describes text that is gone, so nothing is checkpointed (the next
+		// gate retries on current truth).
+		const summarised = JSON.stringify(messages.slice(0, cut));
+		const appended = deps.chatStore.updateMessages(chatId, (current) =>
+			current[cut]?.id === firstKept.id && JSON.stringify(current.slice(0, cut)) === summarised ? [...current, marker] : null,
+		);
+		if (!appended) {
+			console.info(`[chat ${chatId}] compaction abandoned — the summarised history changed during the summary call`);
+			return;
+		}
 		// The money channel: the summary is a real model call on the
 		// session's own engine — its usage keys to the marker (provenance:
 		// the transcript shows the compaction divider at the marker).
