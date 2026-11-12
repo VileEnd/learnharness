@@ -6,6 +6,7 @@
  */
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
 import {
 	Bm25,
@@ -70,6 +71,187 @@ describe("Bm25", () => {
 		copy.remove("a");
 		assert.deepEqual(copy.search(tokenize("alpha")), []);
 		assert.equal(copy.size, 0);
+	});
+});
+
+/** The Map-based index that Bm25 replaced, kept verbatim as the reference its results are compared with. */
+class ReferenceBm25 {
+	private readonly postings = new Map<string, Map<string, number>>();
+	private readonly lengths = new Map<string, number>();
+	private readonly terms = new Map<string, string[]>();
+	private totalLength = 0;
+
+	constructor(
+		private readonly k1 = 1.2,
+		private readonly b = 0.75,
+	) {}
+
+	get size(): number {
+		return this.lengths.size;
+	}
+
+	add(id: string, tokens: readonly string[]): void {
+		this.remove(id);
+		const tf = new Map<string, number>();
+		for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+		for (const [term, n] of tf) {
+			let posting = this.postings.get(term);
+			if (!posting) this.postings.set(term, (posting = new Map()));
+			posting.set(id, n);
+		}
+		this.lengths.set(id, tokens.length);
+		this.terms.set(id, [...tf.keys()]);
+		this.totalLength += tokens.length;
+	}
+
+	remove(id: string): void {
+		const length = this.lengths.get(id);
+		if (length === undefined) return;
+		for (const term of this.terms.get(id) ?? []) {
+			const posting = this.postings.get(term);
+			posting?.delete(id);
+			if (posting?.size === 0) this.postings.delete(term);
+		}
+		this.lengths.delete(id);
+		this.terms.delete(id);
+		this.totalLength -= length;
+	}
+
+	search(query: readonly string[], allow?: (id: string) => boolean): { id: string; score: number }[] {
+		const n = this.lengths.size;
+		if (n === 0) return [];
+		const avg = this.totalLength / n || 1;
+		const scores = new Map<string, number>();
+		for (const term of new Set(query)) {
+			const posting = this.postings.get(term);
+			if (!posting) continue;
+			const idf = Math.log(1 + (n - posting.size + 0.5) / (posting.size + 0.5));
+			for (const [id, tf] of posting) {
+				if (allow && !allow(id)) continue;
+				const len = this.lengths.get(id) ?? avg;
+				const s = (idf * tf * (this.k1 + 1)) / (tf + this.k1 * (1 - this.b + (this.b * len) / avg));
+				scores.set(id, (scores.get(id) ?? 0) + s);
+			}
+		}
+		return [...scores]
+			.filter(([, score]) => score > 0)
+			.map(([id, score]) => ({ id, score }))
+			.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+	}
+}
+
+/** Seeded generator, so a failure reproduces. */
+function prng(seed: number): () => number {
+	let state = seed;
+	return () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
+}
+
+/** Every string of the golden-data library worth indexing: the graph's concepts and the chats' texts. */
+function goldenTexts(): string[] {
+	const dir = new URL("./fixtures/golden-data/", import.meta.url);
+	const texts: string[] = [];
+	const walk = (value: unknown): void => {
+		if (typeof value === "string") {
+			if (value.length >= 40 && value.includes(" ")) texts.push(value);
+		} else if (Array.isArray(value)) value.forEach(walk);
+		else if (value && typeof value === "object") Object.values(value).forEach(walk);
+	};
+	for (const line of fs.readFileSync(new URL("graph/nodes.jsonl", dir), "utf8").split("\n")) {
+		if (line.trim() === "") continue;
+		const node = JSON.parse(line) as { name: string; statement: string };
+		texts.push(`${node.name}\n${node.statement}`);
+	}
+	for (const file of fs.readdirSync(new URL("chats/", dir))) walk(JSON.parse(fs.readFileSync(new URL(`chats/${file}`, dir), "utf8")));
+	return texts;
+}
+
+describe("Bm25 against the Map-based reference", () => {
+	/** Both indexes get the same call; after it the same queries must answer the same, scores to the last bit. */
+	function pair(queries: () => string[][]) {
+		const index = new Bm25();
+		const reference = new ReferenceBm25();
+		const odd = (id: string) => id.length % 2 === 1;
+		const check = (label: string) => {
+			assert.equal(index.size, reference.size, `${label}: size`);
+			for (const q of queries()) {
+				assert.deepStrictEqual(index.search(q), reference.search(q), `${label}: ${q.join(" ")}`);
+				assert.deepStrictEqual(index.search(q, odd), reference.search(q, odd), `${label}: ${q.join(" ")} (filtered)`);
+			}
+		};
+		return {
+			add(id: string, tokens: string[]) {
+				index.add(id, tokens);
+				reference.add(id, tokens);
+			},
+			remove(id: string) {
+				index.remove(id);
+				reference.remove(id);
+			},
+			check,
+		};
+	}
+
+	it("answers every query of the golden-data library like the reference", () => {
+		const texts = goldenTexts();
+		assert.ok(texts.length > 300, "the golden library is not empty");
+		const words = [...new Set(texts.flatMap((t) => tokenize(t)))];
+		const rand = prng(7);
+		const queries = [tokenize("relationale Datenbank Tabelle"), tokenize("kein Treffer xyzzy"), []];
+		for (let i = 0; i < 60; i++) queries.push([words[Math.floor(rand() * words.length)]!, words[Math.floor(rand() * words.length)]!, words[0]!]);
+		const both = pair(() => queries);
+		texts.forEach((t, i) => both.add(`golden#${i}`, tokenize(t)));
+		both.check("built");
+		texts.forEach((t, i) => i % 3 === 0 && both.remove(`golden#${i}`));
+		both.check("a third removed");
+		texts.forEach((t, i) => i % 3 === 0 && both.add(`golden#${i}`, tokenize(t)));
+		both.check("added again");
+	});
+
+	it("answers like the reference through adds, replacements and removals, compactions included", () => {
+		const rand = prng(42);
+		const words = Array.from({ length: 400 }, (_, i) => `w${i.toString(36)}`);
+		// Zipf-ish: low numbers are common, high ones rare.
+		const word = () => words[Math.floor(words.length * rand() ** 3)]!;
+		const doc = () => Array.from({ length: Math.floor(rand() * 60) }, word); // some are empty
+		const queries = () => {
+			const out: string[][] = [["nothing-like-this"], [], [words[0]!, words[0]!], [words[399]!, words[1]!]];
+			for (let i = 0; i < 8; i++) out.push(Array.from({ length: 1 + Math.floor(rand() * 4) }, word));
+			return out;
+		};
+		const both = pair(queries);
+		const present = new Set<string>();
+		let next = 0;
+		for (let step = 0; step < 1500; step++) {
+			const roll = rand();
+			if (roll < 0.5 || present.size < 20) {
+				const id = `d${next++ % 700}#${Math.floor(rand() * 4)}`; // some ids repeat: an add replaces
+				both.add(id, doc());
+				present.add(id);
+			} else if (roll < 0.9) {
+				const id = [...present][Math.floor(rand() * present.size)]!;
+				both.remove(id);
+				present.delete(id);
+			} else {
+				for (const id of [...present].filter(() => rand() < 0.4)) { // a burst, as a replaced document leaves
+					both.remove(id);
+					present.delete(id);
+				}
+			}
+			if (step % 25 === 0) both.check(`step ${step}`);
+		}
+		both.check("end");
+		for (const id of present) both.remove(id);
+		both.check("emptied");
+		both.add("again", ["alpha", "beta", "alpha"]);
+		both.check("one document after emptying");
+	});
+
+	it("keeps a term frequency above 255 and a very common term exact", () => {
+		const both = pair(() => [["x"], ["x", "y"], ["rare"]]);
+		for (let i = 0; i < 300; i++) both.add(`c${i}`, i === 5 ? [...Array<string>(300).fill("x"), "rare"] : ["x", ...(i % 7 === 0 ? ["y"] : [])]);
+		both.check("built");
+		for (let i = 0; i < 300; i += 2) both.remove(`c${i}`);
+		both.check("half removed");
 	});
 });
 
