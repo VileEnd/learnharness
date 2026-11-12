@@ -10,18 +10,23 @@ of these at a time) and have prepared the checkout, volumes and secrets.env.
                no images at all gets a first deploy of --default-target.
   deploy T     T = latest (newest vX.Y.Z tag), a vX.Y.Z tag, or a branch: fetch,
                check out, build images tagged with the commit, bring the stack
-               up on them, wait for the app to report healthy. A failed build
-               leaves the running stack alone; an unhealthy app goes back to
-               the deploy before. Afterwards only the current and the previous
-               deploy keep images.
+               up on them, wait for the app to report healthy, then run the
+               Keycloak bootstrap. A failed build leaves the running stack
+               alone; an app that is not healthy goes back to the deploy
+               before. Afterwards only the current and the previous deploy
+               keep images.
   rollback     swap current and previous: check out the previous commit and
-               bring its images up, without building. Twice returns.
+               bring its images up, without building or pulling. Refused when
+               a third-party image (Keycloak, Postgres, oauth2-proxy) differs
+               between the two, unless --force. Twice returns.
   prune -- C   run the prune command C (the weekly docker system prune) while
-               the current and previous images are held by stopped containers,
-               so a rollback target is never pruned.
+               stopped containers hold the images of the current and previous
+               deploy, so a rollback target is never pruned. If one cannot be
+               held, nothing is pruned.
 
-State: deploy-state.json {version, current, previous}, each {target, commit,
-tag, time}, written atomically. Exit 0 ok, 1 transient (the boot unit tries
+State: deploy-state.json {version, current, previous, pending}, each {target,
+commit, tag, time}; `pending` names a deploy between its `up` and its final
+record. Written atomically. Exit 0 ok, 1 transient (the boot unit tries
 again), 3 failed for good (it does not). Standard library only.
 """
 
@@ -54,6 +59,17 @@ TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 MAX_STATE = 64 * 1024
 EXIT_RETRY = 1
 EXIT_FAILED = 3
+# Seconds per step, so a hung step fails here and the deploy goes back, well
+# inside the units' TimeoutStartSec (deploy 60 min, rollback 30 min).
+T_GIT = 120
+T_FETCH = 300
+T_BUILD = 25 * 60
+T_UP = 300
+T_RELOAD = 60
+T_INSPECT = 30
+# Where an on-disk format change shows: the fixture law updates these files in
+# the same commit (CLAUDE.md, "Fixture law").
+FORMAT_PATHS = "tests/fixtures/golden-data"
 
 
 class Refused(Exception):
@@ -112,6 +128,25 @@ def supports_tagged_images(compose_text):
     )
 
 
+def third_party_images(compose_text):
+    """{service: image} for every service image in compose.yaml that is not one of ours."""
+    out, svc, in_services = {}, None, False
+    for line in compose_text.splitlines():
+        if re.match(r"^\S", line):
+            in_services, svc = line.rstrip() == "services:", None
+        elif in_services and (m := re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", line)):
+            svc = m.group(1)
+        elif in_services and svc and (m := re.match(r"^    image:\s*(\S+)\s*$", line)):
+            if m.group(1).partition(":")[0] not in SERVICES.values():
+                out[svc] = m.group(1)
+    return out
+
+
+def image_differences(now, then):
+    """[(service, image now, image then)] where the two differ (None = absent)."""
+    return [(s, now.get(s), then.get(s)) for s in sorted(set(now) | set(then)) if now.get(s) != then.get(s)]
+
+
 def record(target, commit, tag, now):
     return {"target": target, "commit": commit, "tag": tag, "time": now}
 
@@ -125,6 +160,10 @@ def valid_record(r):
         and isinstance(r["tag"], str) and bool(OUR_TAG.match(r["tag"]))
         and isinstance(r["time"], str) and len(r["time"]) <= 64
     )
+
+
+def make_state(current, previous=None, pending=None):
+    return {"version": STATE_VERSION, "current": current, "previous": previous, "pending": pending}
 
 
 def read_state(path):
@@ -142,9 +181,11 @@ def read_state(path):
         raise Refused(f"{path} is not valid JSON") from None
     if not isinstance(doc, dict) or doc.get("version") != STATE_VERSION:
         raise Refused(f"{path} is not a version {STATE_VERSION} deploy state")
-    if not valid_record(doc.get("current")) or not (doc.get("previous") is None or valid_record(doc["previous"])):
-        raise Refused(f"{path} has an invalid current or previous deploy")
-    return {"version": STATE_VERSION, "current": doc["current"], "previous": doc.get("previous")}
+    if not valid_record(doc.get("current")) or not all(
+        doc.get(k) is None or valid_record(doc[k]) for k in ("previous", "pending")
+    ):
+        raise Refused(f"{path} has an invalid current, previous or pending deploy")
+    return make_state(doc["current"], doc.get("previous"), doc.get("pending"))
 
 
 def write_state(path, state):
@@ -178,11 +219,11 @@ def after_deploy(state, before, new):
         previous = state["previous"] if state else None
     else:
         previous = before
-    return {"version": STATE_VERSION, "current": new, "previous": previous}
+    return make_state(new, previous)
 
 
 def after_rollback(state):
-    return {"version": STATE_VERSION, "current": state["previous"], "previous": state["current"]}
+    return make_state(state["previous"], state["current"])
 
 
 def images_of(tag):
@@ -242,9 +283,14 @@ def describe(r):
 
 # --- running it ----------------------------------------------------------------
 
-def sh(argv, capture=False, cwd=None, env=None):
-    """(exit code, stdout). Without capture, output goes to the journal."""
-    p = subprocess.run(argv, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE if capture else None)
+def sh(argv, capture=False, cwd=None, env=None, timeout=None):
+    """(exit code, stdout); 124 when `timeout` seconds passed (the command is killed).
+    Without capture, output goes to the journal."""
+    try:
+        p = subprocess.run(argv, cwd=cwd, env=env, text=True, timeout=timeout,
+                           stdout=subprocess.PIPE if capture else None)
+    except subprocess.TimeoutExpired:
+        return 124, ""
     return p.returncode, p.stdout or ""
 
 
@@ -263,37 +309,55 @@ class Stack:
         self.keycloak_bootstrap = keycloak_bootstrap
         self.run, self.sleep, self.monotonic, self.now, self.log = run, sleep, monotonic, now, log
         self.health_timeout = health_timeout
+        self.write_state = write_state
 
     # helpers
-    def do(self, argv, what, **kw):
-        code, out = self.run(argv, **kw)
+    def do(self, argv, what, timeout, **kw):
+        code, out = self.run(argv, timeout=timeout, **kw)
+        if code == 124:
+            raise Failed(f"{what} timed out after {timeout}s")
         if code != 0:
             raise Failed(f"{what} exited {code}")
         return out
 
-    def out(self, argv):
-        code, out = self.run(argv, capture=True)
+    def out(self, argv, timeout=T_INSPECT):
+        code, out = self.run(argv, capture=True, timeout=timeout)
         return out.strip() if code == 0 else None
 
-    def git(self, *args):
-        return self.do(["git", "-C", self.src, *args], f"git {args[0]}", capture=True)
+    def git(self, *args, timeout=T_GIT):
+        return self.do(["git", "-C", self.src, *args], f"git {args[0]}", timeout, capture=True)
 
-    def compose(self, tag, *args, check=True):
+    def compose(self, tag, *args, timeout, check=True):
         argv = ["docker", "compose", "--env-file", self.hosts_env, "--env-file", self.secrets, *args]
         kw = {"cwd": os.path.join(self.src, "deploy"), "env": {**os.environ, "LH_IMAGE_TAG": tag}}
         if check:
-            self.do(argv, f"docker compose {args[0]}", **kw)
+            self.do(argv, f"docker compose {args[0]}", timeout, **kw)
         else:
-            self.run(argv, **kw)
+            self.run(argv, timeout=timeout, **kw)
 
     def images(self):
-        code, out = self.run(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], capture=True)
+        code, out = self.run(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], capture=True,
+                             timeout=T_INSPECT)
         if code != 0:
-            raise Failed("docker image ls failed")
+            raise Failed("docker image ls failed (is Docker running?)")
         return {line for line in out.splitlines() if line}
 
     def image_id(self, ref):
         return self.out(["docker", "image", "inspect", "--format", "{{.Id}}", ref])
+
+    def has_commit(self, commit):
+        return self.run(["git", "-C", self.src, "cat-file", "-e", commit + "^{commit}"], capture=True,
+                        timeout=T_GIT)[0] == 0
+
+    def compose_at(self, commit):
+        return self.git("show", f"{commit}:deploy/compose.yaml")
+
+    def fetch(self):
+        # --prune-tags: a tag withdrawn on origin stops counting for `latest`. The
+        # commits the state names are pinned under refs/learnharness/, which no
+        # fetch refspec covers, so they survive this and a history rewrite.
+        self.do(["git", "-C", self.src, "fetch", "--prune", "--prune-tags", "--force", "--tags", "origin"],
+                "git fetch", T_FETCH)
 
     def checkout(self, commit):
         # Only a crash leaves this behind: every git command here runs under deploy.lock.
@@ -303,27 +367,36 @@ class Stack:
             os.unlink(lock)
         self.git("checkout", "--quiet", "--force", "--detach", commit)
 
-    def bring_up(self, r):
-        """Check out r's commit (if known) and start r's images: no build."""
+    def bring_up(self, r, pull_never=False):
+        """Check out r's commit (if known) and start r's images: no build.
+        pull_never: a rollback or go-back never reaches for the network."""
         if r.get("commit"):
             self.checkout(r["commit"])
-        self.compose(r["tag"], "up", "-d", "--no-build", "--remove-orphans")
+        self.compose(r["tag"], "up", "-d", "--no-build", "--remove-orphans",
+                     *(["--pull", "never"] if pull_never else []), timeout=T_UP)
         # The Caddyfile is a bind mount: compose does not notice content changes,
         # so apply them explicitly (a no-op when nothing changed).
         self.compose(r["tag"], "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
-                     "--adapter", "caddyfile", check=False)
+                     "--adapter", "caddyfile", timeout=T_RELOAD, check=False)
+
+    def bootstrap_keycloak(self):
         # Group, admin-API client and its roles in the realm, idempotently. It
-        # waits up to 3 minutes for Keycloak and never fails the stack.
+        # waits up to 3 minutes for Keycloak and never fails the stack: a failure
+        # only logs, and the admin Users section stays unconfigured until the
+        # next start, deploy or rollback.
         code, _ = self.run(["timeout", "300", "bash", self.keycloak_bootstrap, self.secrets])
         if code != 0:
             self.log("keycloak bootstrap failed")
 
+    def health(self, tag):
+        fmt = "{{.Config.Image}} {{if .State.Health}}{{.State.Health.Status}}{{end}}"
+        code, out = self.run(["docker", "inspect", "--format", fmt, APP_CONTAINER], capture=True, timeout=T_INSPECT)
+        return health_verdict(out, tag) if code == 0 else "waiting"
+
     def wait_healthy(self, tag):
         deadline = self.monotonic() + self.health_timeout
-        fmt = "{{.Config.Image}} {{if .State.Health}}{{.State.Health.Status}}{{end}}"
         while True:
-            code, out = self.run(["docker", "inspect", "--format", fmt, APP_CONTAINER], capture=True)
-            verdict = health_verdict(out, tag) if code == 0 else "waiting"
+            verdict = self.health(tag)
             if verdict != "waiting":
                 return verdict == "healthy"
             if self.monotonic() >= deadline:
@@ -338,15 +411,22 @@ class Stack:
                    for svc in SERVICES}
         return legacy_record(head, local, running, self.now())
 
+    def format_note(self, started, other):
+        """The journal line for every rollback and go-back: app data formats."""
+        a, b = started["commit"][:12], other["commit"][:12]
+        self.log(f"note: {describe(started)} cannot read records written by a newer data format than its own. "
+                 f"If {describe(other)} is newer and changed one, data written since is refused: any commit listed by "
+                 f"`git -C {self.src} log --oneline {a}..{b} -- {FORMAT_PATHS}` changed an on-disk format")
+
     def save(self, state):
         """Write the state, then pin its commits with refs so `git gc` keeps them
         even when their branch or tag is deleted on origin (best effort)."""
-        write_state(self.state_path, state)
+        self.write_state(self.state_path, state)
         for name in ("current", "previous"):
             r = state[name]
             ref = f"refs/learnharness/{name}"
             args = ["update-ref", ref, r["commit"]] if r else ["update-ref", "-d", ref]
-            if self.run(["git", "-C", self.src, *args], capture=True)[0] != 0:
+            if self.run(["git", "-C", self.src, *args], capture=True, timeout=T_GIT)[0] != 0:
                 self.log(f"could not set {ref}")
 
     def read_state(self):
@@ -373,25 +453,43 @@ class Stack:
                 self.log("no deploy state: starting the :local stack from the checkout as it is")
                 self.bring_up({"commit": None, "tag": "local"})
             else:
-                self.log(f"starting {describe(cur)}, image tag {cur['tag']}")
+                if not self.has_commit(cur["commit"]):
+                    self.log(f"not starting: the recorded commit {cur['commit'][:12]} is not in the checkout "
+                             f"(re-cloned?); deploy again with learnharness-deploy@<target>")
+                    return EXIT_FAILED
+                if state["pending"]:
+                    self.log(f"a deploy of {describe(state['pending'])} was interrupted; "
+                             f"starting the recorded {describe(cur)}")
+                    try:
+                        self.save(make_state(cur, state["previous"]))
+                    except OSError as e:
+                        self.log(f"could not clear the interrupted deploy from the state ({e}); starting anyway")
+                else:
+                    self.log(f"starting {describe(cur)}, image tag {cur['tag']}")
                 self.bring_up(cur)
         except Failed as e:
             self.log(f"start failed: {e}")
             return EXIT_RETRY
+        self.bootstrap_keycloak()
         return 0
 
     def deploy(self, target):
+        if not valid_target(target):
+            self.log(f"deploy: not a valid target: {target!r}; nothing was changed")
+            return EXIT_FAILED
         state, err = self.read_state()
         if err:
             self.log(err)
             return EXIT_FAILED
         before = state["current"] if state else self.legacy()
+        # What the file holds while this deploy runs (no pending yet).
+        base = make_state(state["current"], state["previous"]) if state else (make_state(before) if before else None)
         if state is None:
             self.log("first tagged deploy: " + (
                 f"the running :local stack ({before['commit'][:12]}) becomes the rollback target" if before
                 else "no running :local stack to go back to, so rollback is possible from the next deploy on"))
         try:
-            self.do(["git", "-C", self.src, "fetch", "--prune", "--force", "--tags", "origin"], "git fetch")
+            self.fetch()
         except Failed as e:
             self.log(f"deploy {target}: fetch failed ({e}); nothing was changed")
             return EXIT_RETRY
@@ -402,7 +500,7 @@ class Stack:
                         if r.startswith("refs/remotes/origin/") and r != "refs/remotes/origin/HEAD"}
             name, ref = resolve_target(target, tags, branches)
             commit = self.git("rev-parse", "--verify", "--quiet", ref + "^{commit}").strip()
-            if not supports_tagged_images(self.git("show", f"{commit}:deploy/compose.yaml")):
+            if not supports_tagged_images(self.compose_at(commit)):
                 raise Refused(f"{name} ({commit[:12]}) predates per-deploy image tags "
                               "(its deploy/compose.yaml has no LH_IMAGE_TAG); deploy a newer target")
         except (Refused, Failed) as e:
@@ -410,20 +508,26 @@ class Stack:
             return EXIT_FAILED
 
         new = record(name, commit, image_tag(commit), self.now())
+        if state and commit == state["current"]["commit"] and self.health(new["tag"]) == "healthy":
+            self.log(f"{name} is {commit[:12]}, already running {new['tag']}; nothing to do")
+            return 0
+
         self.log(f"deploying {describe(new)}, image tag {new['tag']}")
         try:
             self.checkout(commit)
-            self.compose(new["tag"], "build")
+            self.compose(new["tag"], "build", timeout=T_BUILD)
         except Failed as e:
-            restored = ""
-            if before:
-                try:
-                    self.checkout(before["commit"])
-                except Failed:
-                    restored = " (the checkout could not be put back; the next start does it)"
             self.log(f"deploy of {describe(new)} failed: build failed ({e}); "
-                     f"the running stack is untouched{restored}")
+                     f"the running stack is untouched{self.restore_checkout(before)}")
             return EXIT_FAILED
+
+        if base is not None:
+            try:
+                self.save({**base, "pending": new})
+            except OSError as e:
+                self.log(f"deploy of {describe(new)} stopped: the deploy state could not be written ({e}); "
+                         f"the running stack is untouched{self.restore_checkout(before)}")
+                return EXIT_FAILED
 
         reason = None
         try:
@@ -434,8 +538,11 @@ class Stack:
             reason = f"starting it failed ({e})"
 
         if reason is None or before is None:
+            if reason is None:
+                self.bootstrap_keycloak()
+            final = after_deploy(state, before, new)
             try:
-                self.save(after_deploy(state, before, new))
+                self.save(final)
             except OSError as e:
                 self.log(f"{describe(new)} is running but the deploy state could not be written ({e}); "
                          "a restart would start the deploy before it: free space and deploy again")
@@ -446,19 +553,37 @@ class Stack:
                 return EXIT_FAILED
             self.log(f"deployed {describe(new)}")
             try:
-                self.housekeep(after_deploy(state, before, new))
+                self.housekeep(final)
             except Failed as e:
                 self.log(f"removing older images failed ({e}); the weekly prune or the next deploy will")
             return 0
 
+        if before["tag"] == new["tag"]:
+            self.save(base)
+            self.log(f"deploy of {describe(new)} failed: {reason}; it is the same build as the deploy that was "
+                     f"running, so there is no other build to go back to (learnharness-rollback returns to the "
+                     f"previous deploy)")
+            return EXIT_FAILED
         try:
-            self.bring_up(before)
+            self.bring_up(before, pull_never=True)
         except Failed as e:
             self.log(f"deploy of {describe(new)} failed: {reason}; going back to {describe(before)} "
                      f"failed too ({e}): check docker compose ps")
             return EXIT_FAILED
+        self.save(base)
+        self.format_note(before, new)
         self.log(f"deploy of {describe(new)} failed: {reason}; back on {describe(before)}")
         return EXIT_FAILED
+
+    def restore_checkout(self, before):
+        """Put the checkout back on the running deploy's commit; '' or a note for the log line."""
+        if not before:
+            return ""
+        try:
+            self.checkout(before["commit"])
+            return ""
+        except Failed:
+            return " (the checkout could not be put back; the next start does it)"
 
     def housekeep(self, state):
         """Remove images of deploys older than the previous one (none without a previous)."""
@@ -466,12 +591,12 @@ class Stack:
             return
         keep = {state["current"]["tag"], state["previous"]["tag"]}
         for ref in sorted(stale_images(self.images(), keep)):
-            if self.run(["docker", "image", "rm", ref], capture=True)[0] == 0:
+            if self.run(["docker", "image", "rm", ref], capture=True, timeout=T_INSPECT)[0] == 0:
                 self.log(f"removed {ref}")
             else:
                 self.log(f"could not remove {ref}")
 
-    def rollback(self):
+    def rollback(self, force=False):
         state, err = self.read_state()
         if err:
             self.log(err)
@@ -481,16 +606,37 @@ class Stack:
             return EXIT_FAILED
         cur, prev = state["current"], state["previous"]
         try:
-            if not images_of(prev["tag"]) <= self.images():
+            have = self.images()
+            if not images_of(prev["tag"]) <= have:
                 self.log(f"rollback: the images of {describe(prev)} (tag {prev['tag']}) are gone; "
                          f"deploy it instead: learnharness-deploy@{prev['target']}; nothing was changed")
                 return EXIT_FAILED
-            self.log(f"rolling back from {describe(cur)} to {describe(prev)}")
-            self.bring_up(prev)
+            then = third_party_images(self.compose_at(prev["commit"]))
+            diffs = image_differences(third_party_images(self.compose_at(cur["commit"])), then)
+        except Failed as e:
+            self.log(f"rollback: {e}; nothing was changed")
+            return EXIT_FAILED
+        if diffs:
+            listed = "; ".join(f"{svc}: {a or 'absent'} now, {b or 'absent'} in {describe(prev)}" for svc, a, b in diffs)
+            if not force:
+                self.log(f"rollback refused: third-party images differ ({listed}). An older Keycloak or Postgres "
+                         "may not start on data the newer one migrated, and only the app's health is checked. "
+                         "To roll back anyway: systemctl start learnharness-rollback-force; nothing was changed")
+                return EXIT_FAILED
+            self.log(f"forced rollback although third-party images differ ({listed})")
+        missing = sorted(set(then.values()) - have)
+        if missing:
+            self.log(f"rollback: {', '.join(missing)} not on this machine (a rollback never pulls); "
+                     "nothing was changed")
+            return EXIT_FAILED
+        self.log(f"rolling back from {describe(cur)} to {describe(prev)}")
+        self.format_note(prev, cur)
+        try:
+            self.bring_up(prev, pull_never=True)
         except Failed as e:
             self.log(f"rollback to {describe(prev)} failed ({e}); bringing {describe(cur)} back")
             try:
-                self.bring_up(cur)
+                self.bring_up(cur, pull_never=True)
             except Failed as e2:
                 self.log(f"bringing {describe(cur)} back failed too ({e2}): check docker compose ps")
             return EXIT_FAILED
@@ -504,25 +650,35 @@ class Stack:
             self.log(f"rolled back to {describe(prev)}, but the app did not report healthy within "
                      f"{self.health_timeout}s")
             return EXIT_FAILED
+        self.bootstrap_keycloak()
         self.log(f"rolled back to {describe(prev)}")
         return 0
 
     def prune(self, command):
-        """Run `command` while stopped containers hold the current and previous images."""
+        """Run `command` while stopped containers hold the images of the current and
+        previous deploy (ours and the third-party ones). If any cannot be held,
+        nothing is pruned."""
         state, err = self.read_state()
         if err:
             self.log(f"prune skipped: {err}")
             return EXIT_RETRY
         self.drop_keepers()
-        keep = {r["tag"] for r in (state["current"], state["previous"]) if r} if state else set()
         try:
             have = self.images()
-            for tag in sorted(keep):
-                for ref in sorted(images_of(tag) & have):
-                    name = KEEPER_PREFIX + ref.replace(":", "-")
-                    if self.run(["docker", "create", "--pull", "never", "--network", "none", "--name", name, ref],
-                                capture=True)[0] != 0:
-                        self.log(f"could not hold {ref} during the prune")
+            hold = set()
+            for r in (state["current"], state["previous"], state["pending"]) if state else ():
+                if r:
+                    hold |= images_of(r["tag"])
+                    try:
+                        hold |= set(third_party_images(self.compose_at(r["commit"])).values())
+                    except Failed as e:
+                        self.log(f"the third-party images of {describe(r)} are not known ({e}); holding ours only")
+            for i, ref in enumerate(sorted(hold & have)):
+                name = f"{KEEPER_PREFIX}{i}-" + re.sub(r"[^A-Za-z0-9_.-]", "-", ref)
+                if self.run(["docker", "create", "--pull", "never", "--network", "none", "--name", name, ref],
+                            capture=True, timeout=T_INSPECT)[0] != 0:
+                    self.log(f"prune skipped: could not hold {ref}")
+                    return EXIT_RETRY
             return self.run(command)[0]
         except Failed as e:
             self.log(f"prune skipped: {e}")
@@ -531,13 +687,13 @@ class Stack:
             self.drop_keepers()
 
     def drop_keepers(self):
-        code, out = self.run(["docker", "ps", "-a", "--format", "{{.Names}}"], capture=True)
+        code, out = self.run(["docker", "ps", "-a", "--format", "{{.Names}}"], capture=True, timeout=T_INSPECT)
         for name in out.split() if code == 0 else []:
             if name.startswith(KEEPER_PREFIX):
-                self.run(["docker", "rm", "-f", "-v", name], capture=True)
+                self.run(["docker", "rm", "-f", "-v", name], capture=True, timeout=T_INSPECT)
 
 
-def main(argv=None):
+def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--src", required=True, help="the git checkout")
     ap.add_argument("--state", required=True, help="the deploy state file")
@@ -550,22 +706,28 @@ def main(argv=None):
     st.add_argument("--default-target", required=True)
     dp = sub.add_parser("deploy")
     dp.add_argument("target")
-    sub.add_parser("rollback")
+    rb = sub.add_parser("rollback")
+    rb.add_argument("--force", action="store_true", help="even when third-party images differ")
     pr = sub.add_parser("prune")
     pr.add_argument("command", nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
+    if a.cmd == "prune":
+        a.command = a.command[1:] if a.command[:1] == ["--"] else a.command
+        if not a.command:
+            ap.error("prune needs a command after --")
+    return a
 
+
+def main(argv=None):
+    a = parse_args(argv)
     stack = Stack(a.src, a.state, a.hosts_env, a.secrets, a.keycloak_bootstrap, health_timeout=a.health_timeout)
     if a.cmd == "start":
         return stack.start(a.default_target)
     if a.cmd == "deploy":
         return stack.deploy(a.target)
     if a.cmd == "rollback":
-        return stack.rollback()
-    command = a.command[1:] if a.command[:1] == ["--"] else a.command
-    if not command:
-        ap.error("prune needs a command after --")
-    return stack.prune(command)
+        return stack.rollback(force=a.force)
+    return stack.prune(a.command)
 
 
 if __name__ == "__main__":

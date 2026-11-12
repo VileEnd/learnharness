@@ -25,6 +25,8 @@ NODE_ENV=test npx tsx --import ./tests/setup.ts --test --test-name-pattern="<reg
 
 # Python tests for the standalone data skill (skills/learnharness/), separate from the app suite
 python3 -B -m unittest discover -s tests/skills -v
+# Python tests for the VM's deploy scripts (deploy/nixos/deploy.py, wg-apply.py): no Docker, no network
+python3 -I -B -m unittest discover -s tests/deploy -v
 
 # standalone packaging checks (CI order, after npm run build; the Dockerfile runs them too)
 node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs && node scripts/smoke-image-runtime.mjs
@@ -37,7 +39,8 @@ cd deploy && cp .env.example .env && docker compose up -d --build
 deploy/proxmox/tofu.sh plan|apply        # needs ~/.config/learnharness/proxmox.env (token + state passphrase), site.env and site/
 deploy/nixos/rebuild.sh switch --target-host root@learnharness.fritz.box   # needs ~/.config/learnharness/site/site.nix (hostnames, endpoint, root key)
 ssh root@learnharness.fritz.box systemctl start learnharness-deploy@latest   # deploy the newest vX.Y.Z tag (@v1.2.3 a tag, @main untagged changes); a reboot never builds
-ssh root@learnharness.fritz.box systemctl start learnharness-rollback        # back to the previous deploy, no build
+ssh root@learnharness.fritz.box systemctl start learnharness-rollback        # back to the previous deploy, no build (refused if Keycloak/Postgres images differ; learnharness-rollback-force)
+ssh root@learnharness.fritz.box systemctl restart learnharness-stack        # does NOT deploy: restarts the recorded deploy (use learnharness-deploy@ above)
 ```
 
 Gates on every change: typecheck, all tests, lint, and `next build` must be clean; CI also builds and boots the Docker image. CI runs Node 26.

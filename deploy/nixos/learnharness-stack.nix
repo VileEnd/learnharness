@@ -12,7 +12,11 @@
 #   learnharness-deploy@T     T = latest (newest vX.Y.Z tag), a tag, or a branch:
 #                             fetch, build images tagged with the commit, start
 #                             them, wait for the app to be healthy, else go back.
-#   learnharness-rollback     back to the previous deploy, without building.
+#   learnharness-rollback     back to the previous deploy, without building or
+#                             pulling; refused when a third-party image differs
+#                             (learnharness-rollback-force goes anyway).
+#   learnharness-prune        the weekly docker prune, keeping both deploys' images.
+# `systemctl restart learnharness-stack` does not deploy anything.
 # deploy.py makes the decisions and keeps the state in
 # /var/lib/learnharness/deploy-state.json; these units lock, prepare and call it.
 let
@@ -43,6 +47,23 @@ let
   takeLock = wait:
     if wait then "flock 9"
     else ''flock -n 9 || { echo "learnharness: another deploy, rollback or prune is running; try again when it has finished" >&2; exit 1; }'';
+  rollbackUnit = force: {
+    description = "LearnHarness: back to the previous deploy (no build${lib.optionalString force ", even if third-party images differ"})";
+    requires = [ "docker.service" ];
+    after = [ "docker.service" ];
+    path = unitPath;
+    restartIfChanged = false;
+    serviceConfig = {
+      Type = "oneshot";
+      StateDirectory = "learnharness";
+      TimeoutStartSec = "30min";
+    };
+    script = ''
+      ${prepare false}
+      exec ${deployCmd} rollback${lib.optionalString force " --force"}
+    '';
+  };
+
   prepare = wait: ''
     set -euo pipefail
     exec 9>>${lockFile}
@@ -129,27 +150,33 @@ in
     # Every deploy builds images on a small disk: prune weekly. Unused images
     # and build cache older than a week go; recent cache stays so redeploys
     # remain fast. No --volumes: the bind-mounted data is untouched.
-    virtualisation.docker.autoPrune = {
-      enable = true;
-      dates = "weekly";
-      flags = [ "--all" "--filter" "until=168h" ];
-    };
     # The previous deploy's images are used by no container, and --all with
     # until=168h removes unused images built more than a week ago: a rollback
     # target could go in the first prune after the deploy that replaced it.
-    # So deploy.py runs the prune under the deploy lock, with stopped
-    # containers holding the current and previous images while it runs.
-    systemd.services.docker-prune = {
+    # So the prune is ours, not virtualisation.docker.autoPrune: deploy.py runs
+    # it under the deploy lock, with stopped containers holding the current and
+    # previous deploy's images (third-party ones included) while it runs, and
+    # skips it if one cannot be held. Same schedule and flags as autoPrune had.
+    virtualisation.docker.autoPrune.enable = false;
+    systemd.services.learnharness-prune = {
+      description = "LearnHarness: weekly docker prune that keeps the rollback images";
+      requires = [ "docker.service" ];
+      after = [ "docker.service" ];
       path = [ config.virtualisation.docker.package ];
-      serviceConfig.StateDirectory = "learnharness";
-      serviceConfig.ExecStart = lib.mkForce [
-        (utils.escapeSystemdExecArgs (
+      startAt = "weekly";
+      restartIfChanged = false;
+      serviceConfig = {
+        Type = "oneshot";
+        StateDirectory = "learnharness";
+        ExecStart = utils.escapeSystemdExecArgs (
           [ "${pkgs.util-linux}/bin/flock" lockFile ] ++ deployArgv
-          ++ [ "prune" "--" (lib.getExe config.virtualisation.docker.package) "system" "prune" "-f" ]
-          ++ config.virtualisation.docker.autoPrune.flags
-        ))
-      ];
+          ++ [ "prune" "--" (lib.getExe config.virtualisation.docker.package) "system" "prune" "-f"
+               "--all" "--filter" "until=168h" ]
+        );
+      };
     };
+    # As autoPrune's timer: a run missed while the VM was off happens at boot.
+    systemd.timers.learnharness-prune.timerConfig.Persistent = true;
 
     systemd.services.learnharness-stack = {
       description = "LearnHarness Docker stack (Caddy, oauth2-proxy, Keycloak, app, OCR, Claude runner)";
@@ -196,28 +223,17 @@ in
         TimeoutStartSec = "60min";
       };
       scriptArgs = "%I";
+      # `--`: a target that starts with "-" stays a target (and is refused).
       script = ''
         ${prepare false}
-        exec ${deployCmd} deploy "$1"
+        exec ${deployCmd} deploy -- "$1"
       '';
     };
 
-    # systemctl start learnharness-rollback
-    systemd.services.learnharness-rollback = {
-      description = "LearnHarness: back to the previous deploy (no build)";
-      requires = [ "docker.service" ];
-      after = [ "docker.service" ];
-      path = unitPath;
-      restartIfChanged = false;
-      serviceConfig = {
-        Type = "oneshot";
-        StateDirectory = "learnharness";
-        TimeoutStartSec = "15min";
-      };
-      script = ''
-        ${prepare false}
-        exec ${deployCmd} rollback
-      '';
-    };
+    # systemctl start learnharness-rollback: back to the previous deploy, no build,
+    # no pull. Refused when a third-party image (Keycloak, Postgres, oauth2-proxy)
+    # differs between the two deploys; learnharness-rollback-force goes anyway.
+    systemd.services.learnharness-rollback = rollbackUnit false;
+    systemd.services.learnharness-rollback-force = rollbackUnit true;
   };
 }
