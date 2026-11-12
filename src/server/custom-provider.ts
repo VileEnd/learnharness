@@ -201,6 +201,10 @@ function firstPositive(row: Record<string, unknown>, keys: readonly string[]): n
 
 // Field names seen in the wild for each limit (first present wins).
 const CONTEXT_KEYS = ["max_input_tokens", "context_length", "context_window", "max_context", "n_ctx", "max_seq_len", "max_position_embeddings"] as const;
+// llama.cpp's llama-server nests the runtime context (per slot) under `meta`.
+// Its sibling `n_ctx_train` is the model's training maximum, not what the
+// server accepts, so it is deliberately not read.
+const META_CONTEXT_KEYS = ["n_ctx"] as const;
 const MAX_OUTPUT_KEYS = ["max_output_tokens"] as const;
 
 /** Models (objects with `id`, or bare strings) with detected capabilities, sorted by id; null for an unknown shape. */
@@ -219,7 +223,9 @@ function extractModels(body: unknown): CustomModel[] | null {
 			const model: CustomModel = { id };
 			if (detectImage(row)) model.image = true;
 			if (detectReasoning(row)) model.reasoning = true;
-			const context = firstPositive(row, CONTEXT_KEYS);
+			const context =
+				firstPositive(row, CONTEXT_KEYS) ??
+				(isRecord(row.meta) ? firstPositive(row.meta, META_CONTEXT_KEYS) : undefined);
 			if (context) model.context = clampCustomLimit("context", context);
 			const maxOutput = firstPositive(row, MAX_OUTPUT_KEYS);
 			if (maxOutput) model.maxOutput = clampCustomLimit("maxOutput", maxOutput);

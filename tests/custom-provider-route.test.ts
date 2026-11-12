@@ -122,6 +122,22 @@ describe("discoverModels", () => {
 			{ id: "v", image: true, context: 32000, maxOutput: 1000 },
 		]);
 	});
+	it("detects llama.cpp's runtime context from meta.n_ctx, not n_ctx_train", async () => {
+		reply({
+			data: [
+				{ id: "llamacpp", meta: { n_ctx: 65536, n_ctx_train: 262144, n_vocab: 151936 } },
+				{ id: "train-only", meta: { n_ctx_train: 262144 } },
+				{ id: "top-level-wins", context_length: 32768, meta: { n_ctx: 65536 } },
+			],
+		});
+		const found = await discoverModels(h.BASE);
+		assert.ok(found.ok);
+		assert.deepEqual(found.models, [
+			{ id: "llamacpp", context: 65536 },
+			{ id: "top-level-wins", context: 32768 },
+			{ id: "train-only" },
+		]);
+	});
 	it("reports a non-2xx and an unrecognized shape as honest errors; guards the scheme before any fetch", async () => {
 		answerWith(500);
 		assert.deepEqual(await discoverModels(h.BASE), { ok: false, error: "Endpoint returned HTTP 500", status: 500 });
