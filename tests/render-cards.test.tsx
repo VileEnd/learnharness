@@ -17,6 +17,7 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MessageResponse } from "../components/ai-elements/message.tsx";
 import { QuestionDock } from "../components/question-dock.tsx";
+import { parseHTML } from "linkedom";
 import { ProbeDoneCard } from "../components/artifacts/probe-done-card.tsx";
 import { DispatchCard } from "../components/artifacts/dispatch-card.tsx";
 import { JobsContext } from "../components/jobs-context.ts";
@@ -573,6 +574,40 @@ describe("probe-done card", () => {
 		assert.equal(JSON.stringify(input), before);
 		const refused = renderToStaticMarkup(<ProbeDoneCard part={{ output: { ok: false, error: "Retry `$x$` and **literal**" } } as never} />);
 		assert.ok(!refused.includes("katex") && !refused.includes("<strong") && refused.includes("`$x$`"));
+	});
+
+	it("a completed assessment starts collapsed behind a quiet strand count and separates sections with full-width dividers", () => {
+		for (const [count, includeSummary] of [[1, false], [3, true]] as const) {
+			const html = renderToStaticMarkup(<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+				strands: Array.from({ length: count }, (_, i) => ({ strand: `Topic ${i}`, assessment: "ASSESSMENT_BODY" })),
+				...(includeSummary ? { summary: "SUMMARY_BODY" } : {}),
+			} }, output: { ok: true } } as never} />);
+			const { document } = parseHTML(`<html><body>${html}</body></html>`);
+			const card = document.querySelector('[data-testid="probe-done-card"]')!;
+			assert.equal(card.tagName.toLowerCase(), "details");
+			assert.ok(!card.hasAttribute("open"));
+			const summary = card.querySelector("summary")!;
+			assert.ok(summary.textContent!.includes(`${count} strand${count === 1 ? "" : "s"}`));
+			assert.ok(!summary.textContent!.includes("BODY"), "the header never shows the content");
+			assert.equal(summary.querySelectorAll("button, a, input").length, 0);
+			const body = card.lastElementChild!;
+			assert.equal(body.className, "divide-y", "no inset may shorten the separators");
+			assert.equal(body.children.length, count + (includeSummary ? 1 : 0));
+			assert.ok(card.textContent!.includes("ASSESSMENT_BODY"), "the content is in the markup, reachable by assistive technology and find-in-page once opened");
+		}
+	});
+
+	it("never puts refusal, rejected-input or partial-input notes behind a disclosure", () => {
+		const rejected = { assessment: { strands: [{ strand: "REJECTED_INPUT", assessment: "REJECTED_INPUT" }] } };
+		for (const part of [
+			{ state: "output-available", input: rejected, output: { ok: false, error: "Retry `literal`" } },
+			{ state: "output-error", input: rejected },
+			{ state: "input-streaming", input: { assessment: { summary: "PARTIAL_INPUT" } } },
+		]) {
+			const html = renderToStaticMarkup(<ProbeDoneCard part={part as never} />);
+			assert.ok(!html.includes("<details") && !html.includes("<summary"));
+			assert.ok(!html.includes("REJECTED_INPUT") && !html.includes("PARTIAL_INPUT"));
+		}
 	});
 
 	it("a REJECTED assessment (the stringified live shape) renders the retry note, never the garbage", () => {

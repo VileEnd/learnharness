@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardCheckIcon } from "lucide-react";
+import { ChevronRightIcon, ClipboardCheckIcon } from "lucide-react";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { parseProbeDoneInput, type ProbeDoneResult } from "@/src/core";
 
@@ -19,8 +19,10 @@ import { parseProbeDoneInput, type ProbeDoneResult } from "@/src/core";
  * REJECTED by validation and can be any shape (live crash: the model
  * stringified `assessment`); never render it.
  *
- * Deliberately plain v1: the proper assessment viewer design is deferred to
- * the UI wave; this card just guarantees the data is never invisible.
+ * A completed assessment is collapsed by default behind a "N strands" header
+ * (ported from upstream 10363ed2, a90bd426); refusals, malformed calls and
+ * the writing fallback stay visible. The proper assessment viewer design is
+ * deferred to the UI wave; this card guarantees the data is never invisible.
  */
 export function ProbeDoneCard({ part }: { part: { input?: unknown; output?: unknown; state?: unknown } }) {
 	const output = part.output as ProbeDoneResult | undefined;
@@ -43,33 +45,56 @@ export function ProbeDoneCard({ part }: { part: { input?: unknown; output?: unkn
 	// the heading must not claim it did.
 	const refused = output !== undefined && output !== null && output.ok === false;
 
-	return (
-		<div data-testid="probe-done-card" className="my-3 rounded-xl border bg-card/60 p-3">
-			<div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-				<ClipboardCheckIcon className="size-3.5 text-primary" />
-				{refused ? "Assessment not filed yet" : "Probe concluded — your assessment"}
-			</div>
-			{refused ? (
-				<p className="text-sm text-muted-foreground">The prober retried: {output.error}</p>
-			) : state === "output-error" ? (
-				<p className="text-sm text-muted-foreground">
-					The assessment was malformed — the prober retried with a corrected one.
-				</p>
-			) : strands ? (
-				<div className="space-y-2">
-					{strands.map((s, i) => (
-						<div key={i} className="rounded-lg bg-background/60 px-3 py-2">
-							<ToolContentResponse className="text-sm font-medium">{s.strand}</ToolContentResponse>
-							<ToolContentResponse className="mt-0.5 text-sm text-muted-foreground">{s.assessment}</ToolContentResponse>
-						</div>
-					))}
-					{assessment?.summary && (
-						<ToolContentResponse className="px-1 text-sm text-muted-foreground">{assessment.summary}</ToolContentResponse>
-					)}
+	const heading = (
+		<>
+			<ClipboardCheckIcon className="size-3.5 shrink-0 text-primary" />
+			<span className="min-w-0 truncate">{refused ? "Assessment not filed yet" : "Probe concluded — your assessment"}</span>
+		</>
+	);
+
+	// Refusals, rejected calls and the writing fallback stay visible and plain.
+	if (!strands || refused || state === "output-error") {
+		return (
+			<div data-testid="probe-done-card" className="my-3 rounded-xl border bg-card/60 p-3">
+				<div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					{heading}
 				</div>
-			) : (
-				<p className="text-sm text-muted-foreground">Writing the assessment…</p>
-			)}
-		</div>
+				<p className="text-sm text-muted-foreground">
+					{refused
+						? `The prober retried: ${output.error}`
+						: state === "output-error"
+							? "The assessment was malformed — the prober retried with a corrected one."
+							: "Writing the assessment…"}
+				</p>
+			</div>
+		);
+	}
+
+	// A completed assessment is a handoff artifact: collapsed by default
+	// (native disclosure, local to this mounted card), the full formatted
+	// input one tap away.
+	return (
+		<details data-testid="probe-done-card" className="group my-3 overflow-hidden rounded-xl border bg-card/60">
+			<summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl p-3 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent/40 group-open:rounded-b-none group-open:border-b [&::-webkit-details-marker]:hidden">
+				{heading}
+				<span className="ml-auto shrink-0 font-normal normal-case tracking-normal text-muted-foreground/70">
+					{strands.length} strand{strands.length === 1 ? "" : "s"}
+				</span>
+				<ChevronRightIcon className="size-3 shrink-0 opacity-50 transition-transform group-open:rotate-90" />
+			</summary>
+			<div className="divide-y">
+				{strands.map((s, i) => (
+					<div key={i} className="px-3 py-2">
+						<ToolContentResponse className="text-sm font-medium">{s.strand}</ToolContentResponse>
+						<ToolContentResponse className="mt-0.5 text-sm text-muted-foreground">{s.assessment}</ToolContentResponse>
+					</div>
+				))}
+				{assessment?.summary && (
+					<div className="px-3 py-2">
+						<ToolContentResponse className="text-sm text-muted-foreground">{assessment.summary}</ToolContentResponse>
+					</div>
+				)}
+			</div>
+		</details>
 	);
 }
