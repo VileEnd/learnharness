@@ -80,6 +80,21 @@ describe("appearanceVars — the mapping the provider applies", () => {
 		assert.equal(vars["--lh-ink-strong"], undefined, "default ink");
 	});
 
+	it("JetBrains Mono renders from the bundled face when it is not installed", () => {
+		const vars = appearanceVars(resolveAppearance({ fontFamily: "JetBrains Mono" }));
+		assert.equal(
+			vars["--font-prose"],
+			`"JetBrains Mono", var(--font-jetbrains), var(--font-sans3), ui-sans-serif, system-ui, sans-serif`,
+		);
+	});
+
+	it("a family named like an inherited Object member is not treated as bundled", () => {
+		for (const name of ["constructor", "toString", "__proto__"]) {
+			const vars = appearanceVars(resolveAppearance({ fontFamily: name }));
+			assert.equal(vars["--font-prose"], `"${name}", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`);
+		}
+	});
+
 	it("full delta: every knob lands on its token", () => {
 		const vars = appearanceVars(
 			resolveAppearance({

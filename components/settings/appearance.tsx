@@ -72,6 +72,14 @@ export function derivedPalette(background: string): Record<string, string> {
 	};
 }
 
+/** Reading fonts the app ships itself (next/font in app/layout.tsx), by
+ *  family name → the CSS variable carrying the bundled face. They work
+ *  without being installed: an installed copy wins by name, the bundled
+ *  one fills in otherwise. Exported for the font menu and tests. */
+export const BUNDLED_READING_FONTS: Readonly<Record<string, string>> = {
+	"JetBrains Mono": "var(--font-jetbrains)",
+};
+
 /** THE mapping: resolved appearance → the CSS variables to set on <html>.
  *  Absent entries = leave the factory stylesheet value in place. Pure —
  *  exported for tests. */
@@ -79,7 +87,8 @@ export function appearanceVars(a: ReturnType<typeof resolveAppearance>): Record<
 	const vars: Record<string, string> = {};
 	if (a.background !== null) Object.assign(vars, derivedPalette(a.background));
 	if (a.fontFamily !== null) {
-		vars["--font-prose"] = `"${a.fontFamily}", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`;
+		const bundled = Object.hasOwn(BUNDLED_READING_FONTS, a.fontFamily) ? BUNDLED_READING_FONTS[a.fontFamily] : undefined;
+		vars["--font-prose"] = `"${a.fontFamily}", ${bundled ? `${bundled}, ` : ""}var(--font-sans3), ui-sans-serif, system-ui, sans-serif`;
 	}
 	// The ONE documented reading-size variable (typography round 4): prose,
 	// inputs, and session titles all read it, so one setProperty moves them.

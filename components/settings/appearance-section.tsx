@@ -39,7 +39,7 @@ import {
 } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
-import { useAppearance } from "./appearance.tsx";
+import { BUNDLED_READING_FONTS, useAppearance } from "./appearance.tsx";
 import { FontMenuList } from "./model-menu";
 import { CommitInput, SettingsRow, ThinSelect, Toggle } from "./controls.tsx";
 
@@ -59,6 +59,7 @@ export const CURATED_FALLBACK_FONTS: readonly string[] = [
 	"Georgia",
 	"Helvetica",
 	"Helvetica Neue",
+	"JetBrains Mono",
 	"Menlo",
 	"Times New Roman",
 	"Trebuchet MS",
@@ -75,6 +76,15 @@ type LocalFontsApi = () => Promise<Array<{ family: string }>>;
 function localFontsApi(): LocalFontsApi | null {
 	if (typeof window === "undefined") return null;
 	return (window as unknown as { queryLocalFonts?: LocalFontsApi }).queryLocalFonts ?? null;
+}
+
+/** The menu list from the OS-reported families: the bundled families join
+ *  them (they render whether or not the OS has them), but only when the OS
+ *  list was actually read; deduped, default row removed, sorted. Pure. */
+export function installedFontFamilies(installed: readonly string[]): string[] {
+	return [...new Set(installed.length ? [...installed, ...Object.keys(BUNDLED_READING_FONTS)] : [])]
+		.filter((f) => f !== DEFAULT_READING_FONT)
+		.sort((a, b) => a.localeCompare(b));
 }
 
 /** Compose the reading-font pick: null (or blank) = the factory
@@ -126,9 +136,7 @@ export function AppearanceSection({
 				} else {
 					void api()
 						.then((fonts) => {
-							const families = [...new Set(fonts.map((f) => f.family))]
-								.filter((f) => f !== DEFAULT_READING_FONT)
-								.sort((a, b) => a.localeCompare(b));
+							const families = installedFontFamilies(fonts.map((f) => f.family));
 							if (families.length === 0) {
 								// Resolved-but-empty: not a failure the catch sees —
 								// an honest unavailable.
