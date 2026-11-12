@@ -532,8 +532,9 @@ export function AgentSection({
 				setEngineKeys(present);
 			})
 			.catch(() => {});
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- modelsRequest is a counter, not a DOM ref: the cleanup must bump its current value to drop in-flight reads
 		return () => { modelsMounted.current = false; modelsRequest.current++; };
-	}, []);
+	}, [readModels]);
 
 	// The reason line re-reads /api/search AFTER an engine write lands —
 	// the write updates the `agent` prop (the dialog's record mirror), so

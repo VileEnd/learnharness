@@ -211,16 +211,15 @@ export function MenuShell({
 		buttons[next]?.focus();
 	};
 
-	const anchor = () => {
-		if (anchorRef) return anchorRef.current;
-		if (anchorTestid !== undefined) return document.querySelector(`[data-testid="${anchorTestid}"]`);
-		return null;
-	};
-
 	// Measure + (re)place: on mount, then on every capture-phase scroll and
 	// resize (rAF-throttled). scrollHeight keeps the flip decision honest
 	// after the content changes shape (a search filtering the list).
 	useLayoutEffect(() => {
+		const anchor = () => {
+			if (anchorRef) return anchorRef.current;
+			if (anchorTestid !== undefined) return document.querySelector(`[data-testid="${anchorTestid}"]`);
+			return null;
+		};
 		let raf = 0;
 		const place = () => {
 			const el = anchor();

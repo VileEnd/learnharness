@@ -756,6 +756,7 @@ export function Chat({
 				if (busyRef.current) abortInFlightTurn();
 			}
 		},
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- clearReadingThinking is declared further down (so it cannot be a dep here) and is stable ([] deps)
 		[abortInFlightTurn, dismissQuestion, dismissProblem, dismissWork],
 	);
 	// Mount continuation: if the stored transcript ends with a fulfilled tool
@@ -770,7 +771,7 @@ export function Chat({
 		if (mountContinuation.current) return;
 		mountContinuation.current = true;
 		if (!turnInFlight) continueIfOwed(initialMessages);
-		// mount-only by design (turnInFlight read at initial value)
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only by design (turnInFlight read at initial value)
 	}, []);
 
 	const pending = findPendingToolCall(messages, pendingQuestionOf(nativeMessages));
@@ -858,9 +859,11 @@ export function Chat({
 		pending === null && activeWork !== null && questionNeedsReveal(activeWork.tool, activeWork.input, phaseAt3(messages));
 	// The workspace closes when its subject goes (graded, dismissed, concluded) and
 	// when a side question takes the dock: answer it, then re-open the canvas.
+	const noCanvasTarget = canvasTarget === null;
+	const hasPending = pending !== null;
 	useEffect(() => {
-		if (canvasTarget === null || pending !== null) setCanvasOpen(false);
-	}, [canvasTarget === null, pending !== null]);
+		if (noCanvasTarget || hasPending) setCanvasOpen(false);
+	}, [noCanvasTarget, hasPending]);
 
 	/* The READING-THINKING channel (owner 2026-10-03): a draft field for
 	 * thinking while reading the teaching prose, mounted while a check waits
@@ -1061,6 +1064,7 @@ export function Chat({
 		};
 		// (setMessages/clearError are stable per useChat instance — the
 		//  dep pair [error, chatId] is what the flow actually keys on.)
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- setMessages/clearError are stable; applyText is a stable callback; the flow keys on [error, chatId]
 	}, [error, chatId]);
 	// Voice dictation (STT wave, 2026-09-17): finals append at the end of
 	// the current text (the page owns the separator, dictate-flush style);
@@ -2355,6 +2359,7 @@ function DockOverlay({
 		if (!pendingId || pendingId === initialPendingRef.current) return;
 		if (!requiresReveal && atBottomRef.current) void suppressFoldDuringReveal();
 		// fire only when a NEW question lands
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- requiresReveal and the scroll helper are read at the moment a new question lands
 	}, [pendingId]);
 
 	// ── Fold machine (position, not velocity — owner, scroll round 1) ──

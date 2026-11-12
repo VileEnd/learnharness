@@ -127,6 +127,7 @@ export function KnowledgeGraph({
 	);
 	const positions = useMemo(
 		() => incrementalLayout(nodes, edges, new Map()),
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the structure (ids + edges) on purpose: a states-only refetch keeps every node where it was
 		[structureKey],
 	);
 
