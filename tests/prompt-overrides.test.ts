@@ -185,8 +185,8 @@ describe("the source-derived segment list", () => {
 				"shared/16-mental-model.md",
 				"shared/20-question-tools.md",
 				"shared/22-exercise-tools.md",
-				"shared/24-canvas-tasks.md",
 				"shared/24-canvas-tools.md",
+				"shared/24-drawings.md",
 				"shared/25-confidence.md",
 				"shared/30-library.md",
 				"shared/35-documents.md",
@@ -239,25 +239,40 @@ describe("the source-derived segment list", () => {
 		assert.equal(planning.overrideText, null);
 	});
 
-	it("an override of each canvas fragment composes where the fragment does: tasks for teacher and prober, tools also for practice", () => {
-		promptOverrides.writeOverride("shared/24-canvas-tasks.md", "MY TASKS");
-		promptOverrides.writeOverride("shared/24-canvas-tools.md", "MY TOOLS");
+	it("an override of each canvas fragment composes where the fragment does: 24-canvas-tools.md (an old whole-file override) never reaches practice", () => {
+		promptOverrides.writeOverride("shared/24-canvas-tools.md", "MY TASKS grade side questions type predict");
+		promptOverrides.writeOverride("shared/24-drawings.md", "MY DRAWINGS");
 		try {
-			const switches = { "shared/24-canvas-tasks.md": true, "shared/24-canvas-tools.md": true };
+			const switches = { "shared/24-canvas-tools.md": true, "shared/24-drawings.md": true };
 			const { composeInstructions } = teacherAgent;
 			for (const kind of ["teacher", "prober"] as const) {
 				const text = composeInstructions(kind, switches);
-				assert.ok(text.includes("MY TASKS") && text.includes("MY TOOLS"), kind);
+				assert.ok(text.includes("MY TASKS") && text.includes("MY DRAWINGS"), kind);
 			}
 			const practice = composeInstructions("practice", switches);
-			assert.ok(practice.includes("MY TOOLS"));
-			assert.ok(!practice.includes("MY TASKS"), "practice never composes the task mechanics");
+			assert.ok(practice.includes("MY DRAWINGS"));
+			assert.ok(!practice.includes("MY TASKS"), "an override of the old file name cannot reach practice");
 			// switched off, the source defaults are back
 			assert.ok(composeInstructions("practice").includes("### Reading a drawing"));
 		} finally {
-			promptOverrides.deleteOverride("shared/24-canvas-tasks.md");
 			promptOverrides.deleteOverride("shared/24-canvas-tools.md");
+			promptOverrides.deleteOverride("shared/24-drawings.md");
 		}
+	});
+
+	it("the canvas sections compose in the same order for every role that has them: task text, then reading and marking", () => {
+		const { composeInstructions } = teacherAgent;
+		for (const kind of ["teacher", "prober"] as const) {
+			const text = composeInstructions(kind);
+			const at = (needle: string) => text.indexOf(needle);
+			assert.ok(at("### When to pose it") > -1, kind);
+			assert.ok(at("### When to pose it") < at("### Submissions and closing"), kind);
+			assert.ok(at("### Submissions and closing") < at("### Reading a drawing"), kind);
+			assert.ok(at("### Reading a drawing") < at("### Marking a drawing"), kind);
+		}
+		const practice = composeInstructions("practice");
+		assert.ok(practice.indexOf("### Reading a drawing") < practice.indexOf("### Marking a drawing"));
+		assert.ok(!practice.includes("### When to pose it"));
 	});
 
 	it("adapts to source changes by construction: the list is computed, not stored", () => {
@@ -447,7 +462,7 @@ describe("GET /api/settings/prompts: Practice rides along with Teacher and Probe
 		const practice = view.practice.map((s: { path: string }) => s.path);
 		assert.deepEqual(practice, [
 			"practice/00-base.md", "practice/10-doctrine.md",
-			"shared/10-voice.md", "shared/15-accuracy.md", "shared/16-mental-model.md", "shared/24-canvas-tools.md", "shared/40-formatting.md",
+			"shared/10-voice.md", "shared/15-accuracy.md", "shared/16-mental-model.md", "shared/24-drawings.md", "shared/40-formatting.md",
 		]);
 		assert.ok(!practice.includes("system-prompt.md"));
 	});

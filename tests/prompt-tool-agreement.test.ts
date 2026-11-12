@@ -64,7 +64,7 @@ describe("the collapse law: the teaching prompt says what questionNeedsReveal do
 // canvas fragments a role composes is one of that role's tools, one of those
 // tools' fields, or a drawing id / grid cell.
 
-const CANVAS_FRAGMENTS = ["shared/24-canvas-tools.md", "shared/24-canvas-tasks.md"];
+const CANVAS_FRAGMENTS = ["shared/24-canvas-tools.md", "shared/24-drawings.md"];
 const drawingStore = { getScene: () => null } as never;
 const stubCtx = { chatId: "chat_x", chatStore: { getChat: () => null } as never, drawingStore, canvas: true, libraryRoot: "/nonexistent-library" };
 
@@ -98,7 +98,7 @@ describe("the canvas section reaches practice, and names only what practice hold
 	});
 
 	it("the practice composition contains that section", () => {
-		assert.ok(listSourceSegments("practice").some((segment) => segment.path === "shared/24-canvas-tools.md"));
+		assert.ok(listSourceSegments("practice").some((segment) => segment.path === "shared/24-drawings.md"));
 		const composed = composeInstructions("practice");
 		assert.ok(composed.includes("### Reading a drawing"));
 		assert.ok(composed.includes("### Marking a drawing"));
