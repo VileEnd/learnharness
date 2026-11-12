@@ -238,6 +238,18 @@ describe("parseCompactionSettingsBody (owner round 14)", () => {
 	});
 });
 
+describe("compaction in a stored record", () => {
+	it("is sanitised with or without a graph section", async () => {
+		const { sanitizeUserSettings } = await import("../src/core/settings.ts");
+		const { resolveSettings } = await import("../src/core/settings-resolution.ts");
+		for (const extra of [{}, { graph: {} }]) {
+			const record = sanitizeUserSettings({ version: 1, compaction: { thresholdTokens: 5 }, ...extra });
+			assert.equal(resolveSettings(record).compaction.thresholdTokens, 32_000, JSON.stringify(extra));
+		}
+		assert.deepEqual(sanitizeUserSettings({ version: 1, compaction: { thresholdTokens: "big" } })?.compaction, {});
+	});
+});
+
 describe("SETTINGS_SECTIONS (the route's section map)", () => {
 	it("maps exactly the nine record sections", () => {
 		// compaction joined (owner round 14): its own section PUT — the

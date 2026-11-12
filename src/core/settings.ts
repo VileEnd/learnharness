@@ -825,9 +825,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	}
 	if (r.graph !== null && typeof r.graph === "object" && !Array.isArray(r.graph)) {
 		out.graph = sanitizeGraph(r.graph as Record<string, unknown>);
-		if (r.compaction !== undefined && r.compaction !== null && typeof r.compaction === "object") {
-			out.compaction = sanitizeCompaction(r.compaction as Record<string, unknown>);
-		}
+	}
+	if (r.compaction !== undefined && r.compaction !== null && typeof r.compaction === "object") {
+		out.compaction = sanitizeCompaction(r.compaction as Record<string, unknown>);
 	}
 	if (r.documents !== null && typeof r.documents === "object" && !Array.isArray(r.documents)) {
 		out.documents = sanitizeDocuments(r.documents as Record<string, unknown>);
