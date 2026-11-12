@@ -20,6 +20,7 @@ async function main() {
 		graphStore,
 		// Live budget: the graph section's setting, same as the app's trigger
 		getChunkTokens: () => effectiveSettings().graph.extractionChunkTokens,
+		getDigestTokens: () => effectiveSettings().graph.extractionDigestTokens,
 	});
 	for (const chat of chats) {
 		const t0 = Date.now();

@@ -27,7 +27,7 @@ import type {
 } from "../../core/contracts.ts";
 import { getGraph, mergeFindings, mergeTopicRows, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
 import type { DocumentSection } from "../../core/contracts/documents.ts";
-import { MAX_TOPICS_PER_PROPOSITION, canonicalTopics, canonicalizeAndStoreTopics } from "../../core/topics.ts";
+import { MAX_TOPICS_PER_PROPOSITION, canonicalTopics, canonicalizeAndStoreTopics, topicsByNode } from "../../core/topics.ts";
 import { normalizeTopics } from "../../core/documents.ts";
 import { chunkDocument, documentChunkView, type DocumentChunk } from "./section-chunks.ts";
 import type { GraphStore } from "../../core/ports.ts";
@@ -38,6 +38,7 @@ import { registryKey, requireTenant } from "../../core/tenant-context.ts";
 import { failedOutputCallIds, type LhMessage } from "../../core/native-messages.ts";
 import { prepareAuditorReview } from "../tools/graph.ts";
 import { runSubmitAgent, healStringifiedArrays } from "./submit-agent.ts";
+import { boundedSourceDigest, createDigestTools, type DigestTier } from "./source-digest.ts";
 
 /**
  * The extraction pipeline (vision §1 construction, 2026-09-02 redesign;
@@ -62,7 +63,10 @@ import { runSubmitAgent, healStringifiedArrays } from "./submit-agent.ts";
  *                    propositions + chains, ids verbatim) and the
  *                    extractor builds on it — referencing existing ids
  *                    instead of restating, leaning on established
- *                    conclusions as premises. Stretches of one source
+ *                    conclusions as premises (BOUNDED, 2026-11-12:
+ *                    over graph.extractionDigestTokens it compacts into
+ *                    tiers that keep every earlier idea reachable —
+ *                    source-digest.ts). Stretches of one source
  *                    run SERIALLY (each extract reads every earlier
  *                    merge); tree-blind, FULLY TRUSTED — nothing
  *                    downstream re-checks it.
@@ -543,33 +547,15 @@ export const EXTRACTOR_INSTRUCTIONS = `${SESSION_PREAMBLE}\n\n${EXTRACTION_CORE}
 export const NOTES_EXTRACTOR_INSTRUCTIONS = `${NOTES_PREAMBLE}\n\n${EXTRACTION_CORE}`;
 export const DOCUMENT_EXTRACTOR_INSTRUCTIONS = `${DOCUMENT_PREAMBLE}\n\n${EXTRACTION_CORE}\n\n${DOCUMENT_FIELDS_RULE}`;
 
-// ── the same-source digest (owner, 2026-09-30 evening) ──
-//
-// Serialized digest-aware extraction REPLACED the spine stage (owner
-// ruling after the live test: the post-hoc assembly pass added
-// complexity without perceptible gain — the extractor itself is the
-// assembler when it can see what its source has already yielded). Pure
-// string fold over the derived graph; "" when the source owns nothing
-// yet (the first stretch runs bare). Ids ride VERBATIM — that is what
-// the extractor references in its chains (the merger's mixed-namespace
-// resolution passes them through).
-export function sourceDigest(graph: DerivedGraph, sourceId: string): string {
-	const nameOf = new Map(graph.nodes.map((n) => [n.id, n.name]));
-	const ours = graph.nodes.filter((n) => n.provenance.some((pt) => pt.chatId === sourceId));
-	const ourChains = graph.chains.filter((c) => c.provenance.some((pt) => pt.chatId === sourceId));
-	if (ours.length === 0 && ourChains.length === 0) return "";
-	const lines: string[] = [];
-	lines.push("THE GRAPH SO FAR — everything already extracted from this source (reference these ids verbatim):");
-	for (const n of ours) lines.push(`  ${n.id} | ${n.name} | ${n.statement.replace(/\s+/g, " ")}`);
-	if (ourChains.length > 0) {
-		lines.push("DERIVATIONS ALREADY RECORDED (build on these; do not re-derive them):");
-		for (const c of ourChains) {
-			const names = c.premises.map((p) => nameOf.get(p) ?? p).join(" ∧ ");
-			lines.push(`  [${c.premises.join(" + ")} ⇒ ${c.conclusion}]  ${names} ⇒ ${nameOf.get(c.conclusion) ?? c.conclusion}`);
-		}
-	}
-	return lines.join("\n");
-}
+// ── the same-source digest (owner, 2026-09-30 evening; bounded 2026-11-12) ──
+// sourceDigest (today's full digest) and its token-bounded tiers live in
+// source-digest.ts; re-exported here for the pipeline's callers and tests.
+export { sourceDigest, boundedSourceDigest, createDigestTools } from "./source-digest.ts";
+
+/** The extractor's turn budget when the topics-tier digest hands it
+ *  search_ideas / open_idea: a few lookups, then the submit (the bare
+ *  submit-retry budget is 4). */
+const DIGEST_TOOL_TURNS = 12;
 
 /** The extractor over ONE session transcript (the chat front door).
  *  `batchIds` — the CURRENT batch's teacher-prose message ids — is the
@@ -583,6 +569,7 @@ function runExtractor(
 	batchIds: ReadonlySet<string>,
 	signal: AbortSignal | undefined,
 	onStep: (usage: Usage, model: string, step: number, finishReason: string, tools: string) => void,
+	digestTools?: Record<string, AgentTool<any>>,
 ): Promise<SessionFindings> {
 	// Chains in (the wire), chains out (the store) — no translation seam
 	// since chains-primary. Validation runs at the submit seam (error-back)
@@ -606,6 +593,9 @@ function runExtractor(
 		onStep,
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
+		// The topics-tier digest's lookups (search_ideas / open_idea); absent
+		// otherwise, so a source whose digest fits runs exactly as before.
+		...(digestTools ? { extraTools: digestTools, maxTurns: DIGEST_TOOL_TURNS } : {}),
 	}).then(asSessionFindings);
 }
 
@@ -620,6 +610,7 @@ function runNotesExtractor(
 	existingIds: ReadonlySet<string>,
 	signal: AbortSignal | undefined,
 	onStep: (usage: Usage, model: string, step: number, finishReason: string, tools: string) => void,
+	digestTools?: Record<string, AgentTool<any>>,
 ): Promise<NotesFindings> {
 	return runSubmitAgent<FindingsSubmit>({
 		role: "extractor",
@@ -637,6 +628,9 @@ function runNotesExtractor(
 		onStep,
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
+		// The topics-tier digest's lookups (search_ideas / open_idea); absent
+		// otherwise, so a source whose digest fits runs exactly as before.
+		...(digestTools ? { extraTools: digestTools, maxTurns: DIGEST_TOOL_TURNS } : {}),
 	}).then(asSessionFindings);
 }
 
@@ -653,6 +647,7 @@ function runDocumentExtractor(
 	documentHasTopics: boolean,
 	signal: AbortSignal | undefined,
 	onStep: (usage: Usage, model: string, step: number, finishReason: string, tools: string) => void,
+	digestTools?: Record<string, AgentTool<any>>,
 ): Promise<NotesFindings> {
 	const sectionIds = new Set(chunk.sections.map((sec) => sec.id));
 	return runSubmitAgent<DocumentFindingsSubmit>({
@@ -681,6 +676,9 @@ function runDocumentExtractor(
 		onStep,
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
+		// The topics-tier digest's lookups (search_ideas / open_idea); absent
+		// otherwise, so a source whose digest fits runs exactly as before.
+		...(digestTools ? { extraTools: digestTools, maxTurns: DIGEST_TOOL_TURNS } : {}),
 	}).then((raw) => {
 		const pagesOf = new Map(chunk.sections.map((sec) => [sec.id, sec]));
 		const findings = asSessionFindings(raw);
@@ -927,6 +925,12 @@ export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
 	 *  callers wire the live effective settings (extraction-UX redesign,
 	 *  2026-09-24). */
 	getChunkTokens?: () => number;
+	/** The digest budget (audit B4, owner 2026-11-12): the token ceiling of
+	 *  THE GRAPH SO FAR in each extractor prompt. A source whose digest fits
+	 *  runs exactly as before; a larger one gets the compact tiers
+	 *  (source-digest.ts). OPTIONAL with the factory default (4000), like
+	 *  the chunk budget; the server callers wire the effective setting. */
+	getDigestTokens?: () => number;
 	/** A top-level run ended in a way the learner should hear about while
 	 *  away (push notifications; the composition root wires it). Fired for
 	 *  notes imports that merged something or failed, and for chat runs that
@@ -1174,6 +1178,24 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		}
 	}
 
+	/** The stretch's digest under the budget, plus the lookup tools when the
+	 *  topics tier needs them. Topic rows are read only for that tier. */
+	function digestFor(
+		graph: DerivedGraph,
+		sourceId: string,
+		sectionIds?: ReadonlySet<string>,
+	): { digest: string; tier: DigestTier; tools?: Record<string, AgentTool<any>> } {
+		const budgetTokens = deps.getDigestTokens?.() ?? FACTORY_SETTINGS.graph.extractionDigestTokens;
+		let topics: ReadonlyMap<string, readonly string[]> | undefined;
+		const topicsOf = () => (topics ??= topicsByNode(graphStore.readTopics(), graphStore.readTopicAliases()));
+		const { text, tier } = boundedSourceDigest(graph, sourceId, { budgetTokens, sectionIds, topicsOf });
+		return { digest: text, tier, ...(tier === "topics" ? { tools: createDigestTools(graph, sourceId, topicsOf()) } : {}) };
+	}
+
+	/** The extractor log's digest note: its size, and its tier when compacted. */
+	const digestNote = (digest: string, tier: DigestTier): string =>
+		digest === "" ? "" : `, digest ${digest.split("\n").length} lines${tier === "full" ? "" : ` (${tier} tier)`}`;
+
 	async function extract(
 		jobKey: string,
 		sourceId: string,
@@ -1188,12 +1210,13 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		// on it. Serialized batches make this read the post-merge graph of
 		// every earlier batch (cross-source runs stay parallel — the
 		// digest is source-scoped, so only SAME-source order matters).
+		// BOUNDED (audit B4, owner 2026-11-12): over the digest budget the
+		// digest compacts into tiers that keep every earlier idea reachable.
 		const graph = getGraph(graphStore);
-		const digest = sourceDigest(graph, sourceId);
+		const { digest, tier, tools } = digestFor(graph, sourceId);
 		const prompt = digest === "" ? view : `${digest}\n\n${view}`;
 		console.info(
-			`[extraction ${jobKey}] extractor starting (${view.split("\n").length} markdown lines` +
-				`${digest === "" ? "" : `, digest ${digest.split("\n").length} lines`})`,
+			`[extraction ${jobKey}] extractor starting (${view.split("\n").length} markdown lines${digestNote(digest, tier)})`,
 		);
 		const t0 = performance.now();
 
@@ -1204,10 +1227,11 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			new Set(graph.nodes.map((n) => n.id)),
 			batchIds,
 			signal,
-			(usage, model, step, finishReason, tools) => {
+			(usage, model, step, finishReason, toolNames) => {
 				recordStep(jobKey, "extractor", callUsage(usage), model);
-				console.info(`[extraction] extractor step ${step}: ${finishReason}, tools: ${tools}`);
+				console.info(`[extraction] extractor step ${step}: ${finishReason}, tools: ${toolNames}`);
 			},
+			tools,
 		);
 		console.info(`[extraction ${jobKey}] extractor done in ${Math.round(performance.now() - t0)}ms`);
 		return withCanonicalTopics(findings, signal);
@@ -1594,12 +1618,17 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			: notesView(input);
 		// Same digest law as the chat door (owner, 2026-09-30 evening): the
 		// chunk extractor continues its own source, ids verbatim.
+		// Bounded the same way; a document chunk's own sections keep their
+		// earlier ideas in full first.
 		const graph = getGraph(graphStore);
-		const digest = sourceDigest(graph, input.id);
+		const { digest, tier, tools } = digestFor(
+			graph,
+			input.id,
+			input.doc ? new Set(input.doc.sections.map((sec) => sec.id)) : undefined,
+		);
 		const prompt = digest === "" ? view : `${digest}\n\n${view}`;
 		console.info(
-			`[extraction ${jobKey}] notes extractor starting (${view.split("\n").length} source lines` +
-				`${digest === "" ? "" : `, digest ${digest.split("\n").length} lines`})`,
+			`[extraction ${jobKey}] notes extractor starting (${view.split("\n").length} source lines${digestNote(digest, tier)})`,
 		);
 		const t0 = performance.now();
 		const onStep = (usage: Usage, model: string, step: number, finishReason: string, tools: string) => {
@@ -1617,8 +1646,9 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 					(input.topics ?? []).length > 0,
 					signal,
 					onStep,
+					tools,
 				)
-			: await runNotesExtractor(stageEngine("extractor", deps.extractor), input.id, prompt, existingIds, signal, onStep);
+			: await runNotesExtractor(stageEngine("extractor", deps.extractor), input.id, prompt, existingIds, signal, onStep, tools);
 		console.info(`[extraction ${jobKey}] notes extractor done in ${Math.round(performance.now() - t0)}ms`);
 		return findings;
 	}

@@ -159,6 +159,8 @@ export const extraction = createExtractionPipeline({
 	// refuses BEFORE any batch runs (the typed throw), never mid-run.
 	providerKeyMissing: (provider, tier) =>
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
+	// The digest budget (audit B4): read fresh per extractor call, per tenant.
+	getDigestTokens: () => effectiveSettings().graph.extractionDigestTokens,
 	// Push: notes imports that landed (or failed) and failed chat runs.
 	onRunFinished: (run) => void notify({ kind: "extraction", ...run }),
 	// Session topics: proposed labels fold onto the library's topics before the merge.
