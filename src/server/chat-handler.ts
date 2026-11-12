@@ -863,6 +863,10 @@ export async function handleChatInput(
 		// turn here too - nothing was handed (the loop never ticked).
 		unregisterLiveAgent(chatId);
 		console.error(`[chat ${chatId}] turn failed to start:`, err);
+		// The write-ahead save is this try's first statement and returns on its
+		// own failure, so the input IS on disk here: open views refetch it
+		// rather than offer a resend that would duplicate it.
+		emit("record-changed", { chatId });
 		return Response.json({ error: "Failed to start the turn" }, { status: 500 });
 	}
 }

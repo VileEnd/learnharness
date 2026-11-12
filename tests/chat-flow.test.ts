@@ -1095,11 +1095,22 @@ describe("mid-turn navigation (turn liveness + write-ahead)", () => {
 	it("an agent that fails to build releases the turn claim", async () => {
 		const chat = createConfiguredChat("Test: build failure");
 		createdChats.push(chat.id);
-		const res = await handleChatRequest(post(chat.id, { type: "text", text: "hello" }), () => {
-			throw new Error("agent construction failed");
+		const changed: string[] = [];
+		const off = subscribe((e) => {
+			if (e.type === "record-changed") changed.push((e as { chatId?: string }).chatId ?? "");
 		});
+		let res: Response;
+		try {
+			res = await handleChatRequest(post(chat.id, { type: "text", text: "hello" }), () => {
+				throw new Error("agent construction failed");
+			});
+		} finally {
+			off();
+		}
 		assert.equal(res.status, 500);
 		assert.equal(isTurnRunning(chat.id), false, "the chat is not left in flight");
+		assert.equal(chatStore.getChat(chat.id)!.messages.length, 1, "the input was saved before the failure");
+		assert.ok(changed.includes(chat.id), "open views are told to refetch the saved input");
 	});
 });
 
