@@ -12,6 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ChainTableBody } from "../components/chain-table.tsx";
 import type { ChainSort } from "../components/chain-table.tsx";
 import { LearnerLegend } from "../components/learner-legend.tsx";
+import { mountSettled } from "./mount-rendered.tsx";
 import { NodeKnowledge } from "../components/node-knowledge.tsx";
 import type { ConceptState, EvidenceEvent, GraphNode, LearnerSnapshot } from "../src/core/contracts.ts";
 import { LEARNER_STATE_STYLES, learnerNodeStyle, suggestedConceptIds } from "../src/core/learner-colors.ts";
@@ -73,11 +74,10 @@ describe("NodeKnowledge (the detail card block)", () => {
 		});
 		const html = renderToStaticMarkup(<NodeKnowledge state={state} sessions={{ chat1: "Semaphores" }} />);
 		assert.ok(html.includes("Shaky"));
-		assert.ok(html.includes("missed 2026-10-20 in &quot;Semaphores&quot;: confused P and V"));
+		assert.ok(html.includes("missed 2026-10-20 in &quot;Semaphores&quot;:"));
+		assert.ok(html.includes("confused P and V"));
 		assert.ok(html.includes("Next review 2026-10-23"));
-		assert.ok(html.includes("You thought: P increments"));
-		assert.ok(html.includes("Instead: P decrements"));
-		assert.ok(html.includes("Why: P is wait"));
+		for (const text of ["You thought:", "P increments", "Instead:", "P decrements", "Why:", "P is wait"]) assert.ok(html.includes(text), text);
 	});
 
 	it("shows at most 3 evidence lines, newest first, and no next-review line when there is none", () => {
@@ -97,6 +97,28 @@ describe("NodeKnowledge (the detail card block)", () => {
 		assert.ok(html.includes("Solid - 2 clean sessions in a row · due for review"));
 		assert.ok(html.includes("A premise is shaky or due."));
 		assert.equal(renderToStaticMarkup(<NodeKnowledge state={undefined} sessions={{}} />), "");
+	});
+});
+
+describe("NodeKnowledge renders model text as Markdown and math", () => {
+	it("an evidence note and the open confusions render their math (loaded on demand), the labels stay plain", async () => {
+		const state = cs("n1", {
+			state: "shaky",
+			last: [ev({ note: "mixed up $P$ and **V**" })],
+			openMisconceptions: [{ term: "$x^2$ grows", instead: "`x` shrinks", why: "because $\\frac{a}{b}$", at: "2026-10-20T10:00:00.000Z" }],
+		});
+		const { host, unmount } = await mountSettled(<NodeKnowledge state={state} sessions={{ chat1: "Semaphores" }} />, (h) => h.querySelectorAll(".lh-prose").length === 4);
+		try {
+			const evidence = host.querySelector('[data-testid="node-knowledge-evidence"]')!;
+			assert.equal(evidence.querySelectorAll(".katex").length, 1);
+			assert.equal(evidence.querySelector("strong")?.textContent, "V");
+			assert.ok(evidence.textContent!.includes('missed 2026-10-20 in "Semaphores":'), "the verb/date/title stay literal");
+			const confusion = host.querySelector('[data-testid="node-knowledge-confusion"]')!;
+			assert.equal(confusion.querySelectorAll(".katex").length, 2);
+			assert.equal(confusion.querySelector('[data-streamdown="inline-code"]')?.textContent, "x");
+			for (const label of ["You thought:", "Instead:", "Why:"]) assert.ok(confusion.textContent!.includes(label), label);
+			assert.equal(host.querySelectorAll("[data-testid=md-copy]").length, 0);
+		} finally { await unmount(); }
 	});
 });
 

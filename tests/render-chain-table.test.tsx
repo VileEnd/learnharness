@@ -27,7 +27,7 @@ import React from "react";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it } from "node:test";
-import { parseHTML } from "linkedom";
+import { mountSettled } from "./mount-rendered.tsx";
 import { ChainTableBody, ChainTableOverlay } from "../components/chain-table.tsx";
 import type { ChainSort } from "../components/chain-table.tsx";
 import type { GraphChain, GraphNode } from "../src/core/contracts.ts";
@@ -203,46 +203,64 @@ describe("ChainTableBody — chain rows (chips + connectors)", () => {
 		assert.ok(html.includes('aria-label="Premise one, Premise two → Conclusion"'));
 	});
 
-	it("renders Markdown, code and math only in expanded proposition statements", () => {
+	/** Statements load their renderer on demand: mount, wait, inspect the DOM. */
+	async function expandedRow(statement: string, extra: Partial<typeof BASE> = {}) {
+		const nodes = NODES.map((n) => (n.id === "a" ? { ...n, name: "**Name** $x$", statement } : n));
+		const mounted = await mountSettled(
+			React.createElement(ChainTableBody, { ...BASE, nodes, expandedClusters: new Set(["chat1"]), expandedChains: new Set(["c1"]), ...extra }),
+			(host) => host.querySelectorAll('[data-testid^="prop-row-"] .lh-prose').length >= 2,
+		);
+		return { ...mounted, nodes, row: mounted.host.querySelector('[data-testid="prop-row-a"]')! };
+	}
+
+	it("renders Markdown, code and math only in expanded proposition statements, without copy controls", async () => {
 		const statement = "**Statement** " + String.raw`$\nu$` + " with `literal`.\n\n$$\n" +
 			String.raw`\begin{pmatrix}a&b\\c&d\end{pmatrix}` + '\n$$\n\n```js\nconst text = "x";\n```\n\n' +
-			"| Value | Meaning |\n| --- | --- |\n| x | Variable |\n\n![untrusted](https://example.invalid/image.png)\n\n<script>alert(1)</script>";
-		const nodes = NODES.map((n) => (n.id === "a" ? { ...n, name: "**Name** $x$", statement } : n));
-		const before = structuredClone(nodes);
-		const sourceName = "**Source** $x$ `raw`";
-		const { document } = parseHTML(`<html><body>${render({ nodes, sessions: { ...BASE.sessions, chat1: sourceName },
-			expandedClusters: new Set(["chat1"]), expandedChains: new Set(["c1"]) })}</body></html>`);
-		const row = document.querySelector('[data-testid="prop-row-a"]')!;
-		assert.equal(row.querySelector("strong")?.textContent, "Statement");
-		assert.equal(row.querySelectorAll(".katex").length, 2);
-		assert.equal(row.querySelectorAll(".katex-display").length, 1);
-		assert.equal(row.querySelectorAll(".katex-error").length, 0);
-		assert.equal(row.querySelector('[data-streamdown="inline-code"]')?.textContent, "literal");
-		assert.ok(row.querySelector("table"));
-		assert.equal(row.querySelector("img"), null, "a remote image never loads");
-		assert.equal(row.querySelectorAll("script").length, 0);
-		const prose = row.querySelector(".lh-prose")!;
-		for (const token of ["[--font-prose:var(--font-ui)]", "[--lh-prose-size:var(--text-xs)]", "[--lh-prose-leading:1.625]",
-			"text-muted-foreground", "[&_[data-streamdown=inline-code]]:[font-size:inherit]", "[&_[data-streamdown=inline-code]]:[color:inherit]"]) {
-			assert.ok(prose.classList.contains(token), token);
-		}
-		// Chips and source names stay literal; stored fields are never rewritten.
-		const chip = document.querySelector('[data-testid="prop-chip-a"]')!;
-		assert.equal(chip.textContent, "**Name** $x$");
-		assert.equal(chip.children.length, 0);
-		assert.deepEqual(nodes, before);
+			"| Value | Meaning |\n| --- | --- |\n| x | Variable |\n\n[the docs](https://example.invalid/)\n\n![untrusted](https://example.invalid/image.png)\n\n<script>alert(1)</script>";
+		const { row, host, nodes, unmount } = await expandedRow(statement);
+		try {
+			const before = structuredClone(nodes);
+			assert.equal(row.querySelector("strong")?.textContent, "Statement");
+			assert.equal(row.querySelectorAll(".katex").length, 2);
+			assert.equal(row.querySelectorAll(".katex-display").length, 1);
+			assert.equal(row.querySelectorAll(".katex-error").length, 0);
+			assert.equal(row.querySelector('[data-streamdown="inline-code"]')?.textContent, "literal");
+			assert.ok(row.querySelector("table"));
+			assert.ok(row.querySelector('[data-testid="md-code"]'), "the code block still renders");
+			assert.equal(row.querySelector("img"), null, "a remote image never loads");
+			assert.equal(row.querySelectorAll("script").length, 0);
+			// A dense list: no Copy code / Copy table / Copy equation source icons.
+			assert.equal(row.querySelectorAll('[data-testid="md-copy"], [aria-label^="Copy"]').length, 0);
+			// What buttons remain in the row is stated, not inferred: the statement's
+			// two links (the docs, and the remote image turned into a link) - the
+			// app's standard link control. The row's checkbox is an input.
+			assert.deepEqual([...row.querySelectorAll("button")].map((b) => b.getAttribute("data-streamdown")), ["link", "link"]);
+			assert.equal(row.querySelectorAll('input[type="checkbox"]').length, 1);
+			const prose = row.querySelector(".lh-prose")!;
+			for (const token of ["[--font-prose:var(--font-ui)]", "[--lh-prose-size:var(--text-xs)]", "[--lh-prose-leading:1.625]",
+				"text-muted-foreground", "[&_[data-streamdown=inline-code]]:[font-size:inherit]", "[&_[data-streamdown=inline-code]]:[color:inherit]"]) {
+				assert.ok(prose.classList.contains(token), token);
+			}
+			// A formula or table wider than the cell scrolls inside it and never widens the pane.
+			for (const token of ["min-w-0", "max-w-full", "overflow-x-auto", "flex-1"]) assert.ok(prose.classList.contains(token), token);
+			// Chips and source names stay literal; stored fields are never rewritten.
+			const chip = host.querySelector('[data-testid="prop-chip-a"]')!;
+			assert.equal(chip.textContent, "**Name** $x$");
+			assert.equal(chip.children.length, 0);
+			assert.deepEqual(nodes, before);
+		} finally { await unmount(); }
 	});
 
-	it("a rendered statement keeps its accessible text and leaves the row's keyboard controls as they were", () => {
-		const nodes = NODES.map((n) => (n.id === "a" ? { ...n, statement: String.raw`Holds for $\sqrt{x}$ and [the docs](https://example.invalid/).` } : n));
-		const { document } = parseHTML(`<html><body>${render({ nodes, expandedClusters: new Set(["chat1"]), expandedChains: new Set(["c1"]) })}</body></html>`);
-		const row = document.querySelector('[data-testid="prop-row-a"]')!;
-		assert.deepEqual([...row.querySelectorAll('annotation[encoding="application/x-tex"]')].map((a) => a.textContent), [String.raw`\sqrt{x}`],
-			"a screen reader reads the MathML; the TeX source stays in the markup");
-		assert.ok(row.textContent!.includes("Holds for") && row.textContent!.includes("the docs"));
-		assert.equal(row.querySelectorAll('input[type="checkbox"]').length, 1, "the row's checkbox is untouched");
-		assert.equal(row.querySelectorAll("[tabindex]").length, 0, "no new tab stops of our own");
-		assert.ok(!row.querySelector("[onclick], a[href]"), "the statement adds no row-level click or navigation");
+	it("a rendered statement keeps its accessible text and adds no keyboard stops of its own", async () => {
+		const { row, unmount } = await expandedRow(String.raw`Holds for $\sqrt{x}$ and [the docs](https://example.invalid/).`);
+		try {
+			assert.deepEqual([...row.querySelectorAll('annotation[encoding="application/x-tex"]')].map((a) => a.textContent), [String.raw`\sqrt{x}`],
+				"a screen reader reads the MathML; the TeX source stays in the markup");
+			assert.ok(row.textContent!.includes("Holds for") && row.textContent!.includes("the docs"));
+			assert.equal(row.querySelectorAll('input[type="checkbox"]').length, 1, "the row's checkbox is untouched");
+			assert.equal(row.querySelectorAll("[tabindex]").length, 0);
+			assert.deepEqual([...row.querySelectorAll("button")].map((b) => b.textContent), ["the docs"], "the link control is the only button");
+		} finally { await unmount(); }
 	});
 
 	it("expanding a chain reveals member STATEMENTS directly — PLAIN rows, no conclusion marker (owner, round 2)", () => {

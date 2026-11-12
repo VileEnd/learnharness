@@ -11,64 +11,76 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { parseHTML } from "linkedom";
+import { mountSettled } from "./mount-rendered.tsx";
 import { NodeCardBody, observeNodeCardPosition } from "../components/graph-node-card.tsx";
 import type { GraphNode } from "../src/core/contracts.ts";
 
-function body(name: string, statement: string): string {
-	const node = { id: "n1", name, statement, aliases: [], state: "new", createdAt: "2026-09-20T10:00:00.000Z", provenance: [] } as unknown as GraphNode;
-	return renderToStaticMarkup(<NodeCardBody node={node} sourceIds={[]} sessions={{}} fileSources={{}} documents={undefined} />);
+const node = (name: string, statement: string) =>
+	({ id: "n1", name, statement, aliases: [], state: "new", createdAt: "2026-09-20T10:00:00.000Z", provenance: [] }) as unknown as GraphNode;
+const card = (name: string, statement: string) => <NodeCardBody node={node(name, statement)} sourceIds={[]} sessions={{}} fileSources={{}} documents={undefined} />;
+const formulas = (host: ParentNode) => host.querySelectorAll(".katex").length;
+/** Mount, wait for the on-demand renderer, hand the DOM to `check`. */
+async function shown(name: string, statement: string, check: (host: HTMLElement) => void): Promise<void> {
+	const { host, unmount } = await mountSettled(card(name, statement), (h) => h.querySelectorAll(".lh-prose").length === 2);
+	try { check(host); } finally { await unmount(); }
 }
-const formulas = (html: string) => html.split('class="katex"').length - 1;
 
 describe("node detail card text", () => {
-	it("renders math in the name and in the statement", () => {
-		const html = body(String.raw`Euler's formula $e^{ix}$`, String.raw`For real $x$, $e^{ix}=\cos x+i\sin x$.`);
-		assert.equal(formulas(html), 3);
-		assert.ok(!html.replace(/<annotation[\s\S]*?<\/annotation>/g, "").includes("$"), "no raw dollar delimiters remain");
-		assert.ok(html.includes("For real"), "the surrounding prose survives");
+	it("renders math in the name and in the statement", async () => {
+		await shown(String.raw`Euler's formula $e^{ix}$`, String.raw`For real $x$, $e^{ix}=\cos x+i\sin x$.`, (host) => {
+			assert.equal(formulas(host), 3);
+			assert.ok(host.textContent!.includes("For real"), "the surrounding prose survives");
+			assert.ok(![...host.querySelectorAll(".lh-prose")].some((el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent!.includes("$"))), "no raw dollar delimiters remain");
+		});
 	});
 
-	it("keeps the TeX source in the markup for assistive technology", () => {
-		const { document } = parseHTML(`<html><body>${body("Name", String.raw`Uses $\sqrt{x}$.`)}</body></html>`);
-		assert.deepEqual([...document.querySelectorAll('annotation[encoding="application/x-tex"]')].map((a) => a.textContent), [String.raw`\sqrt{x}`]);
-		assert.ok(document.querySelector("math"), "MathML carries the readable statement");
+	it("keeps the TeX source in the markup for assistive technology", async () => {
+		await shown("Name", String.raw`Uses $\sqrt{x}$.`, (host) => {
+			assert.deepEqual([...host.querySelectorAll('annotation[encoding="application/x-tex"]')].map((a) => a.textContent), [String.raw`\sqrt{x}`]);
+			assert.ok(host.querySelector("math"), "MathML carries the readable statement");
+		});
 	});
 
-	it("renders a display block in the statement as display math", () => {
-		const html = body("Gaussian integral", "Over the real line:\n\n$$\n" + String.raw`\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}` + "\n$$");
-		assert.equal(formulas(html), 1);
-		assert.ok(html.includes("katex-display"));
+	it("renders a display block in the statement as display math, without a copy icon", async () => {
+		await shown("Gaussian integral", "Over the real line:\n\n$$\n" + String.raw`\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}` + "\n$$", (host) => {
+			assert.equal(formulas(host), 1);
+			assert.ok(host.querySelector(".katex-display"));
+			assert.equal(host.querySelectorAll('[data-testid="md-copy"], [aria-label^="Copy"]').length, 0);
+		});
 	});
 
-	it("leaves plain text as plain text", () => {
+	it("leaves plain text as plain text", async () => {
 		const statement = "The maximum ratio of broad money a bank can create from each unit of base money.";
-		const html = body("Money multiplier", statement);
-		assert.equal(formulas(html), 0);
-		assert.ok(html.includes("Money multiplier") && html.includes(statement));
+		await shown("Money multiplier", statement, (host) => {
+			assert.equal(formulas(host), 0);
+			assert.ok(host.textContent!.includes("Money multiplier") && host.textContent!.includes(statement));
+		});
 	});
 
-	it("uses the shared Markdown and image-safety policy: no markup injection, no remote image", () => {
-		const { document } = parseHTML(`<html><body>${body("**Meaning** $x$ <img src=x onerror=alert(1)>",
-			'A [reference](https://example.invalid/) and `literal` code.<script>alert(1)</script>\n\n![untrusted](https://example.invalid/image.png)')}</body></html>`);
-		assert.equal(document.querySelector("strong")?.textContent, "Meaning");
-		assert.equal(document.querySelector('[data-streamdown="inline-code"]')?.textContent, "literal");
-		assert.equal(document.querySelector("img"), null, "node content cannot load a remote image");
-		assert.equal(document.querySelectorAll("script, [onerror]").length, 0);
-		assert.ok([...document.querySelectorAll('[data-streamdown="link"]')].some((link) => link.textContent === "untrusted"), "a remote image becomes a link the learner can open");
+	it("uses the shared Markdown and image-safety policy: no markup injection, no remote image", async () => {
+		await shown("**Meaning** $x$ <img src=x onerror=alert(1)>",
+			'A [reference](https://example.invalid/) and `literal` code.<script>alert(1)</script>\n\n![untrusted](https://example.invalid/image.png)', (host) => {
+			assert.equal(host.querySelector("strong")?.textContent, "Meaning");
+			assert.equal(host.querySelector('[data-streamdown="inline-code"]')?.textContent, "literal");
+			assert.equal(host.querySelector("img"), null, "node content cannot load a remote image");
+			assert.equal(host.querySelectorAll("script, [onerror]").length, 0);
+			assert.ok([...host.querySelectorAll('[data-streamdown="link"]')].some((link) => link.textContent === "untrusted"), "a remote image becomes a link the learner can open");
+		});
 	});
 
-	it("keeps the card's own type rather than the chat prose font and size", () => {
-		const { document } = parseHTML(`<html><body>${body("Name `x`", "Statement `x`")}</body></html>`);
-		const lines = [...document.querySelectorAll(".lh-prose")];
-		assert.equal(lines.length, 2);
-		for (const line of lines) {
-			assert.ok(line.classList.contains("[--font-prose:var(--font-ui)]"));
-			assert.ok(line.classList.contains("[&_[data-streamdown=inline-code]]:[font-size:inherit]"));
-			assert.ok(line.classList.contains("[&_[data-streamdown=inline-code]]:[color:inherit]"));
-		}
-		assert.ok(lines[0]!.classList.contains("font-medium") && lines[0]!.classList.contains("[--lh-prose-size:var(--text-sm)]"));
-		assert.ok(lines[1]!.classList.contains("text-muted-foreground") && lines[1]!.classList.contains("[--lh-prose-size:var(--text-xs)]"));
+	it("keeps the card's own type, and scrolls a wide formula inside its own block", async () => {
+		await shown("Name `x`", "Statement `x`", (host) => {
+			const lines = [...host.querySelectorAll(".lh-prose")];
+			assert.equal(lines.length, 2);
+			for (const line of lines) {
+				assert.ok(line.classList.contains("[--font-prose:var(--font-ui)]"));
+				assert.ok(line.classList.contains("[&_[data-streamdown=inline-code]]:[font-size:inherit]"));
+				assert.ok(line.classList.contains("[&_[data-streamdown=inline-code]]:[color:inherit]"));
+				for (const css of ["min-w-0", "max-w-full", "overflow-x-auto", "[&_.katex-base]:my-0.5"]) assert.ok(line.classList.contains(css), css);
+			}
+			assert.ok(lines[0]!.classList.contains("font-medium") && lines[0]!.classList.contains("[--lh-prose-size:var(--text-sm)]"));
+			assert.ok(lines[1]!.classList.contains("text-muted-foreground") && lines[1]!.classList.contains("[--lh-prose-size:var(--text-xs)]"));
+		});
 	});
 });
 

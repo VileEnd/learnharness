@@ -74,7 +74,7 @@ import { GroupByToggle } from "@/components/group-by-toggle";
 import { TopBar } from "@/components/top-bar";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog";
 import { LatexGlyph } from "@/components/latex-glyph";
-import { ToolContentResponse } from "@/components/ai-elements/message";
+import { StatementText } from "@/components/statement-text";
 
 /** The sortable columns (owner ruling: all three — consistency). */
 export type ChainSortCol = "name" | "props" | "created";
@@ -165,7 +165,9 @@ export function ChainTableBody({
 	const searching = query.trim() !== "";
 
 	// The fuzzy filter: a chain is visible when ANY member matches on
-	// name, aliases, or statement; chains rank by best member score.
+	// name, aliases, or statement; chains rank by best member score. The
+	// statement is matched by its SOURCE text (the Markdown as stored), not by
+	// what the row renders, so "frac" matches a statement that shows a fraction.
 	const visibleChains = useMemo(() => {
 		if (!searching) return chains;
 		const scored = chains
@@ -406,15 +408,11 @@ export function ChainTableBody({
 																	testid={`prop-checkbox-${id}`}
 																	label={`Select node ${node.name}`}
 																/>
-																{/* Statements are model output or imported text: they render
-																    as Markdown with math through the shared sanitised path, in the
-																    row's own small type. Names (chips) stay literal. */}
-																<ToolContentResponse
-																	mode="static"
-																	className="min-w-0 flex-1 text-muted-foreground [--font-prose:var(--font-ui)] [--lh-prose-size:var(--text-xs)] [--lh-prose-leading:1.625] [&_[data-streamdown=inline-code]]:[font-size:inherit] [&_[data-streamdown=inline-code]]:[color:inherit]"
-																>
-																	{node.statement}
-																</ToolContentResponse>
+																{/* Statements are model output or imported text: Markdown and
+																    math through the shared sanitised path, in the row's own small
+																	type, loaded on demand and without copy icons (a dense list).
+																    Names (chips) stay literal. */}
+																<StatementText className="flex-1 text-muted-foreground">{node.statement}</StatementText>
 																<span className="hidden w-14 shrink-0 sm:block" />
 																<span className="hidden w-20 shrink-0 sm:block" />
 															</div>

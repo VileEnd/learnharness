@@ -5,7 +5,7 @@ import Link from "next/link";
 import { FileTextIcon } from "lucide-react";
 import { documentCitation, propositionSessionHref, type ConceptState, type GraphNode, type SnapshotDocument } from "@/src/core";
 import { NodeKnowledge } from "@/components/node-knowledge";
-import { ToolContentResponse } from "@/components/ai-elements/message";
+import { StatementText } from "@/components/statement-text";
 
 /**
  * The graph's concept detail card, shared by the home graph and the "My
@@ -70,32 +70,6 @@ export function useCardPlacement(
 	return cardRef;
 }
 
-/** The card's name and statement. Both are model output or imported text, so
- *  they render through ToolContentResponse like other tool content: Markdown
- *  and math, sanitised by the shared pipeline, never streamed. `.lh-prose`
- *  sets the chat font and size in unlayered CSS that beats Tailwind's type
- *  utilities; the variable overrides keep the card's own type. */
-const NODE_CARD_TYPE = "[--font-prose:var(--font-ui)] " +
-	"[&_[data-streamdown=inline-code]]:[font-size:inherit] [&_[data-streamdown=inline-code]]:[color:inherit]";
-function NodeCardText({ name, statement }: Pick<GraphNode, "name" | "statement">) {
-	return (
-		<>
-			<ToolContentResponse
-				mode="static"
-				className={`${NODE_CARD_TYPE} font-medium [--lh-prose-size:var(--text-sm)] [--lh-prose-leading:1.375]`}
-			>
-				{name}
-			</ToolContentResponse>
-			<ToolContentResponse
-				mode="static"
-				className={`${NODE_CARD_TYPE} mt-1 text-muted-foreground [--lh-prose-size:var(--text-xs)] [--lh-prose-leading:1.625]`}
-			>
-				{statement}
-			</ToolContentResponse>
-		</>
-	);
-}
-
 export function NodeCardBody({
 	node,
 	sourceIds,
@@ -115,7 +89,9 @@ export function NodeCardBody({
 }) {
 	return (
 		<>
-			<NodeCardText name={node.name} statement={node.statement} />
+			{/* Model output or imported text: Markdown and math, loaded on demand. */}
+			<StatementText type="name">{node.name}</StatementText>
+			<StatementText className="mt-1 text-muted-foreground">{node.statement}</StatementText>
 			{knowledge && <NodeKnowledge state={knowledge.state} sessions={knowledge.sessions} />}
 			{sourceIds.length > 0 ? (
 				<div className="mt-3 flex flex-col gap-1">

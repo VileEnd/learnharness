@@ -1,3 +1,4 @@
+import { StatementText } from "@/components/statement-text";
 import { EVIDENCE_VERBS, LEARNER_STATE_STYLES, type ConceptState } from "@/src/core";
 
 /**
@@ -45,8 +46,12 @@ export function NodeKnowledge({
 				const title = sessions[e.chatId];
 				return (
 					<div key={`${e.toolCallId}-${i}`} data-testid="node-knowledge-evidence" className="text-xs leading-relaxed text-muted-foreground">
-						{EVIDENCE_VERBS[e.raw] ?? e.raw} {day(e.at)} in {title ? `"${title}"` : "a session"}
-						{e.note ? `: ${e.note}` : ""}
+						<div>
+							{EVIDENCE_VERBS[e.raw] ?? e.raw} {day(e.at)} in {title ? `"${title}"` : "a session"}
+							{e.note ? ":" : ""}
+						</div>
+						{/* The note is model text: Markdown and math, loaded on demand. */}
+						{e.note && <StatementText>{e.note}</StatementText>}
 					</div>
 				);
 			})}
@@ -60,13 +65,23 @@ export function NodeKnowledge({
 					<div className="text-muted-foreground">Open confusions</div>
 					{state.openMisconceptions.map((m) => (
 						<div key={m.term} data-testid="node-knowledge-confusion" className="flex flex-col gap-0.5 leading-relaxed">
-							<div>You thought: {m.term}</div>
-							{m.instead && <div>Instead: {m.instead}</div>}
-							{m.why && <div className="text-muted-foreground">Why: {m.why}</div>}
+							<ConfusionLine label="You thought:">{m.term}</ConfusionLine>
+							{m.instead && <ConfusionLine label="Instead:">{m.instead}</ConfusionLine>}
+							{m.why && <ConfusionLine label="Why:" muted>{m.why}</ConfusionLine>}
 						</div>
 					))}
 				</div>
 			)}
+		</div>
+	);
+}
+
+/** A labelled line whose text is model output (rendered, loaded on demand). */
+function ConfusionLine({ label, muted, children }: { label: string; muted?: boolean; children: string }) {
+	return (
+		<div className={`flex gap-1 ${muted ? "text-muted-foreground" : ""}`}>
+			<span className="shrink-0">{label}</span>
+			<StatementText className="flex-1">{children}</StatementText>
 		</div>
 	);
 }
