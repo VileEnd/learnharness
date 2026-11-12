@@ -17,15 +17,7 @@ A useful report includes:
 
 ## What to expect
 
-These are targets, not guarantees:
-
-| Step | Target |
-| --- | --- |
-| Acknowledge your report | within 7 days |
-| Initial assessment (confirmed or not, severity) | within 14 days |
-| Fix released and advisory published | within 90 days of the report |
-
-The fix is developed privately in a GitHub security advisory. We will keep you updated, agree on a disclosure date with you, and credit you in the published advisory unless you prefer to stay anonymous.
+Reports are handled on a best-effort basis, with no fixed timeline. The fix is developed privately in a GitHub security advisory.
 
 ## Supported versions
 
