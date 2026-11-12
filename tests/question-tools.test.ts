@@ -36,9 +36,6 @@ import { exerciseInputBase, probeQuizInputSchema, quizInputObject, quizInputProb
 import { chatStore } from "../src/store/chats.ts";
 import { PATHS } from "../config.ts";
 
-const dataDir = path.join(PATHS.root, "data");
-fs.mkdirSync(dataDir, { recursive: true });
-
 const createdChats: string[] = [];
 after(() => {
 	for (const id of createdChats) {

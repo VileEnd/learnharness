@@ -21,6 +21,7 @@ const TSX_LOADER = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.m
 describe("LH_DATA_DIR seam", () => {
 	it("relocates data/chats/graph under LH_DATA_DIR, keeps prompts ROOT-anchored", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-seam-"));
+		const preloaded = process.env.LH_DATA_DIR;
 		process.env.LH_DATA_DIR = dir;
 		try {
 			const { PATHS, ROOT } = await import("../config.ts");
@@ -33,15 +34,18 @@ describe("LH_DATA_DIR seam", () => {
 				"read-only prompt assets stay bundle-anchored on purpose",
 			);
 		} finally {
-			delete process.env.LH_DATA_DIR;
+			if (preloaded === undefined) delete process.env.LH_DATA_DIR;
+			else process.env.LH_DATA_DIR = preloaded;
 		}
 	});
 
 	it("unset = the repo data/ exactly as before (fresh child process, no env)", () => {
+		// The test preload sets LH_DATA_DIR / LH_AUTH_FILE; "unset" means unset.
+		const { LH_DATA_DIR: _data, LH_AUTH_FILE: _auth, ...env } = process.env;
 		const out = execFileSync(
 			process.execPath,
 			["--import", TSX_LOADER, "--eval", `const m = await import(${JSON.stringify(path.join(REPO_ROOT, "config.ts"))}); console.log(JSON.stringify({ data: m.PATHS.data, chats: m.PATHS.chats }));`],
-			{ cwd: REPO_ROOT, encoding: "utf-8" },
+			{ cwd: REPO_ROOT, env, encoding: "utf-8" },
 		);
 		const parsed = JSON.parse(out) as { data: string; chats: string | null };
 		assert.equal(parsed.data, path.join(REPO_ROOT, "data"));
