@@ -79,6 +79,19 @@ describe("turn settlement recovery", () => {
 		assert.equal(frames.some(f => f.includes('"type":"error"')), false);
 	});
 
+	it("the settle reports how many views were attached when the turn ended", async () => {
+		const watched: number[] = [];
+		const handle = runPiTurn({ agent: agentEndingWith(), onFinish(_messages, _aborted, viewers) { watched.push(viewers); } });
+		await new Response(handle.subscribe()).text();
+		const unwatched: number[] = [];
+		let done!: () => void;
+		const settled = new Promise<void>((resolve) => (done = resolve));
+		runPiTurn({ agent: agentEndingWith(), onFinish(_messages, _aborted, viewers) { unwatched.push(viewers); done(); } });
+		await settled;
+		assert.deepEqual(watched, [1], "one view was attached");
+		assert.deepEqual(unwatched, [0], "nobody was watching");
+	});
+
 	it("a forced settle after an ignored abort composes with a failed save; the stuck run's late end and failure are dropped", async () => {
 		// An agent whose abort() does nothing: the run ends only when the test says so.
 		const listeners: Array<(event: never) => unknown> = [];

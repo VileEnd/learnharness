@@ -161,9 +161,6 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// relative order of concurrent keys stays chronological).
 	const pending = new Map<string, TurnWireEvent>();
 	const subscribers = new Set<PiTurnSubscriber>();
-	// Views attached when the stream closed (closeAll empties the set before
-	// the settle seam runs).
-	let viewersAtClose = 0;
 
 	const coalesceKey = (event: TurnWireEvent): string | null => {
 		if (event.type === "message_update") return "message";
@@ -229,7 +226,6 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 		flushPending();
 		clearTimeout(forceTimer);
 		settled = true;
-		viewersAtClose = subscribers.size;
 		for (const sub of subscribers) sub.done();
 		subscribers.clear();
 	};
@@ -246,7 +242,10 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	const settleWith = () => {
 		try {
 			const settled_ = [...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system");
-			onFinish((uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_, sawAbort, viewersAtClose);
+			// The views still attached: every settle path runs this before
+			// closeAll, which empties the set.
+			const viewers = subscribers.size;
+			onFinish((uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_, sawAbort, viewers);
 		} catch (err) {
 			console.error("[turn] settlement failed:", err);
 			try { onSettleFailure?.(err, reportedErrorText); }
