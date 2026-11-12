@@ -279,6 +279,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			engineRef.current = null;
 		};
 		// mount-scoped by design: chatId/callId are fixed for a workspace instance
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- the engine is created once per workspace instance; later renders must not rebuild it
 	}, []);
 
 	useEffect(() => {

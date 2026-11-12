@@ -19,7 +19,7 @@ interface Props {
  *  shape must cost only itself: a compact inline fallback, the rest of the
  *  chat renders. */
 export class PartBoundary extends Component<Props, { failed: boolean; resetKey?: string | undefined }> {
-	state: { failed: boolean; resetKey?: string | undefined } = { failed: false, resetKey: this.props.resetKey };
+	override state: { failed: boolean; resetKey?: string | undefined } = { failed: false, resetKey: this.props.resetKey };
 
 	static getDerivedStateFromError() {
 		return { failed: true };
@@ -29,11 +29,11 @@ export class PartBoundary extends Component<Props, { failed: boolean; resetKey?:
 		return props.resetKey === state.resetKey ? null : { failed: false, resetKey: props.resetKey };
 	}
 
-	componentDidCatch(error: Error, info: ErrorInfo) {
+	override componentDidCatch(error: Error, info: ErrorInfo) {
 		console.error("[chat] a transcript part could not be rendered:", error, info.componentStack);
 	}
 
-	render() {
+	override render() {
 		if (this.state.failed) {
 			return (
 				<p data-testid="part-error" role="note" className="my-1 font-ui text-xs text-muted-foreground">

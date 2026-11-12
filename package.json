@@ -1,6 +1,6 @@
 {
 	"name": "learnharness",
-	"version": "0.75.0",
+	"version": "0.76.0",
 	"license": "AGPL-3.0-only",
 	"author": {
 		"name": "Amos Blomqvist",
@@ -78,12 +78,14 @@
 		"@types/react-dom": "^19.3.0",
 		"@types/turndown": "^5.0.6",
 		"@types/web-push": "^3.6.4",
-		"@typescript-eslint/parser": "^8.68.0",
+		"@typescript-eslint/parser": "^8.72.2",
 		"eslint": "^9.39.5",
 		"eslint-import-resolver-typescript": "^4.4.5",
 		"eslint-plugin-import": "^2.32.0",
+		"eslint-plugin-react-hooks": "^7.1.1",
 		"tailwindcss": "^4.3.3",
 		"tsx": "^4.19.0",
-		"typescript": "^5.6.0"
+		"typescript": "^5.6.0",
+		"typescript-eslint": "^8.72.2"
 	}
 }

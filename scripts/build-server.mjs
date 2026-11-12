@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * build-server.mjs — curate the standalone server payload (the Docker image's /app).
  *

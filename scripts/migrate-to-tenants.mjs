@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * migrate-to-tenants.mjs — one-off move of a single-user data dir into the
  * multi-user layout. Plain ESM (runs as bare `node` in the image):

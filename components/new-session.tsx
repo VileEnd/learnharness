@@ -339,7 +339,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 				setSendError(err instanceof Error ? err.message : "Couldn't start the session. Try again.");
 				setBusy(false);
 			});
-	}, [busy, router, configured, zeroKeys, strongKeyless]);
+	}, [busy, router, configured, zeroKeys, strongKeyless, mode]);
 
 	return (
 		<>

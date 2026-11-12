@@ -211,7 +211,18 @@ function policyRefusalResponse(chatId: string, err: unknown): Response | null {
 	return Response.json(err.envelope, { status: 403 });
 }
 
-setJobRespawn((jobId) => void jobRunner.runJob(jobId));
+/** Start a job's sub-agent loop in the background (a side channel: the tool
+ *  already returned its ack). runJob can reject outside its own failure
+ *  handling (an unreadable record, an engine build that throws), and nobody
+ *  awaits it — log it instead of leaving an unhandled rejection. The job
+ *  stays "running" without a result, which the recovery sweep re-runs. */
+function spawnJob(jobId: string, input?: Parameters<typeof jobRunner.runJob>[1]): void {
+	void jobRunner.runJob(jobId, input).catch((err: unknown) => {
+		console.error(`[job ${jobId}] runner crashed:`, err);
+	});
+}
+
+setJobRespawn((jobId) => spawnJob(jobId));
 
 /** The route-facing entry: parse {chatId, input} and run one turn. */
 export async function handleChatRequest(
@@ -619,7 +630,7 @@ export async function handleChatInput(
 							jobs: {
 								chatId,
 								jobStore: stores.jobStore,
-								spawn: (job, input) => void jobRunner.runJob(job.id, input),
+								spawn: (job, input) => spawnJob(job.id, input),
 								searchAvailable,
 							},
 							libraryRoot: PATHS.okf,
@@ -638,7 +649,7 @@ export async function handleChatInput(
 							chatId,
 							chatStore: stores.chatStore,
 							jobStore: stores.jobStore,
-							spawn: (job, input) => void jobRunner.runJob(job.id, input),
+							spawn: (job, input) => spawnJob(job.id, input),
 							// The registry drop's signal (2026-09-20): no live engine
 							// = no research tool in the teacher's registry.
 							searchAvailable,
@@ -662,7 +673,7 @@ export async function handleChatInput(
 							// dispatch (owner ruling — phase-omnipresent), so its ctx
 							// needs the same job wiring as the teacher's.
 							jobStore: stores.jobStore,
-							spawn: (job, input) => void jobRunner.runJob(job.id, input),
+							spawn: (job, input) => spawnJob(job.id, input),
 							searchAvailable,
 							libraryRoot: PATHS.okf,
 							libraryBeforeAccess: () => library.ensureFresh(),

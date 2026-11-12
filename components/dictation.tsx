@@ -423,7 +423,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		// Pre-mint for the next run (mitigation D) — best-effort; a keyless
 		// page just doesn't warm.
 		if (warmNext) warmTokens.refresh();
-	}, []);
+	}, [flush]);
 
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
 	const openSocket = useCallback(

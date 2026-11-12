@@ -338,3 +338,28 @@ test("fork: a legacy pdf record still loads, and its stored result is never repl
 	assert.equal(loaded.kind, "pdf");
 	assert.equal(loaded.delivery, undefined, "terminal legacy records stay untouched");
 });
+
+test("a throwing chat read in the pump is contained: no unhandled rejection, delivery stays pending and joins a learner run", async () => {
+	const owner = chat(); const { job, steer } = pending(owner.id);
+	const unhandled: unknown[] = [];
+	const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+	process.on("unhandledRejection", onUnhandled);
+	const realGetChat = stores.chatStore.getChat;
+	let reads = 0;
+	stores.chatStore.getChat = () => { reads++; throw new Error("record refused: newer schema version"); };
+	const logged = console.error; console.error = () => {};
+	let delivery: Promise<void>;
+	try {
+		delivery = deliverJobResult(steer);
+		await until(() => reads === 1); await delay(50);
+	} finally {
+		stores.chatStore.getChat = realGetChat; console.error = logged;
+		process.off("unhandledRejection", onUnhandled);
+	}
+	assert.deepEqual(unhandled, []);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending");
+	const next = agent(); assert(beginTurn(owner.id)); registerLiveAgent(owner.id, next.value);
+	assert.equal(next.handed.length, 1);
+	persist(owner.id, next.handed); unregisterLiveAgent(owner.id); settleSteers(owner.id, next.handed); endTurn(owner.id);
+	await delivery;
+});

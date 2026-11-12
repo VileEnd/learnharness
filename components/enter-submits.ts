@@ -97,5 +97,5 @@ export function useEnterSubmits(submit: () => void, scope?: RefObject<Element | 
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, []);
+	}, [scope]);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
@@ -147,7 +147,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const entry = catalog?.models.find(
 		(m) => m.id === effectiveId && m.provider === effectiveProvider,
 	);
-	const levels = entry?.supportedLevels ?? [];
+	const levels = useMemo(() => entry?.supportedLevels ?? [], [entry]);
 	// Legacy display (chunk 2 item 4, owner): a record with a model but no
 	// stored level shows the RESOLVED level — the ordering's first supported
 	// — because that is exactly what the engine build would run. Display-

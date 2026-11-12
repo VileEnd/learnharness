@@ -2,6 +2,8 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextPlugin from "@next/eslint-plugin-next";
 import tsParser from "@typescript-eslint/parser";
 import importPlugin from "eslint-plugin-import";
+import reactHooks from "eslint-plugin-react-hooks";
+import tseslint from "typescript-eslint";
 
 /**
  * ESLint with one job here: ENFORCE THE IMPORT LAW (the shell/core
@@ -15,6 +17,15 @@ import importPlugin from "eslint-plugin-import";
  *   src/agent/**   →  never imports src/server, src/store (dependencies —
  *                    the storage ports, the composition — arrive via
  *                    factories/closures from the chat-handler)
+ *
+ * Three more guard rails (audit B13), each scoped to where it pays:
+ *
+ *   app/** + components/**         React hooks: rules-of-hooks + exhaustive-deps
+ *                                  (only those two, not the React Compiler rules)
+ *   src/server/** + src/agent/**   no-floating-promises + no-misused-promises
+ *                                  (type-aware; `void p` marks a deliberate
+ *                                  fire-and-forget, and its rejection must
+ *                                  already be handled)
  *
  * tests/ and scripts/ are internal — unrestricted.
  */
@@ -67,6 +78,26 @@ export default defineConfig([
 					],
 				},
 			],
+		},
+	},
+	{
+		files: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+		plugins: { "react-hooks": reactHooks },
+		rules: {
+			"react-hooks/rules-of-hooks": "error",
+			"react-hooks/exhaustive-deps": "error",
+		},
+	},
+	{
+		files: ["src/server/**/*.ts", "src/agent/**/*.ts"],
+		languageOptions: {
+			parser: tsParser,
+			parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+		},
+		plugins: { "@typescript-eslint": tseslint.plugin },
+		rules: {
+			"@typescript-eslint/no-floating-promises": ["error", { ignoreVoid: true }],
+			"@typescript-eslint/no-misused-promises": ["error", { checksVoidReturn: true, checksConditionals: true }],
 		},
 	},
 ]);
