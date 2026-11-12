@@ -56,6 +56,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MenuShell } from "@/components/menu-shell";
+import { okJson } from "@/components/ok-json";
 import { useSettingsSaved } from "@/components/settings-signal";
 import { defaultOrderLevel, populateLevel } from "@/components/thinking-default";
 import type React from "react";
@@ -467,8 +468,8 @@ export function AgentSection({
 
 	const refreshSearch = () =>
 		fetch("/api/search")
-			.then((r) => r.json())
-			.then((body: { available: boolean; engine: string | null; reason: string }) => setSearch(body))
+			.then((r) => okJson<{ available: boolean; engine: string | null; reason: string }>(r))
+			.then((body) => setSearch(body))
 			.catch(() => setSearch(null));
 
 	/** Re-read the prompt-segment view — the signal seam for the
@@ -480,8 +481,8 @@ export function AgentSection({
 	 *  initial mount fetch below owns the loading/null state). */
 	const readPrompts = useCallback(() => {
 		fetch("/api/settings/prompts")
-			.then((r) => r.json())
-			.then((body: PromptView) => setPrompts(body))
+			.then((r) => okJson<PromptView>(r))
+			.then((body) => setPrompts(body))
 			.catch(() => {});
 	}, []);
 
@@ -518,12 +519,12 @@ export function AgentSection({
 		modelsMounted.current = true;
 		readModels();
 		fetch("/api/settings/prompts")
-			.then((r) => r.json())
-			.then((body: PromptView) => setPrompts(body))
+			.then((r) => okJson<PromptView>(r))
+			.then((body) => setPrompts(body))
 			.catch(() => setPrompts(null));
 		fetch("/api/keys")
-			.then((r) => r.json())
-			.then((body: { keys: { id: string; present: boolean }[] }) => {
+			.then((r) => okJson<{ keys: { id: string; present: boolean }[] }>(r))
+			.then((body) => {
 				const present: Partial<Record<SearchEngineId, boolean>> = {};
 				for (const { id, envVar } of SEARCH_ENGINES) {
 					present[id] = body.keys.some((k) => k.id === envVar && k.present);

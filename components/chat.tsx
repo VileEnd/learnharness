@@ -2,6 +2,7 @@
 
 import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChatSession } from "@/components/session";
+import { okJson } from "@/components/ok-json";
 import { visibleQueuedSteers } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -689,7 +690,7 @@ export function Chat({
 	useSettingsSaved((section) => {
 		if (section !== "models") return;
 		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings?: { models?: ModelsSettings } | null; configured?: unknown } | null>)
+			.then((r) => okJson<{ settings?: { models?: ModelsSettings } | null; configured?: unknown } | null>(r))
 			// The server's `configured` wins when present (a restricted user
 			// needs only their policy's slots); else the record's three slots.
 			.then((body) => setConfigured(typeof body?.configured === "boolean" ? body.configured : slotsConfigured(body?.settings?.models)))

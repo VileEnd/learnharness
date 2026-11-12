@@ -31,6 +31,7 @@ import { CustomEndpointSection } from "./custom-endpoint.tsx";
 import { CacheRetentionSection } from "./cache-retention-section.tsx";
 import { ClaudeCodeSection } from "./claude-code-section.tsx";
 import { MenuShell } from "@/components/menu-shell";
+import { okJson } from "@/components/ok-json";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
 /** One pi-ai provider with plain API-key auth (the Platform seam —
@@ -359,8 +360,8 @@ export function KeysSection({
 
 	const reload = () =>
 		fetch("/api/keys")
-			.then((r) => r.json())
-			.then((body: KeysResponse) => {
+			.then((r) => okJson<KeysResponse>(r))
+			.then((body) => {
 				setStatuses(body.keys ?? []);
 				if (body.providers) setProviders(body.providers);
 			})

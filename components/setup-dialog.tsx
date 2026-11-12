@@ -35,6 +35,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { okJson } from "@/components/ok-json";
 import type React from "react";
 import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings } from "@/src/core";
 import { prettyModel } from "@/components/usage-format";
@@ -293,8 +294,8 @@ export function SetupDialog({
 			.then((b: { account?: { isAdmin: boolean } | null } | null) => { if (!cancelled) setAdmin(b === null ? null : b.account ? b.account.isAdmin : true); })
 			.catch(() => { if (!cancelled) setAdmin(null); });
 		fetch("/api/keys")
-			.then((r) => r.json())
-			.then((b: { providers?: ProviderKeyInfo[] }) => { if (!cancelled) setKeyProviders(b.providers ?? []); })
+			.then((r) => okJson<{ providers?: ProviderKeyInfo[] }>(r))
+			.then((b) => { if (!cancelled) setKeyProviders(b.providers ?? []); })
 			.catch(() => { if (!cancelled) setKeyProviders([]); });
 		fetch("/api/models")
 			.then((r) => { if (!r.ok) throw new Error("Catalog unavailable"); return r.json(); })

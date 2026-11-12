@@ -65,6 +65,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
+import { okJson } from "@/components/ok-json";
 import Link from "next/link";
 import { FileTextIcon, LibraryIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
 import { documentCitation, incrementalLayout, learnerNodeStyle, LEARNER_DUE_RING, LEARNER_STATE_STYLES, propositionSessionHref, type GraphNode, type GraphSnapshot } from "@/src/core";
@@ -1007,7 +1008,7 @@ export function GraphView({
 	const rowIdsRef = useRef<Set<string>>(new Set());
 	const readPipelineStatus = useCallback(() => {
 		fetch("/api/graph/status")
-			.then((res) => res.json() as Promise<{ runs: typeof pipelineRuns }>)
+			.then((res) => okJson<{ runs: typeof pipelineRuns }>(res))
 			.then(({ runs }) => {
 				setPipelineRuns(runs);
 				const ids = new Set(runs.map((r) => r.id));

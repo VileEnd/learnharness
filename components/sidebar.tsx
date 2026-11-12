@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
+import { okJson } from "@/components/ok-json";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
 import { BrainIcon, DumbbellIcon, LibraryIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
@@ -421,7 +422,7 @@ function SessionsSidebar() {
 		refreshInFlightRef.current = true;
 		try {
 			const res = await fetch("/api/chats", { cache: "no-store" });
-			const d = (await res.json()) as { chats: ChatListItem[] };
+			const d = await okJson<{ chats: ChatListItem[] }>(res);
 			setChats(d.chats);
 		} catch {
 			// a transient failure keeps the last snapshot

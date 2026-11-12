@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
+import { okJson } from "@/components/ok-json";
 import { ModelMenuList, ThinkingMenuList } from "@/components/settings/model-menu";
 import { composeSlotModel } from "@/components/settings/agent-section";
 import { MenuShell } from "@/components/menu-shell";
@@ -102,14 +103,14 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const readRecord = useCallback(() => {
 		if (chatId) {
 			fetch(`/api/chats/${chatId}`)
-				.then((r) => r.json() as Promise<{ settings?: ChatSettings }>)
+				.then((r) => okJson<{ settings?: ChatSettings }>(r))
 				.then((body) => setSession(body.settings))
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
 		}
 		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
+			.then((r) => okJson<{ settings: { models?: ModelsSettings } | null }>(r))
 			.then((body) => setModels(body.settings?.models ?? undefined))
 			.catch(() => {
 				/* the record fetch failing leaves the control read-only
@@ -438,7 +439,7 @@ export function CanvasPill({ chatId, value, onChange, capable }: { chatId?: stri
 		if (!chatId) return;
 		let alive = true;
 		fetch(`/api/chats/${chatId}`)
-			.then((r) => r.json() as Promise<{ settings?: ChatSettings }>)
+			.then((r) => okJson<{ settings?: ChatSettings }>(r))
 			.then((body) => {
 				if (alive) setLocal(body.settings?.canvas === true);
 			})

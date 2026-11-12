@@ -22,6 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { LibraryIcon, ListTreeIcon, UploadIcon } from "lucide-react";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
+import { okJson } from "@/components/ok-json";
 import { UsageMonthControl, useUsageMonth } from "@/components/usage/month-pill.tsx";
 import { AddDocumentsDialog } from "@/components/add-documents-dialog.tsx";
 import { Hint } from "@/components/ui/hint";
@@ -104,11 +105,11 @@ export function MinimalHome({
 
 	const readState = useCallback(() => {
 		fetch("/api/graph")
-			.then((res) => res.json() as Promise<GraphSnapshot>)
+			.then((res) => okJson<GraphSnapshot>(res))
 			.then(setSnapshot)
 			.catch(() => {});
 		fetch("/api/chats")
-			.then((res) => res.json() as Promise<{ chats: ChatSummary[] }>)
+			.then((res) => okJson<{ chats: ChatSummary[] }>(res))
 			.then((body) => setChats(body.chats))
 			.catch(() => {});
 	}, []);

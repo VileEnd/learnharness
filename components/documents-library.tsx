@@ -5,6 +5,7 @@ import Link from "next/link";
 import { DownloadIcon, FileTextIcon, SearchIcon, UploadIcon } from "lucide-react";
 import type { DocSearchResult, DocumentSummary } from "@/src/core";
 import { AddDocumentsDialog } from "@/components/add-documents-dialog";
+import { okJson } from "@/components/ok-json";
 import { useServerEvent } from "@/components/server-events";
 import { TopBar } from "@/components/top-bar";
 
@@ -211,7 +212,7 @@ export function DocumentsLibrary({ initial }: { initial: DocumentSummary[] }) {
 	}, [query]);
 	const refetch = useCallback(() => {
 		fetch("/api/documents")
-			.then((res) => res.json() as Promise<{ documents: DocumentSummary[] }>)
+			.then((res) => okJson<{ documents: DocumentSummary[] }>(res))
 			.then((body) => setDocuments(body.documents))
 			.catch(() => {});
 	}, []);
