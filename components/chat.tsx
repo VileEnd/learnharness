@@ -264,7 +264,7 @@ function useStableMap<K, V>(next: Map<K, V>): Map<K, V> {
 /** One transcript row. Memoised so a streamed chunk re-renders only the live
  *  tail: every prop is a primitive, a settled message (referentially stable
  *  across projections, see shareView) or a stable callback/map. */
-const TranscriptRow = memo(function TranscriptRow({
+export const TranscriptRow = memo(function TranscriptRow({
 	m,
 	phase,
 	prevPhase,
