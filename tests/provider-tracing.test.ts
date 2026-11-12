@@ -47,6 +47,7 @@ describe("standalone JavaScript tracing exclusions and native workaround policy"
 			"node_modules/@napi-rs/canvas-*/**/*",
 			"src/agent/image-processing/*.mjs",
 			"src/agent/image-processing/LICENSE",
+			"src/server/pwa/sw.js",
 			"node_modules/@silvia-odwyer/photon-node/**/*",
 			"node_modules/@resvg/resvg-js-*/**/*",
 			"node_modules/@earendil-works/pi-ai/dist/providers/data/**/*",

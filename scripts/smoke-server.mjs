@@ -57,6 +57,23 @@ function freePort() {
 	});
 }
 
+/** One GET; resolves {status, body} (status 0 = connection refused/failed). */
+function getText(url) {
+	return new Promise((resolve) => {
+		const req = http.get(url, (res) => {
+			let body = "";
+			res.setEncoding("utf8");
+			res.on("data", (chunk) => (body += chunk));
+			res.on("end", () => resolve({ status: res.statusCode ?? 0, type: res.headers["content-type"] ?? "", body }));
+		});
+		req.on("error", () => resolve({ status: 0, type: "", body: "" }));
+		req.setTimeout(5000, () => {
+			req.destroy();
+			resolve({ status: 0, type: "", body: "" });
+		});
+	});
+}
+
 /** One GET; resolves the status code (0 = connection refused/failed). */
 function get(url) {
 	return new Promise((resolve) => {
@@ -161,6 +178,15 @@ async function main() {
 			if (status !== 200) throw new Error(`GET ${route} → ${status} (expected 200)`);
 			console.log(`[smoke-server] GET ${route} → 200`);
 		}
+
+		// 3) The service worker: public JavaScript carrying this build's id (the
+		//    worker source is read from disk at request time).
+		const buildId = fs.readFileSync(path.join(STANDALONE, ".next", "BUILD_ID"), "utf8").trim();
+		const sw = await getText(url + "/sw.js");
+		if (sw.status !== 200) throw new Error(`GET /sw.js → ${sw.status} (expected 200)`);
+		if (!sw.type.startsWith("application/javascript")) throw new Error(`GET /sw.js content-type ${sw.type}`);
+		if (!sw.body.includes(`"${buildId}"`)) throw new Error(`GET /sw.js does not carry the build id ${buildId}`);
+		console.log("[smoke-server] GET /sw.js → 200 with the build id");
 	} catch (err) {
 		failed = err;
 	} finally {

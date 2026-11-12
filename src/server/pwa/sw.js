@@ -3,8 +3,8 @@
  *
  * Scope: make the installed app open instantly and fail gracefully.
  *   - static build assets (/_next/static/*, hashed + immutable): cache-first.
- *     The static cache is named after the build (the page registers
- *     /sw.js?v=<build id>, so the worker differs per deploy and the browser
+ *     The static cache is named after the build (the build id is embedded in
+ *     the served script, so the worker differs per deploy and the browser
  *     notices it). The previous build's cache is KEPT — a page opened before
  *     a deploy still asks for its own chunk hashes — and older ones are
  *     pruned on activate.
@@ -22,14 +22,10 @@
 
 const SHELL_CACHE = "lh-shell-v1";
 const STATIC_PREFIX = "lh-static-";
-// The build id rides the script URL (components/pwa-runtime.tsx).
-const BUILD_ID = (() => {
-	try {
-		return new URL(self.location.href).searchParams.get("v") || "0";
-	} catch {
-		return "0";
-	}
-})();
+// The app serves this file with the build id substituted below
+// (src/server/pwa.ts), so the bytes differ per deploy under the one URL
+// /sw.js and registration.update() in a long-lived window finds a new worker.
+const BUILD_ID = "__LH_BUILD_ID__";
 const STATIC_CACHE = STATIC_PREFIX + BUILD_ID;
 // Which build ids this device has seen, kept in the shell cache.
 const BUILDS_KEY = "/__lh-builds";

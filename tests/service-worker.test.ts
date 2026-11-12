@@ -1,14 +1,18 @@
-/** The service worker's routing table, exercised on the real public/sw.js. */
+/** The service worker's routing table, exercised on the real worker source (src/server/pwa/sw.js). */
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as vm from "node:vm";
 import { it } from "node:test";
+import { renderServiceWorker } from "../src/server/pwa.ts";
 
 const ORIGIN = "https://learnharness.example";
+const WORKER_SOURCE = fs.readFileSync(new URL("../src/server/pwa/sw.js", import.meta.url), "utf8");
+/** The worker as the app serves it: the build id substituted into the script. */
+const workerFor = (build: string) => renderServiceWorker(WORKER_SOURCE, build);
 const self: { lhRouteFor?: (req: unknown, origin: string) => string; addEventListener: () => void } = {
 	addEventListener: () => {},
 };
-vm.runInNewContext(fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8"), { self, URL });
+vm.runInNewContext(workerFor("t0"), { self, URL });
 const route = (path: string, opts: { method?: string; mode?: string; headers?: Record<string, string> } = {}) =>
 	self.lhRouteFor!(
 		{
@@ -43,7 +47,7 @@ it("shows a tagged notification on push and routes the click", async () => {
 		registration: { showNotification: async (...args: unknown[]) => void shown.push(args) },
 		clients: { matchAll: async () => [win], openWindow: async (u: string) => calls.push(`open ${u}`) },
 	};
-	vm.runInNewContext(fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8"), { self: sw, URL });
+	vm.runInNewContext(workerFor("t0"), { self: sw, URL });
 	let pending: Promise<unknown> = Promise.resolve();
 	const waitUntil = (p: Promise<unknown>) => void (pending = p);
 	const payload = { title: "Algebra", body: "Your teacher replied", url: "/chat/c1", tag: "chat:c1" };
@@ -65,8 +69,8 @@ type Store = Map<string, Map<string, Response>>;
  *  `new Response` reports type "default"). */
 const basic = (body: string, init?: ResponseInit) => Object.defineProperty(new Response(body, init), "type", { value: "basic" });
 
-/** The worker loaded on the real public/sw.js with a fake Cache Storage. */
-function loadWorker(build: string | null, store: Store, network: (url: string) => Promise<Response>) {
+/** The worker loaded from the real source with a fake Cache Storage. */
+function loadWorker(build: string, store: Store, network: (url: string) => Promise<Response>) {
 	const handlers: Record<string, (e: unknown) => void> = {};
 	const keyOf = (r: unknown) => (typeof r === "string" ? new URL(r, ORIGIN).href : (r as { url: string }).url);
 	const cacheNamed = (name: string) => {
@@ -91,13 +95,13 @@ function loadWorker(build: string | null, store: Store, network: (url: string) =
 		},
 	};
 	const sw = {
-		location: { href: `${ORIGIN}/sw.js${build === null ? "" : `?v=${build}`}`, origin: ORIGIN },
+		location: { href: `${ORIGIN}/sw.js`, origin: ORIGIN },
 		addEventListener: (type: string, fn: (e: unknown) => void) => void (handlers[type] = fn),
 		registration: {},
 		clients: { claim: async () => {} },
 		skipWaiting: () => {},
 	};
-	vm.runInNewContext(fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8"), {
+	vm.runInNewContext(workerFor(build), {
 		self: sw,
 		URL,
 		Request,
@@ -181,15 +185,28 @@ it("a push without a tag does not ask to renotify (which throws)", async () => {
 		addEventListener: (type: string, fn: (e: unknown) => void) => void (handlers[type] = fn),
 		registration: { showNotification: async (...args: unknown[]) => void shown.push(args) },
 	};
-	vm.runInNewContext(fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8"), { self: sw, URL });
+	vm.runInNewContext(workerFor("t0"), { self: sw, URL });
 	let pending: Promise<unknown> = Promise.resolve();
 	handlers.push!({ data: { json: () => ({ title: "Hi" }) }, waitUntil: (p: Promise<unknown>) => void (pending = p) });
 	await pending;
 	const opts = (shown[0] as [string, { tag?: string; renotify?: boolean }])[1];
 	assert.ok(!(opts.renotify === true && !opts.tag), "renotify without a tag throws in showNotification");
 });
-it("registers the worker under a build-specific URL", async () => {
-	const { serviceWorkerUrl } = await import("../components/pwa-runtime.tsx");
-	assert.equal(serviceWorkerUrl("a1b2c3"), "/sw.js?v=a1b2c3");
-	assert.equal(serviceWorkerUrl(undefined), "/sw.js");
+it("the served bytes differ per build under one constant URL, so registration.update() sees a deploy", () => {
+	const a = workerFor("build-a");
+	const b = workerFor("build-b");
+	assert.notEqual(a, b);
+	assert.ok(a.includes('"build-a"') && !a.includes("__LH_BUILD_ID__"));
+	assert.equal(workerFor("build-a"), a, "same build, same bytes");
+	// A hostile id cannot break out of the string literal.
+	assert.ok(!workerFor('x"; evil(); "').includes("evil();"));
+});
+
+it("GET /sw.js is public, uncached JavaScript carrying the build id", async () => {
+	const { GET } = await import("../app/sw.js/route.ts");
+	const res = await GET();
+	assert.equal(res.status, 200);
+	assert.match(res.headers.get("content-type") ?? "", /^application\/javascript/);
+	assert.equal(res.headers.get("cache-control"), "no-cache");
+	assert.equal(await res.text(), workerFor("dev"), "the test build has no id: the dev placeholder");
 });

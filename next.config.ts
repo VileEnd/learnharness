@@ -3,15 +3,15 @@ import type { NextConfig } from "next";
 
 // One id per build. Next evaluates this file more than once per build, so the
 // first evaluation stores the id in the environment for the rest (LH_BUILD_ID
-// can pin it). It names the build (BUILD_ID) and reaches the client as
-// NEXT_PUBLIC_BUILD_ID, which the page puts on the service worker's URL so
-// every deploy ships a different worker (components/pwa-runtime.tsx).
+// can pin it). It names the build (BUILD_ID) and is inlined into the server
+// code, where GET /sw.js (app/sw.js/route.ts) embeds it in the service worker:
+// every deploy serves different worker bytes under the same URL.
 process.env.LH_BUILD_ID ||= randomBytes(6).toString("hex");
 const buildId = process.env.LH_BUILD_ID;
 
 const nextConfig: NextConfig = {
 	generateBuildId: () => buildId,
-	env: { NEXT_PUBLIC_BUILD_ID: buildId },
+	env: { LH_BUILD_ID: buildId },
 	// Container target: standalone output = a self-contained
 	// .next/standalone/server.js the Docker image runs (`node server.js`).
 	// The manual copies the docs require — public/ and .next/static — are
@@ -81,6 +81,9 @@ const nextConfig: NextConfig = {
 			// loads its colocated WASM through Node.
 			"src/agent/image-processing/*.mjs",
 			"src/agent/image-processing/LICENSE",
+			// GET /sw.js reads the worker source from disk at request time
+			// (src/server/pwa.ts); no import links it, so the tracer cannot see it.
+			"src/server/pwa/sw.js",
 			"node_modules/@silvia-odwyer/photon-node/**/*",
 			// Wave E stage 2: resvg rasterizes visual-maker SVGs natively; same
 			// per-platform-binary story as the canvas above (one per build).

@@ -28,6 +28,7 @@ function withPayload(test: (fixture: {
 		write(path.join("public", "asset.txt"));
 		write(path.join(STANDALONE, PROMPT));
 		write(path.join(STANDALONE, "src", "agent", "prompts", "teacher", "20-teaching.md"));
+		write(path.join(STANDALONE, "src", "server", "pwa", "sw.js"));
 		test({ root, write, run: () => spawnSync(process.execPath, [path.join(root, "scripts", "build-server.mjs")], {
 			cwd: root, encoding: "utf8", timeout: 10_000,
 		}) });
@@ -87,6 +88,15 @@ describe("standalone server payload", () => {
 			const result = run();
 			assert.equal(result.status, 1);
 			assert.match(String(result.stderr), /prompt asset missing/);
+		});
+	});
+
+	it("refuses a payload without the service worker source GET /sw.js reads", () => {
+		withPayload(({ root, run }) => {
+			fs.rmSync(path.join(root, STANDALONE, "src", "server", "pwa", "sw.js"));
+			const result = run();
+			assert.equal(result.status, 1);
+			assert.match(String(result.stderr), /sw\.js/);
 		});
 	});
 });
