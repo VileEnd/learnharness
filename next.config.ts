@@ -12,6 +12,17 @@ const buildId = process.env.LH_BUILD_ID;
 const nextConfig: NextConfig = {
 	generateBuildId: () => buildId,
 	env: { LH_BUILD_ID: buildId },
+	// Second layer behind the markdown image block (components/ai-elements/
+	// message.tsx): no image loads from another origin, whatever renders it.
+	// Only img-src, so scripts, styles and fonts are unaffected. Every image
+	// the app shows itself is same-origin, a data: URL (SVG figures) or a
+	// blob: URL (photo previews). The sandboxed demo iframe is a srcdoc
+	// document and inherits this policy, so a model-written demo cannot load
+	// a remote image either. Caddy adds its own policy (frame-ancestors);
+	// two policies combine.
+	headers: async () => [
+		{ source: "/:path*", headers: [{ key: "Content-Security-Policy", value: "img-src 'self' data: blob:" }] },
+	],
 	// Container target: standalone output = a self-contained
 	// .next/standalone/server.js the Docker image runs (`node server.js`).
 	// The manual copies the docs require — public/ and .next/static — are
