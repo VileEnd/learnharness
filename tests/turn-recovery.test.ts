@@ -176,6 +176,64 @@ describe("turn settlement recovery", () => {
 		}
 	});
 
+	it("a forced settle in a parallel batch keeps a finished call's real result and aborts only the stuck one", async () => {
+		// pi's parallel shape: every call starts, "a" finishes (its end event
+		// carries the result), "b" never settles, and the batch's result
+		// messages are only built once all calls are done, so none exist yet.
+		const listeners: Array<(event: never) => unknown> = [];
+		const call = (id: string, name: string) => ({ type: "toolCall", id, name, arguments: {} });
+		const batch = { role: "assistant", content: [call("a", "plan_init"), call("b", "stuck")], stopReason: "toolUse", timestamp: 1 };
+		const state = { messages: [] as unknown[], pendingToolCalls: new Set<string>() };
+		let ran!: () => void;
+		const finishedA = new Promise<void>((resolve) => (ran = resolve));
+		const agent = {
+			state,
+			subscribe(listener: (event: never) => unknown) { listeners.push(listener); return () => {}; },
+			async continue() {
+				const emit = async (event: unknown) => { for (const listener of listeners) await listener(event as never); };
+				await Promise.resolve();
+				await emit({ type: "message_start", message: batch });
+				state.messages.push(batch);
+				await emit({ type: "message_end", message: batch });
+				state.pendingToolCalls = new Set(["a", "b"]);
+				await emit({ type: "tool_execution_start", toolCallId: "a", toolName: "plan_init", args: {} });
+				await emit({ type: "tool_execution_start", toolCallId: "b", toolName: "stuck", args: {} });
+				state.pendingToolCalls = new Set(["b"]);
+				await emit({ type: "tool_execution_end", toolCallId: "a", toolName: "plan_init", result: { content: [{ type: "text", text: "Plan saved." }], details: { saved: true } }, isError: false, durationMs: 5 });
+				ran();
+				await new Promise(() => {}); // "b" ignores the abort
+			},
+			abort() {},
+		} as unknown as Agent;
+		const grace = abortSettleGraceMs.current;
+		abortSettleGraceMs.current = 1;
+		const warn = console.warn;
+		console.warn = () => {};
+		try {
+			let finished!: (messages: AgentMessage[]) => void;
+			const settled = new Promise<AgentMessage[]>((resolve) => (finished = resolve));
+			// "a" collides with an id the record already holds, so it is reminted.
+			const handle = runPiTurn({ agent, usedToolCallIds: new Set(["a"]), onFinish(messages) { finished(messages); } });
+			await finishedA;
+			handle.abort();
+			const [assistant, resultA, resultB, ...rest] = (await settled) as unknown as Array<Record<string, unknown>>;
+			assert.equal(rest.length, 0);
+			const ids = (assistant!.content as Array<{ id: string }>).map((c) => c.id);
+			assert.notEqual(ids[0], "a", "the colliding id is reminted");
+			assert.deepEqual({ ...resultA, timestamp: 0 }, {
+				role: "toolResult", toolCallId: ids[0], toolName: "plan_init",
+				content: [{ type: "text", text: "Plan saved." }], details: { saved: true }, usage: undefined,
+				isError: false, durationMs: 5, timestamp: 0,
+			}, "the finished call keeps its real result, under the reminted id");
+			assert.equal(resultB!.toolCallId, "b");
+			assert.equal(resultB!.isError, true);
+			assert.deepEqual(resultB!.content, [{ type: "text", text: "Operation aborted" }]);
+		} finally {
+			abortSettleGraceMs.current = grace;
+			console.warn = warn;
+		}
+	});
+
 	it("does not contain a canonical write failure as an empty successful persist", () => {
 		const store = {
 			getChat: () => ({ messages: [] }),

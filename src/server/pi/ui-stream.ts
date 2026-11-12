@@ -134,14 +134,23 @@ const ABORT_SETTLE_GRACE_MS = 5_000;
 /** Test seam (the toolTimeoutMs idiom). */
 export const abortSettleGraceMs = { current: ABORT_SETTLE_GRACE_MS };
 
+/** A finished call's tool_execution_end, kept by the provider's raw call id. */
+type EndedCall = Extract<AgentEvent, { type: "tool_execution_end" }>;
+
 /** What an honoured abort leaves in the record that a forced settle must add
- *  itself, in the engine's own shapes (pi-agent-core's agent-loop): an
- *  "Operation aborted" error result for each call of the stuck batch that has
- *  none (pi's createErrorToolResult + createToolResultMessage), and the
+ *  itself, in the engine's own shapes (pi-agent-core's agent-loop): a result
+ *  for each call of the stuck batch that has no result message, and the
  *  partial reply the views watched (state.streamingMessage), to be stamped
- *  aborted. The batch is the assistant message holding a pending call, so
- *  history from earlier turns is never touched. */
-function abortedTail(state: Agent["state"]): { results: ToolResultMessage[]; partial: AssistantMessage | undefined } {
+ *  aborted. A call that already finished (a parallel batch emits its result
+ *  messages only once every call is done) gets its real result, built from
+ *  its tool_execution_end as createToolResultMessage builds it; a call still
+ *  running or never started gets "Operation aborted" (createErrorToolResult).
+ *  The batch is the assistant message holding a pending call, so history
+ *  from earlier turns is never touched. */
+function abortedTail(
+	state: Agent["state"],
+	ended: ReadonlyMap<string, EndedCall>,
+): { results: ToolResultMessage[]; partial: AssistantMessage | undefined } {
 	const results: ToolResultMessage[] = [];
 	const callsOf = (m: AgentMessage): ToolCall[] =>
 		(m as { role?: string }).role === "assistant"
@@ -157,6 +166,21 @@ function abortedTail(state: Agent["state"]): { results: ToolResultMessage[]; par
 		);
 		for (const call of callsOf(messages[batch]!)) {
 			if (answered.has(call.id)) continue;
+			const end = state.pendingToolCalls.has(call.id) ? undefined : ended.get(call.id);
+			if (end) {
+				results.push({
+					role: "toolResult",
+					toolCallId: call.id,
+					toolName: call.name,
+					content: end.result?.content ?? [],
+					details: end.result?.details,
+					usage: end.result?.usage,
+					isError: end.isError,
+					...(end.durationMs === undefined ? {} : { durationMs: end.durationMs }),
+					timestamp: Date.now(),
+				});
+				continue;
+			}
 			results.push({
 				role: "toolResult",
 				toolCallId: call.id,
@@ -257,6 +281,9 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 		// Never holds the process (or the test runner) open for a straggler.
 		(flushTimer as { unref?: () => void }).unref?.();
 	};
+	// The current batch's finished calls (raw ids; abortedTail reads them on a
+	// forced settle). A new assistant message starts a new batch.
+	const endedCalls = new Map<string, EndedCall>();
 	// The forced settle after an abort (armed by abort(), cleared at close).
 	let forceTimer: ReturnType<typeof setTimeout> | undefined;
 	const closeAll = () => {
@@ -282,7 +309,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// record also takes what an honoured abort would have left (abortedTail).
 	const settleWith = (forced = false) => {
 		try {
-			const tail = forced ? abortedTail(agent.state) : { results: [], partial: undefined };
+			const tail = forced ? abortedTail(agent.state, endedCalls) : { results: [], partial: undefined };
 			const settled_ = [
 				...[...agent.state.messages].filter((m) => (m as { role?: string }).role !== "system"),
 				...tail.results,
@@ -308,6 +335,8 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 
 	const handle = (event: AgentEvent) => {
 		if (settled) return;
+		if (event.type === "message_start" && (event.message as { role?: string }).role === "assistant") endedCalls.clear();
+		if (event.type === "tool_execution_end") endedCalls.set(event.toolCallId, event);
 		// THE LACAN FIX: ids uniquify HERE, before any view — the one seam
 		// every consumer downstream shares. No uniquifier → verbatim.
 		const uniqued = uniquifier ? uniquifier.event(event) : event;
