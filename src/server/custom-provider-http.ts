@@ -28,6 +28,7 @@ import {
 import { CustomBodyLimitError, readBoundedJson } from "./custom-provider-body.ts";
 import { customAuthState, customKeyAuthorized, persistCustomAuth, type CustomAuthState } from "./custom-provider-auth.ts";
 import { customProviderRuntime, discoverModels, mergeManualModels } from "./custom-provider.ts";
+import { sameOrigin } from "./same-origin.ts";
 import { requireAdmin } from "./tenant.ts";
 import { stores } from "./stores.ts";
 
@@ -89,22 +90,6 @@ export function customProviderGet(_request: Request): Response {
 		return Response.json({ configured: customProviderRuntime(s.config, s.auth) !== null }, { headers: { "cache-control": "no-store" } });
 	}
 	return statusResponse();
-}
-
-/** Same-origin browser request: Origin's host equals the addressed Host.
- *  The scheme is not compared: TLS ends at Caddy and the inner hop is http.
- *  Forwarded-host headers are never trusted. */
-function sameOrigin(request: Request): boolean {
-	const origin = request.headers.get("origin");
-	if (!origin || origin === "null") return false;
-	const site = request.headers.get("sec-fetch-site");
-	if (site !== null && site !== "same-origin") return false;
-	try {
-		const host = request.headers.get("host") ?? new URL(request.url).host;
-		return new URL(origin).host === host;
-	} catch {
-		return false;
-	}
 }
 
 class SaveFailed extends Error {}

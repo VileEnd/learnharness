@@ -155,8 +155,9 @@ export function summarizeMonth(month: string, lines: readonly RequestLogLine[], 
 			// Tavily and Brave report no dollars: counting their search lines as
 			// unpriced would keep "N calls unpriced" up for good and hide a real
 			// partial total. A priced search line (Exa's reported cost) never
-			// reaches this branch; it counts like any other priced line.
-			if (category !== "search" && (line.outcome !== "error" || hasUsage(line))) {
+			// reaches this branch; it counts like any other priced line. A dictation
+			// token mint is free and reports no dollars either: same exemption.
+			if (category !== "search" && line.purpose !== "dictation" && (line.outcome !== "error" || hasUsage(line))) {
 				unpricedCalls++;
 				cat.unpriced++;
 			}

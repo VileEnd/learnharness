@@ -10,16 +10,22 @@
  * tests/auth-provider-keys.test.ts) — the settings UI reads it optionally
  * with a graceful fallback.
  *
- * Masked only — last 4 + length; PLAINTEXT NEVER LEAVES THE STORE THROUGH
- * THIS API (owner decision). `source` tells the page whether the live
+ * Masked only — last 4 + length, for admins; every other user gets only
+ * {id, present}. PLAINTEXT NEVER LEAVES THE STORE THROUGH THIS API (owner decision). `source` tells the page whether the live
  * value comes from the environment (dev .env.local / launch env) or the
  * file, and `shadowedByEnv` explains why a saved key is not the live one
  * (env always wins).
  */
-import { keyStatuses, providerKeyList, withTenant } from "@/src/server";
+import { currentTenant, keyStatuses, providerKeyList, withTenant } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withTenant(async () => {
+	// The shared keys belong to the instance: only an admin sees their masked
+	// details (tail, length, source). Everyone else learns just which keys are
+	// present, enough to show which providers are available.
+	if (!currentTenant()?.isAdmin) {
+		return Response.json({ keys: keyStatuses().map(({ id, present }) => ({ id, present })), providers: providerKeyList() });
+	}
 	return Response.json({ keys: keyStatuses(), providers: providerKeyList() });
 });

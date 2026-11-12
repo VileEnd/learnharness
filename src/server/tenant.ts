@@ -8,6 +8,7 @@
  */
 import { headers } from "next/headers";
 import { LEGACY_FIX, legacyLayoutResponse } from "./health.ts";
+import { isCrossSiteWrite } from "./same-origin.ts";
 import { setEventScope } from "../core/events.ts";
 import {
 	LOCAL_TENANT,
@@ -38,7 +39,7 @@ export function resolveTenant(h: Headers): Tenant | null {
 	};
 }
 
-/** Route wrapper: 401 without an identity; extra args (Next's { params }) pass through untouched. */
+/** Route wrapper: 401 without an identity, 403 for a cross-site write (same-origin.ts); extra args (Next's { params }) pass through untouched. */
 export function withTenant<A extends unknown[]>(
 	handler: (req: Request, ...rest: A) => Response | Promise<Response>,
 ): (req: Request, ...rest: A) => Promise<Response> {
@@ -47,6 +48,7 @@ export function withTenant<A extends unknown[]>(
 		if (legacy) return legacy;
 		const tenant = resolveTenant(req?.headers ?? new Headers());
 		if (!tenant) return Response.json({ error: "unauthenticated" }, { status: 401 });
+		if (req && isCrossSiteWrite(req)) return Response.json({ error: "same_origin_required" }, { status: 403 });
 		return runAsTenant(tenant, () => handler(req, ...rest));
 	};
 }

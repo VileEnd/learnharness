@@ -92,3 +92,13 @@ test("search lines count as calls, never as unpriced; their failures still count
 	assert.equal(m.failures, 1);
 	assert.ok(Math.abs((m.totalUsd ?? 0) - 0.01) < 1e-9);
 });
+
+test("a free dictation token mint is not an unpriced call, but still counts as a call", () => {
+	const mint = line({ purpose: "dictation", category: "library", provider: "deepgram", model: "token-grant" });
+	const s = summarizeMonth("2026-10", [mint, mint, line({ chatId: "A", output: 1000 })], price);
+	assert.equal(s.unpricedCalls, 0);
+	assert.equal(s.categories.library.unpriced, 0);
+	assert.equal(s.categories.library.calls, 2);
+	// Other no-cost library lines stay unpriced.
+	assert.equal(summarizeMonth("2026-10", [line({ purpose: "embed", category: "library" })], price).unpricedCalls, 1);
+});

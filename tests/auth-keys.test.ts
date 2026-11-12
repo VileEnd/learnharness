@@ -108,9 +108,11 @@ describe("maskKey (plaintext never leaves)", () => {
 	});
 
 	it("never reveals a degenerate short value in full", () => {
-		assert.equal(maskKey("ab"), "…ab");
-		assert.equal(maskKey("abcd"), "…abcd");
-		assert.equal(maskKey("abcde"), "…bcde");
+		for (const short of ["", "a", "ab", "abc", "abcd", "abcde", "abcdefg"]) {
+			assert.ok(!maskKey(short).includes(short) || short === "", `"${short}" -> "${maskKey(short)}"`);
+		}
+		assert.equal(maskKey("abcd"), "…d");
+		assert.equal(maskKey("ab"), "…");
 	});
 
 	it("trims before masking", () => {

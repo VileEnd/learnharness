@@ -286,6 +286,10 @@ describe("keyStatusLine — the minimal at-a-glance state", () => {
 		);
 	});
 
+	it("a present key without masked details (a non-admin's row) reads 'set'", () => {
+		assert.equal(keyStatusLine({ id: "X", info: null, present: true, masked: null, source: "none", shadowedByEnv: false }), "set");
+	});
+
 	it("absent key reads 'not set'", () => {
 		assert.equal(keyStatusLine({ id: "X", info: null, present: false, masked: null, source: "none", shadowedByEnv: false }), "not set");
 	});

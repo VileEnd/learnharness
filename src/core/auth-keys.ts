@@ -204,8 +204,10 @@ export function genericProviderKeyGuard(id: string, rawValue: string): KeyShapeR
  *  rotating between several, and to spot a mis-pasted family). */
 export function maskKey(value: string): string {
 	const v = value.trim();
-	if (v.length <= 4) return `…${v}`; // degenerate paste — still never the whole value
-	return `…${v.slice(-4)}`;
+	// A short value shows at most a third of itself (none under 3 chars): the
+	// tail of a degenerate paste must never be the whole credential.
+	const tail = Math.min(4, Math.floor(v.length / 3));
+	return tail === 0 ? "…" : `…${v.slice(-tail)}`;
 }
 
 /** One key's status row for the GET view (never carries plaintext). */

@@ -13,9 +13,18 @@
  * /auth/grant (their docs, token-based auth FAQ) — plain read/transcribe
  * keys return FORBIDDEN here.
  */
-import { keyValue, withTenant } from "@/src/server";
+import { isPolicyRefusal } from "@/src/core";
+import { assertWithinCap, deepgramGrantFetch, keyValue, withTenant } from "@/src/server";
 
 export const GET = withTenant(async () => {
+	// The shared key pays for dictation: an over-cap user is refused before any
+	// token exists (the same 403 envelope the turn and chat routes answer).
+	try {
+		assertWithinCap();
+	} catch (err) {
+		if (isPolicyRefusal(err)) return Response.json(err.envelope, { status: 403 });
+		throw err;
+	}
 	const key = keyValue("DEEPGRAM_API_KEY");
 	if (!key) {
 		return Response.json(
@@ -25,7 +34,7 @@ export const GET = withTenant(async () => {
 	}
 
 	try {
-		const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
+		const res = await deepgramGrantFetch()("https://api.deepgram.com/v1/auth/grant", {
 			method: "POST",
 			headers: { Authorization: `Token ${key}`, "Content-Type": "application/json" },
 			body: JSON.stringify({ ttl_seconds: 300 }),

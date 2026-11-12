@@ -1,12 +1,14 @@
-import { DRAWING_ASSET_MAX_BYTES } from "@/src/core";
-import { getChat, stores, withTenant } from "@/src/server";
+import { DRAWING_ASSET_MAX_BYTES, MULTIPART_ALLOWANCE_BYTES } from "@/src/core";
+import { getChat, readUploadForm, stores, withTenant } from "@/src/server";
 
 /** Image upload for the canvas: multipart `file`, PNG or JPEG (by magic bytes), max 5 MB (DRAWING_ASSET_MAX_BYTES). */
 export const POST = withTenant(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
 	const { id } = await params;
 	if (!getChat(id)) return Response.json({ error: "Not found" }, { status: 404 });
-	const form = await req.formData().catch(() => null);
-	const file = form?.get("file");
+	// Bounded read: an oversized body is refused while it streams in, never buffered whole.
+	const form = await readUploadForm(req, DRAWING_ASSET_MAX_BYTES + MULTIPART_ALLOWANCE_BYTES, DRAWING_ASSET_MAX_BYTES);
+	if (form instanceof Response) return form;
+	const file = form.get("file");
 	if (!(file instanceof File)) return Response.json({ error: "file is required" }, { status: 400 });
 	if (file.size > DRAWING_ASSET_MAX_BYTES) return Response.json({ error: "image too large (max 5 MB)" }, { status: 413 });
 	const bytes = new Uint8Array(await file.arrayBuffer());
