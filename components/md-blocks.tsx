@@ -462,7 +462,17 @@ export function MarkdownStrong(props: ComponentProps<"strong"> & ExtraProps) {
 	);
 }
 
+/** A bare image. Streamdown's own `img` wraps the image in a <div>, which is
+ *  invalid inside the <p> or link button it sits in (a hydration mismatch on
+ *  server-rendered pages). Only data: raster images reach here: the message
+ *  pipeline (ai-elements/message.tsx) blocks every other address. */
+function MarkdownImage({ src, alt, title, width, height }: ComponentProps<"img">) {
+	// eslint-disable-next-line @next/next/no-img-element
+	return <img src={src} alt={alt ?? ""} title={title} width={width} height={height} className="h-auto max-w-full rounded-lg" />;
+}
+
 export const mdComponents = {
+	img: MarkdownImage,
 	code: MarkdownCode,
 	table: MarkdownTable,
 	span: MathDisplay,
