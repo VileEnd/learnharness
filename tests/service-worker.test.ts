@@ -174,6 +174,20 @@ it("never caches a redirected or non-OK static response", async () => {
 	assert.equal(store.get("lh-static-b1")?.size ?? 0, 0);
 });
 
+it("a push without a tag does not ask to renotify (which throws)", async () => {
+	const handlers: Record<string, (e: unknown) => void> = {};
+	const shown: unknown[][] = [];
+	const sw = {
+		addEventListener: (type: string, fn: (e: unknown) => void) => void (handlers[type] = fn),
+		registration: { showNotification: async (...args: unknown[]) => void shown.push(args) },
+	};
+	vm.runInNewContext(fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8"), { self: sw, URL });
+	let pending: Promise<unknown> = Promise.resolve();
+	handlers.push!({ data: { json: () => ({ title: "Hi" }) }, waitUntil: (p: Promise<unknown>) => void (pending = p) });
+	await pending;
+	const opts = (shown[0] as [string, { tag?: string; renotify?: boolean }])[1];
+	assert.ok(!(opts.renotify === true && !opts.tag), "renotify without a tag throws in showNotification");
+});
 it("registers the worker under a build-specific URL", async () => {
 	const { serviceWorkerUrl } = await import("../components/pwa-runtime.tsx");
 	assert.equal(serviceWorkerUrl("a1b2c3"), "/sw.js?v=a1b2c3");

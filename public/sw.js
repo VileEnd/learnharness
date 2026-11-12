@@ -183,8 +183,8 @@ self.addEventListener("push", (event) => {
 	event.waitUntil(
 		self.registration.showNotification(p.title || "LearnHarness", {
 			body: p.body || "",
-			tag: p.tag,
-			renotify: true,
+			// renotify without a tag throws, so the two travel together.
+			...(p.tag ? { tag: p.tag, renotify: true } : {}),
 			icon: "/icons/icon-192.png",
 			badge: "/icons/icon-96.png",
 			data: { url: p.url || "/" },
