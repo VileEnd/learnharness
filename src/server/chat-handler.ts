@@ -31,7 +31,7 @@ import {
 	unregisterLiveAgent,
 } from "./jobs.ts";
 import { runPiTurn } from "./pi/ui-stream.ts";
-import { collectToolCallIds } from "./pi/call-ids.ts";
+import { collectToolCallIds, ToolCallIdUniquifier } from "./pi/call-ids.ts";
 import { providerEventNote } from "../agent/provider-events.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
@@ -566,7 +566,11 @@ export async function handleChatInput(
 		} catch (err) {
 			console.error(`[chat ${chatId}] drawing context failed:`, err);
 		}
+		// One uniquifier per turn, shared by the wire (runPiTurn) and the tools,
+		// so a tool keys on the id the record will hold (see call-ids.ts).
+		const callIds = new ToolCallIdUniquifier(collectToolCallIds(merged));
 		const agentOpts: AgentBuildOptions = {
+			resolveCallId: (id) => callIds.resolve(id),
 			engine,
 			drawing,
 			messages: asAgentMessages(agentMessages),
@@ -700,12 +704,12 @@ export async function handleChatInput(
 			// tighten it via LH_UPDATE_FLUSH_MS; production rides the 100ms
 			// default in ui-stream.
 			...(process.env.LH_UPDATE_FLUSH_MS ? { updateFlushMs: Number(process.env.LH_UPDATE_FLUSH_MS) } : {}),
-			// THE LACAN FIX (2026-10-04): seed the uniquifier with every
-			// tool-call id the record already holds — a provider that resets
+			// THE LACAN FIX (2026-10-04): the uniquifier (built above) is seeded
+			// with every tool-call id the record already holds — a provider that resets
 			// ids per response (DeepSeek) then gets fresh unique ids for this
 			// turn's calls at the wire boundary, on the wire, in the record,
 			// and in the next turn's context alike.
-			usedToolCallIds: new Set(collectToolCallIds(merged)),
+			uniquifier: callIds,
 			// Stream-level failures are provider/transport internals — masked,
 			// like the SDK defaults. Tool-input validation messages never
 			// route through here: they ride the error-result path and reach the

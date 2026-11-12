@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { serverExecute } from "../tool-execute.ts";
+import { serverExecute, type CallIdResolver } from "../tool-execute.ts";
 import type { JobRecord } from "../../core/contracts.ts";
 import type { JobStore } from "../../core/ports.ts";
 
@@ -27,6 +27,8 @@ export interface JobToolContext {
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
 	searchAvailable?: () => boolean;
+	/** Provider call id -> the record's id; jobs are keyed by the latter. */
+	resolveCallId?: CallIdResolver;
 }
 
 export const researchInputSchema = Type.Object({
@@ -68,6 +70,7 @@ function dispatch(
 	ack: string,
 	input: ResearchInput | DemoInput | VisualInput,
 ): string {
+	toolCallId = ctx.resolveCallId?.(toolCallId) ?? toolCallId;
 	const existing = ctx.jobStore.findJobByToolCallId(ctx.chatId, toolCallId);
 	const job = existing ?? ctx.jobStore.createJob({ kind, chatId: ctx.chatId, toolCallId, input });
 	if (!existing) ctx.spawn(job, input);

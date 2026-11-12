@@ -93,6 +93,9 @@ export interface PiTurnSpec {
 	 *  routing, and the next turn's provider context all agree. Absent →
 	 *  verbatim passthrough (the protocol law below still holds). */
 	usedToolCallIds?: ReadonlySet<string>;
+	/** A uniquifier the caller built (and shares with the turn's tools, which
+	 *  resolve provider ids through it); takes precedence over usedToolCallIds. */
+	uniquifier?: ToolCallIdUniquifier;
 	/** The coalescing window for update fan-out (COMPACTION LAW above).
 	 *  Defaults to 100ms; tests tighten it. */
 	updateFlushMs?: number;
@@ -122,7 +125,7 @@ export interface PiTurnHandle {
 
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100 } = spec;
-	const uniquifier = usedToolCallIds ? new ToolCallIdUniquifier(usedToolCallIds) : undefined;
+	const uniquifier = spec.uniquifier ?? (usedToolCallIds ? new ToolCallIdUniquifier(usedToolCallIds) : undefined);
 
 	let settled = false;
 	let sawAbort = false;

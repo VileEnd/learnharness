@@ -179,6 +179,12 @@ export function toToolResult(result: unknown): AgentToolResult<unknown> {
 	};
 }
 
+/** Maps the provider's tool-call id to the id the record holds for the same
+ *  call. Some providers reuse ids across responses and the handler makes
+ *  them unique for the record; a tool that stores or echoes its own call id
+ *  must use the record's. Absent = the provider's id is already the record's. */
+export type CallIdResolver = (providerCallId: string) => string;
+
 /** What a server-executed tool's body receives: the call id + the guard's
  *  combined signal (run abort + per-call timeout) for cooperative polling. */
 export interface ToolExecuteContext {

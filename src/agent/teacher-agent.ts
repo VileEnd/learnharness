@@ -1,6 +1,6 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentEvent, AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import { invalidInputResult, questionResult } from "./tool-execute.ts";
+import { invalidInputResult, questionResult, type CallIdResolver } from "./tool-execute.ts";
 import { providerEventObserver } from "./provider-events.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
@@ -139,6 +139,10 @@ export interface AgentBuildOptions {
 	/** Cost of one assistant step (the handler binds the money channel's
 	 *  callCost); null/absent = unknown, counted as 0. */
 	stepCost?: (usage: Usage) => number | null;
+	/** Provider tool-call id -> the id the record holds (the handler's
+	 *  per-turn uniquifier). Reaches every tool that stores or echoes its own
+	 *  call id; absent = the provider's ids are used as they are. */
+	resolveCallId?: CallIdResolver;
 }
 
 /**
@@ -329,7 +333,7 @@ export function createProberAgent(ctx: ProberToolContext, opts: AgentBuildOption
 		messages: () => holder.agent?.state.messages ?? [],
 		hasSendToUser: () => holder.agent?.state.tools.some((t) => t.name === SEND_TO_USER_TOOL) ?? false,
 	};
-	const agent = baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, turn, ...ctx }, opts.toolToggles)));
+	const agent = baseAgentOptions("prober", opts, Object.values(createProberTools({ quizMechanic: opts.quizMechanic, turn, resolveCallId: opts.resolveCallId, ...ctx }, opts.toolToggles)));
 	holder.agent = agent;
 	return agent;
 }
@@ -354,7 +358,7 @@ export function createTeacherAgent(
 		messages: () => holder.agent?.state.messages ?? [],
 		hasSendToUser: () => holder.agent?.state.tools.some((t) => t.name === SEND_TO_USER_TOOL) ?? false,
 	};
-	const tools = opts.tools ?? (ctx ? createTeacherTools({ quizMechanic: opts.quizMechanic, turn, ...ctx }, opts.toolToggles) : bareQuestionTools());
+	const tools = opts.tools ?? (ctx ? createTeacherTools({ quizMechanic: opts.quizMechanic, turn, resolveCallId: opts.resolveCallId, ...ctx }, opts.toolToggles) : bareQuestionTools());
 	const agent = baseAgentOptions("teacher", opts, Object.values(tools));
 	holder.agent = agent;
 	return agent;
@@ -400,7 +404,9 @@ export function bareQuestionTools(): Record<string, AgentTool<any>> {
  * baseAgentOptions wires PRACTICE_TURN_ENDERS so a mixed batch ends too.
  */
 export function createPracticeAgent(ctx: PracticeToolContext, opts: AgentBuildOptions = {}) {
-	const tools = opts.tools ?? practiceTools(ctx);
+	const tools =
+		opts.tools ??
+		practiceTools(ctx.jobs ? { ...ctx, jobs: { resolveCallId: opts.resolveCallId, ...ctx.jobs } } : ctx);
 	return baseAgentOptions("practice", opts, Object.values(tools));
 }
 
