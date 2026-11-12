@@ -208,6 +208,7 @@ export class Bm25 {
 	private scores = new Float64Array(0);
 	private stamp = new Uint32Array(0);
 	private generation = 0;
+	private compactionCount = 0;
 
 	constructor(
 		private readonly k1 = 1.2,
@@ -216,6 +217,11 @@ export class Bm25 {
 
 	get size(): number {
 		return this.live;
+	}
+
+	/** How many compactions ran (for tests: they must cover that path). */
+	get compactions(): number {
+		return this.compactionCount;
 	}
 
 	add(id: string, tokens: readonly string[]): void {
@@ -261,7 +267,8 @@ export class Bm25 {
 		if (dead >= 64 && dead * 4 >= this.live) this.compact();
 	}
 
-	/** Matching ids best first (score > 0), ties by id. */
+	/** Matching ids best first (score > 0), ties by id. The scratch arrays are per
+	 *  instance, so `allow` must not call `search` on the same index. */
 	search(query: readonly string[], allow?: (id: string) => boolean): { id: string; score: number }[] {
 		const n = this.live;
 		if (n === 0) return [];
@@ -355,6 +362,7 @@ export class Bm25 {
 	/** Renumber the live documents densely, drop dead postings and terms with no
 	 *  live posting left, and slide the blocks together (in place: nothing moves up). */
 	private compact(): void {
+		this.compactionCount++;
 		const remap = new Int32Array(this.numbers).fill(-1);
 		let next = 0;
 		for (let num = 0; num < this.numbers; num++) {

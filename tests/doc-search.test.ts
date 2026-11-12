@@ -179,6 +179,7 @@ describe("Bm25 against the Map-based reference", () => {
 			}
 		};
 		return {
+			index,
 			add(id: string, tokens: string[]) {
 				index.add(id, tokens);
 				reference.add(id, tokens);
@@ -240,6 +241,7 @@ describe("Bm25 against the Map-based reference", () => {
 			if (step % 25 === 0) both.check(`step ${step}`);
 		}
 		both.check("end");
+		assert.ok(both.index.compactions >= 5, `compaction was exercised (${both.index.compactions})`);
 		for (const id of present) both.remove(id);
 		both.check("emptied");
 		both.add("again", ["alpha", "beta", "alpha"]);
