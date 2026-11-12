@@ -369,5 +369,10 @@ export function kickCompaction(buildDeps: () => CompactionDeps | null, chatId: s
 	if (projectedContextTokens(record.messages, deps.systemPromptTokens) <= deps.thresholdTokens) return;
 	const run = compact(deps, chatId);
 	state().inFlight.set(chatId, run);
-	void run.finally(() => state().inFlight.delete(chatId));
+	// Fire-and-forget: a crash in the run is logged here (nobody awaits this
+	// chain) and the registry is freed either way. A later awaiter of the
+	// registry entry still sees the rejection on `run` itself.
+	void run
+		.catch((err: unknown) => console.error(`[chat ${chatId}] compaction failed:`, err))
+		.finally(() => state().inFlight.delete(chatId));
 }

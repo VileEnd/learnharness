@@ -572,6 +572,18 @@ async function pump(chatId: string): Promise<void> {
 				// or settlement. HTTP 200 alone is not a durable marker receipt.
 			}
 		}
+	} catch (err) {
+		// A throw here (an unreadable record, say) must never escape: the pump
+		// runs as `void pump(...)`, so a rejection would be unhandled and
+		// would take the process down. Park every entry this loop could still
+		// own the way a failed wake start does (job steers stay pending and
+		// quiet until a learner run or the next sweep; others reject), and
+		// the finally below then has no live entry to restart for.
+		console.error(`[pump ${chatId}] delivery pass crashed:`, err);
+		const error = err instanceof Error ? err : new Error(String(err));
+		for (const entry of [...(s.queues.get(chatId) ?? [])]) {
+			if (entry.handedTo === undefined) deferOrReject(chatId, entry, error);
+		}
 	} finally {
 		s.pumping.delete(chatId);
 		// A steer may have arrived between the last check and the finally —

@@ -259,6 +259,28 @@ describe("the compaction service", () => {
 		kickCompaction(() => null, chatId);
 	});
 
+	it("kickCompaction: a crash inside the run is contained (no unhandled rejection) and frees the registry", async () => {
+		const chatId = overThresholdChat("compact: kick crash");
+		let reads = 0;
+		const crashing: CompactionDeps = {
+			...depsOf(chatId, 40_000),
+			chatStore: { ...chatStore, getChat: (id: string) => { if (++reads > 1) throw new Error("record refused: newer schema version"); return chatStore.getChat(id); } },
+		};
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+		process.on("unhandledRejection", onUnhandled);
+		const logged = console.error; console.error = () => {};
+		try {
+			kickCompaction(() => crashing, chatId);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		} finally {
+			console.error = logged;
+			process.off("unhandledRejection", onUnhandled);
+		}
+		assert.deepEqual(unhandled, []);
+		assert.equal(compactionInFlight(chatId), false);
+	});
+
 	it("a usage-heavy zero cut does not spend or append a marker", async () => {
 		const chat = chatStore.createChat("no-progress fixture");
 		const assistant = { id: "measured", role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop", usage: { input: 120_000, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 120_001 }, timestamp: 1 } as LhMessage;
