@@ -8,7 +8,7 @@ import { documents, withTenant } from "@/src/server";
 
 const POLICY_CODES: readonly unknown[] = [MONTHLY_CAP_REACHED_CODE, MODEL_NOT_ALLOWED_CODE, POLICY_UNAVAILABLE_CODE];
 
-// The chat route'"'"'s refusal: 503 with the envelope, so the client says "set up a model".
+// The chat route's refusal: 503 with the envelope, so the client says "set up a model".
 const SETUP_CODES: readonly unknown[] = [MODELS_NOT_CONFIGURED_CODE, PROVIDER_KEY_MISSING_CODE];
 
 export const dynamic = "force-dynamic";

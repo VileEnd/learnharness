@@ -1237,10 +1237,6 @@ describe("Wave C: live steering handoff + settlement reconciliation", () => {
 	});
 });
 
-function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // ─── persist id hygiene (the duplicate-empty-key bug) ────────────────────────
 
 describe("persistTurn (native history, Wave B)", () => {
@@ -1519,47 +1515,50 @@ describe("abort (src/server/jobs.ts abortJob)", () => {
 		return { chatId: chat.id, jobId: job.id };
 	}
 
-	it("kills the running loop: error \"Aborted by learner\" immediately, loop unwinds silently, teacher gets the abort steer", async () => {
-		const { jobId } = newChatWithResearchJob("abort running job", "call-abort1");
-		const fired: SteerMessage[] = [];
-		setTurnRunner(async (_cid, input) => {
-			fired.push(...((input as SteerInput).steers as SteerMessage[]));
-			return 200;
+	describe("the abort wake (virtual clock)", () => {
+		const clock = useVirtualClock();
+		it("kills the running loop: error \"Aborted by learner\" immediately, loop unwinds silently, teacher gets the abort steer", async () => {
+			const { jobId } = newChatWithResearchJob("abort running job", "call-abort1");
+			const fired: SteerMessage[] = [];
+			setTurnRunner(async (_cid, input) => {
+				fired.push(...((input as SteerInput).steers as SteerMessage[]));
+				return 200;
+			});
+			researchModelOverride.current = hangingModel();
+			const runner = createJobRunner({
+				chatStore,
+				jobStore,
+				deliver: async () => {
+					throw new Error("a cancelled job must never deliver a result steer");
+				},
+			});
+			try {
+				const settled = runner.runJob(jobId, RESEARCH_INPUT);
+				await waitFor(() => jobStore.getJob(jobId)!.activity === "researching", 8000, "loop started");
+
+				const outcome = abortJob(jobId);
+				assert.ok(outcome.ok);
+				const killed = jobStore.getJob(jobId)!;
+				assert.equal(killed.status, "error", "flipped synchronously — the poll sees it at once");
+				assert.equal(killed.error, "Aborted by learner", "abort reads as an error with a reason, not a failure");
+				assert.equal(killed.activity, "aborted");
+
+				await settled; // unwinds — no hang
+				assert.equal(jobStore.getJob(jobId)!.status, "error", "the runner never overwrites the flip");
+				assert.equal(jobStore.getJob(jobId)!.error, "Aborted by learner");
+				assert.equal(jobStore.getJob(jobId)!.result, undefined, "no result on an aborted job");
+
+				await clock.until(() => fired.length > 0, "abort wake fired");
+				const last = fired[0]!;
+				assert.equal((last.details as { aborted: boolean }).aborted, true);
+				assert.equal(last.id, `steer_${jobId}`);
+				assert.equal(last.customType, "subagent-abort", "the abort marker — no artifact");
+				// aborted is terminal: the wake completing must not flip it
+				assert.equal(jobStore.getJob(jobId)!.status, "error", "terminal after the wake");
+			} finally {
+				researchModelOverride.current = undefined;
+			}
 		});
-		researchModelOverride.current = hangingModel();
-		const runner = createJobRunner({
-			chatStore,
-			jobStore,
-			deliver: async () => {
-				throw new Error("a cancelled job must never deliver a result steer");
-			},
-		});
-		try {
-			const settled = runner.runJob(jobId, RESEARCH_INPUT);
-			await waitFor(() => jobStore.getJob(jobId)!.activity === "researching", 8000, "loop started");
-
-			const outcome = abortJob(jobId);
-			assert.ok(outcome.ok);
-			const killed = jobStore.getJob(jobId)!;
-			assert.equal(killed.status, "error", "flipped synchronously — the poll sees it at once");
-			assert.equal(killed.error, "Aborted by learner", "abort reads as an error with a reason, not a failure");
-			assert.equal(killed.activity, "aborted");
-
-			await settled; // unwinds — no hang
-			assert.equal(jobStore.getJob(jobId)!.status, "error", "the runner never overwrites the flip");
-			assert.equal(jobStore.getJob(jobId)!.error, "Aborted by learner");
-			assert.equal(jobStore.getJob(jobId)!.result, undefined, "no result on an aborted job");
-
-			await waitFor(() => fired.length > 0, 8000, "abort wake fired");
-			const last = fired[0]!;
-			assert.equal((last.details as { aborted: boolean }).aborted, true);
-			assert.equal(last.id, `steer_${jobId}`);
-			assert.equal(last.customType, "subagent-abort", "the abort marker — no artifact");
-			// aborted is terminal: the wake completing must not flip it
-			assert.equal(jobStore.getJob(jobId)!.status, "error", "terminal after the wake");
-		} finally {
-			researchModelOverride.current = undefined;
-		}
 	});
 
 	it("the usage folded so far survives the kill (money channel outlives the abort)", async () => {
@@ -1646,6 +1645,7 @@ describe("abort (src/server/jobs.ts abortJob)", () => {
 // immediacy by running the sweep on FRESH records.
 
 describe("stale-job recovery sweep (liveness-gated)", () => {
+	const clock = useVirtualClock();
 	/** Reset the sweep's 30s throttle — tests fire it directly, repeatedly. */
 	function resetSweepThrottle(): void {
 		const g = globalThis as { __lhWakePipeline?: { lastSweepAt: Map<string, number> } };
@@ -1715,8 +1715,8 @@ describe("stale-job recovery sweep (liveness-gated)", () => {
 		});
 		resetSweepThrottle();
 		recoverStaleJobs();
-		await waitFor(() => fired > 0, 8000, "recovery wake fired");
-		await waitFor(() => jobStore.getJob(jobId)!.status !== "running", 8000, "orphan settled after re-delivery");
+		await clock.until(() => fired > 0, "recovery wake fired");
+		await clock.until(() => jobStore.getJob(jobId)!.status !== "running", "orphan settled after re-delivery");
 		assert.equal(jobStore.getJob(jobId)!.status, "done");
 	});
 });
