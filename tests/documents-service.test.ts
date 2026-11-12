@@ -360,6 +360,15 @@ describe("routes", () => {
 		assert.equal((await oneRoute.GET(new Request("http://localhost"), { params: Promise.resolve({ id: "doc_missing" }) })).status, 404);
 	});
 
+	it("describe answers 503 with the models_not_configured envelope when no model is set up", async () => {
+		const describeRoute = await import("../app/api/documents/[id]/describe/route.ts");
+		const [t] = await harness().service.importFiles([md("d.md", `# D\n\n${prose(120, "d")}`)]);
+		await t!.completion;
+		const res = await describeRoute.POST(new Request("http://localhost", { method: "POST" }), { params: Promise.resolve({ id: t!.docId! }) });
+		const body = await res.json();
+		assert.deepEqual([res.status, body.code, Array.isArray(body.missing)], [503, "models_not_configured", true]);
+	});
+
 	it("rejects empty requests and bad decisions; estimate needs a PDF and a configured sidecar", async () => {
 		assert.equal((await checkRoute.POST(req("/api/documents/check", form([])))).status, 400);
 		assert.equal((await importRoute.POST(req("/api/documents/import", form([new File(["x"], "a.md")], { decisions: "nope" })))).status, 400);
