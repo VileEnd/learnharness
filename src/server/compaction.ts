@@ -170,7 +170,7 @@ export function projectedContextTokens(messages: readonly LhMessage[], systemPro
 
 /** Run one compaction for the chat (the registry mutex is HELD by the
  *  caller — ensureCompacted). Reads the record fresh, cuts, summarizes,
- *  appends the marker, records usage, notifies. Never throws upward
+ *  inserts the marker, records usage, notifies. Never throws upward
  *  past the registry cleanup. */
 async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 	const record = deps.chatStore.getChat(chatId);
@@ -235,16 +235,21 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 		};
 		const marker = newCompactionMarker(trimmed, details);
 		// The summary call took seconds: the record may have moved meanwhile
-		// (a dismissal, an artifact-ui toggle). Append to the record as it is
-		// NOW, and only while what was summarised is still its unchanged
+		// (a dismissal, an artifact-ui toggle). Commit against the record as it
+		// is NOW, and only while what was summarised is still its unchanged
 		// prefix with the kept boundary in place; otherwise the summary
 		// describes text that is gone, so nothing is checkpointed (the next
-		// gate retries on current truth).
+		// gate retries on current truth). The marker goes right after the
+		// messages compaction saw, so whatever was written meanwhile stays
+		// after it: the record matches compacting first and acting after,
+		// and a trailing dismissal still pauses the wake pipeline.
 		// Deleted during the summary call: nothing to checkpoint, and not a failure.
 		if (!deps.chatStore.getChat(chatId)) return;
 		const summarised = JSON.stringify(messages.slice(0, cut));
 		const appended = deps.chatStore.updateMessages(chatId, (current) =>
-			current[cut]?.id === firstKept.id && JSON.stringify(current.slice(0, cut)) === summarised ? [...current, marker] : null,
+			current[cut]?.id === firstKept.id && JSON.stringify(current.slice(0, cut)) === summarised
+				? [...current.slice(0, messages.length), marker, ...current.slice(messages.length)]
+				: null,
 		);
 		if (!appended) {
 			console.info(`[chat ${chatId}] compaction abandoned — the summarised history changed during the summary call`);
