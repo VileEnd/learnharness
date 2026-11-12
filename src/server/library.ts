@@ -18,7 +18,7 @@ import { providerKeyPresent } from "./keys.ts";
 import { providerKeyMissing } from "../core/settings.ts";
 import { ocr } from "./ocr-client.ts";
 import { notify } from "./push.ts";
-import { stores } from "./stores.ts";
+import { extractionBudgets, stores } from "./stores.ts";
 
 const cheapDeps = {
 	// BYOK: role override -> cheap slot -> nothing (read fresh per call).
@@ -47,6 +47,7 @@ export const documents = createDocumentService({
 	store: indexedStore,
 	// Looked up per call: tests and dev swap extraction.importNotes on the shared instance.
 	importNotes: (input) => extraction.importNotes(input),
+	chunkTokens: extractionBudgets.chunkTokens,
 	describe: (text, signal) => describer.describe(text, signal),
 	graph: stores.graphStore,
 	canonicalize: (topics, existing, signal) => topicist.canonicalize(topics, existing, signal),
