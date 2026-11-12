@@ -60,6 +60,7 @@ export function subagentEngine(role: ModelRole, override?: PiEngine): PiEngine {
 }
 
 export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRunOptions): Promise<SubagentRunResult> {
+	if (opts.abortSignal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
 	const engine = subagentEngine(opts.role, opts.engine);
 	let turns = 0;
 	// Debug recorder (owner, 2026-10-04): raw provider events per job run.
@@ -76,6 +77,9 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 			messages: opts.messages ?? [],
 		},
 		streamFn: engine.streamFn,
+		prepareRequest: async () => {
+			if (opts.abortSignal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+		},
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
 		// 0.87.1: shouldStopAfterTurn → finishTurn (same call point; "end"
 		// exits before the steering poll, exactly the old boolean-true).
@@ -110,7 +114,7 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 						step++;
 						opts.onUsage?.(m.usage);
 						opts.onAssistantMessage?.(m, step);
-						if (m.stopReason === "error") errorMessage = m.errorMessage;
+						if (m.stopReason === "error") errorMessage = m.errorMessage ?? "Subagent provider error";
 					}
 					break;
 				case "tool_execution_start":
