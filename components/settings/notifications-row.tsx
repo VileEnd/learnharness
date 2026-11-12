@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { currentSubscription, registerSubscription, syncPushSubscription } from "../push-device.ts";
 import { SettingsRow, Toggle } from "./controls.tsx";
 
 type Support = "checking" | "ok" | "ios-install" | "unsupported";
@@ -31,11 +32,6 @@ function urlBase64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
 	return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
-async function currentSubscription(): Promise<PushSubscription | null> {
-	const reg = await navigator.serviceWorker.ready;
-	return reg.pushManager.getSubscription();
-}
-
 export function NotificationsRow() {
 	const [support, setSupport] = useState<Support>("checking");
 	const [on, setOn] = useState(false);
@@ -47,7 +43,7 @@ export function NotificationsRow() {
 		setSupport(s);
 		if (s !== "ok") return;
 		let alive = true;
-		void currentSubscription().then((sub) => alive && setOn(sub !== null));
+		void syncPushSubscription().then((subscribed) => alive && setOn(subscribed)).catch(() => {});
 		return () => {
 			alive = false;
 		};
@@ -70,11 +66,7 @@ export function NotificationsRow() {
 				userVisibleOnly: true,
 				applicationServerKey: urlBase64ToUint8Array(publicKey),
 			}));
-		const res = await fetch("/api/push", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ subscription: sub.toJSON() }),
-		});
+		const res = await registerSubscription(sub);
 		if (!res.ok) {
 			await sub.unsubscribe();
 			throw new Error("the server refused the subscription");
