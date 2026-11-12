@@ -39,7 +39,7 @@ import {
 } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
-import { useAppearance } from "./appearance.tsx";
+import { BUNDLED_READING_FONTS, useAppearance } from "./appearance.tsx";
 import { FontMenuList } from "./model-menu";
 import { CommitInput, SettingsRow, ThinSelect, Toggle } from "./controls.tsx";
 
@@ -59,6 +59,7 @@ export const CURATED_FALLBACK_FONTS: readonly string[] = [
 	"Georgia",
 	"Helvetica",
 	"Helvetica Neue",
+	"JetBrains Mono",
 	"Menlo",
 	"Times New Roman",
 	"Trebuchet MS",
@@ -126,7 +127,11 @@ export function AppearanceSection({
 				} else {
 					void api()
 						.then((fonts) => {
-							const families = [...new Set(fonts.map((f) => f.family))]
+							const installed = fonts.map((f) => f.family);
+							// The bundled families join the installed ones (they
+							// render whether or not the OS has them), but only
+							// when the OS list was actually read.
+							const families = [...new Set(installed.length ? [...installed, ...Object.keys(BUNDLED_READING_FONTS)] : [])]
 								.filter((f) => f !== DEFAULT_READING_FONT)
 								.sort((a, b) => a.localeCompare(b));
 							if (families.length === 0) {
