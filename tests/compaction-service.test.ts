@@ -6,7 +6,7 @@
  *
  * The laws:
  * - the registry is a mutex: concurrent ensureCompacted → ONE summary;
- * - over-threshold → marker appended + usage logged + events emitted;
+ * - over-threshold → marker inserted + usage logged + events emitted;
  * - under-threshold (or the projection post-marker) → no-op;
  * - chained compaction: the span carries the prior summary forward;
  * - the effective threshold: min(setting, window − reserve).
@@ -36,6 +36,7 @@ import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { ToolCall } from "@earendil-works/pi-ai";
 const { subscribe } = await import("../src/core/events.ts");
 const { activeCompactionOf, newCompactionMarker, newUserMessage, measuredContextTokens, COMPACTED_HISTORY_HEADER, activeProblemOf, buildSubagentSteer, danglingQuestionOf, dismissedAnswer, endsInDismissal, newMessageId, toLlmMessages } = await import("../src/core/index.ts");
+const { beginTurn, endTurn } = await import("../src/server/turn-liveness.ts");
 const dismissRoute = await import("../app/api/chats/[id]/dismiss/route.ts");
 const artifactUiRoute = await import("../app/api/chats/[id]/artifact-ui/route.ts");
 import type { LhMessage } from "../src/core/index.ts";
@@ -96,7 +97,7 @@ describe("the compaction service", () => {
 		await Promise.resolve(); assert.equal(finished, false);
 		release(); await waiter; assert.equal(finished, true);
 	});
-	it("over-threshold record → marker appended, usage logged, both events emitted", async () => {
+	it("over-threshold record → marker inserted, usage logged, both events emitted", async () => {
 		const chatId = overThresholdChat("compact: basic");
 		const events: string[] = [];
 		const off = subscribe((e) => {
@@ -446,5 +447,46 @@ describe("learner writes while compaction runs", () => {
 		const messages = await finish();
 		const saved = messages.find((m) => m.id === steer.id) as unknown as { details: { ui?: { inverted?: boolean } } };
 		assert.equal(saved.details.ui?.inverted, true, "the switch survived compaction");
+	});
+
+	it("no compaction starts while a turn is running for the chat; one starts after it settles", async () => {
+		const chatId = overThresholdChat("marker: turn running");
+		const before = summarizeCalls;
+		assert.equal(beginTurn(chatId), true);
+		try {
+			await ensureCompacted(depsOf(chatId, 40_000), chatId);
+			assert.equal(summarizeCalls, before, "the gate of a request arriving mid-turn does not summarise");
+			assert.equal(activeCompactionOf(chatStore.getChat(chatId)!.messages), null);
+		} finally {
+			endTurn(chatId);
+		}
+		kickCompaction(() => depsOf(chatId, 40_000), chatId); // the settle kick runs after endTurn
+		await awaitCompaction(chatId);
+		assert.equal(summarizeCalls, before + 1, "the settle kick is unaffected");
+		assert.ok(activeCompactionOf(chatStore.getChat(chatId)!.messages));
+	});
+
+	it("a second compaction over a record whose first marker sits mid-record summarises the in-between messages once", async (t) => {
+		const { id, finish } = await compactingChat(t, "marker: chained", newUserMessage("seed"));
+		const late = newUserMessage("LATE-WRITE written during the first summary");
+		chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, late]);
+		await finish();
+		const afterFirst = chatStore.getChat(id)!.messages;
+		const first = activeCompactionOf(afterFirst)!;
+		assert.equal(afterFirst.at(-1)!.id, late.id, "the first marker sits mid-record, the write after it");
+		chatStore.saveMessages(id, [...afterFirst, big("g1"), big("g2"), big("g3")]);
+		let seenPrompt = "";
+		const deps = depsOf(id, 40_000);
+		await ensureCompacted({ ...deps, summarize: async (prompt, engine) => { seenPrompt = prompt; return deps.summarize!(prompt, engine); } }, id);
+		assert.equal(seenPrompt.split("LATE-WRITE").length - 1, 1, "the in-between message is summarised once");
+		assert.equal(seenPrompt.split(COMPACTED_HISTORY_HEADER).length - 1, 1, "the prior summary rides once");
+		const messages = chatStore.getChat(id)!.messages;
+		const second = activeCompactionOf(messages)!;
+		assert.notEqual(second.id, first.id);
+		assert.equal(messages.at(-1)!.id, second.id, "nothing was written meanwhile: the new marker closes the record");
+		assert.equal(messages.indexOf(first as never) < messages.findIndex((m) => m.id === late.id), true, "the first marker keeps its place");
+		const wire = JSON.stringify(toLlmMessages(messages as never));
+		assert.ok(!wire.includes("LATE-WRITE"), "the summarised write is not in the wire view again");
+		assert.ok(wire.includes("SUMMARY #"), "the newest summary heads the wire view");
 	});
 });

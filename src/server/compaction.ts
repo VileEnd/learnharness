@@ -47,6 +47,7 @@ import {
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { PiEngine } from "../agent/models.ts";
+import { isTurnRunning } from "./turn-liveness.ts";
 import { runSubagent } from "../agent/subagents/pi-run.ts";
 
 /** The summarizer's system prompt — server-owned operational framing,
@@ -300,6 +301,10 @@ export async function ensureCompacted(deps: CompactionDeps, chatId: string): Pro
 	if (process.env.NODE_ENV === "test" && !deps.summarize) return;
 	await awaitCompaction(chatId);
 	if (deps.canStart?.() === false) return;
+	// A request that arrives mid-turn never starts a compaction: that turn's
+	// persist would land after the marker (its usage describes the pre-cut
+	// context), and the request is answered 409 at beginTurn anyway.
+	if (isTurnRunning(chatId)) return;
 	const record = deps.chatStore.getChat(chatId);
 	if (!record) return;
 	if (projectedContextTokens(record.messages, deps.systemPromptTokens) <= deps.thresholdTokens) return;
