@@ -26,9 +26,13 @@ services:
     tmpfs:
       - /tmp:mode=1777,size=512m
     # Peaks seen with this image: ~0.4 GB idle plus a Chromium launch, ~1.7 GB for a
-    # 240 MB PDF upload, ~2.7 GB for a 40 MB text upload. 4 GB on a 12 GB VM stops a
-    # runaway before it takes Keycloak and Postgres with it.
-    mem_limit: 4g
+    # 240 MB PDF upload, ~2.7 GB for a 40 MB text upload. Large uploads are a shipped
+    # feature and two users importing while a demo renders can cross 4 GB, so the cap is
+    # 6 GB on a 12 GB VM: a runaway is killed before it takes Keycloak and Postgres with
+    # it. memswap_limit equals mem_limit because Docker would otherwise allow the same
+    # amount again in swap (the server has zram), and a runaway would thrash first.
+    mem_limit: 6g
+    memswap_limit: 6g
     # Threads count: the app idles at ~180, and six concurrent Chromium launches peaked at ~1000.
     pids_limit: 2048
     volumes:
@@ -36,7 +40,7 @@ services:
       # The entrypoint hands the files to the app user (uid 1000) on start.
       - ./volumes/learnharness:/data
     environment:
-      # PDF scanning sidecar (services/ocr): internal only, shared secret on every call.
+      # PDF scanning sidecar (services/ocr): on its own ocr-link network shared with the app only, shared secret on every call.
       OCR_URL: http://ocr:8000
       OCR_TOKEN: ${OCR_TOKEN}
       # Per-user data under users/<keycloak sub>/ (docs/self-hosting.md).
@@ -120,6 +124,7 @@ services:
     tmpfs:
       - /tmp:mode=1777,size=512m
     mem_limit: 2g
+    memswap_limit: 2g
     pids_limit: 512
     environment:
       OCR_TOKEN: ${OCR_TOKEN:?set OCR_TOKEN in .env}
