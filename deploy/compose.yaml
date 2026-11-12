@@ -144,6 +144,7 @@ services:
       OAUTH2_PROXY_WHITELIST_DOMAINS: ${LH_HOST},${AUTH_SITE}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET:?set OAUTH2_COOKIE_SECRET in .env}
       OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
       # Rolling login: the session is refreshed (via Keycloak) every hour while
       # the app is used, and ends after 30 days without use (also the realm's
       # SSO idle timeout, deploy/keycloak/realm-learnharness.json).
