@@ -15,7 +15,7 @@ import { PATHS } from "../config.ts";
 import { questionNeedsReveal } from "../src/core/question-core.ts";
 import { listSourceSegments } from "../src/agent/prompt-segments.ts";
 import { annotateInputObject } from "../src/agent/tools/annotate.ts";
-import { practiceTools } from "../src/agent/tools/practice.ts";
+import { concludeTool, createPracticeGate, practiceTools, problemTool } from "../src/agent/tools/practice.ts";
 import { createProberTools, createTeacherTools } from "../src/agent/tools.ts";
 import { probeSketchToolFor, teachWorkToolFor } from "../src/agent/tools/work.ts";
 import { IMPLEMENTED_FORMATS } from "../src/core/exercise-core.ts";
@@ -171,5 +171,29 @@ describe("the canvas section names only what the prober holds", () => {
 				if (!own.has(word)) assert.doesNotMatch(refusal.replace(/exercise tools?/g, ""), new RegExp(`\\b${word}\\b`, "i"), `${role}: the refusal names \`${word}\`, which it does not hold`);
 			}
 		}
+	});
+});
+
+describe("the pause before the next practice problem: prompt, tool description and gate agree", () => {
+	const concluded = { outcome: "solved", verdict: "ok", rung: null, missClass: null, retest: false };
+	const pose = { statement: "State the rule.", mode: "recall", modelSolution: "The rule." };
+	const active = [
+		{ role: "assistant", content: [{ type: "toolCall", id: "call_p1", name: "problem", arguments: pose }] },
+		{ role: "toolResult", toolCallId: "call_p1", toolName: "problem", content: [{ type: "text", text: "posed" }], isError: false },
+	];
+	const ctx = { chatId: "chat_x", chatStore: { getChat: () => ({ messages: active, kind: "practice" }) } as never, libraryRoot: "/nonexistent-library" };
+
+	it("the prompt and the conclude description both say the next problem is not posed in the concluding reply", () => {
+		const prompt = composeInstructions("practice").replace(/\s+/g, " ");
+		assert.match(prompt, /no further tool calls in that reply, never another problem/);
+		const description = concludeTool(createPracticeGate(ctx)).description;
+		assert.match(description, /The next problem is NEVER posed here/);
+	});
+
+	it("the gate agrees: problem is refused after conclude in the same turn", async () => {
+		const gate = createPracticeGate(ctx);
+		assert.equal((await concludeTool(gate).execute("call_c1", concluded as never)).isError, undefined);
+		const refused = await problemTool(gate).execute("call_p2", pose as never);
+		assert.equal(refused.isError, true);
 	});
 });

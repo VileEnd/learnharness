@@ -239,6 +239,27 @@ describe("the source-derived segment list", () => {
 		assert.equal(planning.overrideText, null);
 	});
 
+	it("an override of each canvas fragment composes where the fragment does: tasks for teacher and prober, tools also for practice", () => {
+		promptOverrides.writeOverride("shared/24-canvas-tasks.md", "MY TASKS");
+		promptOverrides.writeOverride("shared/24-canvas-tools.md", "MY TOOLS");
+		try {
+			const switches = { "shared/24-canvas-tasks.md": true, "shared/24-canvas-tools.md": true };
+			const { composeInstructions } = teacherAgent;
+			for (const kind of ["teacher", "prober"] as const) {
+				const text = composeInstructions(kind, switches);
+				assert.ok(text.includes("MY TASKS") && text.includes("MY TOOLS"), kind);
+			}
+			const practice = composeInstructions("practice", switches);
+			assert.ok(practice.includes("MY TOOLS"));
+			assert.ok(!practice.includes("MY TASKS"), "practice never composes the task mechanics");
+			// switched off, the source defaults are back
+			assert.ok(composeInstructions("practice").includes("### Reading a drawing"));
+		} finally {
+			promptOverrides.deleteOverride("shared/24-canvas-tasks.md");
+			promptOverrides.deleteOverride("shared/24-canvas-tools.md");
+		}
+	});
+
 	it("adapts to source changes by construction: the list is computed, not stored", () => {
 		// If a fragment vanishes upstream, its switch/override simply stop
 		// composing — nothing here can go stale. Pinned by absence:
