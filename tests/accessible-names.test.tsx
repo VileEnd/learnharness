@@ -31,7 +31,9 @@ describe("accessible names of controls that had none", () => {
 	it("the scroll-to-bottom button is named", () => {
 		// initial={false}: the stick-to-bottom state starts scrolled up, so the button renders.
 		const html = renderToStaticMarkup(
-			createElement(Conversation, { initial: false }, createElement(ConversationScrollButton)),
+			<Conversation initial={false}>
+				<ConversationScrollButton />
+			</Conversation>,
 		);
 		assert.ok(/<button[^>]*aria-label="Scroll to latest message"/.test(html), html);
 	});
