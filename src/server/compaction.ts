@@ -70,7 +70,9 @@ const SUMMARY_TIMEOUT_MS = 5 * 60_000;
 
 /** Race the summary call against the bound; on timeout abort it and throw
  *  (compact's catch treats it like any summarizer failure). A late result
- *  of a call that ignored the abort is dropped. */
+ *  of a call that ignored the abort is dropped. A second compaction can
+ *  start beside such a call; it costs a second provider call and cannot
+ *  corrupt the record, because the late result is never written. */
 async function withSummaryTimeout<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
 	const controller = new AbortController();
 	let timer: ReturnType<typeof setTimeout> | undefined;
