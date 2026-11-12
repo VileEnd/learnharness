@@ -249,7 +249,9 @@ export interface AuthStore {
 	/** Set one VAR (atomic write, mode 0600 always, other vars preserved). */
 	setAuthVar(name: string, value: string): void;
 	/** Remove one VAR if present (absent = no-op, still a silent success).
-	 *  set/delete throw for the custom endpoint's two reserved names. */
+	 *  set/delete throw for the custom endpoint's two reserved names, and
+	 *  when the file exists but is not a JSON object (a write over it would
+	 *  erase every other entry); other entries, string or not, survive. */
 	deleteAuthVar(name: string): void;
 	/** The custom endpoint's key and binding from ONE strict read: absent
 	 *  file = both undefined; unreadable, non-object, malformed binding or a

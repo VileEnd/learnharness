@@ -47,7 +47,7 @@ function readMap(): Record<string, string> {
  *  would erase every key in it, so writes refuse (the key routes answer 500). */
 export class AuthFileUnreadableError extends Error {
 	constructor() {
-		super("The key file (auth.json) exists but is not valid JSON, so nothing was changed. Fix or remove it, then try again.");
+		super("The key file (auth.json) could not be read as a JSON object, so nothing was changed. Fix or remove it, then try again.");
 		this.name = "AuthFileUnreadableError";
 	}
 }

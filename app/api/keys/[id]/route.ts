@@ -15,8 +15,9 @@
  * MODEL-PROVIDER env vars (provider-keys interlude); anything else is 404
  * — unknown file vars are preserved, not editable.
  *
- * A key file that exists but is not valid JSON is never written over (that
- * would erase every other key): PUT and DELETE answer 500 and change nothing.
+ * A key file that exists but is not a valid JSON object is never written
+ * over (that would erase every other key): PUT and DELETE answer 500 and
+ * change nothing.
  */
 import { AuthFileUnreadableError, isWritableAuthKey, requireAdmin, withTenant } from "@/src/server";
 import { deleteKey, saveKey } from "@/src/server";
