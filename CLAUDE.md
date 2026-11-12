@@ -11,7 +11,7 @@ LearnHarness is a self-hosted, browser-only learning app: a Next.js standalone s
 ## Commands
 
 ```bash
-npm run dev            # http://localhost:3000
+npm run dev            # http://localhost:3000 (localhost only; see docs/development.md for the network override)
 npm run dev:fresh      # new-user simulator: empty .fresh-data/, env keys hidden, port 3005 (ports 3000–3004 refused)
 npm run build          # standalone output
 

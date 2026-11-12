@@ -15,15 +15,15 @@ Not a chat app with a graph bolted on: sessions are probe→teach lessons, the p
 ```bash
 npm install          # once
 
-npm run dev          # http://localhost:3000
+npm run dev          # http://localhost:3000 (listens on localhost only)
 npm run build        # production build (standalone output)
-npm start            # serve the production build
+npm start            # serve the production build (localhost only)
 
 npm test             # the full suite (node:test via tsx; deterministic, no LLM, no network)
 npm run lint         # eslint — includes the import law (architecture §2)
 npm run typecheck    # tsc --noEmit
 
-npm run dev:fresh      # a fresh-user instance: empty data, env keys hidden (port 3005)
+npm run dev:fresh      # a fresh-user instance: empty data, env keys hidden (port 3005, localhost only)
 
 docker build -t learnharness:local .           # the image (runs the standalone gates + Chromium probe)
 cd deploy && docker compose up -d --build      # the full stack (Caddy, oauth2-proxy, Keycloak)
@@ -33,6 +33,8 @@ npx tsx --env-file=.env.local scripts/import-notes.ts <dir>   # bulk-import note
 npx tsx --env-file=.env.local scripts/backfill-graph.ts       # wipe + re-extract every chat
 npx tsx --env-file=.env.local scripts/replay-layout.ts        # re-derive layout from the ledgers
 ```
+
+`npm run dev`, `npm start` and `npm run dev:fresh` listen on `localhost` only: a development server has no login (without `LH_MULTI_USER` every request is the implicit local user), so it must not be reachable from the network. To test from a phone on the local network, pass a later `-H`: `npm run dev -- -H 0.0.0.0` (the same for `npm start`), or `bash scripts/dev-fresh.sh --host 0.0.0.0`. Do that only on a network you trust. The Docker image is not affected: it runs `node server.js` and listens on the `HOSTNAME` the image or compose file sets.
 
 Native renderer binaries (`@napi-rs/canvas`, `@resvg/resvg-js`) are traced for the build platform, so the image builds its own standalone payload on linux — never copy one in from another OS.
 
