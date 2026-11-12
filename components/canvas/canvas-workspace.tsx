@@ -27,7 +27,7 @@ import { useBackDismiss } from "@/components/use-back-dismiss";
 import { isTopModal, useModal } from "@/components/ui/use-modal";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
-import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
+import { hintsFor, isInputBoundary, isThemeChoice, latestTaskMarks, nextObjectId, renderedModeOf, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
 import { fitImageSize, PALETTE_NAMES, revealView, screenColor } from "./geometry";
 import { CanvasObjectsLayer, uploadAsset } from "./canvas-objects";
@@ -623,12 +623,21 @@ function imageSize(file: Blob): Promise<{ w: number; h: number }> {
 	});
 }
 
-/** The app theme is the `dark` class on <html>; swatches and the engine follow it live. */
+/** The mode on screen: the theme choice on <html> (data-theme), with Follow
+ *  system resolved against the device. Swatches and the engine follow it live
+ *  (the engine reads it through this callback, outside React). */
 function readTheme(): "light" | "dark" {
-	return document.documentElement.classList.contains("dark") ? "dark" : "light";
+	const choice = document.documentElement.dataset.theme;
+	return renderedModeOf(isThemeChoice(choice) ? choice : "default", window.matchMedia(LIGHT_QUERY).matches ? "light" : "dark");
 }
+const LIGHT_QUERY = "(prefers-color-scheme: light)";
 function subscribeTheme(onChange: () => void): () => void {
 	const observer = new MutationObserver(onChange);
-	observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-	return () => observer.disconnect();
+	observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+	const mq = window.matchMedia(LIGHT_QUERY);
+	mq.addEventListener("change", onChange);
+	return () => {
+		observer.disconnect();
+		mq.removeEventListener("change", onChange);
+	};
 }

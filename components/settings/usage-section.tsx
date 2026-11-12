@@ -21,7 +21,7 @@ import {
 } from "@/src/core";
 import { costLabel, formatHitRate, formatTokens, prettyModel } from "@/components/usage-format";
 import {
-	CATEGORY_COLORS,
+	useCategoryColors,
 	CATEGORY_LABELS,
 	CATEGORY_ORDER,
 	DailyBars,
@@ -116,6 +116,7 @@ export function UsageView({
 	/** A chat link was followed: the dialog closes. */
 	onNavigate?: () => void;
 }) {
+	const categoryColors = useCategoryColors();
 	// The months with data, newest first; the shown month is always pickable.
 	const options = (months === "error" ? [] : months).map((m) => m.month).reverse();
 	if (!options.includes(month)) options.unshift(month);
@@ -187,7 +188,7 @@ export function UsageView({
 										<tr key={c} className="border-b border-border/30 last:border-b-0">
 											<td className="py-1.5">
 												<span className="flex items-center gap-1.5">
-													<span className="size-2 shrink-0 rounded-[2px]" style={{ background: CATEGORY_COLORS[c] }} />
+													<span className="size-2 shrink-0 rounded-[2px]" style={{ background: categoryColors[c] }} />
 													{CATEGORY_LABELS[c]}
 												</span>
 											</td>

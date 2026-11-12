@@ -72,6 +72,7 @@ import {
 	type GraphRenderSettings,
 	type LayoutNode,
 	type Position,
+	type RenderedMode,
 } from "@/src/core";
 
 export type { GraphRenderSettings };
@@ -113,11 +114,27 @@ export interface CanvasCluster {
 
 /** Theme colors, resolved to #rrggbb by the caller (canvas wants hex,
  *  and the renderer must not read CSS itself). */
+/** Cluster region + label lightness (HSL %), per rendered mode — the hues
+ *  come from clusterHue, only the lightness follows the page (upstream's
+ *  light-mode fix, 4117f212). */
+export interface ClusterLightness {
+	ring: number;
+	label: number;
+}
+
+/** Dark keeps the original 60% regions / 78% labels; light darkens both so
+ *  the pastel regions and their labels read on the light background. */
+export const CLUSTER_LIGHTNESS: Record<RenderedMode, ClusterLightness> = {
+	dark: { ring: 60, label: 78 },
+	light: { ring: 42, label: 30 },
+};
+
 export interface CanvasColors {
 	node: string;
 	edge: string;
 	label: string;
 	hoverText: string;
+	clusterLightness: ClusterLightness;
 }
 
 /** "Show my knowledge": per-node fill colour (+ a due ring) in place of the
@@ -2049,7 +2066,7 @@ export class GraphCanvasRenderer {
 			// counted spot (user report 2026-09-14). At alpha 1 the alpha
 			// channel is a pure coverage indicator: overlaps of any count
 			// contribute exactly 1.0.
-			rctx.strokeStyle = `hsla(${hue}, 65%, 60%, 1)`;
+			rctx.strokeStyle = `hsla(${hue}, 65%, ${data.colors.clusterLightness.ring}%, 1)`;
 			rctx.beginPath();
 			// Endpoints actually covered by a stroke's round caps.
 			const touched = new Set<string>();
@@ -2078,7 +2095,7 @@ export class GraphCanvasRenderer {
 			// radius as a round cap = dilation) covers exactly the members no
 			// stroke reached: every member is painted by its edges' caps OR
 			// one disc, never both — the no-double-counting rule survives.
-			rctx.fillStyle = `hsla(${hue}, 65%, 60%, 1)`;
+			rctx.fillStyle = `hsla(${hue}, 65%, ${data.colors.clusterLightness.ring}%, 1)`;
 			const discR = dilationW / cell;
 			for (const id of cluster.members) {
 				if (touched.has(id) || !isVisible(id)) continue;
@@ -2326,7 +2343,7 @@ export class GraphCanvasRenderer {
 			const lineH = (settings.clusterLabelSize * REGION_LABEL_LINE_HEIGHT) / k;
 			for (const rm of this.regionMeta) {
 				if (!rm.lines) continue;
-				ctx.fillStyle = `hsla(${rm.hue}, 55%, 78%, 0.85)`;
+				ctx.fillStyle = `hsla(${rm.hue}, 55%, ${data.colors.clusterLightness.label}%, 0.85)`;
 				const firstOffset = (-(rm.lines.length - 1) / 2) * lineH;
 				for (let i = 0; i < rm.lines.length; i++) {
 					ctx.fillText(rm.lines[i]!, rm.cx, rm.cy + firstOffset + i * lineH);
