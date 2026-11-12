@@ -718,6 +718,13 @@ export function recoverStaleJobs(): void {
 	}
 }
 
+/** The activity feed's entry: every running job across chats, one read of
+ *  the jobs directory (+ the same lazy recovery as listJobs). */
+export function listRunningJobs(): JobRecord[] {
+	if (process.env.NODE_ENV !== "test") recoverStaleJobs();
+	return stores.jobStore.listRunningJobs();
+}
+
 /** The /api/jobs entry: job list for the client poll (+ lazy recovery). */
 export function listJobs(chatId: string): JobRecord[] {
 	if (process.env.NODE_ENV !== "test") recoverStaleJobs();

@@ -226,6 +226,7 @@ function fakeJobStore(): JobStore {
 			return Object.assign(job, patch);
 		},
 		listJobs: () => [...jobs.values()],
+		listRunningJobs: () => [...jobs.values()].filter((j) => j.status === "running"),
 		findJobByToolCallId: () => null,
 		deleteJobsForChat: () => 0, // the drop tests never delete
 	};

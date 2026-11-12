@@ -23,7 +23,7 @@ import { extractionStatuses, type ExtractionPhase } from "../agent/subagents/ext
 import { chatStore } from "../store/chats.ts";
 import { graphRevision } from "./graph.ts";
 import { catalogContextLimits } from "./model-catalog.ts";
-import { listJobs } from "./jobs.ts";
+import { listRunningJobs } from "./jobs.ts";
 import { scanStatuses } from "./documents.ts";
 import { jobCost } from "./pricing.ts";
 import type { JobRecord } from "../core/contracts.ts";
@@ -81,20 +81,21 @@ export function activityFeed(): {
 	scans: ActivityScan[];
 	graphRevision: number;
 } {
-	const chats = chatStore.listChats();
 	const limits = catalogContextLimits();
+	// One directory read for the running jobs; a chat record is read only for
+	// a chat that has one (its title), never for every chat in the library.
+	const chats = new Map<string, { title: string | undefined } | null>();
 	const jobs: ActivityJob[] = [];
-	for (const chat of chats) {
-		for (const job of listJobs(chat.id)) {
-			if (job.status === "running") {
-				jobs.push({
-					...job,
-					costUsd: jobCost(job),
-					title: chat.title ?? chat.id,
-					contextLimit: job.usage ? (limits.get(job.usage.model) ?? null) : null,
-				});
-			}
-		}
+	for (const job of listRunningJobs()) {
+		if (!chats.has(job.chatId)) chats.set(job.chatId, chatStore.getChat(job.chatId));
+		const chat = chats.get(job.chatId);
+		if (!chat) continue; // a job whose chat is gone has no dock row
+		jobs.push({
+			...job,
+			costUsd: jobCost(job),
+			title: chat.title ?? job.chatId,
+			contextLimit: job.usage ? (limits.get(job.usage.model) ?? null) : null,
+		});
 	}
 	const extractions: ActivityExtraction[] = extractionStatuses().map((run) => ({
 		id: run.part ? `${run.chatId}#${run.part.i}` : run.chatId,

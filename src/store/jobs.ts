@@ -86,6 +86,22 @@ function listJobs(chatId: string): JobRecord[] {
 	}
 }
 
+/** Every running job across all chats, newest activity first — the jobs
+ *  directory is read once, whatever the number of chats. */
+function listRunningJobs(): JobRecord[] {
+	try {
+		fs.mkdirSync(jobsDir(), { recursive: true });
+		return fs
+			.readdirSync(jobsDir())
+			.filter((f) => f.endsWith(".json"))
+			.map((f) => getJob(f.slice(0, -5)))
+			.filter((j): j is JobRecord => j !== null && j.status === "running")
+			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	} catch {
+		return [];
+	}
+}
+
 /** The job fulfilling a given tool part, if any (spawn-hook dedup). */
 function findJobByToolCallId(chatId: string, toolCallId: string): JobRecord | null {
 	return listJobs(chatId).find((j) => j.toolCallId === toolCallId) ?? null;
@@ -117,6 +133,7 @@ export const jobStore: JobStore = {
 	getJob,
 	updateJob,
 	listJobs,
+	listRunningJobs,
 	findJobByToolCallId,
 	deleteJobsForChat,
 };
