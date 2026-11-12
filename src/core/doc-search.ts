@@ -157,11 +157,58 @@ export function foldKey(text: string): string {
 
 // ─── BM25 ────────────────────────────────────────────────────────────────────
 
+/** A typed array with room for at least `min` elements (doubling; contents kept). */
+function grown<T extends Uint8Array | Uint32Array>(a: T, min: number): T {
+	if (a.length >= min) return a;
+	let n = Math.max(a.length, 16);
+	while (n < min) n *= 2;
+	const out = new (a.constructor as new (length: number) => T)(n);
+	out.set(a);
+	return out;
+}
+
+/**
+ * Incremental BM25 index kept in packed typed arrays instead of nested Maps
+ * (about 8 bytes per posting plus a little per term, instead of about 49 per
+ * posting; the results are the same ids, scores and order as the Map-based
+ * index this replaces).
+ *
+ * Chunk ids are interned to integers ("document numbers", handed out in the
+ * order of adding, not reused until a compaction). The postings of every term
+ * (document number, term frequency) live in one shared Uint32Array, each term
+ * in a block whose capacity is a power of two; a full block moves to the next
+ * size and its old block goes on a free list for the next term that needs it.
+ * Removing a document only marks it dead (a tombstone: it costs nothing and
+ * its postings are skipped); when the dead reach a quarter of the live
+ * documents, a compaction renumbers the live ones, drops the dead postings
+ * and terms and packs the blocks.
+ */
 export class Bm25 {
-	private readonly postings = new Map<string, Map<string, number>>();
-	private readonly lengths = new Map<string, number>();
-	private readonly terms = new Map<string, string[]>();
+	private readonly numById = new Map<string, number>();
+	// Per document number.
+	private ids: (string | undefined)[] = [];
+	private lengths = new Uint32Array(0);
+	private alive = new Uint8Array(0);
+	private numbers = 0; // handed out: live plus dead
+	private live = 0;
 	private totalLength = 0;
+	// Per term number: where its block starts in `heap`, its size class (room for
+	// 2 ** class postings), how many postings were written (dead ones included).
+	private readonly termNumbers = new Map<string, number>();
+	private termNames: (string | undefined)[] = [];
+	private offset = new Uint32Array(0);
+	private sizeClass = new Uint8Array(0);
+	private used = new Uint32Array(0);
+	private freeTerms: number[] = [];
+	// The shared posting heap: pairs of (document number, term frequency).
+	private heap = new Uint32Array(0);
+	private top = 0;
+	private readonly freeBlocks: number[][] = [];
+	// Scratch for search: scores per document number, valid where stamp === generation.
+	private scores = new Float64Array(0);
+	private stamp = new Uint32Array(0);
+	private generation = 0;
+	private compactionCount = 0;
 
 	constructor(
 		private readonly k1 = 1.2,
@@ -169,57 +216,199 @@ export class Bm25 {
 	) {}
 
 	get size(): number {
-		return this.lengths.size;
+		return this.live;
+	}
+
+	/** How many compactions ran (for tests: they must cover that path). */
+	get compactions(): number {
+		return this.compactionCount;
 	}
 
 	add(id: string, tokens: readonly string[]): void {
 		this.remove(id);
 		const tf = new Map<string, number>();
 		for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+
+		const num = this.numbers++;
+		this.lengths = grown(this.lengths, this.numbers);
+		this.alive = grown(this.alive, this.numbers);
+		this.ids[num] = id;
+		this.numById.set(id, num);
+		this.lengths[num] = tokens.length;
+		this.alive[num] = 1;
 		for (const [term, n] of tf) {
-			let posting = this.postings.get(term);
-			if (!posting) this.postings.set(term, (posting = new Map()));
-			posting.set(id, n);
+			const t = this.termNumbers.get(term) ?? this.newTerm(term);
+			const u = this.used[t]!;
+			let at = this.offset[t]!;
+			if (u === 2 ** this.sizeClass[t]!) {
+				const moved = this.allocate(this.sizeClass[t]! + 1);
+				this.heap.copyWithin(moved, at, at + 2 * u);
+				this.release(at, this.sizeClass[t]!);
+				this.offset[t] = at = moved;
+				this.sizeClass[t] = this.sizeClass[t]! + 1;
+			}
+			this.heap[at + 2 * u] = num;
+			this.heap[at + 2 * u + 1] = n;
+			this.used[t] = u + 1;
 		}
-		this.lengths.set(id, tokens.length);
-		this.terms.set(id, [...tf.keys()]);
+		this.live++;
 		this.totalLength += tokens.length;
 	}
 
 	remove(id: string): void {
-		const length = this.lengths.get(id);
-		if (length === undefined) return;
-		for (const term of this.terms.get(id) ?? []) {
-			const posting = this.postings.get(term);
-			posting?.delete(id);
-			if (posting?.size === 0) this.postings.delete(term);
-		}
-		this.lengths.delete(id);
-		this.terms.delete(id);
-		this.totalLength -= length;
+		const num = this.numById.get(id);
+		if (num === undefined) return;
+		this.numById.delete(id);
+		this.ids[num] = undefined;
+		this.alive[num] = 0;
+		this.live--;
+		this.totalLength -= this.lengths[num]!;
+		const dead = this.numbers - this.live;
+		if (dead >= 64 && dead * 4 >= this.live) this.compact();
 	}
 
-	/** Matching ids best first (score > 0), ties by id. */
+	/** Matching ids best first (score > 0), ties by id. The scratch arrays are per
+	 *  instance, so `allow` must not call `search` on the same index. */
 	search(query: readonly string[], allow?: (id: string) => boolean): { id: string; score: number }[] {
-		const n = this.lengths.size;
+		const n = this.live;
 		if (n === 0) return [];
 		const avg = this.totalLength / n || 1;
-		const scores = new Map<string, number>();
+		const { k1, b, alive, lengths, ids, heap } = this;
+		const tombstones = this.numbers > n;
+		if (this.scores.length < this.numbers) {
+			this.scores = new Float64Array(this.lengths.length);
+			this.stamp = new Uint32Array(this.lengths.length);
+			this.generation = 0;
+		}
+		const { scores, stamp } = this;
+		if (++this.generation === 0xffffffff) {
+			stamp.fill(0);
+			this.generation = 1;
+		}
+		const gen = this.generation;
+		const touched: number[] = [];
 		for (const term of new Set(query)) {
-			const posting = this.postings.get(term);
-			if (!posting) continue;
-			const idf = Math.log(1 + (n - posting.size + 0.5) / (posting.size + 0.5));
-			for (const [id, tf] of posting) {
-				if (allow && !allow(id)) continue;
-				const len = this.lengths.get(id) ?? avg;
-				const s = (idf * tf * (this.k1 + 1)) / (tf + this.k1 * (1 - this.b + (this.b * len) / avg));
-				scores.set(id, (scores.get(id) ?? 0) + s);
+			const t = this.termNumbers.get(term);
+			if (t === undefined) continue;
+			const from = this.offset[t]!;
+			const end = from + 2 * this.used[t]!;
+			let df = this.used[t]!;
+			if (tombstones) {
+				df = 0;
+				for (let i = from; i < end; i += 2) df += alive[heap[i]!]!;
+				if (df === 0) continue;
+			}
+			const idf = Math.log(1 + (n - df + 0.5) / (df + 0.5));
+			for (let i = from; i < end; i += 2) {
+				const num = heap[i]!;
+				if (alive[num] === 0) continue;
+				if (allow && !allow(ids[num]!)) continue;
+				const tf = heap[i + 1]!;
+				const len = lengths[num]!;
+				const s = (idf * tf * (k1 + 1)) / (tf + k1 * (1 - b + (b * len) / avg));
+				if (stamp[num] === gen) {
+					scores[num] = scores[num]! + s;
+				} else {
+					stamp[num] = gen;
+					scores[num] = s;
+					touched.push(num);
+				}
 			}
 		}
-		return [...scores]
-			.filter(([, score]) => score > 0)
-			.map(([id, score]) => ({ id, score }))
-			.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+		const out: { id: string; score: number }[] = [];
+		for (const num of touched) {
+			const score = scores[num]!;
+			if (score > 0) out.push({ id: ids[num]!, score });
+		}
+		return out.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+	}
+
+	private newTerm(term: string): number {
+		let t = this.freeTerms.pop();
+		if (t === undefined) {
+			t = this.termNames.length;
+			this.termNames.push(undefined);
+			this.offset = grown(this.offset, t + 1);
+			this.sizeClass = grown(this.sizeClass, t + 1);
+			this.used = grown(this.used, t + 1);
+		}
+		this.termNames[t] = term;
+		this.offset[t] = this.allocate(0);
+		this.sizeClass[t] = 0;
+		this.used[t] = 0;
+		this.termNumbers.set(term, t);
+		return t;
+	}
+
+	/** A block with room for 2 ** sizeClass postings: a freed one, else new heap. */
+	private allocate(sizeClass: number): number {
+		const reused = this.freeBlocks[sizeClass]?.pop();
+		if (reused !== undefined) return reused;
+		const size = 2 * 2 ** sizeClass;
+		if (this.top + size > this.heap.length) {
+			const bigger = new Uint32Array(Math.max(this.top + size, Math.ceil(this.heap.length * 1.5), 1024));
+			bigger.set(this.heap.subarray(0, this.top));
+			this.heap = bigger;
+		}
+		const at = this.top;
+		this.top += size;
+		return at;
+	}
+
+	private release(at: number, sizeClass: number): void {
+		(this.freeBlocks[sizeClass] ??= []).push(at);
+	}
+
+	/** Renumber the live documents densely, drop dead postings and terms with no
+	 *  live posting left, and slide the blocks together (in place: nothing moves up). */
+	private compact(): void {
+		this.compactionCount++;
+		const remap = new Int32Array(this.numbers).fill(-1);
+		let next = 0;
+		for (let num = 0; num < this.numbers; num++) {
+			if (this.alive[num] === 0) continue;
+			const id = this.ids[num]!;
+			this.ids[next] = id;
+			this.lengths[next] = this.lengths[num]!;
+			this.numById.set(id, next);
+			remap[num] = next++;
+		}
+		this.ids.length = next;
+		this.alive.fill(1, 0, next);
+		this.alive.fill(0, next);
+		this.numbers = next;
+
+		const order: number[] = [];
+		for (let t = 0; t < this.termNames.length; t++) if (this.termNames[t] !== undefined) order.push(t);
+		order.sort((x, y) => this.offset[x]! - this.offset[y]!);
+		const heap = this.heap;
+		let dst = 0;
+		for (const t of order) {
+			const src = this.offset[t]!;
+			let w = 0;
+			for (let r = 0; r < this.used[t]!; r++) {
+				const to = remap[heap[src + 2 * r]!]!;
+				if (to < 0) continue;
+				heap[dst + 2 * w] = to;
+				heap[dst + 2 * w + 1] = heap[src + 2 * r + 1]!;
+				w++;
+			}
+			if (w === 0) {
+				this.termNumbers.delete(this.termNames[t]!);
+				this.termNames[t] = undefined;
+				this.used[t] = 0;
+				this.freeTerms.push(t);
+				continue;
+			}
+			const sizeClass = 32 - Math.clz32(w - 1);
+			this.offset[t] = dst;
+			this.sizeClass[t] = sizeClass;
+			this.used[t] = w;
+			dst += 2 * 2 ** sizeClass;
+		}
+		this.top = dst;
+		this.freeBlocks.length = 0;
+		if (this.heap.length > dst * 1.5 + 1024) this.heap = this.heap.slice(0, Math.ceil(dst * 1.25));
 	}
 }
 
