@@ -32,6 +32,6 @@ variable "lan_ipv4" {
 }
 
 variable "dns_names" {
-  description = "The public names of the app and Keycloak, e.g. [\"learnharness.example.com\", \"auth.example.com\"] (site.env)."
+  description = "The public names of the app and Keycloak, e.g. [\"learnharness.home.example.com\", \"auth.home.example.com\"] (site.env)."
   type        = list(string)
 }

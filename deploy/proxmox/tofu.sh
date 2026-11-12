@@ -26,6 +26,8 @@ if [ -f "$site_env" ]; then
   # shellcheck source=/dev/null
   source "$site_env"
   set +a
+else
+  echo "note: no $site_env; OpenTofu will ask for cloudflare_zone_id, lan_ipv4 and dns_names (docs/self-hosting.md, section 1)" >&2
 fi
 site="${LEARNHARNESS_SITE:-$HOME/.config/learnharness/site}"
 [ -f "$site/site.nix" ] || { echo "missing $site/site.nix (see docs/self-hosting.md)" >&2; exit 1; }

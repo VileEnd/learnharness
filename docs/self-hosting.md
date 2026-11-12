@@ -43,7 +43,7 @@ The VM is declared in code. `deploy/proxmox/` is OpenTofu, which creates VM 104 
   ```bash
   install -D -m 0644 deploy/nixos/site.example/site.nix ~/.config/learnharness/site/site.nix
   ```
-  `deploy/nixos/rebuild.sh` and `deploy/proxmox/tofu.sh` hand it to the flake (`--override-input site`, directory overridable with `LEARNHARNESS_SITE`). Without it the flake only has the in-repo example and refuses to evaluate, so a plain `nixos-rebuild --flake ./deploy/nixos#learnharness` cannot deploy placeholders.
+  `deploy/nixos/rebuild.sh` and `deploy/proxmox/tofu.sh` hand it to the flake (`--override-input site`, directory overridable with `LEARNHARNESS_SITE`). Without it the flake only has the in-repo example and refuses to evaluate, as it does while any value is still a placeholder or the root key list is empty (the error names each one), so a plain `nixos-rebuild --flake ./deploy/nixos#learnharness` cannot deploy placeholders.
 - `~/.config/learnharness/site.env` (never committed): the OpenTofu site values, which `tofu.sh` reads after `proxmox.env`:
   ```bash
   TF_VAR_cloudflare_zone_id=<zone id>

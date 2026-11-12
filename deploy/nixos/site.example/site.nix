@@ -2,7 +2,7 @@
 # gateway and the root SSH key. The real file lives outside the repository,
 # in ~/.config/learnharness/site/site.nix, and deploy/nixos/rebuild.sh passes
 # it to the flake. This copy holds placeholders only: the flake refuses to
-# build with it. Start your own with
+# build while any value below is still a placeholder. Start your own with
 #
 #   install -D -m 0644 deploy/nixos/site.example/site.nix ~/.config/learnharness/site/site.nix
 #
@@ -11,11 +11,11 @@
   services.learnharness = {
     # The app's public hostname (LH_HOST). Its A record points at the VM's
     # LAN address (deploy/proxmox/dns.tf).
-    host = "learnharness.example.com";
+    host = "learnharness.home.example.com";
     # Caddy site address for Keycloak (AUTH_SITE).
-    authSite = "auth.example.com";
+    authSite = "auth.home.example.com";
     # Keycloak's public URL (AUTH_URL, KC_HOSTNAME).
-    authUrl = "https://auth.example.com";
+    authUrl = "https://auth.home.example.com";
   };
 
   services.learnharness.wireguard = {

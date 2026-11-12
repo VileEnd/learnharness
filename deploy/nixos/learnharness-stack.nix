@@ -1,8 +1,9 @@
 { config, lib, pkgs, ... }:
 
 # Runs the deploy/ Docker stack from a checkout of the fork. Hostnames are
-# Nix options (the move-day switch is a change here + nixos-rebuild);
-# secrets are generated on the VM on first start and never leave it.
+# Nix options (the move-day switch is a change in the site file +
+# deploy/nixos/rebuild.sh); secrets are generated on the VM on first start
+# and never leave it.
 let
   cfg = config.services.learnharness;
   stateDir = "/var/lib/learnharness";
