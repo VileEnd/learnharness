@@ -25,8 +25,8 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		// redesign's chunk budget (2026-09-24); doubled to 8192 with the
 		// digest-aware redesign (2026-09-30), then HALVED BACK to 4096
 		// with the message anchors (owner, 2026-10-13)
-		// + the digest budget (audit B4, owner 2026-11-12: "about 4,000")
-		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 4000 });
+		// + the digest budget (audit B4, owner 2026-11-12: 8000 after review)
+		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 });
 		const a = FACTORY_SETTINGS.appearance;
 		assert.equal(a.mode, "dark");
 		assert.equal(a.background, null); // the mode's own default, not a factory hex

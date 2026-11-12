@@ -552,7 +552,7 @@ export const DOCUMENT_EXTRACTOR_INSTRUCTIONS = `${DOCUMENT_PREAMBLE}\n\n${EXTRAC
 // source-digest.ts; re-exported here for the pipeline's callers and tests.
 export { sourceDigest, boundedSourceDigest, createDigestTools } from "./source-digest.ts";
 
-/** The extractor's turn budget when the topics-tier digest hands it
+/** The extractor's turn budget when a compact digest hands it
  *  search_ideas / open_idea: a few lookups, then the submit (the bare
  *  submit-retry budget is 4). */
 const DIGEST_TOOL_TURNS = 12;
@@ -593,7 +593,7 @@ function runExtractor(
 		onStep,
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
-		// The topics-tier digest's lookups (search_ideas / open_idea); absent
+		// A compact digest's lookups (search_ideas / open_idea); absent
 		// otherwise, so a source whose digest fits runs exactly as before.
 		...(digestTools ? { extraTools: digestTools, maxTurns: DIGEST_TOOL_TURNS } : {}),
 	}).then(asSessionFindings);
@@ -628,7 +628,7 @@ function runNotesExtractor(
 		onStep,
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
-		// The topics-tier digest's lookups (search_ideas / open_idea); absent
+		// A compact digest's lookups (search_ideas / open_idea); absent
 		// otherwise, so a source whose digest fits runs exactly as before.
 		...(digestTools ? { extraTools: digestTools, maxTurns: DIGEST_TOOL_TURNS } : {}),
 	}).then(asSessionFindings);
@@ -676,7 +676,7 @@ function runDocumentExtractor(
 		onStep,
 		neverSubmitted: "the extractor never submitted findings",
 		prepareArguments: healStringifiedArrays,
-		// The topics-tier digest's lookups (search_ideas / open_idea); absent
+		// A compact digest's lookups (search_ideas / open_idea); absent
 		// otherwise, so a source whose digest fits runs exactly as before.
 		...(digestTools ? { extraTools: digestTools, maxTurns: DIGEST_TOOL_TURNS } : {}),
 	}).then((raw) => {
@@ -928,7 +928,7 @@ export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
 	/** The digest budget (audit B4, owner 2026-11-12): the token ceiling of
 	 *  THE GRAPH SO FAR in each extractor prompt. A source whose digest fits
 	 *  runs exactly as before; a larger one gets the compact tiers
-	 *  (source-digest.ts). OPTIONAL with the factory default (4000), like
+	 *  (source-digest.ts). OPTIONAL with the factory default (8000), like
 	 *  the chunk budget; the server callers wire the effective setting. */
 	getDigestTokens?: () => number;
 	/** A top-level run ended in a way the learner should hear about while
@@ -1178,8 +1178,8 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		}
 	}
 
-	/** The stretch's digest under the budget, plus the lookup tools when the
-	 *  topics tier needs them. Topic rows are read only for that tier. */
+	/** The stretch's digest under the budget, plus the lookup tools when it
+	 *  is compact. Topic rows are read only then. */
 	function digestFor(
 		graph: DerivedGraph,
 		sourceId: string,
@@ -1189,7 +1189,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		let topics: ReadonlyMap<string, readonly string[]> | undefined;
 		const topicsOf = () => (topics ??= topicsByNode(graphStore.readTopics(), graphStore.readTopicAliases()));
 		const { text, tier } = boundedSourceDigest(graph, sourceId, { budgetTokens, sectionIds, topicsOf });
-		return { digest: text, tier, ...(tier === "topics" ? { tools: createDigestTools(graph, sourceId, topicsOf()) } : {}) };
+		return { digest: text, tier, ...(tier === "full" ? {} : { tools: createDigestTools(graph, sourceId, topicsOf()) }) };
 	}
 
 	/** The extractor log's digest note: its size, and its tier when compacted. */

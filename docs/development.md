@@ -40,7 +40,7 @@ Native renderer binaries (`@napi-rs/canvas`, `@resvg/resvg-js`) are traced for t
 
 ## Environment (`.env.local`)
 
-Secrets and machine-specific paths only. Model choice and thinking budgets are the user's, not the environment's — BYOK model slots live in **settings** (`models` section: strong/cheap/vision, provider + model id + optional thinking level; per-role and per-chat overrides ride on top). The extraction batch threshold is a settings knob too (`graph.extractionChunkTokens`, default 4096, floor 500), and so is the ceiling of the same-source digest each extractor prompt carries (`graph.extractionDigestTokens`, default 4000, floor 500).
+Secrets and machine-specific paths only. Model choice and thinking budgets are the user's, not the environment's — BYOK model slots live in **settings** (`models` section: strong/cheap/vision, provider + model id + optional thinking level; per-role and per-chat overrides ride on top). The extraction batch threshold is a settings knob too (`graph.extractionChunkTokens`, default 4096, floor 500), and so is the ceiling of the same-source digest each extractor prompt carries (`graph.extractionDigestTokens`, default 8000, floor 500).
 
 | Variable | Purpose |
 |---|---|

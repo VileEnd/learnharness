@@ -2483,6 +2483,16 @@ describe("the bounded digest: every earlier idea stays reachable under a token b
 		assert.ok(bounded.text.includes(`  n_0005 | Concept 5 | ${nodes[5]!.statement}`), "the chunk's own section in full");
 		assert.match(bounded.text, /\n {2}n_0000 \| Concept 0\n/, "an old idea as one line: id and name");
 		assert.match(bounded.text, /\[n_0057 ⇒ n_0059\]/, "the newest idea's derivation rides along");
+		assert.match(bounded.text, /open_idea shows one idea in full by its id, with the derivations recorded for it/, "the header routes to every derivation");
+	});
+
+	it("the budget is clamped to the settings floor: a raw caller far below it still gets a bounded digest", () => {
+		const nodes = bigSource(2000, "src_t");
+		for (const raw of [10, 100, Number.NaN]) {
+			const bounded = boundedSourceDigest(graphOf(nodes), "src_t", { budgetTokens: raw, topicsOf: () => new Map(nodes.map((n, i) => [n.id, [`Topic ${i}`]])) });
+			assert.equal(bounded.tier, "topics");
+			assert.ok(tok(bounded.text) <= 500, `budget ${raw}: ${tok(bounded.text)} tok within the 500 floor`);
+		}
 	});
 
 	it("when even the one-line index is over the budget: grouped by topic with counts, still within it", () => {
@@ -2494,6 +2504,7 @@ describe("the bounded digest: every earlier idea stays reachable under a token b
 		assert.match(bounded.text, /search_ideas/);
 		assert.match(bounded.text, /open_idea/);
 		assert.match(bounded.text, / {2}Topic 0: \d+\n/);
+		assert.match(bounded.text, /lists the ideas of one topic \(topic, paged with offset\)/, "the header says how to reach a topic's ideas");
 		assert.ok(bounded.text.includes(`  n_1999 | Concept 1999 | ${nodes[1999]!.statement}`), "the newest idea in full");
 	});
 
@@ -2513,15 +2524,42 @@ describe("the bounded digest: every earlier idea stays reachable under a token b
 		assert.match(await text("open_idea", { id: "n_nope" }), /not an idea/);
 		const broad = await text("search_ideas", { query: "concept stated precision words tokens" });
 		assert.ok(broad.length <= 6000, `a broad search stays bounded (${broad.length} chars)`);
+		assert.match(broad, /More: call search_ideas again with offset 8\./);
+		assert.match(await text("search_ideas", { query: "concept stated precision words tokens", offset: 8 }), /^Matches 9-16 of/);
+	});
+
+	it("search_ideas lists a topic's ideas page by page, and a plain query matches the home-topic label", async () => {
+		const nodes = bigSource(2000, "src_t");
+		const topicsOf = new Map(nodes.map((n, i) => [n.id, [i === 1234 ? "Measure theory" : `Topic ${i % 12}`, "Secondary"]]));
+		const tools = createDigestTools(graphOf(nodes), "src_t", topicsOf);
+		const text = async (input: unknown) =>
+			((await tools.search_ideas!.execute("t1", input as never)).content[0] as { text: string }).text;
+		const first = await text({ topic: "topic 3" }); // labels compare case-insensitively
+		const lines = first.split("\n");
+		assert.match(lines[0]!, /^Ideas of topic "topic 3", 1-60 of 167, newest first \(id \| name\):$/);
+		assert.equal(lines[1], "  n_1995 | Concept 1995", "one line per idea: id and name");
+		assert.match(first, /More: call search_ideas again with offset 60\./);
+		const last = await text({ topic: "Topic 3", offset: 120 });
+		assert.match(last, /121-167 of 167/);
+		assert.ok(last.includes("  n_0003 | Concept 3") && !/More:/.test(last), "the last page reaches the oldest idea");
+		assert.ok(first.length <= 6000);
+		// A query naming the home topic finds its idea even though no word of it is in the name or statement.
+		assert.match(await text({ query: "measure theory" }), /n_1234 \| Concept 1234 \|/);
+		// topic + query: matches within that topic only.
+		assert.doesNotMatch(await text({ topic: "Topic 4", query: "measure theory" }), /n_1234/);
+		assert.match(await text({ topic: "Nonexistent" }), /No earlier idea of this source has the topic/);
+		assert.match(await text({}), /Give a query, a topic, or both/);
 	});
 
 	it("through the pipeline: the prompt stays within the budget and a reference by id from the one-line tier merges", async () => {
 		const ledgers = memoryLedgers();
 		for (const n of bigSource(60, "src_digest")) ledgers.appendNode(n);
 		const views: string[] = [];
+		let declared: string[] = [];
 		const extractor = fauxEngine([
 			(context) => {
 				views.push(capturedView(context));
+				declared = declaredTools(context);
 				const submit = {
 					propositions: [{ id: "p1", name: "Derived idea", statement: "Follows from Concept 0.", aliases: [] }],
 					chains: [{ premises: ["n_0000"], conclusion: "p1" }],
@@ -2537,6 +2575,7 @@ describe("the bounded digest: every earlier idea stays reachable under a token b
 			getDigestTokens: () => 1000,
 		});
 		assert.deepEqual(await pipeline.importNotes({ id: "src_digest", filePath: "/vault/big.md", text: "A short stretch of notes." }), { nodes: 1, chains: 1 });
+		assert.deepEqual(declared.sort(), ["open_idea", "search_ideas", "submit_findings"], "the index tier reaches every derivation too");
 		const digest = views[0]!.slice(0, views[0]!.indexOf("\n\nSOURCE ("));
 		assert.ok(tok(digest) <= 1000, `digest ${tok(digest)} tok within the budget`);
 		assert.match(digest, /\n {2}n_0000 \| Concept 0\n/, "n_0000 only as one line");

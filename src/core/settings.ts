@@ -474,7 +474,9 @@ export interface GraphSettings {
 	 *  per-topic count plus a search tool), so a long document's late chunks
 	 *  stop paying for the whole book again.
 	 *
-	 *  FACTORY DEFAULT 4000 (owner: "about 4,000"). FLOOR 500
+	 *  FACTORY DEFAULT 8000 (owner ruling, 2026-11-12 review: first "about
+	 *  4,000", raised so typical chats and documents keep today's exact
+	 *  prompt and only long sources compact). FLOOR 500
 	 *  (EXTRACTION_DIGEST_TOKENS_FLOOR, the chunk budget's discipline): the
 	 *  compact digest's fixed part — its header and the topic counts — needs
 	 *  room before any idea gets its full statement. NO CEILING: a large
@@ -572,7 +574,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		sessionNameSerif: true,
 		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
 	},
-	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 4000 },
+	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 },
 	compaction: { thresholdTokens: 150_000 },
 	documents: { embeddingModel: DEFAULT_EMBEDDING_MODEL, embeddingBatch: true },
 };

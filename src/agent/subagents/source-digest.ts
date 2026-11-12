@@ -5,6 +5,7 @@ import type { DerivedGraph } from "../../core/graph.ts";
 import type { GraphChain, GraphNode } from "../../core/contracts.ts";
 import { createPropositionCandidateSearch } from "../../core/proposition-candidates.ts";
 import { viewTokens } from "../../core/coverage.ts";
+import { EXTRACTION_DIGEST_TOKENS_FLOOR } from "../../core/settings.ts";
 
 // ── the same-source digest (owner, 2026-09-30 evening) ──
 //
@@ -44,12 +45,17 @@ export function sourceDigest(graph: DerivedGraph, sourceId: string): string {
 //           entry (id | name | statement) with the derivations that conclude
 //           in them, while the budget lasts.
 //   topics  even the one-line index is over the budget: the nearest ideas in
-//           full as above, the others counted per topic, and the extractor
-//           gets search_ideas / open_idea over the source's ideas.
+//           full as above, the others counted per topic.
+//
+// In both compact tiers the extractor gets search_ideas (by words, or a
+// topic's ideas page by page) and open_idea (one idea in full with the
+// derivations recorded for it), so no idea and no derivation is out of reach.
 //
 // Tokens are the pipeline's estimate (chars/4, ceil — core/coverage.ts
 // viewTokens, the counter behind graph.extractionChunkTokens), so a digest
-// of at most 4 × budget characters is within the budget.
+// of at most 4 × budget characters is within the budget. The budget is
+// clamped to the setting's floor: below it the fixed header alone would not
+// fit.
 
 export type DigestTier = "full" | "index" | "topics";
 
@@ -68,7 +74,7 @@ export interface DigestBudget {
 	topicsOf?: () => ReadonlyMap<string, readonly string[]>;
 }
 
-/** The two tools the topics tier names; the prompt cites these verbatim. */
+/** The two tools the compact tiers name; the prompt cites these verbatim. */
 export const SEARCH_IDEAS_TOOL = "search_ideas";
 export const OPEN_IDEA_TOOL = "open_idea";
 
@@ -78,21 +84,28 @@ const INDEX_LABEL_CHARS = 60;
 const TOPIC_INDEX_SHARE = 0.5;
 /** Tool results are bounded: hits per search, and characters per result. */
 const SEARCH_HITS = 8;
+/** Ideas per page when search_ideas lists a topic (one line each). */
+const TOPIC_PAGE = 60;
 const TOOL_RESULT_CHARS = 6000;
 const OPEN_ALIASES = 5;
 const OPEN_CHAINS = 10;
 const NO_TOPIC = "(no topic)";
 
+/** What both compact headers say about the lookups (field names verbatim). */
+const LOOKUPS =
+	`${OPEN_IDEA_TOOL} shows one idea in full by its id, with the derivations recorded for it; ${SEARCH_IDEAS_TOOL} ` +
+	"finds this source's earlier ideas by their words (query) or lists the ideas of one topic (topic, paged with " +
+	"offset). The ids those tools return belong to THE GRAPH SO FAR — reference them verbatim just the same";
 const INDEX_HEADER =
 	"THE GRAPH SO FAR — everything already extracted from this source (reference these ids verbatim). It is too long " +
-	"to show whole: the ideas nearest this stretch keep their full statement, every other idea shows only its id and " +
-	"name — reference those ids verbatim just the same:";
+	"to show whole: the ideas nearest this stretch keep their full statement and their derivations, every other idea " +
+	"shows only its id and name — reference those ids verbatim just the same. Before you restate an idea or derive " +
+	`a conclusion that may already be recorded, look it up: ${LOOKUPS}:`;
 const topicsHeader = (others: number) =>
 	"THE GRAPH SO FAR — everything already extracted from this source (reference these ids verbatim). It is too large " +
-	`to list: the ideas nearest this stretch are shown in full, the other ${others} are counted by topic below. Before ` +
-	`you add an idea or a derivation that may already be there, look it up: ${SEARCH_IDEAS_TOOL} finds this source's ` +
-	`earlier ideas by their words, ${OPEN_IDEA_TOOL} shows one in full by its id. The ids those tools return belong to ` +
-	"THE GRAPH SO FAR — reference them verbatim just the same:";
+	`to list: the ideas nearest this stretch are shown in full with their derivations, the other ${others} are counted ` +
+	"by topic below. Before you add an idea or derive a conclusion that may already be recorded, look it up: " +
+	`${LOOKUPS}:`;
 const TOPIC_INDEX_HEADER = "OTHER IDEAS BY TOPIC (topic: number of ideas):";
 const COMPACT_DERIVATIONS_HEADER =
 	"DERIVATIONS ALREADY RECORDED for the ideas shown in full (build on these; do not re-derive them):";
@@ -160,7 +173,9 @@ function topicIndex(rest: readonly GraphNode[], topicsOf: ReadonlyMap<string, re
 
 export function boundedSourceDigest(graph: DerivedGraph, sourceId: string, budget: DigestBudget): BoundedDigest {
 	const full = sourceDigest(graph, sourceId);
-	const budgetTokens = Math.max(0, Math.floor(budget.budgetTokens));
+	const budgetTokens = Number.isFinite(budget.budgetTokens)
+		? Math.max(EXTRACTION_DIGEST_TOKENS_FLOOR, Math.floor(budget.budgetTokens))
+		: EXTRACTION_DIGEST_TOKENS_FLOOR;
 	if (viewTokens([full]) <= budgetTokens) return { text: full, tier: "full" };
 	// Below, sizes are counted in characters: ceil(chars / 4) <= budget
 	// exactly when chars <= 4 × budget.
@@ -229,10 +244,20 @@ export function boundedSourceDigest(graph: DerivedGraph, sourceId: string, budge
 
 const searchInput = Type.Object(
 	{
-		query: Type.String({
-			minLength: 1,
-			description: "Words the earlier idea would use — a name, a term, a phrase of its statement. Plain words, no patterns.",
-		}),
+		query: Type.Optional(
+			Type.String({
+				description:
+					"Words the earlier idea would use — a name, a term, a phrase of its statement, or its topic. Plain words, no patterns.",
+			}),
+		),
+		topic: Type.Optional(
+			Type.String({
+				description: "A topic exactly as THE GRAPH SO FAR counts it: lists that topic's ideas (id and name), or narrows a query to it.",
+			}),
+		),
+		offset: Type.Optional(
+			Type.Integer({ minimum: 0, description: "Where the next page starts, as the previous result said. Omit for the first page." }),
+		),
 	},
 	{ additionalProperties: false },
 );
@@ -242,6 +267,13 @@ const openInput = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+
+/** Topic labels compare case- and space-insensitively, and the digest's
+ *  clipped form of a long label names the same topic. */
+const topicMatch = (label: string, asked: string): boolean => {
+	const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+	return norm(label) === norm(asked) || norm(clip(label, INDEX_LABEL_CHARS)) === norm(asked);
+};
 
 function bounded(lines: readonly string[]): string {
 	const text = lines.join("\n");
@@ -261,28 +293,58 @@ export function createDigestTools(
 ): Record<string, AgentTool<any>> {
 	const { ours, ourChains, nameOf } = sourceSlice(graph, sourceId);
 	const byId = new Map(ours.map((n) => [n.id, n]));
+	const homeTopic = (n: GraphNode) => topicsOf.get(n.id)?.[0] ?? NO_TOPIC;
 	let search: ReturnType<typeof createPropositionCandidateSearch> | undefined;
+	/** Ranked ids for a query. A node's home-topic label is one more phrasing
+	 *  in the index, so a query naming the topic finds its ideas too. */
+	const ranked = (query: string): GraphNode[] => {
+		search ??= createPropositionCandidateSearch(
+			ours.map((n) => (topicsOf.has(n.id) ? { ...n, aliases: [...n.aliases, homeTopic(n)] } : n)),
+		);
+		return search({ id: "query", name: "", statement: query, aliases: [] }).map((hit) => byId.get(hit.node.id)!);
+	};
 	return {
 		[SEARCH_IDEAS_TOOL]: {
 			name: SEARCH_IDEAS_TOOL,
 			label: SEARCH_IDEAS_TOOL,
 			description:
-				`Search the ideas already extracted from THIS source (THE GRAPH SO FAR) by their words. Returns up to ${SEARCH_HITS} ` +
-				"best matches, each as id | name | statement in full. Ranks word overlap across names, statements and other phrasings.",
+				"Look up the ideas already extracted from THIS source (THE GRAPH SO FAR). With query: the best matches by their " +
+				`words (names, statements, other phrasings, topic), up to ${SEARCH_HITS} per page, each as id | name | statement in ` +
+				`full. With topic: that topic's ideas, up to ${TOPIC_PAGE} per page as id | name (with a query too: the matches ` +
+				"within that topic). offset pages on.",
 			parameters: searchInput,
-			execute: serverExecute(SEARCH_IDEAS_TOOL, searchInput, ({ query }): string => {
-				search ??= createPropositionCandidateSearch(ours);
-				const hits = search({ id: "query", name: "", statement: query, aliases: [] });
-				if (hits.length === 0) return `No earlier idea of this source matches "${query}". Try other words, or treat the idea as new.`;
+			execute: serverExecute(SEARCH_IDEAS_TOOL, searchInput, ({ query, topic, offset }): string => {
+				const q = query?.trim() ?? "";
+				const t = topic?.trim() ?? "";
+				const from = offset ?? 0;
+				if (q === "" && t === "") return "Give a query, a topic, or both.";
+				let pool = ours;
+				if (t !== "") {
+					pool = ours.filter((n) => topicMatch(homeTopic(n), t));
+					if (pool.length === 0) return `No earlier idea of this source has the topic "${t}". Use a topic as THE GRAPH SO FAR counts it.`;
+				}
+				if (q === "") {
+					// A topic listing: one line per idea, newest first, paged.
+					const list = [...pool].reverse();
+					const page = list.slice(from, from + TOPIC_PAGE);
+					if (page.length === 0) return `The topic "${t}" has ${list.length} ideas; offset ${from} is past the end.`;
+					const next = from + page.length < list.length ? [`More: call ${SEARCH_IDEAS_TOOL} again with offset ${from + page.length}.`] : [];
+					return bounded([`Ideas of topic "${t}", ${from + 1}-${from + page.length} of ${list.length}, newest first (id | name):`, ...page.map(indexLine), ...next]);
+				}
+				const inPool = new Set(pool.map((n) => n.id));
+				const hits = ranked(q).filter((n) => inPool.has(n.id));
+				if (hits.length === 0) return `No earlier idea of this source matches "${q}"${t === "" ? "" : ` in the topic "${t}"`}. Try other words, or treat the idea as new.`;
 				const shown: string[] = [];
 				let used = 0;
-				for (const { node } of hits.slice(0, SEARCH_HITS)) {
+				for (const node of hits.slice(from, from + SEARCH_HITS)) {
 					const line = fullLine(node);
 					if (shown.length > 0 && used + line.length + 1 > TOOL_RESULT_CHARS - 200) break;
 					shown.push(line);
 					used += line.length + 1;
 				}
-				return bounded([`${shown.length} of ${hits.length} matching earlier ideas, best first (id | name | statement):`, ...shown]);
+				if (shown.length === 0) return `${hits.length} ideas match; offset ${from} is past the end.`;
+				const next = from + shown.length < hits.length ? [`More: call ${SEARCH_IDEAS_TOOL} again with offset ${from + shown.length}.`] : [];
+				return bounded([`Matches ${from + 1}-${from + shown.length} of ${hits.length}, best first (id | name | statement):`, ...shown, ...next]);
 			}),
 		},
 		[OPEN_IDEA_TOOL]: {
