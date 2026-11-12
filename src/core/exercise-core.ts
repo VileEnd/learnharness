@@ -73,7 +73,12 @@ function checkAnswer(src: string, mode: string, variables: readonly string[] = [
 		const r = parseExpr(src);
 		if (!r.ok) return `"${src}" is not a valid expression: ${r.error}`;
 		const unknown = [...identifiers(r.expr)].filter((n) => !variables.includes(n));
-		return unknown.length ? `"${src}" uses ${unknown.join(", ")} not listed in variables` : null;
+		if (unknown.length) return `"${src}" uses ${unknown.join(", ")} not listed in variables`;
+		// A key that does not match itself could never be answered correctly
+		// (graded by sampling: too few points where it has a real value).
+		return exprEquivalent(src, src, variables)
+			? null
+			: `"${src}" has no real value at enough sample points of ${variables.length ? variables.join(", ") : "its variables"}, so no answer could match it; use a key that is defined for a range of values`;
 	}
 	return null;
 }

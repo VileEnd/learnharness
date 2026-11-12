@@ -87,3 +87,15 @@ test("typed notation grades right", () => {
 	assert.equal(gradeExercise("numeric", { answer: "x^2", mode: "expression", variables: ["x"] }, { value: "x²" }).outcome, "correct");
 	assert.equal(gradeExercise("numeric", { answer: "1000", mode: "number" }, { value: "1,000,000" }).outcome, "wrong");
 });
+
+test("an expression key that is not equivalent to itself is refused at authoring", () => {
+	const p = exerciseSpecProblems("numeric", { answer: "sqrt(-x^2-1)", mode: "expression", variables: ["x"] });
+	assert.equal(p.length, 1);
+	assert.match(p[0]!, /sqrt\(-x\^2-1\)/);
+	assert.match(p[0]!, /real value/);
+	const spec = { answer: "sqrt(x-5)", mode: "expression", variables: ["x"] };
+	assert.deepEqual(exerciseSpecProblems("numeric", spec), []);
+	assert.equal(gradeExercise("numeric", spec, { value: "sqrt(x-5)" }).outcome, "correct");
+	const blanks = { text: "{{a}}", blanks: [{ id: "a", accept: ["sqrt(-x^2-1)"], mode: "expression", variables: ["x"] }] };
+	assert.equal(exerciseSpecProblems("blanks", blanks).length, 1);
+});

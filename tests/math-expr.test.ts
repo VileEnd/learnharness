@@ -44,6 +44,15 @@ test("exprEquivalent skips shared poles", () => {
 	assert.equal(exprEquivalent("x+y", "y+x", ["x", "y"]), true);
 });
 
+test("exprEquivalent samples wider until enough points are defined", () => {
+	for (const e of ["sqrt(x-5)", "ln(x-5)"]) assert.equal(exprEquivalent(e, e, ["x"]), true, e);
+	const roots = "sqrt(x)*sqrt(y)*sqrt(z)";
+	assert.equal(exprEquivalent(roots, roots, ["x", "y", "z"]), true);
+	assert.equal(exprEquivalent("sqrt(x-5)", "sqrt(x-4)", ["x"]), false);
+	assert.equal(exprEquivalent("ln(x-5)", "ln(x-5)+1", ["x"]), false);
+	assert.equal(exprEquivalent("sqrt(-x^2-1)", "sqrt(-x^2-1)", ["x"]), false); // never defined
+});
+
 test("parseExpr rejects unknown identifiers", () => {
 	assert.equal(parseExpr("constructor(1)").ok, false);
 	assert.equal(parseExpr("y + 1").ok, true); // free variables are allowed; equivalence fixes them
