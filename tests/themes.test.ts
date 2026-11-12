@@ -122,12 +122,17 @@ describe("presets", () => {
 		for (const [name, value] of Object.entries(PRE_THEME_DARK)) assert.equal(vars[name], value, name);
 	});
 
-	it("Ivory is upstream's preset, except muted text, success and warning, darkened in the same hue for AA (owner ruling)", () => {
+	it("Ivory is upstream's preset, except the text inks darkened in the same hue for AA (owner ruling)", () => {
+		const DARKENED = ["textMuted", "italic", "code", "error", "success", "warning"] as const;
 		assert.deepEqual(
-			{ ...IVORY_THEME.colors, textMuted: UPSTREAM_IVORY.textMuted, success: UPSTREAM_IVORY.success, warning: UPSTREAM_IVORY.warning },
+			{ ...IVORY_THEME.colors, ...Object.fromEntries(DARKENED.map((k) => [k, UPSTREAM_IVORY[k]])) },
 			UPSTREAM_IVORY,
 		);
-		for (const key of ["textMuted", "success", "warning"] as const) {
+		assert.deepEqual(
+			Object.fromEntries(DARKENED.map((k) => [k, IVORY_THEME.colors[k]])),
+			{ textMuted: "#6b6a66", italic: "#347759", code: "#a85134", error: "#c03a3a", success: "#347759", warning: "#8c6320" },
+		);
+		for (const key of DARKENED) {
 			// Same HSL hue, up to 8-bit rounding (a near-gray moves a few degrees).
 			assert.ok(Math.abs(hueSat(IVORY_THEME.colors[key]).h - hueSat(UPSTREAM_IVORY[key]).h) <= 3, `${key} keeps its hue`);
 			assert.ok(lum(IVORY_THEME.colors[key]) < lum(UPSTREAM_IVORY[key]), `${key} is darker`);
@@ -138,7 +143,7 @@ describe("presets", () => {
 		const page = IVORY_THEME.colors.background;
 		const surface = IVORY_THEME.colors.surface;
 		const vars = themeVars(IVORY_THEME);
-		for (const name of ["--muted-foreground", "--lh-warning", "--lh-success", "--foreground"]) {
+		for (const name of ["--muted-foreground", "--lh-warning", "--lh-success", "--foreground", "--lh-ink-italic", "--lh-ink-code", "--lh-error", "--destructive", "--lh-ink-strong"]) {
 			for (const bg of [page, surface]) assert.ok(contrast(vars[name]!, bg) >= 4.5, `${name} on ${bg}: ${contrast(vars[name]!, bg).toFixed(2)}`);
 		}
 		for (const name of ["--lh-muted-80", "--lh-muted-70", "--lh-muted-60", "--lh-muted-50", "--lh-muted-40", "--lh-foreground-50"]) {

@@ -10,9 +10,11 @@
  *   Default (dark), unchanged: red-500 #ef4444, yellow-500 #eab308,
  *   green-500 #22c55e (the confidence rail's ramp), "not yet checked" the
  *   muted text #8d8d8d, the "due" ring the text colour #e6e6e6.
- *   Ivory (light): the theme's own error / warning / success inks, which
- *   read on the light page; "not yet checked" and the ring follow the text
- *   tokens, so the ring turns dark instead of vanishing.
+ *   Ivory (light): upstream Ivory's error / warning / success hues as fills
+ *   (the theme's text inks of those hues were darkened for AA, the fills
+ *   were not; see themes.ts), which read on the light page; "not yet checked"
+ *   and the ring follow the text tokens, so the ring turns dark instead of
+ *   vanishing.
  *
  * `due` is not a colour of its own: it is a RING drawn on top of the state
  * colour. weakFoundation is not drawn on the graph at all (detail card only).

@@ -123,7 +123,8 @@ export function isHex(value: unknown): value is string {
  *  themes, value for value (the status colours are the Tailwind 4 oklch
  *  values step 1 compiled to, inline code inherits). Ivory: upstream's preset (warm ivory page,
  *  terracotta accent, blue/green/clay emphasis), except that its muted
- *  text, success and warning are darker (same hue) to reach WCAG AA, a
+ *  text, italic, code, error, success and warning are darker (same hue) to
+ *  reach WCAG AA, a
  *  deliberate departure from upstream (owner ruling 2026-11-12); its tokens
  *  are the fork's additions. */
 export const DEFAULT_THEME: Theme = {
@@ -177,9 +178,12 @@ export const IVORY_THEME: Theme = {
 		textMuted: "#6b6a66",
 		accent: "#d97757",
 		bold: "#3266c9",
-		italic: "#3f8f6b",
-		code: "#c4613f",
-		error: "#c43d3d",
+		// italic, code and error: darker than upstream (#3f8f6b, #c4613f,
+		// #c43d3d), same hue, for AA on page and surface (owner ruling,
+		// fix round 2): 5.07 / 4.60, 5.12 / 4.65, 5.10 / 4.63.
+		italic: "#347759",
+		code: "#a85134",
+		error: "#c03a3a",
 		// Darker than upstream (#3f8f6b, #b8822a), same hue: white on success
 		// 5.34:1 (was 3.92), success text 4.60:1 on the surface; warning
 		// text 4.61:1 on the surface, 5.08:1 on the page (was 2.89 / 3.18).
@@ -187,7 +191,8 @@ export const IVORY_THEME: Theme = {
 		warning: "#8c6320",
 	},
 	tokens: {
-		destructive: "#c43d3d",
+		// The second error token is text too (text-destructive): the same ink.
+		destructive: "#c03a3a",
 		// White on it 6.02:1; one step darker than success so the hover shows.
 		successStrong: "#316e53",
 		lineStrong: "#3d3d3a",
