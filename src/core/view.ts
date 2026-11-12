@@ -557,8 +557,9 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 		case "compaction": {
 			// THE MOMENT DIVIDER (owner round 14): minimal centered small
 			// text at the compaction moment — where the user currently is
-			// (the marker appends at the record's tail). Clicking opens the
-			// full summary. The cut divider is emitted by the fold loop at
+			// (the marker sits right after the messages that were
+			// summarised: the tail, unless something was written during the
+			// summary call). Clicking opens the full summary. The cut divider is emitted by the fold loop at
 			// the kept boundary (see projectView).
 			out.push({
 				id: marker.id,

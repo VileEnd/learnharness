@@ -345,7 +345,7 @@ export async function handleChatInput(
 	// request waits. Skipped under tests (the extraction precedent);
 	// placement mirrors the BYOK/key gates — BEFORE appends and
 	// beginTurn, no liveness effects — and the record re-reads after
-	// because compaction appends the marker.
+	// because compaction inserts the marker.
 	// The gate's engine summarizes, so it logs as compaction; the turn builds
 	// its own engine off the same spec below (teacher / prober / practice).
 	// A Claude Code chat compacts on the strong slot (buildCompactionEngine).
