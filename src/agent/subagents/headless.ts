@@ -393,7 +393,11 @@ async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRun
 			await new Promise((resolve) => setTimeout(resolve, settleMs));
 			if (opts.probe) {
 				if (leftDemo || withoutHash(page.url()) !== withoutHash(demoUrl)) {
-					pageErrors.push("probe not run: the page navigated away from the demo document");
+					pageErrors.push(
+						"probe not run: the page navigated away from the demo document. Verification blocks every navigation " +
+							"away from the demo, so a form submit, a link or a download link that navigates the page breaks it: " +
+							"keep the demo on one page (handle forms and links in script, without navigating).",
+					);
 				} else {
 					try {
 						probeResult = await page.evaluate(opts.probe);

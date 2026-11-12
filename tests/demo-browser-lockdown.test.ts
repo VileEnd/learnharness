@@ -138,6 +138,7 @@ describe("demo browser against a real Chromium", { skip }, () => {
 			probe: "document.documentElement.innerText",
 		});
 		assert.ok(!JSON.stringify(result).includes(secret.marker), JSON.stringify(result));
+		assert.match(result.pageErrors.join("\n"), /probe not run: .*form submit, a link or a download link/);
 	});
 
 	it("a demo cannot fetch, frame or open a socket to the app's network, and public https still loads", async () => {
