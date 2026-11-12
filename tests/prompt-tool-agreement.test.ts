@@ -13,7 +13,11 @@ import { describe, it } from "node:test";
 
 import { PATHS } from "../config.ts";
 import { questionNeedsReveal } from "../src/core/question-core.ts";
+import { listSourceSegments } from "../src/agent/prompt-segments.ts";
+import { annotateInputObject } from "../src/agent/tools/annotate.ts";
+import { practiceTools } from "../src/agent/tools/practice.ts";
 import { planTools } from "../src/agent/tools/plan.ts";
+import { composeInstructions } from "../src/agent/teacher-agent.ts";
 
 const promptText = (rel: string) => fs.readFileSync(path.join(PATHS.root, "src/agent/prompts", rel), "utf-8");
 
@@ -47,5 +51,66 @@ describe("the collapse law: the teaching prompt says what questionNeedsReveal do
 		assert.ok(sentence, "the prompt still addresses ask_user_question under the collapse law");
 		assert.match(sentence, /does not apply to `ask_user_question`/);
 		assert.doesNotMatch(sentence, /arrives behind the button/);
+	});
+});
+
+// ── the canvas section, per role ─────────────────────────────────────────────
+// The canvas fragments are composed for more than one agent, and each agent
+// holds a different set of tools. A fragment must name only what the reader
+// of THIS composition has, so the check is: every backticked name in the
+// canvas fragments a role composes is one of that role's tools, one of those
+// tools' fields, or a drawing id / grid cell.
+
+const CANVAS_FRAGMENTS = ["shared/24-canvas-tools.md", "shared/24-canvas-tasks.md"];
+const drawingStore = { getScene: () => null } as never;
+const stubCtx = { chatId: "chat_x", chatStore: { getChat: () => null } as never, drawingStore, canvas: true, libraryRoot: "/nonexistent-library" };
+
+const toolNames = (registry: Record<string, { parameters?: unknown }>) => {
+	const names = new Set(Object.keys(registry));
+	for (const tool of Object.values(registry)) {
+		const props = (tool.parameters as { properties?: Record<string, unknown> } | undefined)?.properties;
+		for (const field of Object.keys(props ?? {})) names.add(field);
+	}
+	return names;
+};
+const ANNOTATE_NAMES = ["drawingId", "marks", "kind", "target", "from", "to", "label", "object", "stroke", "cell", "cells"];
+const DRAWING_REFS = /^(?:[os]\d+|[A-H]\d+(?:[-:][A-H]\d+)?)$/;
+
+/** The backticked names of the canvas fragments one role composes. */
+function canvasCitations(role: "teacher" | "prober" | "practice"): string[] {
+	const composed = new Set(listSourceSegments(role).map((segment) => segment.path));
+	const cited: string[] = [];
+	for (const fragment of CANVAS_FRAGMENTS) {
+		if (!composed.has(fragment)) continue;
+		cited.push(...promptText(fragment).matchAll(/`([A-Za-z_0-9:-]+)`/g).map((m) => m[1]!));
+	}
+	return cited;
+}
+
+describe("the canvas section reaches practice, and names only what practice holds", () => {
+	const practice = toolNames(practiceTools(stubCtx));
+
+	it("the practice prompt tells the agent to read a drawing as the canvas tool section describes", () => {
+		assert.match(promptText("practice/00-base.md"), /as the canvas tool section describes/);
+	});
+
+	it("the practice composition contains that section", () => {
+		assert.ok(listSourceSegments("practice").some((segment) => segment.path === "shared/24-canvas-tools.md"));
+		const composed = composeInstructions("practice");
+		assert.ok(composed.includes("### Reading a drawing"));
+		assert.ok(composed.includes("### Marking a drawing"));
+	});
+
+	it("every name the practice composition cites from the canvas section is a practice tool or field", () => {
+		const cited = canvasCitations("practice");
+		assert.ok(cited.length >= 3, "the section cites names");
+		const allowed = new Set([...practice, ...ANNOTATE_NAMES, ...Object.keys(annotateInputObject.properties)]);
+		for (const name of cited) assert.ok(allowed.has(name) || DRAWING_REFS.test(name), `\`${name}\` is not something practice holds`);
+	});
+
+	it("the task mechanics (grade, side questions) stay out of practice's composition", () => {
+		const composed = composeInstructions("practice");
+		assert.ok(!composed.includes("Close the task with `grade`"));
+		assert.ok(!composed.includes("Side questions"));
 	});
 });
