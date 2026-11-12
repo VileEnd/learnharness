@@ -11,7 +11,8 @@
  * a thin or empty bar is still easy to hover.
  */
 
-import type { UsageCategory, UsageMonth, UsageMonthTotal } from "@/src/core";
+import type { RenderedMode, UsageCategory, UsageMonth, UsageMonthTotal } from "@/src/core";
+import { useAppearance } from "@/components/settings/appearance";
 import { costLabel } from "@/components/usage-format";
 
 /** Display order: bottom of the stack first, and the order of every table. */
@@ -40,23 +41,42 @@ export const CATEGORY_LABELS: Record<UsageCategory, string> = {
 /**
  * The app palette's hue families (components/canvas/geometry.ts: blue,
  * orange, green, yellow, purple, red, plus aqua and magenta for eight),
- * stepped for the dark chart surface. geometry.ts's own dark steps are
- * pen colours: too light for fills, and its red and orange are too close
- * to sit side by side in a stack. These steps pass the dataviz palette
- * validator on #1c1c1c (lightness band, chroma, adjacent CVD ΔE ≥ 8,
- * normal-vision ΔE ≥ 15, contrast ≥ 3:1) in this order, which is also the
- * stacking order, so neighbours in a bar stay distinguishable.
+ * stepped per chart surface. geometry.ts's own dark steps are pen colours:
+ * too light for fills, and its red and orange are too close to sit side by
+ * side in a stack. Each set passes the dataviz palette validator in this
+ * order, which is also the stacking order, so neighbours in a bar stay
+ * distinguishable: dark on #1c1c1c (lightness band, chroma, adjacent CVD
+ * ΔE ≥ 8, normal-vision ΔE ≥ 15, contrast ≥ 3:1); light (themes step 2)
+ * on Ivory's #f0eee6 and #faf9f5, the same hues one step darker, every check
+ * passing (the dark set fell under 3:1 contrast for four slots there).
  */
-export const CATEGORY_COLORS: Record<UsageCategory, string> = {
-	teaching: "#3987e5",
-	practice: "#d95926",
-	"canvas-reader": "#199e70",
-	graph: "#c98500",
-	jobs: "#d55181",
-	library: "#008300",
-	learner: "#9085e9",
-	search: "#e66767",
+export const CATEGORY_COLORS: Record<RenderedMode, Record<UsageCategory, string>> = {
+	dark: {
+		teaching: "#3987e5",
+		practice: "#d95926",
+		"canvas-reader": "#199e70",
+		graph: "#c98500",
+		jobs: "#d55181",
+		library: "#008300",
+		learner: "#9085e9",
+		search: "#e66767",
+	},
+	light: {
+		teaching: "#2f78d4",
+		practice: "#c24e1f",
+		"canvas-reader": "#14876a",
+		graph: "#a36a00",
+		jobs: "#c0436f",
+		library: "#007000",
+		learner: "#7a6ddb",
+		search: "#cf4848",
+	},
 };
+
+/** The category colours for the mode on screen. */
+export function useCategoryColors(): Record<UsageCategory, string> {
+	return CATEGORY_COLORS[useAppearance().resolvedMode];
+}
 
 const PLOT_H = 120;
 /** Headroom above the top gridline, px. */
@@ -185,6 +205,7 @@ export function DailyBars({ days, month }: { days: UsageMonth["days"]; month: st
 	const max = niceCeil(Math.max(0, ...totals));
 	const shortMonth = monthName(month, "short");
 	const present = CATEGORY_ORDER.filter((c) => days.some((d) => (d.byCategory[c] ?? 0) > 0));
+	const colors = useCategoryColors();
 	const ticks: Array<[number, string]> = [1, 8, 15, 22, 29].filter((d) => d <= n).map((d) => [d - 1, String(d)]);
 	return (
 		<div data-testid="usage-daily-chart">
@@ -214,7 +235,7 @@ export function DailyBars({ days, month }: { days: UsageMonth["days"]; month: st
 										width={BAR}
 										y={top + gap}
 										height={Math.max(h - gap, 0.75)}
-										fill={CATEGORY_COLORS[c]}
+										fill={colors[c]}
 									/>
 								);
 							})}
@@ -226,7 +247,7 @@ export function DailyBars({ days, month }: { days: UsageMonth["days"]; month: st
 				<ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-ui text-xs text-muted-foreground" data-testid="usage-legend">
 					{present.map((c) => (
 						<li key={c} className="flex items-center gap-1.5">
-							<span className="size-2 rounded-[2px]" style={{ background: CATEGORY_COLORS[c] }} />
+							<span className="size-2 rounded-[2px]" style={{ background: colors[c] }} />
 							{CATEGORY_LABELS[c]}
 						</li>
 					))}

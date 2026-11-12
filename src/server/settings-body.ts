@@ -12,7 +12,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { isHexColor, type ChatSettings } from "../core";
+import { isHexColor, isThemeChoice, THEME_CHOICES, THEME_COLOR_KEYS, THEME_IDS, type AppearanceColorOverrides, type ChatSettings, type ThemeColorOverrides } from "../core";
 import type {
 	AgentSettings,
 	QuizMechanic,
@@ -258,22 +258,54 @@ function parseHexOrNull(value: unknown, field: string): { color?: string | null;
 	return { color: value };
 }
 
-/** appearance: { mode?, background?, fontFamily?, proseFontSize?,
- *  sessionNameSerif?, mdRendering? } */
+/** The answer to a v1-shaped appearance write: a page loaded before the
+ *  themes release still sends `background`, `mode` and the emphasis inks,
+ *  which the record no longer has (they live in colors.default). Refusing
+ *  beats saving the rest and silently dropping the colour edit. */
+export const STALE_APPEARANCE_ERROR =
+	"This page is out of date: reload it, then change the appearance again (colours are set per theme now).";
+
+/** appearance: { theme?, colors?: { <themeId>: { <colour>: hex|null } },
+ *  fontFamily?, proseFontSize?, sessionNameSerif?, mdRendering? }. A v1
+ *  key (`background`, `mode`, `mdRendering.boldColor/italicColor`) is a 400
+ *  asking for a reload. A colour set for a theme id this build does not
+ *  know (a newer build's) passes through untouched when it is an object. */
 export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<AppearanceSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
 	const settings: AppearanceSettings = {};
-	if (raw.mode !== undefined) {
-		if (raw.mode !== "dark" && raw.mode !== "light") {
-			return { ok: false, error: "mode must be \"dark\" or \"light\"" };
-		}
-		settings.mode = raw.mode;
+	const md0 = asRecord(raw.mdRendering);
+	if (raw.background !== undefined || raw.mode !== undefined || md0?.boldColor !== undefined || md0?.italicColor !== undefined) {
+		return { ok: false, error: STALE_APPEARANCE_ERROR };
 	}
-	if (raw.background !== undefined) {
-		const parsed = parseHexOrNull(raw.background, "background");
-		if (parsed.error) return { ok: false, error: parsed.error };
-		settings.background = parsed.color ?? null;
+	if (raw.theme !== undefined) {
+		if (!isThemeChoice(raw.theme)) {
+			return { ok: false, error: `theme must be one of: ${THEME_CHOICES.join(", ")}` };
+		}
+		settings.theme = raw.theme;
+	}
+	if (raw.colors !== undefined) {
+		const byTheme = asRecord(raw.colors);
+		if (!byTheme) return { ok: false, error: "colors must be an object of theme ids" };
+		const colors: AppearanceColorOverrides = {};
+		for (const id of Object.keys(byTheme)) {
+			const c = asRecord(byTheme[id]);
+			if (!c) return { ok: false, error: `colors.${id} must be an object of colours` };
+			if (!(THEME_IDS as readonly string[]).includes(id)) {
+				// A newer build's theme: kept verbatim, like every unknown key.
+				(colors as Record<string, unknown>)[id] = c;
+				continue;
+			}
+			const own: ThemeColorOverrides = {};
+			for (const key of THEME_COLOR_KEYS) {
+				if (c[key] === undefined) continue;
+				const parsed = parseHexOrNull(c[key], `colors.${id}.${key}`);
+				if (parsed.error) return { ok: false, error: parsed.error };
+				own[key] = parsed.color ?? null;
+			}
+			colors[id as (typeof THEME_IDS)[number]] = own;
+		}
+		settings.colors = colors;
 	}
 	if (raw.fontFamily !== undefined) {
 		if (raw.fontFamily !== null && (typeof raw.fontFamily !== "string" || !raw.fontFamily.trim())) {
@@ -312,16 +344,6 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 				return { ok: false, error: "mdRendering.headingWeight must be an integer between 100 and 900" };
 			}
 			rendering.headingWeight = md.headingWeight;
-		}
-		if (md.boldColor !== undefined) {
-			const parsed = parseHexOrNull(md.boldColor, "mdRendering.boldColor");
-			if (parsed.error) return { ok: false, error: parsed.error };
-			rendering.boldColor = parsed.color ?? null;
-		}
-		if (md.italicColor !== undefined) {
-			const parsed = parseHexOrNull(md.italicColor, "mdRendering.italicColor");
-			if (parsed.error) return { ok: false, error: parsed.error };
-			rendering.italicColor = parsed.color ?? null;
 		}
 		if (Object.keys(rendering).length) settings.mdRendering = rendering;
 	}

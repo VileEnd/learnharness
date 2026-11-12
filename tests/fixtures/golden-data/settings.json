@@ -1,11 +1,14 @@
 {
-	"version": 1,
+	"version": 2,
 	"agent": {
 		"tools": {
 			"explain": false
 		},
 		"quizMechanic": "mixed",
 		"turnSpendCapUsd": 1
+	},
+	"appearance": {
+		"theme": "system"
 	},
 	"models": {
 		"strong": {

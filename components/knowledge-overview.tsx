@@ -31,7 +31,7 @@ function StateDot({ state, due }: { state: KnowledgeConceptRef["state"]; due: bo
 			className="inline-block size-2.5 shrink-0 rounded-full"
 			style={{
 				backgroundColor: LEARNER_STATE_STYLES[state].color,
-				...(due ? { boxShadow: `0 0 0 1.5px var(--background, #0a0a0a), 0 0 0 3px ${LEARNER_DUE_RING.color}` } : {}),
+				...(due ? { boxShadow: `0 0 0 1.5px var(--background), 0 0 0 3px ${LEARNER_DUE_RING.color}` } : {}),
 			}}
 		/>
 	);

@@ -74,7 +74,8 @@ import { LearnerLegend } from "@/components/learner-legend";
 import { NodeCardBody, useCardPlacement, type CardSelection } from "@/components/graph-node-card";
 import { tokenHex } from "@/components/css-color";
 import { useLearnerSnapshot } from "@/components/use-learner-snapshot";
-import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { useAppearance } from "@/components/settings/appearance";
 import { UsageMonthControl, useUsageMonth } from "@/components/usage/month-pill.tsx";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { useServerEvent, useServerResync } from "@/components/server-events";
@@ -860,6 +861,7 @@ export function GraphView({
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const { resolvedMode, paletteKey } = useAppearance();
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
 	// The load failed with nothing to show yet (a refetch failure keeps the
 	// snapshot it has). Null snapshot without this is "still loading".
@@ -1294,14 +1296,19 @@ export function GraphView({
 				: {}),
 			colors: {
 				node: tokenHex(NODE_COLOR_TOKEN),
-				edge: tokenHex("--ring"),
+				// Edges read the muted text, which --ring equalled before themes
+				// made --ring the theme accent (upstream 618f6227).
+				edge: tokenHex("--muted-foreground"),
 				label: tokenHex("--muted-foreground"),
 				hoverText: tokenHex("--foreground"),
+				clusterLightness: CLUSTER_LIGHTNESS[resolvedMode],
 			},
 			// Match the app typography (Geist via the body's stack).
 			fontFamily: getComputedStyle(document.body).fontFamily,
 		});
-	}, [snapshot, isEmpty]);
+		// paletteKey re-runs this: the token hexes and the cluster lightness
+		// follow the theme (the provider moved the palette before this runs).
+	}, [snapshot, isEmpty, resolvedMode, paletteKey]);
 
 	// Feed #1b — the knowledge overlay: node fills by learner state (+ a due
 	// ring). Off or not loaded yet = null = the neutral rendering.
@@ -1313,13 +1320,13 @@ export function GraphView({
 			return;
 		}
 		const byNode = new Map<string, { color: string; due: boolean }>();
-		for (const [id, st] of Object.entries(learner.states)) byNode.set(id, learnerNodeStyle(st));
+		for (const [id, st] of Object.entries(learner.states)) byNode.set(id, learnerNodeStyle(st, tokenHex));
 		renderer.setKnowledge({
 			byNode,
-			fallback: LEARNER_STATE_STYLES["not-yet-checked"].color,
-			ringColor: LEARNER_DUE_RING.color,
+			fallback: tokenHex(LEARNER_STATE_STYLES["not-yet-checked"].cssVar),
+			ringColor: tokenHex(LEARNER_DUE_RING.cssVar),
 		});
-	}, [learner, settings.showKnowledge, snapshot, isEmpty]);
+	}, [learner, settings.showKnowledge, snapshot, isEmpty, paletteKey]);
 
 	// Feed #2 — settings: just marks the frame dirty. No rebuild, no
 	// re-layout, no camera touch (the whole point of the new renderer).
@@ -1412,7 +1419,7 @@ export function GraphView({
 							setDeletingNode({ id: ctxNode.id, name: ctxNode.name });
 							setCtxNode(null);
 						}}
-						className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
+						className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground-80 transition-colors hover:bg-accent hover:text-foreground"
 					>
 						Delete
 					</button>

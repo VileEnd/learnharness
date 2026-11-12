@@ -1,0 +1,24 @@
+{
+	"version": 1,
+	"agent": {
+		"tools": {
+			"explain": false
+		},
+		"quizMechanic": "mixed",
+		"turnSpendCapUsd": 1
+	},
+	"appearance": {
+		"background": "#101820",
+		"fontFamily": "Georgia",
+		"proseFontSize": 18,
+		"sessionNameSerif": false,
+		"mdRendering": {
+			"headingWeight": 700,
+			"boldColor": "#ff8800",
+			"italicColor": "#66aaff"
+		}
+	},
+	"compaction": {
+		"thresholdTokens": 50000
+	}
+}

@@ -3,38 +3,45 @@
  * pure). The graph canvas and the legend both read it, so a state can never
  * be one colour on the canvas and another in the key.
  *
- * Palette: the app's existing semantic hexes, the same ones the answered-card
- * and the confidence rail already use (components/confidence-rail.tsx ramp:
- * red-500 #ef4444, yellow-500 #eab308, green-500 #22c55e) plus the graph's own
- * neutral token (--ring / --muted-foreground, #8d8d8d). The app has a single
- * dark theme (app/globals.css: :root and .dark carry the same values), so
- * there is one value per slot; the canvas wants hex, not a CSS variable.
+ * Themes (step 2, 2026-11-12): every colour is a CSS variable, set per theme
+ * in app/globals.css (src/core/themes.ts tokens). The DOM (legend, chips,
+ * the overview) uses `color` as is; the canvases resolve `cssVar` to hex
+ * (components/css-color.ts tokenHex) and re-read it when the palette moves.
+ *   Default (dark), unchanged: red-500 #ef4444, yellow-500 #eab308,
+ *   green-500 #22c55e (the confidence rail's ramp), "not yet checked" the
+ *   muted text #8d8d8d, the "due" ring the text colour #e6e6e6.
+ *   Ivory (light): upstream Ivory's error / warning / success hues as fills
+ *   (the theme's text inks of those hues were darkened for AA, the fills
+ *   were not; see themes.ts), which read on the light page; "not yet checked"
+ *   and the ring follow the text tokens, so the ring turns dark instead of
+ *   vanishing.
  *
  * `due` is not a colour of its own: it is a RING drawn on top of the state
- * colour (ring colour = --foreground, #e6e6e6). weakFoundation is not drawn
- * on the graph at all (detail card only).
+ * colour. weakFoundation is not drawn on the graph at all (detail card only).
  */
 
 import type { ConceptStateName } from "./contracts/learner.ts";
 
 export interface LearnerStateStyle {
-	/** The node fill. */
+	/** The fill, as a CSS value (`var(--lh-learner-…)`). */
 	color: string;
+	/** The variable behind it, for the canvas renderers. */
+	cssVar: string;
 	/** The legend word. */
 	label: string;
-	/** The existing token / palette entry the hex comes from. */
-	token: string;
 }
 
+const token = (cssVar: string) => ({ color: `var(${cssVar})`, cssVar });
+
 export const LEARNER_STATE_STYLES: Readonly<Record<ConceptStateName, LearnerStateStyle>> = {
-	shaky: { color: "#ef4444", label: "Shaky", token: "red-500 (confidence ramp 0)" },
-	learning: { color: "#eab308", label: "Learning", token: "yellow-500 (confidence ramp 50)" },
-	solid: { color: "#22c55e", label: "Solid", token: "green-500 (confidence ramp 90)" },
-	"not-yet-checked": { color: "#8d8d8d", label: "Not yet checked", token: "--ring / --muted-foreground" },
+	shaky: { ...token("--lh-learner-shaky"), label: "Shaky" },
+	learning: { ...token("--lh-learner-learning"), label: "Learning" },
+	solid: { ...token("--lh-learner-solid"), label: "Solid" },
+	"not-yet-checked": { ...token("--lh-learner-unchecked"), label: "Not yet checked" },
 };
 
-/** The ring that marks a concept as due for review (--foreground). */
-export const LEARNER_DUE_RING = { color: "#e6e6e6", label: "Due for review", token: "--foreground" } as const;
+/** The ring that marks a concept as due for review (the text colour). */
+export const LEARNER_DUE_RING = { ...token("--lh-learner-due"), label: "Due for review" } as const;
 
 /** Legend order: the four states (the due ring follows). */
 export const LEARNER_STATE_ORDER: readonly ConceptStateName[] = ["shaky", "learning", "solid", "not-yet-checked"];
@@ -53,12 +60,15 @@ export const EVIDENCE_VERBS: Record<string, string> = {
 	surrendered: "gave up",
 };
 
-/** What the canvas needs per node: its state colour and whether to ring it. */
+/** What the canvas needs per node: its state colour and whether to ring it.
+ *  `resolve` turns the state's CSS variable into a canvas colour (the
+ *  caller's tokenHex); without it the colour is the CSS value. */
 export function learnerNodeStyle(
 	state: { state: ConceptStateName; due: boolean } | undefined,
+	resolve?: (cssVar: string) => string,
 ): { color: string; due: boolean } {
-	const s = state?.state ?? "not-yet-checked";
-	return { color: LEARNER_STATE_STYLES[s].color, due: state?.due === true };
+	const style = LEARNER_STATE_STYLES[state?.state ?? "not-yet-checked"];
+	return { color: resolve ? resolve(style.cssVar) : style.color, due: state?.due === true };
 }
 
 /** "Suggested: shaky and due": exactly the shaky concepts and the due ones,

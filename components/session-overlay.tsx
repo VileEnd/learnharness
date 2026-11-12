@@ -8,6 +8,7 @@ import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { useCoarsePointer } from "@/components/use-coarse-pointer";
 import { fitGraphView, fitZoomFor, pinchView, zoomedGraphView, type Pt, type Viewport } from "@/components/pan-zoom";
 import { renderMermaid } from "@/components/mermaid-render";
+import { useAppearance } from "@/components/settings/appearance";
 import { MermaidError } from "@/components/mermaid-error";
 import { Hint } from "@/components/ui/hint";
 import { SvgImage } from "@/components/artifacts/svg-image";
@@ -91,6 +92,7 @@ export function MermaidOverlay({
 	const [svg, setSvg] = useState<string | null>(rawSvg ?? null);
 	const [error, setError] = useState<string | null>(null);
 	const [attempt, setAttempt] = useState(0);
+	const { resolvedMode } = useAppearance();
 	useEffect(() => {
 		if (rawSvg !== undefined) {
 			setSvg(rawSvg);
@@ -101,7 +103,7 @@ export function MermaidOverlay({
 		let cancelled = false;
 		setSvg(null);
 		setError(null);
-		renderMermaid(chart)
+		renderMermaid(chart, resolvedMode)
 			.then((s) => {
 				if (!cancelled) setSvg(s);
 			})
@@ -111,7 +113,7 @@ export function MermaidOverlay({
 		return () => {
 			cancelled = true;
 		};
-	}, [rawSvg, chart, attempt]);
+	}, [rawSvg, chart, attempt, resolvedMode]);
 
 	// The back gesture (Android back, iOS edge swipe) closes the overlay.
 	useBackDismiss(true, onClose);
@@ -326,7 +328,7 @@ export function MermaidOverlay({
 							)}
 						</div>
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
-							<span className="text-xs text-muted-foreground/60">{coarse ? "Drag to pan · pinch to zoom" : "Drag to pan · scroll to zoom"}</span>
+							<span className="text-xs text-muted-foreground-60">{coarse ? "Drag to pan · pinch to zoom" : "Drag to pan · scroll to zoom"}</span>
 							<div className="flex gap-1">
 								<Hint label="Zoom out" side="bottom">
 <button

@@ -33,10 +33,15 @@ import type { ModelRole } from "../../config.ts";
 import type { ChatSettings } from "./contracts/chat.ts";
 import { isSearchEngineId, type SearchEngineId } from "./search.ts";
 import { isDictationLanguage, type DictationLanguage } from "./dictation.ts";
+import { isThemeChoice, THEME_COLOR_KEYS, THEME_IDS, type AppearanceColorOverrides, type ThemeChoice, type ThemeColorOverrides } from "./themes.ts";
 
 /** The schema version this code understands. Bump ONLY for breaking shape
- *  changes (a field renamed/meaning changed); pure additions never bump. */
-export const CURRENT_SETTINGS_VERSION = 1;
+ *  changes (a field renamed/meaning changed); pure additions never bump.
+ *  2 (themes, 2026-11-12): colour overrides live per theme in
+ *  `appearance.colors.<themeId>`; v1's `background` (which derived the
+ *  raised surfaces and edges from itself) and `mdRendering.boldColor/
+ *  italicColor` move into Default's overrides on read (src/store/settings.ts). */
+export const CURRENT_SETTINGS_VERSION = 2;
 
 /** The background-agent roles whose models the Agent settings expose.
  *  The conversation pair (prober/teacher) stays out — chat-controlled via
@@ -399,19 +404,19 @@ export interface MdRenderingSettings {
 	/** Heading font weight (100–900, default 900). CSS resolves the nearest
 	 *  available weight of the chosen font — no font introspection needed. */
 	headingWeight?: number;
-	/** Color for **bold** spans (default #ffffff). */
-	boldColor?: string | null;
-	/** Color for *italic* spans (default #ffffff). */
-	italicColor?: string | null;
+	// v1's boldColor/italicColor are Default's `bold`/`italic` overrides since v2.
 }
 
-/** Appearance settings — mode, colors, type, markdown emphasis. */
+/** Appearance settings — theme, colour overrides, type, markdown emphasis. */
 export interface AppearanceSettings {
-	/** "dark" | "light" (default dark). */
-	mode?: "dark" | "light";
-	/** The one user-chosen color; everything else derives per-mode in code.
-	 *  null = the mode's default background. */
-	background?: string | null;
+	/** The theme choice (core/themes.ts): "default" (dark), "ivory" (light)
+	 *  or "system" (Ivory while the device is light, Default otherwise).
+	 *  Absent = "default". Replaces v1's never-enabled `mode` key. */
+	theme?: ThemeChoice;
+	/** Per-colour overrides, stored per theme id (`default`, `ivory`): each
+	 *  preset shows only its own (null/absent = the theme's colour). v1's
+	 *  `background` and emphasis inks migrated into `default`. */
+	colors?: AppearanceColorOverrides;
 	/** The main reading font (everything that is Source Sans 3 today), by
 	 *  name — user-chosen from installed fonts. null = Source Sans 3. */
 	fontFamily?: string | null;
@@ -546,15 +551,13 @@ export interface FactorySettings {
 	general: Required<GeneralSettings>;
 	dictation: DictationSettings;
 	appearance: {
-		mode: "dark" | "light";
-		background: string | null;
+		theme: ThemeChoice;
+		colors: AppearanceColorOverrides;
 		fontFamily: string | null;
 		proseFontSize: number;
 		sessionNameSerif: boolean;
 		mdRendering: {
 			headingWeight: number;
-			boldColor: string | null;
-			italicColor: string | null;
 		};
 	};
 	graph: Required<GraphSettings>;
@@ -567,12 +570,12 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	general: {},
 	dictation: {},
 	appearance: {
-		mode: "dark",
-		background: null, // the dark default (#141414) lives in the mode's derivation curve
+		theme: "default",
+		colors: {}, // no overrides: every colour is each theme's own
 		fontFamily: null, // Source Sans 3
 		proseFontSize: 16,
 		sessionNameSerif: true,
-		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
+		mdRendering: { headingWeight: 900 },
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 },
 	compaction: { thresholdTokens: 150_000 },
@@ -731,15 +734,36 @@ function sanitizeMdRendering(raw: unknown): MdRenderingSettings {
 	if (typeof r.headingWeight === "number" && Number.isFinite(r.headingWeight)) {
 		out.headingWeight = clamp(Math.round(r.headingWeight), 100, 900);
 	}
-	if (r.boldColor !== undefined) out.boldColor = sanitizeHexOrNull(r.boldColor);
-	if (r.italicColor !== undefined) out.italicColor = sanitizeHexOrNull(r.italicColor);
 	return out;
 }
 
 function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	const out: AppearanceSettings = {};
-	if (raw.mode === "dark" || raw.mode === "light") out.mode = raw.mode;
-	if (raw.background !== undefined) out.background = sanitizeHexOrNull(raw.background);
+	// v1's `mode` (never enabled in the UI) is not read: the theme decides
+	// the mode. Dropped here like the graph's dead rungs.
+	if (isThemeChoice(raw.theme)) out.theme = raw.theme;
+	// Per-theme overrides: a known theme's set keeps its known colour keys,
+	// hex or null; an unknown theme id's set rides along verbatim.
+	if (raw.colors !== null && typeof raw.colors === "object" && !Array.isArray(raw.colors)) {
+		const colors: AppearanceColorOverrides = {};
+		const byTheme = raw.colors as Record<string, unknown>;
+		for (const [id, c] of Object.entries(byTheme)) {
+			if (!(THEME_IDS as readonly string[]).includes(id)) {
+				// A theme this build does not know (a newer build's): preserved
+				// verbatim, like every unknown key, never shown.
+				(colors as Record<string, unknown>)[id] = c;
+				continue;
+			}
+			if (c === null || typeof c !== "object" || Array.isArray(c)) continue;
+			const own: ThemeColorOverrides = {};
+			for (const key of THEME_COLOR_KEYS) {
+				const v = (c as Record<string, unknown>)[key];
+				if (v !== undefined) own[key] = sanitizeHexOrNull(v);
+			}
+			colors[id as (typeof THEME_IDS)[number]] = own;
+		}
+		out.colors = colors;
+	}
 	if (raw.fontFamily !== undefined) {
 		out.fontFamily = typeof raw.fontFamily === "string" && raw.fontFamily.trim() ? raw.fontFamily : null;
 	}

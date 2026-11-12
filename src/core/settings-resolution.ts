@@ -222,15 +222,13 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			vision: resolveSlot(modelsSection.vision),
 		},
 		appearance: {
-			mode: appearance.mode ?? factoryAppearance.mode,
-			background: appearance.background ?? factoryAppearance.background,
+			theme: appearance.theme ?? factoryAppearance.theme,
+			colors: appearance.colors ?? factoryAppearance.colors,
 			fontFamily: appearance.fontFamily ?? factoryAppearance.fontFamily,
 			proseFontSize: appearance.proseFontSize ?? factoryAppearance.proseFontSize,
 			sessionNameSerif: appearance.sessionNameSerif ?? factoryAppearance.sessionNameSerif,
 			mdRendering: {
 				headingWeight: md.headingWeight ?? factoryMd.headingWeight,
-				boldColor: md.boldColor ?? factoryMd.boldColor,
-				italicColor: md.italicColor ?? factoryMd.italicColor,
 			},
 		},
 		graph: {

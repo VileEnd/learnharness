@@ -289,7 +289,7 @@ export function PromptTextEditor({
 	return (
 		<div className="mt-1 flex flex-col gap-2">
 			<div>
-				<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Source</p>
+				<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground-70">Source</p>
 				<textarea
 					readOnly
 					value={info.sourceText}
@@ -298,7 +298,7 @@ export function PromptTextEditor({
 				/>
 			</div>
 			<div>
-				<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Override</p>
+				<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground-70">Override</p>
 				<textarea
 					value={draft}
 					readOnly={!isAdmin}
@@ -316,7 +316,7 @@ export function PromptTextEditor({
 					className={
 						canSave
 							? "text-xs text-foreground underline-offset-2 hover:underline"
-							: "cursor-not-allowed text-xs text-muted-foreground/40 underline-offset-2"
+							: "cursor-not-allowed text-xs text-muted-foreground-40 underline-offset-2"
 					}
 				>
 					Save
@@ -325,13 +325,13 @@ export function PromptTextEditor({
 					<button
 						type="button"
 						onClick={onDelete}
-						className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
+						className="text-xs text-muted-foreground-70 underline-offset-2 hover:text-error hover:underline"
 					>
 						Delete
 					</button>
 				)}
 				{!isAdmin && (
-					<p className="text-xs text-muted-foreground/70" data-testid="segment-readonly-note">
+					<p className="text-xs text-muted-foreground-70" data-testid="segment-readonly-note">
 						Only an administrator can edit prompt text. The switch above is yours.
 					</p>
 				)}
@@ -339,7 +339,7 @@ export function PromptTextEditor({
 				    no file paths in user-facing status). One editor is open at a time
 				    (openSegment), so one shared status reads unambiguously. */}
 				{status && (
-					<p className="text-xs text-muted-foreground/70" data-testid="segment-status">
+					<p className="text-xs text-muted-foreground-70" data-testid="segment-status">
 						{status}
 					</p>
 				)}
@@ -677,7 +677,7 @@ export function AgentSection({
 						setOpenSegment(open ? null : info.path);
 						setSegmentStatus(null);
 					}}
-					className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+					className="text-xs text-muted-foreground-70 underline-offset-2 hover:text-foreground hover:underline"
 				>
 					{open ? "Hide text" : "Show text"}
 				</button>
@@ -1067,14 +1067,14 @@ export function AgentSection({
 
 			<SettingsGroup label="System prompts" testid="group-prompts">
 				{prompts === null ? (
-					<p className="text-xs text-muted-foreground/70">Loading prompt segments…</p>
+					<p className="text-xs text-muted-foreground-70">Loading prompt segments…</p>
 				) : (
 					<div className="flex flex-col gap-4">
 						{/* Teacher, Prober, Practice, Shared — shared chunks once,
 						    each agent's own section in prompt-assembly order. */}
 						{sectionedSegments(prompts).map((section) => (
 							<div key={section.id} data-testid={`prompt-section-${section.id}`}>
-								<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">
+								<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground-70">
 									{section.label}
 								</p>
 								<div className="flex flex-col gap-2">

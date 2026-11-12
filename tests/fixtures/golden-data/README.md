@@ -63,10 +63,14 @@ core tool surface must appear in real data here.
   research job that finished (`delivery: {kind: "result", status:
   "delivered"}`) and one the learner aborted (`delivery: {kind: "abort",
   status: "delivered"}`), both with the saved dispatch `input`.
-- `settings.json` — the stamped settings record (version 1, model slots). Its agent
+- `settings.json` — the stamped settings record (model slots). Its agent
   section was last written by the app's `PUT /api/settings/agent` (dev server on a
   scratch copy of this dir, 2026-10-27) to carry `turnSpendCapUsd: 1` (the per-turn
-  spend cap) next to `quizMechanic`.
+  spend cap) next to `quizMechanic`. Rewritten as version 2 (themes, 2026-11-12) by
+  the app itself: production server on a scratch copy, Settings → Appearance →
+  "Follow system" clicked in headless Chromium, so the read migrated the v1 record
+  and the `PUT /api/settings/appearance` wrote `appearance.theme: "system"`. The v1
+  read path (the background migration) is unit-tested in `tests/settings-store.test.ts`.
 
 ## Regenerating / extending
 

@@ -13,7 +13,8 @@ import {
 import { tokenHex } from "@/components/css-color";
 import { NodeCardBody, useCardPlacement } from "@/components/graph-node-card";
 import { LearnerLegend } from "@/components/learner-legend";
-import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { useAppearance } from "@/components/settings/appearance";
 
 /**
  * The "My knowledge" Graph tab: only the concepts that have evidence, filled by
@@ -92,6 +93,7 @@ export function KnowledgeGraph({
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const { resolvedMode, paletteKey } = useAppearance();
 	const rendererRef = useRef<GraphCanvasRenderer | null>(null);
 	const [open, setOpen] = useState<Open | null>(null);
 	const placement = useMemo(
@@ -182,20 +184,22 @@ export function KnowledgeGraph({
 			clusters: [],
 			colors: {
 				node: tokenHex("--primary"),
-				edge: tokenHex("--ring"),
+				edge: tokenHex("--muted-foreground"),
 				label: tokenHex("--muted-foreground"),
 				hoverText: tokenHex("--foreground"),
+				clusterLightness: CLUSTER_LIGHTNESS[resolvedMode],
 			},
 			fontFamily: getComputedStyle(document.body).fontFamily,
 		});
 		const byNode = new Map<string, { color: string; due: boolean }>();
-		for (const [id, st] of Object.entries(view.learner.states)) byNode.set(id, learnerNodeStyle(st));
+		for (const [id, st] of Object.entries(view.learner.states)) byNode.set(id, learnerNodeStyle(st, tokenHex));
 		renderer.setKnowledge({
 			byNode,
-			fallback: LEARNER_STATE_STYLES["not-yet-checked"].color,
-			ringColor: LEARNER_DUE_RING.color,
+			fallback: tokenHex(LEARNER_STATE_STYLES["not-yet-checked"].cssVar),
+			ringColor: tokenHex(LEARNER_DUE_RING.cssVar),
 		});
-	}, [view, nodes, edges, positions, hasNodes]);
+		// paletteKey: the token hexes follow the theme.
+	}, [view, nodes, edges, positions, hasNodes, resolvedMode, paletteKey]);
 
 	const deferredSettings = useDeferredValue(settings);
 	useEffect(() => {

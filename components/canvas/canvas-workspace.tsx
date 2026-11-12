@@ -13,7 +13,7 @@
  * thinking" draft, kept in the field) with the request and stays open, so the tutor's marks land in view.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ArrowUpRightIcon, CircleIcon, EraserIcon, EyeIcon, EyeOffIcon, FileTextIcon, HandIcon, HighlighterIcon, ImageIcon, LightbulbIcon, MinusIcon, Minimize2Icon,
 	MousePointer2Icon, PencilIcon, PenLineIcon, Redo2Icon, ScanIcon, SigmaIcon, SquareIcon, TableIcon, TypeIcon, Undo2Icon,
@@ -27,6 +27,7 @@ import { useBackDismiss } from "@/components/use-back-dismiss";
 import { isTopModal, useModal } from "@/components/ui/use-modal";
 import type { Viewport } from "@/components/pan-zoom";
 import { cn } from "@/lib/utils";
+import { useAppearance } from "@/components/settings/appearance";
 import { hintsFor, isInputBoundary, latestTaskMarks, nextObjectId, sceneBoundingBox, type AnnotationMark, type BlockObject, type Box, type DrawingScene, type TableObject, type ImageObject } from "@/src/core";
 import { CanvasEngine, type CanvasTool } from "./canvas-engine";
 import { fitImageSize, PALETTE_NAMES, revealView, screenColor } from "./geometry";
@@ -105,6 +106,10 @@ function nextZ(scene: DrawingScene): number {
 export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false, messages = [], turnBusy = false }: CanvasWorkspaceProps) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const engineRef = useRef<CanvasEngine | null>(null);
+	// The mode on screen comes from the appearance provider (Follow system
+	// resolved live). The engine reads it through a ref, outside React.
+	const theme = useAppearance().resolvedMode;
+	const themeRef = useRef(theme);
 	const [scene, setScene] = useState<DrawingScene>(EMPTY_SCENE);
 	const sceneRef = useRef<DrawingScene>(EMPTY_SCENE);
 	const [view, setView] = useState<Viewport>({ zoom: 1, x: 0, y: 0 });
@@ -240,7 +245,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 		const root = rootRef.current;
 		if (!root) return;
 		const engine = new CanvasEngine(root, {
-			theme: readTheme,
+			theme: () => themeRef.current,
 			onChange: onSceneChange,
 			onSelect: setSelected,
 			onViewChange: setView,
@@ -416,8 +421,10 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 	};
 	useEnterSubmits(() => void submit(), dialogRef);
 
-	const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as const);
-	useEffect(() => engineRef.current?.refresh(), [theme]);
+	useEffect(() => {
+		themeRef.current = theme;
+		engineRef.current?.refresh();
+	}, [theme]);
 	const interactive = tool === "select" || PLACE_TOOLS.includes(tool);
 	const zoomPct = useMemo(() => Math.round(view.zoom * 100), [view.zoom]);
 
@@ -623,12 +630,3 @@ function imageSize(file: Blob): Promise<{ w: number; h: number }> {
 	});
 }
 
-/** The app theme is the `dark` class on <html>; swatches and the engine follow it live. */
-function readTheme(): "light" | "dark" {
-	return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
-function subscribeTheme(onChange: () => void): () => void {
-	const observer = new MutationObserver(onChange);
-	observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-	return () => observer.disconnect();
-}

@@ -225,7 +225,7 @@ export function DocumentReaderBody({
 						</div>
 					)}
 					{meta.filenames.length > 0 && (
-						<p className="mt-2 break-words text-[11px] text-muted-foreground/70">Also known as {meta.filenames.join(" · ")}</p>
+						<p className="mt-2 break-words text-[11px] text-muted-foreground-70">Also known as {meta.filenames.join(" · ")}</p>
 					)}
 					{rebuild && (
 						<RebuildPanel
@@ -261,7 +261,7 @@ export function DocumentReaderBody({
 								className={`min-w-0 scroll-mt-20${numbered.length > 1 ? " [content-visibility:auto] [contain-intrinsic-size:auto_48rem]" : ""}`}
 							>
 								{p.page !== null && numbered.length > 1 && (
-									<div className="mb-2 text-[11px] uppercase tracking-widest text-muted-foreground/70">Page {p.page}</div>
+									<div className="mb-2 text-[11px] uppercase tracking-widest text-muted-foreground-70">Page {p.page}</div>
 								)}
 								<div className="min-w-0 overflow-x-auto">
 									<MessageResponse>{withoutPageImages(p.markdown)}</MessageResponse>

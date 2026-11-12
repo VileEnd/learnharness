@@ -337,7 +337,8 @@ test("jobs: delivery-era records keep their saved input and delivery state", () 
 test("settings: the stamped record parses", () => {
 	const s = settingsStore.readSettings();
 	assert.ok(s, "settings record reads");
-	assert.equal(s!.version, 1, "settings carry their version stamp");
+	assert.equal(s!.version, 2, "settings carry their version stamp (v2: themes)");
+	assert.equal(s!.appearance?.theme, "system", "the theme choice written by PUT /api/settings/appearance");
 	assert.ok(s!.models && typeof s!.models === "object", "model slots present");
 	assert.equal(resolveQuizMechanic(s!.agent), "mixed", "the sanitizer keeps agent.quizMechanic");
 	assert.equal(s!.agent?.turnSpendCapUsd, 1, "the sanitizer keeps agent.turnSpendCapUsd (written by PUT /api/settings/agent)");

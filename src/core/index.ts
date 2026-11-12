@@ -20,6 +20,10 @@ export * from "./ports.ts";
 export * from "./chains.ts";
 export * from "./render-settings.ts";
 export * from "./learner-colors.ts";
+// Themes (themes step 2): the two presets, the choice, the CSS-variable
+// adapter, and the appearance stylesheet the provider renders.
+export * from "./themes.ts";
+export * from "./appearance-css.ts";
 export * from "./internal-labels.ts";
 
 export * from "./question-core.ts";

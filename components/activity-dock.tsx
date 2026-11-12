@@ -366,7 +366,7 @@ export function ActivitySection({ feed: feedProp }: { feed?: ActivityFeed }) {
 	// alone (the cost span is population, not decoration).
 	return (
 		<section data-testid="activity-section" className="border-t border-border px-3 pb-3 pt-2">
-			<div className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-widest text-muted-foreground/70">
+			<div className="mb-1 flex items-center gap-1.5 text-xs uppercase tracking-widest text-muted-foreground-70">
 				<ActivityIcon className="size-3" />
 				Background agents
 				{blobs.length > 0 && (
@@ -445,7 +445,7 @@ function ActivityBlobRow({
 							{blob.activity}
 						</span>
 					) : (
-						<span className="block truncate text-muted-foreground/80">{label}</span>
+						<span className="block truncate text-muted-foreground-80">{label}</span>
 					)}
 				</span>
 				<span className="flex shrink-0 items-center gap-2 tabular-nums text-muted-foreground">
@@ -463,7 +463,7 @@ function ActivityBlobRow({
 				disabled={abortState !== undefined}
 				title={abortState === "failed" ? "Abort failed — try again" : "End this background process"}
 				aria-label={`End ${label} in ${blob.title}`}
-				className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50 pointer-coarse:p-3"
+				className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground-70 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50 pointer-coarse:p-3"
 			>
 				<SquareIcon className="size-3" />
 			</button>
@@ -519,7 +519,7 @@ function ActivityBlobRow({
 							{blob.process === "scan" ? "Open documents →" : "Open session →"}
 						</a>
 					</div>
-					<div className="mt-2 text-muted-foreground/80">
+					<div className="mt-2 text-muted-foreground-80">
 					{abortState === "failed" && "Abort failed — try again"}
 					{abortState === "pending" && "Stopping…"}
 				</div>

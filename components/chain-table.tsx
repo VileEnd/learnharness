@@ -288,8 +288,8 @@ export function ChainTableBody({
 										{open ? <FolderOpenIcon className="size-3.5" /> : <FolderIcon className="size-3.5" />}
 									</span>
 									<span onClick={() => onToggleCluster(group.key)} className="min-w-0 flex-1 truncate text-sm font-medium">
-										{group.label ?? <span className="text-muted-foreground/60">unlabeled</span>}
-										{group.kind === "notes" && <span className="ml-2 text-[11px] uppercase tracking-widest text-muted-foreground/60">notes</span>}
+										{group.label ?? <span className="text-muted-foreground-60">unlabeled</span>}
+										{group.kind === "notes" && <span className="ml-2 text-[11px] uppercase tracking-widest text-muted-foreground-60">notes</span>}
 									</span>
 									<span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
 										{group.nodeIds.length}
@@ -469,7 +469,7 @@ export function ChainTableBody({
 			<div className={`min-h-0 flex-1 overflow-y-auto${selection.size > 0 ? " pb-24" : ""}`}>
 				{/* The TOP rule (owner round 5: the table is framed — a line under
 			    the header, a line under the last group, lines between groups). */}
-				<div className="sticky top-0 z-10 flex items-center gap-1 border-b border-border/60 bg-background/80 px-3 py-1.5 text-[11px] uppercase tracking-widest text-muted-foreground/70 backdrop-blur">
+				<div className="sticky top-0 z-10 flex items-center gap-1 border-b border-border/60 bg-background/80 px-3 py-1.5 text-[11px] uppercase tracking-widest text-muted-foreground-70 backdrop-blur">
 					<button
 						type="button"
 						data-testid="sort-name"
@@ -615,7 +615,7 @@ function Expander({ open, onClick, testid, label }: { open: boolean; onClick: ()
 			onClick={onClick}
 			aria-label={label}
 			aria-expanded={open}
-			className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground pointer-coarse:relative pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-2 pointer-coarse:after:content-['']"
+			className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground-70 transition-colors hover:bg-accent hover:text-foreground pointer-coarse:relative pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-2 pointer-coarse:after:content-['']"
 		>
 			<ChevronRightIcon className={`size-3.5 transition-transform ${open ? "rotate-90" : ""}`} />
 		</button>

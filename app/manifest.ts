@@ -1,10 +1,15 @@
 import type { MetadataRoute } from "next";
+import { DEFAULT_THEME } from "@/src/core";
 
 /**
  * The web app manifest (browser-only self-hosting, 2026-10-25): makes the
  * app installable as a PWA (own window, home-screen icon). No service
  * worker — the app needs its server anyway, so there is nothing to serve
- * offline. Colors are the dark theme's --background (app/globals.css).
+ * offline. Colors are the Default theme's background: the manifest is public
+ * and shared by every learner (no identity reaches it), so it cannot carry
+ * one learner's theme. It colours the
+ * launch splash; once the page loads, its theme-color meta (app/layout.tsx,
+ * per learner) takes over the browser chrome.
  * Icons come from scripts/make-pwa-icons.mjs.
  */
 export default function manifest(): MetadataRoute.Manifest {
@@ -21,8 +26,8 @@ export default function manifest(): MetadataRoute.Manifest {
 		// Launching again (icon, shortcut, notification) focuses the open app.
 		launch_handler: { client_mode: "focus-existing" },
 		categories: ["education", "productivity"],
-		background_color: "#141414",
-		theme_color: "#141414",
+		background_color: DEFAULT_THEME.colors.background,
+		theme_color: DEFAULT_THEME.colors.background,
 		shortcuts: [
 			{ name: "New session", short_name: "New", url: "/chat/new", icons: [{ src: "/icons/icon-96.png", sizes: "96x96", type: "image/png" }] },
 			{ name: "Settings", url: "/settings", icons: [{ src: "/icons/icon-96.png", sizes: "96x96", type: "image/png" }] },

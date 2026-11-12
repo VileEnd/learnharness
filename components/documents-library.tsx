@@ -46,7 +46,7 @@ export function SearchResults({ search }: { search: TextSearch }) {
 				In the text · {result.hits.length} {result.hits.length === 1 ? "match" : "matches"} ·{" "}
 				{result.mode === "hybrid" ? "keyword + semantic" : "keyword"}
 			</h2>
-			{result.note && <p className="px-1 pb-2 text-[11px] text-muted-foreground/80">{result.note}</p>}
+			{result.note && <p className="px-1 pb-2 text-[11px] text-muted-foreground-80">{result.note}</p>}
 			<ul className="flex flex-col gap-2">
 				{result.hits.map((hit, i) => (
 					<li key={`${hit.docId}-${hit.sectionId}-${i}`}>
@@ -167,7 +167,7 @@ export function DocumentsLibraryBody({
 												</div>
 											)}
 											{doc.filenames.length > 0 && (
-												<div data-testid="document-aliases" className="mt-1.5 break-words text-[11px] text-muted-foreground/70">
+												<div data-testid="document-aliases" className="mt-1.5 break-words text-[11px] text-muted-foreground-70">
 													{doc.filenames.join(" · ")}
 												</div>
 											)}

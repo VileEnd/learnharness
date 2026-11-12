@@ -13,6 +13,7 @@ import {
 	parseAgentSettingsBody,
 	parseModelsSettingsBody,
 	parseAppearanceSettingsBody,
+	STALE_APPEARANCE_ERROR,
 	parseGeneralSettingsBody,
 	parseCompactionSettingsBody,
 	parseGraphSettingsBody,
@@ -101,36 +102,38 @@ describe("parseAgentSettingsBody", () => {
 describe("parseAppearanceSettingsBody", () => {
 	it("parses every field; hex-or-null colors; clamps happen at sanitize, rejects here", () => {
 		const r = parseAppearanceSettingsBody({
-			mode: "light",
-			background: "#ffffff",
+			theme: "system",
+			colors: { default: { background: "#ffffff", accent: "#123456" }, ivory: { text: null, bold: "#ff8800" } },
 			fontFamily: "Some Font",
 			proseFontSize: 20,
 			sessionNameSerif: false,
-			mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
+			mdRendering: { headingWeight: 700 },
 		});
 		assert.ok(r.ok);
 		assert.deepEqual(r.settings, {
-			mode: "light",
-			background: "#ffffff",
+			theme: "system",
+			colors: { default: { background: "#ffffff", accent: "#123456" }, ivory: { text: null, bold: "#ff8800" } },
 			fontFamily: "Some Font",
 			proseFontSize: 20,
 			sessionNameSerif: false,
-			mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
+			mdRendering: { headingWeight: 700 },
 		});
 	});
 
 	it("rejects bad enums, ranges, and colors — with specific messages, never clamps", () => {
 		const cases: unknown[] = [
-			{ mode: "sepia" },
-			{ background: "blue" },
-			{ background: 42 },
+			{ theme: "sepia" },
+			{ theme: "catppuccin-mocha" },
+			{ colors: "red" },
+			{ colors: { accent: "#123456" } },
+			{ colors: { ivory: "x" } },
+			{ colors: { default: { accent: "red" } } },
 			{ fontFamily: "" },
 			{ fontFamily: 12 },
 			{ proseFontSize: 30 },
 			{ proseFontSize: 64.5 },
 			{ sessionNameSerif: 1 },
 			{ mdRendering: { headingWeight: 1000 } },
-			{ mdRendering: { boldColor: "red" } },
 		];
 		for (const body of cases) {
 			assert.equal(parseAppearanceSettingsBody(body).ok, false, JSON.stringify(body));
@@ -140,9 +143,16 @@ describe("parseAppearanceSettingsBody", () => {
 		assert.ok(parseAppearanceSettingsBody({ proseFontSize: 24 }));
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 100 } }));
 		assert.ok(parseAppearanceSettingsBody({ mdRendering: { headingWeight: 900 } }));
-		assert.ok(parseAppearanceSettingsBody({ background: "#abc" }));
-		// null = "the mode's default" — explicit, valid
-		assert.ok(parseAppearanceSettingsBody({ background: null, fontFamily: null }));
+		assert.ok(parseAppearanceSettingsBody({ colors: { default: { background: "#abc" } } }).ok);
+		// A v1-shaped body (a page loaded before themes) is refused with a reload hint, never half-saved.
+		for (const stale of [{ background: "#000000" }, { mode: "dark" }, { mdRendering: { boldColor: "#ffffff" } }, { proseFontSize: 18, mdRendering: { italicColor: null } }]) {
+			assert.deepEqual(parseAppearanceSettingsBody(stale), { ok: false, error: STALE_APPEARANCE_ERROR }, JSON.stringify(stale));
+		}
+		assert.match(STALE_APPEARANCE_ERROR, /reload/);
+		// A newer build's theme id rides along verbatim (the record's unknown-keys rule).
+		assert.deepEqual(parseAppearanceSettingsBody({ colors: { sepia: { accent: "#123456", glow: 1 } } }), { ok: true, settings: { colors: { sepia: { accent: "#123456", glow: 1 } } } });
+		// null = "the theme's colour" — explicit, valid
+		assert.ok(parseAppearanceSettingsBody({ colors: { default: { background: null } }, fontFamily: null }).ok);
 	});
 
 	it("rejects non-object bodies and non-object mdRendering", () => {

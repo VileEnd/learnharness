@@ -235,31 +235,31 @@ describe("KeysSection (thin SSR)", () => {
 });
 
 describe("AppearanceSection (thin SSR)", () => {
-	it("mode is rendered DISABLED — dark-only this wave, no lying control", () => {
+	it("the theme cards replace the disabled mode row: Default, Ivory, Follow system", () => {
 		const html = renderToStaticMarkup(<AppearanceSection appearance={undefined} onSectionChange={() => {}} />);
-		assert.ok(tagOf(html, "select-mode").includes("disabled"), "mode select disabled");
-		assert.ok(html.includes("Coming soon"));
-		// The whole row dims, graph-view style (the control never adds its own).
-		assert.ok(tagOf(html, "row-mode").includes("opacity-40"), "mode row dims whole");
+		assert.ok(!html.includes('data-testid="select-mode"'), "the dark-only mode control is gone");
+		for (const choice of ["default", "ivory", "system"]) assert.ok(html.includes(`data-testid="theme-card-${choice}"`), choice);
+		assert.ok(tagOf(html, "theme-card-default").includes('aria-pressed="true"'), "no record = Default");
 	});
 
-	it("hex inputs carry the factory placeholders; prose size resolves against the factory", () => {
+	it("hex inputs carry the theme's placeholders; prose size resolves against the factory", () => {
 		const html = renderToStaticMarkup(<AppearanceSection appearance={undefined} onSectionChange={() => {}} />);
-		assert.ok(html.includes(`placeholder="#141414"`));
-		// The reading font is the searchable dropdown now (font-menu
-		// wave): its trigger shows the factory family; the emphasis
-		// inks' empty state is "same as text" (the old hexes died with
-		// the factory token change).
+		assert.ok(html.includes(`placeholder="#141414"`), "the background row, Default's background");
+		// The reading font is the searchable dropdown (font-menu wave): its
+		// trigger shows the factory family. The emphasis inks' empty state is
+		// the theme's own colour (Default: the text colour).
 		assert.ok(html.includes('data-testid="font-trigger"'));
-		assert.equal((html.match(/Empty = same as text/g) ?? []).length, 2);
+		assert.equal((html.match(/Empty = #e6e6e6/g) ?? []).length, 3, "text, bold and italic: Default's text colour");
 		assert.ok(html.includes("16px"));
 	});
 
-	it("a set background shows in the input, not the placeholder", () => {
+	it("the grid shows the on-screen theme's own overrides, never the other theme's", () => {
 		const html = renderToStaticMarkup(
-			<AppearanceSection appearance={{ background: "#1a1a2e" }} onSectionChange={() => {}} />,
+			<AppearanceSection appearance={{ colors: { default: { background: "#1a1a2e" }, ivory: { accent: "#aa3300" } } }} onSectionChange={() => {}} />,
 		);
-		assert.ok(html.includes(`value="#1a1a2e"`));
+		assert.ok(html.includes(`value="#1a1a2e"`), "Default (on screen outside a provider) shows its background");
+		assert.ok(!html.includes(`value="#aa3300"`), "Ivory's accent is not Default's");
+		assert.match(html, /Default&#x27;s own overrides|Default's own overrides/);
 	});
 });
 

@@ -1,6 +1,19 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
+/* The dark variant (Tailwind `dark:`, and the dual Shiki theme the markdown
+   renderer ships) follows the THEME, not a class: Default always, Follow
+   system while the device is not light. Both arms keep the old .dark
+   selector's weight (one attribute). */
+@custom-variant dark {
+	&:is([data-theme="default"] *) {
+		@slot;
+	}
+	@media not all and (prefers-color-scheme: light) {
+		&:is([data-theme="system"] *) {
+			@slot;
+		}
+	}
+}
 
 /*
  * THE SKIN — wave 5. Design tokens, the single place to restyle the app.
@@ -27,7 +40,18 @@
 	outline: none;
 }
 
-/* Palette (owner's hexes): main #141414, raised #1C1C1C, edges #434343.
+/* THEMES (themes step 2, 2026-11-12). The theme choice is the data-theme
+   attribute on <html> (app/layout.tsx renders it from the learner's record;
+   the appearance provider moves it live). Both palettes live here as
+   literals so the first frame is right before any script:
+     :root                          Default (dark; also no/unknown attribute)
+     [data-theme="ivory"]           Ivory (light)
+     [data-theme="system"]          Default, or Ivory while the device is light
+   The palette blocks are themeVars(DEFAULT_THEME) / themeVars(IVORY_THEME)
+   from src/core/themes.ts, value for value: tests/themes.test.ts pins them
+   equal. Default is the pre-theme palette (owner's hexes: main #141414,
+   raised #1C1C1C, edges #434343) exactly. Colour overrides from the record
+   arrive as a <style> with one more selector step (core/appearance-css.ts).
    Mono chrome = JetBrains Mono; prose = Source Sans 3; titles = CMU Serif. */
 :root {
 	color-scheme: dark;
@@ -50,26 +74,35 @@
 	--border: #434343;
 	--input: #434343;
 	--ring: #8d8d8d;
-	/* Status tokens (themes step 1, port of upstream's --lh-error/success/
-	   warning): the colours Tailwind's red-500 / green-500 / amber-500
-	   resolve to, so the dark look is unchanged. A theme sets these three;
-	   components use text-error, bg-success/15, border-warning/50 … and never
-	   a fixed palette class (tests/status-tokens.test.ts). --lh-success-strong
-	   is green-600, the filled "next problem" button.
-	   NOTE: two error-ish tokens exist: --destructive (the old red-400) and
-	   --lh-error (the old red-500); themes step 2 must define BOTH per theme.
-	   The markdown renderer's own red classes (Streamdown, found by the
-	   @source scan) are third-party and belong to step 3. */
+	--lh-accent: #8d8d8d;
+	--lh-line-strong: #ffffff;
+	--lh-ink-strong: #e6e6e6;
+	--lh-ink-italic: #e6e6e6;
+	--lh-ink-code: currentColor;
 	--lh-error: oklch(0.637 0.237 25.331);
 	--lh-success: oklch(0.723 0.219 149.579);
 	--lh-success-strong: oklch(0.627 0.194 149.214);
 	--lh-warning: oklch(0.769 0.188 70.08);
-	/* Emphasis inks default to the REGULAR TEXT COLOR (owner ruling,
-	   appearance wave 2026-09-26 — the old #ee928c/#6fa9d6 factory
-	   emphasis colors are gone). Explicit overrides land via the
-	   appearance settings vars. */
-	--lh-ink-strong: var(--foreground);
-	--lh-ink-italic: var(--foreground);
+	--lh-learner-shaky: #ef4444;
+	--lh-learner-learning: #eab308;
+	--lh-learner-solid: #22c55e;
+	--lh-muted-80: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+	--lh-muted-70: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+	--lh-muted-60: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+	--lh-muted-50: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
+	--lh-muted-40: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+	--lh-foreground-50: color-mix(in oklab, var(--foreground) 50%, transparent);
+	--lh-code-well: color-mix(in oklab, var(--background) 86%, black);
+	/* Status tokens (themes step 1): components use text-error,
+	   bg-success/15, border-warning/50 … and never a fixed palette class
+	   (tests/status-tokens.test.ts). Two error-ish tokens exist on purpose:
+	   --destructive (the old red-400 in Default) and --lh-error (red-500).
+	   --lh-success-strong is the filled "next problem" button. */
+	/* Learner state on the knowledge graph (src/core/learner-colors.ts):
+	   the three state fills above are per theme; "not yet checked" and the
+	   "due" ring follow the text tokens. */
+	--lh-learner-unchecked: var(--muted-foreground);
+	--lh-learner-due: var(--foreground);
 	/* THE READING SIZE = the ladder's 16px rung (--text-lg). Can't be
 	   var()-linked: @theme inline inlines literals into utilities without
 	   emitting runtime vars — so this is the one documented duplication:
@@ -81,53 +114,94 @@
 	--lh-heading-weight: 900;
 }
 
-/* The app is always dark (<html class="dark">); mirror the same values so
-   the block stays coherent under Tailwind's variant. */
-.dark {
-	--background: #141414;
-	--foreground: #e6e6e6;
-	--card: #1c1c1c;
-	--card-foreground: #e6e6e6;
-	--popover: #1c1c1c;
-	--popover-foreground: #e6e6e6;
-	--primary: #e6e6e6;
-	--primary-foreground: #141414;
-	--secondary: #1c1c1c;
-	--secondary-foreground: #e6e6e6;
-	--muted: #1c1c1c;
-	--muted-foreground: #8d8d8d;
-	--accent: #2a2a2a;
-	--accent-foreground: #e6e6e6;
-	--destructive: oklch(0.704 0.191 22.216);
-	--border: #434343;
-	--input: #434343;
-	--ring: #8d8d8d;
-	/* Status tokens (themes step 1, port of upstream's --lh-error/success/
-	   warning): the colours Tailwind's red-500 / green-500 / amber-500
-	   resolve to, so the dark look is unchanged. A theme sets these three;
-	   components use text-error, bg-success/15, border-warning/50 … and never
-	   a fixed palette class (tests/status-tokens.test.ts). --lh-success-strong
-	   is green-600, the filled "next problem" button.
-	   NOTE: two error-ish tokens exist: --destructive (the old red-400) and
-	   --lh-error (the old red-500); themes step 2 must define BOTH per theme.
-	   The markdown renderer's own red classes (Streamdown, found by the
-	   @source scan) are third-party and belong to step 3. */
-	--lh-error: oklch(0.637 0.237 25.331);
-	--lh-success: oklch(0.723 0.219 149.579);
-	--lh-success-strong: oklch(0.627 0.194 149.214);
-	--lh-warning: oklch(0.769 0.188 70.08);
-	/* Same emphasis ruling as the block above: unset = text color. */
-	--lh-ink-strong: var(--foreground);
-	--lh-ink-italic: var(--foreground);
-	/* THE READING SIZE = the ladder's 16px rung (--text-lg). Can't be
-	   var()-linked: @theme inline inlines literals into utilities without
-	   emitting runtime vars — so this is the one documented duplication:
-	   change one, change both. (owner, typography round 4: snapped from
-	   the reskin's hand-tuned 16.5 to the ladder's 16.) */
-	--lh-prose-size: 16px;
-	--lh-prose-leading: 1.5;
-	/* Markdown heading weight (appearance settings; 900 = the Black cut). */
-	--lh-heading-weight: 900;
+/* Ivory. Must follow :root (equal specificity would otherwise tie). */
+:root[data-theme="ivory"] {
+	color-scheme: light;
+	--background: #faf9f5;
+	--foreground: #3d3d3a;
+	--card: #f0eee6;
+	--card-foreground: #3d3d3a;
+	--popover: #f0eee6;
+	--popover-foreground: #3d3d3a;
+	--primary: #3d3d3a;
+	--primary-foreground: #faf9f5;
+	--secondary: #f0eee6;
+	--secondary-foreground: #3d3d3a;
+	--muted: #f0eee6;
+	--muted-foreground: #6b6a66;
+	--accent: #e2e0d8;
+	--accent-foreground: #3d3d3a;
+	--destructive: #c03a3a;
+	--border: #e0ddd2;
+	--input: #e0ddd2;
+	--ring: #d97757;
+	--lh-accent: #d97757;
+	--lh-line-strong: #3d3d3a;
+	--lh-ink-strong: #3266c9;
+	--lh-ink-italic: #347759;
+	--lh-ink-code: #a85134;
+	--lh-error: #c03a3a;
+	--lh-success: #347759;
+	--lh-success-strong: #316e53;
+	--lh-warning: #8c6320;
+	--lh-learner-shaky: #c43d3d;
+	--lh-learner-learning: #b8822a;
+	--lh-learner-solid: #3f8f6b;
+	--lh-muted-80: #757470;
+	--lh-muted-70: #7d7c77;
+	--lh-muted-60: #82817c;
+	--lh-muted-50: #868580;
+	--lh-muted-40: #898884;
+	--lh-foreground-50: #7c7c76;
+	/* 14% black over a light page reads as a heavy gray slab; 4% keeps the
+	   code well just darker than the page (upstream's light rule). */
+	--lh-code-well: color-mix(in oklab, var(--background) 96%, black);
+}
+
+/* Follow system: Ivory while the device is in light mode (the same block). */
+@media (prefers-color-scheme: light) {
+	:root[data-theme="system"] {
+		color-scheme: light;
+		--background: #faf9f5;
+		--foreground: #3d3d3a;
+		--card: #f0eee6;
+		--card-foreground: #3d3d3a;
+		--popover: #f0eee6;
+		--popover-foreground: #3d3d3a;
+		--primary: #3d3d3a;
+		--primary-foreground: #faf9f5;
+		--secondary: #f0eee6;
+		--secondary-foreground: #3d3d3a;
+		--muted: #f0eee6;
+		--muted-foreground: #6b6a66;
+		--accent: #e2e0d8;
+		--accent-foreground: #3d3d3a;
+		--destructive: #c03a3a;
+		--border: #e0ddd2;
+		--input: #e0ddd2;
+		--ring: #d97757;
+		--lh-accent: #d97757;
+		--lh-line-strong: #3d3d3a;
+		--lh-ink-strong: #3266c9;
+		--lh-ink-italic: #347759;
+		--lh-ink-code: #a85134;
+		--lh-error: #c03a3a;
+		--lh-success: #347759;
+		--lh-success-strong: #316e53;
+		--lh-warning: #8c6320;
+		--lh-learner-shaky: #c43d3d;
+		--lh-learner-learning: #b8822a;
+		--lh-learner-solid: #3f8f6b;
+		--lh-muted-80: #757470;
+		--lh-muted-70: #7d7c77;
+		--lh-muted-60: #82817c;
+		--lh-muted-50: #868580;
+		--lh-muted-40: #898884;
+		--lh-foreground-50: #7c7c76;
+		/* 14% black over a light page reads as a heavy gray slab; 4% keeps the
+		   code well just darker than the page (upstream's light rule). */
+		--lh-code-well: color-mix(in oklab, var(--background) 96%, black);
+	}
 }
 
 /* CMU Serif bold (titles) — bundled local file, no CDN dependency. */
@@ -199,6 +273,17 @@
 	--color-success: var(--lh-success);
 	--color-success-strong: var(--lh-success-strong);
 	--color-warning: var(--lh-warning);
+	--color-line-strong: var(--lh-line-strong);
+	/* Tertiary text: text-muted-foreground-80 … -40 and text-foreground-50
+	   replace the old opacity modifiers (/80 … /40, /50), so each theme sets
+	   them (Default: the same translucent mix as before; Ivory: solid inks
+	   at 3:1 or better). tests/status-tokens.test.ts forbids the modifiers. */
+	--color-muted-foreground-80: var(--lh-muted-80);
+	--color-muted-foreground-70: var(--lh-muted-70);
+	--color-muted-foreground-60: var(--lh-muted-60);
+	--color-muted-foreground-50: var(--lh-muted-50);
+	--color-muted-foreground-40: var(--lh-muted-40);
+	--color-foreground-50: var(--lh-foreground-50);
 }
 
 * {
@@ -401,7 +486,7 @@ body {
 [data-streamdown="inline-code"],
 [data-streamdown="code-block"] {
 	border: 1px solid var(--border);
-	background: color-mix(in oklab, var(--background) 86%, black);
+	background: var(--lh-code-well);
 }
 [data-streamdown="code-block"] {
 	border-radius: 0.75rem;

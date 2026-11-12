@@ -77,7 +77,7 @@ export function DeleteDocumentBody({
 					<li key={line}>{line}</li>
 				))}
 			</ul>
-			<p className="mt-2 text-xs text-muted-foreground/80">Your answers and learning record are kept.</p>
+			<p className="mt-2 text-xs text-muted-foreground-80">Your answers and learning record are kept.</p>
 			{failure && (
 				<div role="alert" data-testid="delete-document-failure" className="mt-3 rounded-sm border border-border/60 px-3 py-2 text-xs text-foreground">
 					{failure}

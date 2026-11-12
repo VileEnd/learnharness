@@ -17,7 +17,8 @@ it("the section route persists language independently, clears it with {}, and re
 		method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 	}), { params: Promise.resolve({ section: "dictation" }) });
 	assert.equal((await putBody({ language: "pl" })).status, 200);
-	const saved = { version: 1, dictation: { language: "pl" }, general: {} };
+	// The v1 record migrates on read and lands as v2 with this write (themes step 2).
+	const saved = { version: 2, dictation: { language: "pl" }, general: {} };
 	assert.deepEqual(readSettings(), saved);
 	assert.equal((await putBody({ language: "unsupported" })).status, 400);
 	assert.deepEqual(readSettings(), saved);

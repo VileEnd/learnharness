@@ -103,7 +103,7 @@ export function WorkSubmissionCard({ data, chatId }: { data: WorkSubmissionData;
 
 export function WorkDismissedLine() {
 	return (
-		<div data-testid="work-dismissed-line" className="my-1 px-1 text-sm text-muted-foreground/70">
+		<div data-testid="work-dismissed-line" className="my-1 px-1 text-sm text-muted-foreground-70">
 			Canvas task dismissed.
 		</div>
 	);
