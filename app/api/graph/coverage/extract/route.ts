@@ -9,6 +9,8 @@
  * trigger fires, just user-initiated. 409 while a run is already in
  * flight (the dock is the source of truth for that); failures are logged
  * by the pipeline and leave coverage untouched — the button stays honest.
+ * Being explicit, it also retries a batch that automatic runs now skip after
+ * repeated failures, and resets that batch's failure count.
  */
 import { extraction, extractionStatuses, withTenant } from "@/src/server";
 
@@ -30,7 +32,7 @@ export const POST = withTenant(async (request: Request) => {
 	}
 	// Fire-and-forget, like the trigger: the dock + the coverage panel's
 	// running flags track progress; the promise never blocks the response.
-	void extraction.runExtraction(chatId).catch((err: unknown) => {
+	void extraction.runExtraction(chatId, { explicit: true }).catch((err: unknown) => {
 		console.error(`[chat ${chatId}] manual extraction failed:`, err);
 	});
 	return Response.json({ started: true }, { status: 202 });

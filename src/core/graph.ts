@@ -330,15 +330,13 @@ export function mergeFindings(
 
 	// 2b. Simplification (owner, 2026-09-30 evening) — the deterministic
 	//     dedupe pass over the WHOLE chain ledger (this merge runs inside
-	//     the serialized audit section, so the rewrite is race-free). Two
-	//     rules, decided per conclusion group, greedy in (premiseCount,
-	//     createdAt, key) order — the leanest, earliest derivation stands:
-	//     • prefer-fewest-premises: a chain whose premise set strictly
-	//       contains a kept chain's premise set is redundant;
-	//     • ancestry-cover: a chain whose every premise is a premise of a
-	//       kept chain, or derivable from one (transitively, through the
-	//       FULL pre-simplification chain set) is redundant — [A,B]⟹X
-	//       plus [X,C]⟹Y makes [A,B,C]⟹Y redundant.
+	//     the serialized audit section, so the rewrite is race-free). One
+	//     greedy pass in descending (premiseCount, createdAt, key) order —
+	//     the leanest, earliest derivation stands: a chain whose conclusion
+	//     the chains still standing already derive from its premises is
+	//     redundant —
+	//     [A,B]⟹X plus [X,C]⟹Y makes [A,B,C]⟹Y redundant. Nothing that
+	//     was derivable stops being derivable (simplifyChains below).
 	//     Dropped keys take every provenance line with them (the rewrite is
 	//     atomic); stats count APPENDS only — simplification is maintenance.
 	const allChains = ledgers.readChains();
@@ -363,95 +361,94 @@ export function mergeFindings(
 }
 
 /** The deterministic chain-simplification pass (owner, 2026-09-30
- *  evening): strips redundant derivations — same-conclusion chains whose
- *  premises add nothing a leaner kept chain doesn't already derive. Pure
- *  over the input list; the caller owns the ledger rewrite. Exported for
- *  tests.
+ *  evening; derivability rule 2026-11-12): strips redundant derivations.
+ *  Pure over the input list; the caller owns the ledger rewrite. Exported
+ *  for tests.
+ *
+ *  One global greedy pass over the logical chains in DESCENDING (premise
+ *  count, createdAt, key) order, so the leanest, earliest derivation
+ *  stands: a chain [P]⟹X is dropped exactly when X is in
+ *  the forward closure of P over the chains still standing at that moment
+ *  (every chain not yet dropped, kept or not yet visited, minus itself).
+ *  [A,B]⟹X plus [X,C]⟹Y make [A,B,C]⟹Y redundant; a premise superset of
+ *  another chain for the same conclusion falls out of the same rule.
+ *
+ *  The property: whatever was derivable from a set of premises before the
+ *  pass is still derivable after it. Each drop removes only a chain the
+ *  standing ones already imply, so no derivation is ever lost, and two
+ *  chains can never justify each other's removal.
  *
  *  Same (premises, conclusion) lines are ONE logical chain (read-time
  *  merge semantics) — a key is kept or dropped as a whole, every
- *  provenance line with it. */
+ *  provenance line with it; its createdAt is its earliest line's, so the
+ *  result does not depend on the order of the input lines. */
 export function simplifyChains(lines: GraphChain[]): GraphChain[] {
 	if (lines.length < 2) return lines;
 
-	// Group lines by chain key (logical chains).
-	const groups = new Map<string, GraphChain[]>();
+	// Logical chains, one per key.
+	const byKey = new Map<string, { key: string; premises: string[]; conclusion: string; createdAt: string }>();
 	for (const line of lines) {
 		const key = chainKey(line.premises, line.conclusion);
-		const bucket = groups.get(key);
-		if (bucket === undefined) groups.set(key, [line]);
-		else bucket.push(line);
+		const have = byKey.get(key);
+		if (have === undefined)
+			byKey.set(key, { key, premises: [...new Set(line.premises)], conclusion: line.conclusion, createdAt: line.createdAt });
+		else if (line.createdAt < have.createdAt) have.createdAt = line.createdAt;
 	}
+	// Visit order: DESCENDING (premise count, createdAt, key) — the fattest,
+	// latest chains are tested first, while the lean, early ones still stand.
+	const chains = [...byKey.values()].sort(
+		(a, b) => b.premises.length - a.premises.length || b.createdAt.localeCompare(a.createdAt) || b.key.localeCompare(a.key),
+	);
+	const usesPremise = new Map<string, number[]>();
+	const concluding = new Map<string, number>(); // standing chains per conclusion
+	chains.forEach((c, i) => {
+		for (const p of c.premises) {
+			const list = usesPremise.get(p);
+			if (list === undefined) usesPremise.set(p, [i]);
+			else list.push(i);
+		}
+		concluding.set(c.conclusion, (concluding.get(c.conclusion) ?? 0) + 1);
+	});
+	const dropped = new Array<boolean>(chains.length).fill(false);
 
-	// Ancestry over the FULL chain set: every node id reachable as a
-	// premise behind an id (A⟹X makes A an ancestor of X; [X,C]⟹Y makes
-	// both A and C ancestors of Y). Memoized walk, cycle-guarded (a cycle
-	// cannot be minted by the extractor — a premise equal to the
-	// conclusion is refused — but the walk stays honest if one ever lands).
-	const premisesOf = new Map<string, string[][]>();
-	for (const line of lines) {
-		const bucket = premisesOf.get(line.conclusion);
-		if (bucket === undefined) premisesOf.set(line.conclusion, [line.premises]);
-		else bucket.push(line.premises);
-	}
-	const ancestryMemo = new Map<string, Set<string>>();
-	const ancestry = (id: string, visiting: Set<string>): Set<string> => {
-		const memo = ancestryMemo.get(id);
-		if (memo !== undefined) return memo;
-		const out = new Set<string>();
-		if (visiting.has(id)) return out;
-		visiting.add(id);
-		for (const premises of premisesOf.get(id) ?? []) {
-			for (const premise of premises) {
-				out.add(premise);
-				for (const ancestor of ancestry(premise, visiting)) out.add(ancestor);
+	// Forward chaining with missing-premise counters, touched only for the
+	// chains the walk reaches, stopping as soon as `target` is reached. One
+	// walk is linear in the ledger, so the pass is quadratic in the worst
+	// case (every chain has a competing chain for its conclusion and every
+	// walk explores the whole ledger).
+	const derives = (start: readonly string[], target: string, excluded: number): boolean => {
+		const missing = new Map<number, number>();
+		const have = new Set(start);
+		const queue = [...have];
+		while (queue.length > 0) {
+			for (const i of usesPremise.get(queue.pop()!) ?? []) {
+				if (i === excluded || dropped[i]) continue;
+				const left = (missing.get(i) ?? chains[i]!.premises.length) - 1;
+				missing.set(i, left);
+				if (left > 0) continue;
+				const conclusion = chains[i]!.conclusion;
+				if (conclusion === target) return true;
+				if (!have.has(conclusion)) {
+					have.add(conclusion);
+					queue.push(conclusion);
+				}
 			}
 		}
-		visiting.delete(id);
-		ancestryMemo.set(id, out);
-		return out;
+		return false;
 	};
 
-	// Per conclusion: greedy in (premiseCount, createdAt, key).
-	const byConclusion = new Map<
-		string,
-		Array<{ key: string; premises: string[]; createdAt: string }>
-	>();
-	for (const [key, bucket] of groups) {
-		const head = bucket[0]!; // the representative — its premises stand
-		const entry = { key, premises: head.premises, createdAt: head.createdAt };
-		const list = byConclusion.get(head.conclusion);
-		if (list === undefined) byConclusion.set(head.conclusion, [entry]);
-		else list.push(entry);
-	}
-	const droppedKeys = new Set<string>();
-	for (const candidates of byConclusion.values()) {
-		candidates.sort(
-				(a, b) =>
-					a.premises.length - b.premises.length ||
-					a.createdAt.localeCompare(b.createdAt) ||
-					a.key.localeCompare(b.key),
-		);
-		const kept: typeof candidates = [];
-		for (const candidate of candidates) {
-			const candidateSet = new Set(candidate.premises);
-			const redundant = kept.some((k) => {
-					// Rule 1 — prefer-fewest-premises: strict subset (equal keys are
-					// grouped, so a kept ⊆ candidate with fewer premises is strict).
-					if (k.premises.every((p) => candidateSet.has(p))) return true;
-					// Rule 2 — ancestry-cover: every candidate premise is a kept
-					// premise, or reachable behind one.
-					const covered = new Set(k.premises);
-					for (const p of k.premises) {
-						for (const ancestor of ancestry(p, new Set())) covered.add(ancestor);
-					}
-					return candidate.premises.every((p) => covered.has(p));
-			});
-			if (redundant) droppedKeys.add(candidate.key);
-			else kept.push(candidate);
-		}
-	}
-	if (droppedKeys.size === 0) return lines;
+	let droppedAny = false;
+	chains.forEach((c, i) => {
+		// Trivial when a premise IS the conclusion (never minted by the merger);
+		// otherwise only another standing chain for the conclusion can derive it.
+		const trivial = c.premises.includes(c.conclusion);
+		if (!trivial && ((concluding.get(c.conclusion) ?? 0) < 2 || !derives(c.premises, c.conclusion, i))) return;
+		dropped[i] = true;
+		concluding.set(c.conclusion, concluding.get(c.conclusion)! - 1);
+		droppedAny = true;
+	});
+	if (!droppedAny) return lines;
+	const droppedKeys = new Set(chains.filter((_, i) => dropped[i]).map((c) => c.key));
 	return lines.filter((line) => !droppedKeys.has(chainKey(line.premises, line.conclusion)));
 }
 

@@ -101,7 +101,8 @@ export function persistTurn(
  * projection (the record is native history; the extraction view stays
  * client-shaped until Wave D). Fire-and-forget — never blocks the turn;
  * failures are logged by the pipeline and leave coverage untouched, so the
- * next trigger (or the manual extract button) re-runs what's left.
+ * next trigger (or the manual extract button) re-runs what's left; a batch
+ * that failed 3 times in a row is left to the manual button.
  *
  * Deliberately isolated in this one seam — the pipeline is
  * trigger-agnostic. Skipped under tests: scripted chats are fixtures, not
