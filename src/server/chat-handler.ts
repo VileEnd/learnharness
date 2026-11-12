@@ -54,7 +54,7 @@ import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.t
 import { persistTurn, triggerAttribution, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
 import { hasProbeDone, danglingQuestionOf } from "../core/native-messages.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
-import { awaitCompaction, ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
+import { awaitCompaction, compactionInFlight, ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
 import { catalogContextLimits } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
@@ -352,9 +352,6 @@ export async function handleChatInput(
 	let compactionEngine: PiEngine | null;
 	try { compactionEngine = buildCompactionEngine(conversation, effective.models.strong, { purpose: "compaction", chatId, chatKind }); }
 	catch (err) { return policyRefusalResponse(chatId, err) ?? Response.json({ error: "The selected model is unavailable." }, { status: 503 }); }
-	// The wait holds for every turn: also one with no engine to compact with,
-	// and under tests, where the gate's own compaction is skipped.
-	await awaitCompaction(chatId);
 	if (compactionEngine) {
 		const modelIdForCompaction = `${compactionEngine.model.provider}:${compactionEngine.model.id}`;
 		await ensureCompacted(
@@ -372,6 +369,13 @@ export async function handleChatInput(
 			chatId,
 		);
 	}
+	// The wait holds for every turn (also one with no engine to compact with,
+	// and under tests, where the gate's own compaction is skipped), and it
+	// holds AT THE CLAIM: a compaction may start while this request awaits
+	// above (the previous turn's settle kick), so wait until none is in
+	// flight. From the last check to beginTurn there is no await, so none can
+	// start before the claim, and the record is read after it.
+	while (compactionInFlight(chatId)) await awaitCompaction(chatId);
 	const compactedRecord = stores.chatStore.getChat(chatId);
 	if (!compactedRecord) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	record = compactedRecord;
