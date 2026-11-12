@@ -93,6 +93,31 @@ describe("turn settlement recovery", () => {
 		assert.deepEqual(unwatched, [0], "nobody was watching");
 	});
 
+	it("a view that disconnects mid-turn leaves nothing registered: the settle counts only the views still attached", async () => {
+		const listeners: Array<(event: never) => unknown> = [];
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		const agent = {
+			state: { messages: [] },
+			subscribe(listener: (event: never) => unknown) { listeners.push(listener); return () => {}; },
+			async continue() {
+				await held;
+				for (const listener of listeners) await listener({ type: "agent_end", messages: [] } as never);
+			},
+			abort() {},
+		} as unknown as Agent;
+		const watched: number[] = [];
+		const handle = runPiTurn({ agent, onFinish(_messages, _aborted, viewers) { watched.push(viewers); } });
+		const leaver = handle.subscribe().getReader();
+		const stayer = new Response(handle.subscribe()).text();
+		await Promise.resolve();
+		await leaver.cancel();
+		release();
+		const frames = wireFrames(await stayer);
+		assert.deepEqual(watched, [1], "only the view that stayed was attached at the settle");
+		assert.equal(frames.at(-1), "[DONE]");
+	});
+
 	it("a forced settle after an ignored abort composes with a failed save; the stuck run's late end and failure are dropped", async () => {
 		// An agent whose abort() does nothing: the run ends only when the test says so.
 		const listeners: Array<(event: never) => unknown> = [];

@@ -202,6 +202,19 @@ describe("pdf", () => {
 		assert.equal(documentStore.getMeta(t!.docId!)!.ocr?.costUsd, 0.5);
 	});
 
+	it("deleting a scanned document makes no call to the sidecar (its output is shared across users and pruned there)", async () => {
+		const side = sidecar(ocrMarkdown("Scanned lecture", prose(100)));
+		const calls: string[] = [];
+		const ocr = Object.fromEntries(Object.entries(side.ocr).map(([name, fn]) => [name, (...args: unknown[]) => { calls.push(name); return (fn as (...a: unknown[]) => unknown)(...args); }]));
+		const { service } = harness({ ocr });
+		const [t] = await service.importFiles([pdf("lecture.pdf", "del1")]);
+		await t!.completion;
+		calls.length = 0;
+		assert.equal(service.remove(t!.docId!).ok, true);
+		await new Promise((r) => setImmediate(r));
+		assert.deepEqual(calls, []);
+	});
+
 	it("refuses clearly without OCR_URL, and without an OpenRouter key", async () => {
 		const none = harness();
 		const [a] = await none.service.importFiles([pdf("a.pdf", "d")]);
@@ -310,6 +323,15 @@ describe("routes", () => {
 		const one = await oneRoute.GET(new Request("http://localhost"), { params: Promise.resolve({ id }) });
 		assert.match((await one.json()).markdown, /Route doc/);
 		assert.equal((await oneRoute.GET(new Request("http://localhost"), { params: Promise.resolve({ id: "doc_missing" }) })).status, 404);
+	});
+
+	it("describe answers 503 with the models_not_configured envelope when no model is set up", async () => {
+		const describeRoute = await import("../app/api/documents/[id]/describe/route.ts");
+		const [t] = await harness().service.importFiles([md("d.md", `# D\n\n${prose(120, "d")}`)]);
+		await t!.completion;
+		const res = await describeRoute.POST(new Request("http://localhost", { method: "POST" }), { params: Promise.resolve({ id: t!.docId! }) });
+		const body = await res.json();
+		assert.deepEqual([res.status, body.code, Array.isArray(body.missing)], [503, "models_not_configured", true]);
 	});
 
 	it("rejects empty requests and bad decisions; estimate needs a PDF and a configured sidecar", async () => {

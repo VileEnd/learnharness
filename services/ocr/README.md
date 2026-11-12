@@ -78,6 +78,8 @@ Endpoints beyond the browser UI's:
 - `GET /api/jobs/{id}` returns `{id, status: running|done|failed, strategy, usd, files: [{name, sha256, status: queued|running|done|failed, pages, done_pages, failed_pages, markdown, title, summary, topics, cost_usd, error}]}`. `markdown` is a file name inside the job; fetch it from `GET /api/jobs/{id}/files/{markdown}`. It also works for jobs found only on disk after a restart: `done` if `job.json` exists, else `failed` (interrupted). The job is `failed` only when every file failed; look at the per-file status.
 - `GET /api/by-sha/{sha256}` returns `{job, markdown, title, summary, topics, pages, cost_usd}` for the newest complete conversion of that exact PDF, else 404.
 
+Output on disk is shared by content across every user of the app (the by-sha lookup serves one user's conversion to the next), so it is pruned by last use: finished runs not read for 30 days (reads touch an `.accessed` file in the run's directory) and unfinished runs older than seven days, on startup and at each `POST /api/run`.
+
 Finished jobs leave memory after an hour (the disk is the source of truth). The uploaded bytes are dropped when a job ends, except for files that still have failed pages (needed for "retry").
 
 Documents are named from their content only, never from the file name; if naming fails, the first heading (or text line) becomes the title.

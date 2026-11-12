@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LogOutIcon } from "lucide-react";
 import { Hint } from "@/components/ui/hint";
+import { dropPushSubscription, syncPushSubscription } from "./push-device.ts";
 
 interface Account {
 	name: string;
@@ -28,6 +29,12 @@ export function AccountLine() {
 			live = false;
 		};
 	}, []);
+	// Once per page load, wherever the sidebar is: a browser subscription the
+	// server lost or that the browser rotated gets registered again, whether or
+	// not Settings is ever opened. Best effort; single-user mode included.
+	useEffect(() => {
+		void syncPushSubscription().catch(() => {});
+	}, []);
 	if (!account) return null;
 	return (
 		<div className="flex w-full items-center justify-between gap-2 px-2 pt-1 text-xs text-muted-foreground" data-testid="account-line">
@@ -37,6 +44,13 @@ export function AccountLine() {
 			<Hint label="Sign out (switch user)" side="right">
 				<a
 					href={account.signOutUrl}
+					onClick={(e) => {
+						// Drop this device's push subscription first (the session must still be valid), then leave.
+						e.preventDefault();
+						const url = account.signOutUrl;
+						const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+						void Promise.race([dropPushSubscription().catch(() => {}), timeout]).then(() => window.location.assign(url));
+					}}
 					data-testid="sign-out"
 					className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 uppercase tracking-wider transition-colors hover:bg-accent hover:text-foreground"
 				>
