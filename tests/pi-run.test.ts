@@ -18,14 +18,14 @@ describe("runSubagent", () => {
 	it("throws on a provider error that carries no message text", async () => {
 		const { engine } = engineOf(fauxAssistantMessage([fauxText("partial")], { stopReason: "error" }));
 		await assert.rejects(
-			runSubagent([], { role: "strong", engine, systemPrompt: "s", prompt: "go", maxTurns: 2 }),
+			runSubagent([], { role: "researcher", engine, systemPrompt: "s", prompt: "go", maxTurns: 2 }),
 			/Subagent provider error/,
 		);
 	});
 	it("keeps a provider's own error text", async () => {
 		const { engine } = engineOf(fauxAssistantMessage([], { stopReason: "error", errorMessage: "rate limited" }));
 		await assert.rejects(
-			runSubagent([], { role: "strong", engine, systemPrompt: "s", prompt: "go", maxTurns: 2 }),
+			runSubagent([], { role: "researcher", engine, systemPrompt: "s", prompt: "go", maxTurns: 2 }),
 			/rate limited/,
 		);
 	});
@@ -34,7 +34,7 @@ describe("runSubagent", () => {
 		const ac = new AbortController();
 		ac.abort();
 		await assert.rejects(
-			runSubagent([], { role: "strong", engine, systemPrompt: "s", prompt: "go", maxTurns: 2, abortSignal: ac.signal }),
+			runSubagent([], { role: "researcher", engine, systemPrompt: "s", prompt: "go", maxTurns: 2, abortSignal: ac.signal }),
 			{ name: "AbortError" },
 		);
 		assert.equal(faux.state.callCount, 0);
