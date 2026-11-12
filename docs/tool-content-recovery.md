@@ -18,6 +18,12 @@ There are three separate responsibilities:
 
 Code and inline-code source ranges come from the rendering stack's CommonMark parser with its math extensions. This covers fences, indentation, quotes and lists without maintaining separate container heuristics. The projection copies those source ranges verbatim; it does not serialize an AST back into Markdown.
 
+### Extra-encoded code fences
+
+A complete standalone fence whose line breaks are consistently encoded may establish one local JSON-string layer. That layer is decoded as a unit, preserving program quotes and literal backslashes; code `\n` sequences are never replaced globally. Mixed physical/encoded layout, invalid JSON escapes, incomplete fences and outer literal examples stay unrepaired. Surrounding prose and math keep their existing recovery; the whole question is not JSON-decoded. Question parsers continue returning source text.
+
+The encoding profile is **evidence**, not proof of author intent: a single-quoted program string or regex containing a literal `\n` can be indistinguishable from misplaced layout escaping even when JSON decoding succeeds. This residual ambiguity is accepted for complete standalone encoded fences; there is no language-specific program repair.
+
 ### Document escapes
 
 A literal two-character `\n` is different from a physical newline. Document-layout recovery requires evidence such as repeated document-escape candidates or a candidate alongside over-escaped known TeX commands. Complete known n-prefixed TeX words, including `\nu`, `\nabla`, `\neq` and declared n-prefixed macros, take precedence over interpreting their prefix as document layout. Code, genuine TeX comments and recognized path tokens are protected.
@@ -56,6 +62,7 @@ Unbalanced, unsupported or ambiguous content is not generally corrected into new
 ## Verification
 
 - `tests/content-recovery.test.ts`: recovery/preservation rules and adversarial row/comment/code examples.
+- `tests/escaped-code-recovery.test.tsx`: encoding profiles, exact code-copy contents, native literals/math, and pending → saved/answered source preservation.
 - `tests/tool-content-presentation.test.tsx`: provenance-labeled synthetic corpus regressions, historical joins and ambiguity.
 - `tests/tool-content-interaction.test.tsx`: select/submit/persist/reveal flow and paragraph structure.
 - Existing Markdown, card, practice, tool-shape and grading suites remain applicable.

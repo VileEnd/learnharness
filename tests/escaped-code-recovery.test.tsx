@@ -151,7 +151,7 @@ test("valid encoding is structural evidence, not a language-specific semantic pr
 	assert.equal(repairMathForDisplay(ambiguous), "```python\nprint('\n')\n```");
 });
 
-test("only tool presentation recovers code, ", () => {
+test("only tool presentation recovers code", () => {
 	const native = "Read the program.\n\n" + fence + "\n\nContinue.";
 	const source = extraLayer(native);
 	const recovered = documentOf(<ToolContentResponse mode="static">{source}</ToolContentResponse>);
@@ -165,8 +165,10 @@ test("pending → exact copy → submit → saved/answered copy never changes so
 	const { window, document } = parseHTML("<html><body></body></html>");
 	const previous = Object.getOwnPropertyDescriptors(globalThis);
 	const copies: string[] = [];
+	// The fork's dock reads (pointer: coarse); linkedom has no matchMedia.
+	Object.assign(window, { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 	Object.assign(globalThis, { window, document, Element: window.Element, HTMLElement: window.HTMLElement,
-		IS_REACT_ACT_ENVIRONMENT: true });
+		IS_REACT_ACT_ENVIRONMENT: true, CSS: { supports: () => true } });
 	Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async (text: string) => { copies.push(text); } } } });
 	const question = "Read the program.\\n\\n" + extraLayer(fence);
 	const input = { question, options: [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }], correctAnswer: "yes", explanation: question };
