@@ -60,4 +60,4 @@ Unbalanced, unsupported or ambiguous content is not generally corrected into new
 - `tests/tool-content-interaction.test.tsx`: select/submit/persist/reveal flow and paragraph structure.
 - Existing Markdown, card, practice, tool-shape and grading suites remain applicable.
 
-The local frozen corpus can be replayed offline with `scripts/replay-tool-rendering-corpus.ts`. Replay verifies source hashes and preserves baseline findings; it reports glyph loss, matrix rows, rendering errors, code bytes, schema regressions, answer facts and projection convergence. Corpus collection and larger diagnostic batches are separate from product recovery and are not prerequisites for running these unit tests.
+The local frozen corpus could be replayed offline with `scripts/replay-tool-rendering-corpus.ts`, which is no longer in the repository. Replay verified source hashes and preserved baseline findings; it reported glyph loss, matrix rows, rendering errors, code bytes, schema regressions, answer facts and projection convergence. Corpus collection and larger diagnostic batches are separate from product recovery and are not prerequisites for running these unit tests.

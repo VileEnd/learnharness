@@ -21,7 +21,7 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
 - **The records:** both names are public DNS records (Cloudflare, **DNS only**) pointing at the VM's **LAN** address. They resolve anywhere but only work at home. OpenTofu manages them in `deploy/proxmox/dns.tf`; the address is the variable `lan_ipv4`.
 - **The router:** it must allow public names that resolve to private addresses. On the FRITZ!Box, go to Heimnetz → Netzwerk → Netzwerkeinstellungen → **DNS-Rebind-Schutz** and add `home.example.com`. The UniFi gateway needs no exception unless you turn on its own rebinding protection.
 - **Hostname settings:** they're NixOS options (`services.learnharness.*` in the site file `~/.config/learnharness/site/site.nix`, see section 1), or `deploy/.env` on a manual host.
-- **Without a domain:** use `CADDY_TLS=internal` with any local names, for example `learnharness.fritz.box` with Keycloak on `:8443`, and trust Caddy's root once per device (section 3).
+- **Without a domain:** use `CADDY_TLS=internal` with any local names, for example `learnharness.fritz.box` with Keycloak on `:8443`, and trust Caddy's root once per device (section 2).
 
 ## 1. Create the VM (OpenTofu + NixOS)
 
@@ -85,7 +85,7 @@ On any Linux host with Docker, clone the repo, then:
 cd learnharness/deploy && cp .env.example .env && nano .env && docker compose up -d --build
 ```
 
-## 3. Trust the local CA on each device (only with `CADDY_TLS=internal`)
+## 2. Trust the local CA on each device (only with `CADDY_TLS=internal`)
 
 Skip this with `CADDY_TLS=cloudflare`: Let's Encrypt certificates are already trusted everywhere.
 
@@ -99,17 +99,17 @@ Copy Caddy's root certificate from the VM. On the NixOS VM it's `/var/lib/learnh
 
 The CA stays the same when hostnames change, so you only do this once per device. Back up `volumes/caddy`.
 
-## 4. Create users (Keycloak)
+## 3. Create users (Keycloak)
 
 1. Open `https://auth.home.example.com/admin` and log in with `KC_ADMIN_USER` / `KC_ADMIN_PASSWORD`. On the NixOS VM: `ssh root@learnharness.fritz.box cat /var/lib/learnharness/secrets.env`.
 2. Switch to the realm **learnharness**.
-3. For each person: go to Users → *Create new user* and set a username and email. Under *Credentials*, set a password (*Temporary* off if you like). Under *Groups*, join **learnharness**.
+3. For each person: go to Users → *Create new user* and set a username and email. Under *Credentials*, set a password (*Temporary* off if you like). Under *Groups*, join **learnharness**. The first user must also join **learnharness-admin**: only admins can add provider keys (Settings → Providers answers 403 `admin_only` to anyone else).
 
 Someone who can log in but is not in the group gets a 403 from oauth2-proxy.
 
 To switch users, use **Sign out** at the bottom of the sidebar (under "Signed in as …"). It ends both the app session and the Keycloak session (you confirm once on Keycloak's page), so the next visit asks for a login. The plain `/oauth2/sign_out` URL only ends the app session, and Keycloak signs you straight back in.
 
-## 5. Use it
+## 4. Use it
 
 - Open `https://learnharness.home.example.com` and log in.
 - Add your provider API key under Settings → Providers, then pick the strong, cheap, and vision models.
@@ -122,7 +122,7 @@ To switch users, use **Sign out** at the bottom of the sidebar (under "Signed in
 - **Your documents in a session:** the tutor can search and read what you added (`search_documents` finds passages and concepts, then it opens the library file with `read`), so "help me with exercise 3 of the semaphore sheet" finds the sheet and cites it as "(title, p. 2)". The same search is the box on `/documents`. Settings → Agent → *Document tools* turns it off. Search is keyword-only until your documents are embedded; with an OpenRouter key (Settings → Providers) the app embeds them in the background (activity section, "Indexing …") using the model under Settings → Agent → Documents (default `google/gemini-embedding-2`, multilingual, 3072 dimensions) and search becomes hybrid. Indexing uses the OpenRouter *Batch API* by default (Settings → Agent → Documents → *Batch indexing*): about half the sync price, roughly $0.10 per million tokens for `gemini-embedding-2` ($0.20 sync; check the model page), so a library of a few hundred pages costs a cent or two. Results usually arrive within minutes and at most a day; the activity row reads "Indexing documents (batch) · waiting for OpenRouter" meanwhile, a bulk import is collected for about two minutes into one batch, and search is keyword-only for those documents until the batch returns. Pending batches are kept in `data/documents/pending-batches.json`, so a restart picks them up, and OpenRouter's copy is deleted once read. Turn the switch off for immediate, full-price indexing. Search queries always use the normal (sync) endpoint. Changing the model or pressing *Re-index* embeds everything again. Without a key, or if embedding fails, search still works on keywords and says so. Vectors live next to each document (`data/documents/<id>/vectors.f32`), so they belong in the same backups.
 - Dictation (Deepgram) and clipboard copy need HTTPS, which the stack provides.
 
-## 6. Migrate data from the Windows desktop app
+## 5. Migrate data from the Windows desktop app
 
 The desktop app stored everything in `%APPDATA%\LearnHarness` (`C:\Users\<you>\AppData\Roaming\LearnHarness`). Its ChatGPT/Copilot/Grok subscription logins don't exist in the browser version. Its `*-credentials.json` files are **not** migrated, and any model that pointed at a subscription is rewritten to an API-key model you choose.
 

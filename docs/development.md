@@ -2,11 +2,11 @@
 
 The developer README (split out of the storefront README, 2026-10-10). Everything below is for people working ON LearnHarness, not using it.
 
-A self-hosted, browser-only learning app (Docker; see [`self-hosting.md`](self-hosting.md)): a **teacher agent** (Next.js; the Vercel AI SDK's `UIMessage` protocol end-to-end, LLM engine [pi-ai](pi-engine-swap.md), bring-your-own-key across 30+ providers), probe→teach lessons with graded quiz/ask interactions, a formal **session plan tree** the teacher authors once (`plan_init`) and whose progress is derived from tagged quiz calls, and a persistent cross-session **knowledge graph** of what the learner knows — the graph is the app's home page.
+A self-hosted, browser-only learning app (Docker; see [`self-hosting.md`](self-hosting.md)): a **teacher agent** (Next.js; the native pi agent-event wire end-to-end, LLM engine [pi-ai](pi-engine-swap.md), bring-your-own-key across 30+ providers), probe→teach lessons with graded quiz/ask interactions, a formal **session plan tree** the teacher authors once (`plan_init`) and whose progress is derived from tagged quiz calls, and a persistent cross-session **knowledge graph** of what the learner knows — the graph is the app's home page.
 
 Not a chat app with a graph bolted on: sessions are probe→teach lessons, the plan tree is a structured, schema-validated object, sessions accumulate into the graph through the extraction pipeline (propositions + reasoning chains — the stored truth; the canvas renders a derived image), and the teacher reaches back into the graph through read-only prober tools on its own judgment so probing compounds across sessions.
 
-- [`docs/architecture.md`](architecture.md) is the **canonical architecture spec** — layers, the import law, the five systems, the invariants, the seam directory. (The pre-audit spec is archived under `docs/archive/` — history only.)
+- [`docs/architecture.md`](architecture.md) is the **canonical architecture spec** — layers, the import law, the six systems, the invariants, the seam directory. (The pre-audit spec is archived under `docs/archive/` — history only.)
 - Living design doc (all decisions): [`docs/vision.md`](vision.md)
 - Build plan + wave/gate results: [`docs/plan.md`](plan.md)
 
@@ -103,7 +103,7 @@ flowchart TB
 ## Layout
 
 ```
-app/                            Next.js App Router — pages + 16 thin API route handlers
+app/                            Next.js App Router — pages + 65 thin API route handlers
 components/                     session + home UI, question dock, plan panel, graph
                                 canvas + view, artifact renderers (registry: artifacts/),
                                 dictation, activity dock, keyboard machine
@@ -117,8 +117,7 @@ src/
     tools/probe.ts              probe_done (probe→teach handoff seam)
     tools/jobs.ts               research / demo / visual tool surfaces
     tools/web.ts                web_search (keyed search port) + web_fetch (researcher only)
-    subagents/                  researcher · demo-builder · visual-maker
-                                · pdf-reader,
+    subagents/                  researcher · demo-builder · visual-maker,
                                 extraction pipeline (extractor/auditor + merger handoff),
                                 runner (async protocol), native renderers + browser-service helper,
                                 abort registry
@@ -129,19 +128,19 @@ src/
   server/stores.ts              THE storage composition root — the one place adapters wire in
   server/turn-liveness.ts       per-chat turn registry (one turn per chat, ever)
   server/observability.ts       the activity feed (running jobs + extraction, abort)
-  server/pi/                    the engine bridge: record-adapter (record → pi messages)
-                                · ui-stream (pi events → UIMessage SSE)
+  server/pi/                    the engine bridge: call-ids (tool-call id uniquifier)
+                                · ui-stream (pi events → SSE, the native wire)
   server/index.ts               the server barrel (the only server import app/ may use)
   core/contracts/{plan,graph,chat,jobs,probe,models}.ts
                                 the contracts — one file per domain
   core/ports.ts                 storage ports — ChatStore · GraphStore · JobStore
                                 (core code depends on these types only)
-  core/                         question-core, plan-tree, phases, pending, graph
+  core/                         question-core, native-messages (record → pi messages), plan-tree, phases, pending, graph
                                 (merger/derivation), coverage, layout, clusters,
                                 prices, tool-parts — all pure: storage
                                 arrives as parameters
   store/                        fs adapters implementing the ports: chats · graph
-                                ledgers · jobs (+ render-settings, default-settings)
+                                ledgers · jobs (+ render-settings, settings)
 deploy/                         the self-hosting stack: compose.yaml, Caddyfile, Keycloak
                                 realm import, .env.example (docs/self-hosting.md)
 scripts/                        build-server.mjs (packaging guards), import-notes,
@@ -161,11 +160,11 @@ pricing-generation step: Pi AI's catalog and public calculator are the authority
 
 **The formal plan tree (author-once).** The teacher authors the session's dependency tree with one schema-validated tool — `plan_init`, whose mermaid-subset input is parsed deterministically (line-numbered errors) and validated as a DAG. The tree persists in the chat record; progress is never mutated — `current`/`visited`/upcoming are **derived** from tagged quiz calls in the transcript, and the panel renders that derivation.
 
-**The async sub-agent protocol (ack-and-steer).** `research` / `demo` / `visual` are server-executed tools: the call resolves immediately mid-turn with a fire-and-forget ack and the teacher keeps teaching; a background runner works in parallel (the client polls `/api/activity` and `/api/jobs`). On completion the runner builds a **steer message** — a user-role `UIMessage` whose text part is the model-facing result and whose `data-subagent-artifact` part carries the full result for the client — and the **wake pipeline** delivers it: a per-chat serialized queue waits for the turn to end and no question to be pending, then fires a server-side teacher turn that weaves the result into the lesson. Delivery is exactly-once (deterministic steer ids, delivered-flag checks at every claim point); stalled jobs are recovered on read; aborted jobs deliver an abort steer. The client adopts the wake turn through the same `turnInFlight` machinery as returning mid-stream (busy shimmer, composer gate) and renders steers as artifacts — never a bubble. Sub-agents **verify, never one-shot**: the demo-builder executes its HTML in the app's own Chromium browser-service (system Chrome fallback) before delivery; the visual-maker rasterizes each SVG natively and looks at it (vision-capable model — the `vision` slot in settings).
+**The async sub-agent protocol (ack-and-steer).** `research` / `demo` / `visual` are server-executed tools: the call resolves immediately mid-turn with a fire-and-forget ack and the teacher keeps teaching; a background runner works in parallel (the client polls `/api/activity` and `/api/jobs`). On completion the runner builds a **steer message** — a user-role `subagent-steer` message whose text is the model-facing result and whose details carry the full result for the client (projected as a `data-subagent-artifact` part) — and the **wake pipeline** delivers it: a per-chat serialized queue waits for the turn to end and no question to be pending, then fires a server-side teacher turn that weaves the result into the lesson. Delivery is exactly-once (deterministic steer ids, delivered-flag checks at every claim point); stalled jobs are recovered on read; aborted jobs deliver an abort steer. The client adopts the wake turn through the same `turnInFlight` machinery as returning mid-stream (busy shimmer, composer gate) and renders steers as artifacts — never a bubble. Sub-agents **verify, never one-shot**: the demo-builder executes its HTML in the app's own Chromium browser-service (system Chrome fallback) before delivery; the visual-maker rasterizes each SVG natively and looks at it (vision-capable model — the `vision` slot in settings).
 
 **The knowledge graph (two channels, one writer).** The write channel: the extraction pipeline — extractor (LLM: sees the source — the session's teacher prose or a notes chunk — plus its own source's digest (**THE GRAPH SO FAR**: propositions + chains already extracted from this source, ids verbatim — digest-aware redesign, 2026-09-30 evening: the extractor IS the assembler, referencing existing ids instead of restating, leaning on established conclusions as premises); fully trusted; its deliverable is core ideas + reasoning chains: premises that jointly entail a conclusion, submitted as chains and stored as chains — `chains.jsonl` is the truth, edges a derived view; owner redesign + chains-primary, 2026-09-30) → auditor (LLM, an agentic loop that never sees the source: reviews a preloaded, bounded set of ranked candidates (`find_candidates` for more) and stamps each proposition with an identity verdict — link to an existing node (equivalence bias: paraphrases merge) or create) → merger (`mergeFindings`, deterministic: applies the verdicts, link-appends phrasings/provenance, resolves and dedupes chains — identical arguments merge under one `arg_` id; then the chain-simplification pass strips provably redundant derivations — derivability over the chains still standing — checkpoints coverage) → layout settle. A source's batches run strictly in order (each extractor continues the digest of every earlier merge). No quiz outcomes or understanding assessments live in the graph (2026-09-27 cleanup); practice (`/practice`) consumes the graph as feedback-only problem sets and writes nothing back. Triggered when a chat's **uncovered tokens** (message-view fingerprints, `coverage.jsonl`) cross `graph.extractionChunkTokens` (a settings knob, default 8192, floor 500 — read fresh per turn); failure checkpoints nothing, the next trigger re-runs (a batch that failed 3 times in a row is skipped by the trigger until it changes, the process restarts, or the learner requests extraction). The same pipeline serves the **notes front door** (`POST /api/graph/import`: any `*.md`/`*.txt` becomes a source; re-imports are idempotent by path hash). The read channel: `GET /api/graph` derives the snapshot from the ledgers — a pure read (`deriveView` rebuilds the lossy image: each chain an implication node `⟹` with premise→implication→conclusion arrows, so two arguments for one conclusion stay two diamonds); the home view is a hand-rolled Canvas 2D renderer (one rAF loop, dirty-flag idle, d3-zoom camera, zoom-gated labels, cluster hulls) over a d3-force layout, with server-persisted render settings and drag-committed positions. Clusters are **birth-session groupings**: a node joins the cluster of the session that birthed it (a chat, or an imported notes file as a file-kind session), derived at read — no embedding pass, no naming pass. The teacher reaches the graph on its own terms through the gated prober tools (`list_sessions` / `list_propositions`, the `agent.graphTools` setting) — there is no automatic context injection.
 
-**Practice (problem sets).** A node selection resolves to the STORED reasoning chains it fully contains (a chain rides iff every member is selected; unchained nodes ride as singletons); the `/practice` creation dialog picks a birth-session cluster (the graph view's own groups) and freezes its propositions + chains into a self-contained `ProblemSet`. Three named-level axes steer generation (ladder rung 0–4, cue distance 0–2, Theory|Application — never a number to interpolate; defaults Direct exercise · Adjacent context · Theory), plus an optional free-form note the agents weigh but need not follow. Creation has two entries: the cluster picker on `/practice`, or the graph view's chain table — a full-bleed sortable table of every reasoning chain, grouped by birth cluster under the shared top bar, selecting chips, chains, or whole clusters, whose floating selection bar shows the exact `N nodes → M chains` the agents will receive — handing a free-form node selection to the same dialog — and carries the fenced Delete action, making it the graph's management view (whole-cluster cleanup through the same full-death confirm dialog). A partitioner agent covers every chain exactly once, one generator per partition writes problems against the owner's problem-engineering framework (commit-before-pose: statement + solution + rubric together), and grading is **strengthening, not assessment** — one attempt per problem with its own submit button, instant solution/rubric reveal, then a score 0–10 with brief reasoning landing live; nothing ever written back to the graph. Runs are registry-backed background jobs on the activity dock (no steer, never wakes the teacher); sets live in `data/practice`, crash-swept on boot.
+**Practice (a chat session kind).** Practice is a chat session kind (`ChatRecord.kind === "practice"`; absent means teach), with its own prompts in `src/agent/prompts/practice/` and tools `problem`/`conclude` in `src/agent/tools/practice.ts`; it does no extraction and writes nothing to the graph.
 
 **Dictation.** Optional speech-to-text: the server mints short-lived Deepgram tokens; audio streams browser→Deepgram over WebSocket, never through the server.
 
@@ -181,7 +180,7 @@ All deterministic, no LLM, no network (engines are injected — pi-ai's faux pro
 
 ## Lineage
 
-The teaching methodology comes from an Obsidian-based POC (its `knowledge graph design.md` was the original epistemic-model source, since amended — see the amendments table in `docs/vision.md`). The harness was originally built on the pi agent SDK, pivoted to standalone Next.js + the Vercel AI SDK, and later swapped its LLM engine back to pi-ai while keeping the AI SDK's `UIMessage` as the client protocol ([`docs/pi-engine-swap.md`](pi-engine-swap.md)).
+The teaching methodology comes from an Obsidian-based POC (its `knowledge graph design.md` was the original epistemic-model source, since amended — see the amendments table in `docs/vision.md`). The harness was originally built on the pi agent SDK, pivoted to standalone Next.js + the Vercel AI SDK, and later swapped its LLM engine back to pi-ai, while the AI SDK's `UIMessage` client protocol has since been dropped for the native pi event wire ([`docs/pi-engine-swap.md`](pi-engine-swap.md)).
 
 ## Data
 
