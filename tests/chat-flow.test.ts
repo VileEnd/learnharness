@@ -1039,6 +1039,16 @@ describe("mid-turn navigation (turn liveness + write-ahead)", () => {
 		await turn;
 		assert.equal(built, true);
 	});
+
+	it("an agent that fails to build releases the turn claim", async () => {
+		const chat = createConfiguredChat("Test: build failure");
+		createdChats.push(chat.id);
+		const res = await handleChatRequest(post(chat.id, { type: "text", text: "hello" }), () => {
+			throw new Error("agent construction failed");
+		});
+		assert.equal(res.status, 500);
+		assert.equal(isTurnRunning(chat.id), false, "the chat is not left in flight");
+	});
 });
 
 describe("renameChat (the header's click-to-edit title)", () => {

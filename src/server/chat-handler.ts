@@ -483,191 +483,194 @@ export async function handleChatInput(
 		return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 	}
 
-	// Write-ahead persistence: the input's native appends go on disk BEFORE
-	// the turn starts - the learner's answer is durable the instant the
-	// request arrives, and any remount, second tab, or server crash reads
-	// truth instead of the pre-answer record. (Wave C: the wake's markers
-	// ride this same write-ahead - the pump de-queued them at fire, so this
-	// is the ONLY copy ever appended.)
+	// Everything after the claim runs inside this try: whatever throws
+	// before the turn is live (spend cap, prompt, agent construction)
+	// lands in the catch below, which releases the claim.
 	try {
-		stores.chatStore.saveMessages(chatId, merged);
-	} catch (err) {
-		console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
-		endTurn(chatId);
-		return new Response("Your input could not be saved. Please try again.", { status: 500 });
-	}
-	// Visibility bookkeeping is not the canonical save. Its failure must
-	// neither misreport a saved input as lost nor prevent the turn running.
-	try {
-		noteSteersDurable(chatId, merged);
-	} catch (err) {
-		console.error(`[chat ${chatId}] input visibility bookkeeping failed:`, err);
-	}
+		// Write-ahead persistence: the input's native appends go on disk BEFORE
+		// the turn starts - the learner's answer is durable the instant the
+		// request arrives, and any remount, second tab, or server crash reads
+		// truth instead of the pre-answer record. (Wave C: the wake's markers
+		// ride this same write-ahead - the pump de-queued them at fire, so this
+		// is the ONLY copy ever appended.)
+		try {
+			stores.chatStore.saveMessages(chatId, merged);
+		} catch (err) {
+			console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
+			endTurn(chatId);
+			return new Response("Your input could not be saved. Please try again.", { status: 500 });
+		}
+		// Visibility bookkeeping is not the canonical save. Its failure must
+		// neither misreport a saved input as lost nor prevent the turn running.
+		try {
+			noteSteersDurable(chatId, merged);
+		} catch (err) {
+			console.error(`[chat ${chatId}] input visibility bookkeeping failed:`, err);
+		}
 
-	// MONEY CHANNEL (wave 4): one collector per request, fed by the agent's
-	// message_end events. Every model call's usage lands in the chat record's
-	// append-only turns log at onFinish — idempotent per turn id.
-	const turnUsageId = crypto.randomUUID();
-	const steps: CallUsage[] = [];
-	const callUsageOf = (usage: Usage): CallUsage => ({
-		inputTokens: usage.input,
-		outputTokens: usage.output,
-		cacheReadTokens: usage.cacheRead,
-		cacheWriteTokens: usage.cacheWrite,
-		cacheWrite1hTokens: usage.cacheWrite1h ?? 0,
-		// Optional in pi's Usage — persisted as 0, never dropped.
-		reasoningTokens: usage.reasoning ?? 0,
-	});
-	const collectUsage = (usage: Usage) => {
-		steps.push(callUsageOf(usage));
-	};
-	// The drawing reader runs on the vision slot, not the session model: its
-	// calls go into their OWN entry stamped with the reader's model, so they
-	// are priced at its rates (the compaction precedent: one entry per model).
-	const reader: { id: string; model?: string; steps: CallUsage[] } = { id: crypto.randomUUID(), steps: [] };
+		// MONEY CHANNEL (wave 4): one collector per request, fed by the agent's
+		// message_end events. Every model call's usage lands in the chat record's
+		// append-only turns log at onFinish — idempotent per turn id.
+		const turnUsageId = crypto.randomUUID();
+		const steps: CallUsage[] = [];
+		const callUsageOf = (usage: Usage): CallUsage => ({
+			inputTokens: usage.input,
+			outputTokens: usage.output,
+			cacheReadTokens: usage.cacheRead,
+			cacheWriteTokens: usage.cacheWrite,
+			cacheWrite1hTokens: usage.cacheWrite1h ?? 0,
+			// Optional in pi's Usage — persisted as 0, never dropped.
+			reasoningTokens: usage.reasoning ?? 0,
+		});
+		const collectUsage = (usage: Usage) => {
+			steps.push(callUsageOf(usage));
+		};
+		// The drawing reader runs on the vision slot, not the session model: its
+		// calls go into their OWN entry stamped with the reader's model, so they
+		// are priced at its rates (the compaction precedent: one entry per model).
+		const reader: { id: string; model?: string; steps: CallUsage[] } = { id: crypto.randomUUID(), steps: [] };
 
-	// Provider-qualified stamp (model slots wave): matches the price table's
-	// provider:id keys.
-	const modelId = `${engine.model.provider}:${engine.model.id}`;
-	// Tests inject a factory: the agent is stateless per turn, so each
-	// request builds a fresh one off the record — the factory mirrors that
-	// seam exactly. Wave B: the record IS the agent state (native messages;
-	// the record's id field strips at the wire in toLlmMessages).
-	// CROSS-STREAM SEAM (P2 reconciliation, 2026-09-19): `toolToggles`
-	// rides the build opts as the user-level DELTA map (absent key =
-	// enabled). The definitive toggleable set is TOGGLEABLE_TOOLS — the
-	// sub-agent JOB tools (research/demo/visual; adjudicated with the
-	// user: quiz/ask/fs/plan/probe_done are always-on).
-	// DRAWINGS (PR 2, Task 10): the active task's drawing as the model reads
-	// it (the image for a vision model, plus the vision-slot reader's
-	// transcript, cached per drawing). Time-bounded; never fails the turn.
-	let drawing: Awaited<ReturnType<typeof prepareDrawingContext>> | undefined;
-	try {
-		drawing = await prepareDrawingContext(
-			{ id: chatId, messages: agentMessages },
-			engine,
-			{
-				drawingStore: stores.drawingStore,
-				transcriber: createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, { ...opts, chatId, chatKind }) }),
-				onUsage: (usage, model) => {
-					reader.model = model;
-					reader.steps.push(callUsageOf(usage));
+		// Provider-qualified stamp (model slots wave): matches the price table's
+		// provider:id keys.
+		const modelId = `${engine.model.provider}:${engine.model.id}`;
+		// Tests inject a factory: the agent is stateless per turn, so each
+		// request builds a fresh one off the record — the factory mirrors that
+		// seam exactly. Wave B: the record IS the agent state (native messages;
+		// the record's id field strips at the wire in toLlmMessages).
+		// CROSS-STREAM SEAM (P2 reconciliation, 2026-09-19): `toolToggles`
+		// rides the build opts as the user-level DELTA map (absent key =
+		// enabled). The definitive toggleable set is TOGGLEABLE_TOOLS — the
+		// sub-agent JOB tools (research/demo/visual; adjudicated with the
+		// user: quiz/ask/fs/plan/probe_done are always-on).
+		// DRAWINGS (PR 2, Task 10): the active task's drawing as the model reads
+		// it (the image for a vision model, plus the vision-slot reader's
+		// transcript, cached per drawing). Time-bounded; never fails the turn.
+		let drawing: Awaited<ReturnType<typeof prepareDrawingContext>> | undefined;
+		try {
+			drawing = await prepareDrawingContext(
+				{ id: chatId, messages: agentMessages },
+				engine,
+				{
+					drawingStore: stores.drawingStore,
+					transcriber: createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, { ...opts, chatId, chatKind }) }),
+					onUsage: (usage, model) => {
+						reader.model = model;
+						reader.steps.push(callUsageOf(usage));
+					},
 				},
-			},
-		);
-	} catch (err) {
-		console.error(`[chat ${chatId}] drawing context failed:`, err);
-	}
-	const agentOpts: AgentBuildOptions = {
-		engine,
-		drawing,
-		messages: asAgentMessages(agentMessages),
-		onUsage: collectUsage,
-		// The runaway-turn spend cap (turn-guard.ts): the same price
-		// computation the money channel folds with; unknown cost = null.
-		// A restricted user's turn is also clamped to their remaining month.
-		spendCapUsd: turnSpendCapFor(effective.agent.turnSpendCapUsd),
-		stepCost: (usage) => callCost(callUsageOf(usage), modelId),
-		toolToggles: effective.agent.tools,
-		quizMechanic: effective.agent.quizMechanic,
-		// Debug (owner, 2026-10-04): teacher/prober raw provider events under
-		// LH_PROVIDER_EVENTS=1 (provider-events.ts); no-op otherwise.
-		chatId,
-		// The prompt-override switches (P2, 2026-09-19): same resolution
-		// point as the tool delta — the agent layer composes the system
-		// prompt fresh per turn, swapping in any enabled override segments.
-		promptSwitches: effective.agent.prompts,
-	};
-	// PRACTICE BRANCH (owner design, 2026-10-04): a kind:"practice"
-	// session builds the practitioner from turn 1 — no prober→teacher
-	// split, no plan/question/job tools; the whole registry is
-	// problem + conclude. buildAgent stays honored (the test seam is
-	// uniform across kinds).
-	// The canvas tools exist only when the chat enabled the canvas AND this
-	// request came from a canvas-capable device (a phone turn and every
-	// server-initiated turn run without them; `grade` stays armed whenever a
-	// task is open - tools.ts gradeFor).
-	const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true;
-	const constructed: TeachingAgent = buildAgent
-		? buildAgent({ ...agentOpts, teaching, canvas })
-		: record.kind === "practice"
-			? createPracticeAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						// TARGET VALIDATION (owner round 9): the practice tools read the
-						// WHOLE graph fresh per pose — targets validate against every
-						// proposition, not just the session's picks (pickless sessions
-						// and future graph-tools poses stay valid).
-						graphNodes: () => stores.graphStore.readNodes(),
-						// THE RARELY-NEEDED SET (owner round 10): research job
-						// (same runner/gating as the teacher's — research honestly
-						// absent when no engine is live) and the map readers behind
-						// the SAME settings gate as the prober's.
-						jobs: {
+			);
+		} catch (err) {
+			console.error(`[chat ${chatId}] drawing context failed:`, err);
+		}
+		const agentOpts: AgentBuildOptions = {
+			engine,
+			drawing,
+			messages: asAgentMessages(agentMessages),
+			onUsage: collectUsage,
+			// The runaway-turn spend cap (turn-guard.ts): the same price
+			// computation the money channel folds with; unknown cost = null.
+			// A restricted user's turn is also clamped to their remaining month.
+			spendCapUsd: turnSpendCapFor(effective.agent.turnSpendCapUsd),
+			stepCost: (usage) => callCost(callUsageOf(usage), modelId),
+			toolToggles: effective.agent.tools,
+			quizMechanic: effective.agent.quizMechanic,
+			// Debug (owner, 2026-10-04): teacher/prober raw provider events under
+			// LH_PROVIDER_EVENTS=1 (provider-events.ts); no-op otherwise.
+			chatId,
+			// The prompt-override switches (P2, 2026-09-19): same resolution
+			// point as the tool delta — the agent layer composes the system
+			// prompt fresh per turn, swapping in any enabled override segments.
+			promptSwitches: effective.agent.prompts,
+		};
+		// PRACTICE BRANCH (owner design, 2026-10-04): a kind:"practice"
+		// session builds the practitioner from turn 1 — no prober→teacher
+		// split, no plan/question/job tools; the whole registry is
+		// problem + conclude. buildAgent stays honored (the test seam is
+		// uniform across kinds).
+		// The canvas tools exist only when the chat enabled the canvas AND this
+		// request came from a canvas-capable device (a phone turn and every
+		// server-initiated turn run without them; `grade` stays armed whenever a
+		// task is open - tools.ts gradeFor).
+		const canvas = record.settings?.canvas === true && turnOpts.canvasCapable === true;
+		const constructed: TeachingAgent = buildAgent
+			? buildAgent({ ...agentOpts, teaching, canvas })
+			: record.kind === "practice"
+				? createPracticeAgent(
+						{
 							chatId,
+							chatStore: stores.chatStore,
+							// TARGET VALIDATION (owner round 9): the practice tools read the
+							// WHOLE graph fresh per pose — targets validate against every
+							// proposition, not just the session's picks (pickless sessions
+							// and future graph-tools poses stay valid).
+							graphNodes: () => stores.graphStore.readNodes(),
+							// THE RARELY-NEEDED SET (owner round 10): research job
+							// (same runner/gating as the teacher's — research honestly
+							// absent when no engine is live) and the map readers behind
+							// the SAME settings gate as the prober's.
+							jobs: {
+								chatId,
+								jobStore: stores.jobStore,
+								spawn: (job, input) => void jobRunner.runJob(job.id, input),
+								searchAvailable,
+							},
+							libraryRoot: PATHS.okf,
+							libraryBeforeAccess: () => library.ensureFresh(),
+							formats: enabledFormats(effective),
+							canvas,
+							drawingStore: stores.drawingStore,
+							// The learner's document library (PR I), behind agent.documentTools.
+							...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
+						},
+						agentOpts,
+					)
+				: teaching
+				? createTeacherAgent(
+						{
+							chatId,
+							chatStore: stores.chatStore,
+							jobStore: stores.jobStore,
+							spawn: (job, input) => void jobRunner.runJob(job.id, input),
+							// The registry drop's signal (2026-09-20): no live engine
+							// = no research tool in the teacher's registry.
+							searchAvailable,
+							libraryRoot: PATHS.okf,
+							libraryBeforeAccess: () => library.ensureFresh(),
+							// The questions' `concepts` tags validate against the whole graph.
+							graphNodes: () => stores.graphStore.readNodes(),
+							formats: enabledFormats(effective),
+							canvas,
+							drawingStore: stores.drawingStore,
+							...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
+						},
+						agentOpts,
+					)
+				: createProberAgent(
+						{
+							chatId,
+							chatStore: stores.chatStore,
+							deliver: (steer) => void deliverJobResult(steer),
+							// Fix wave (2026-09-20): the prober carries research
+							// dispatch (owner ruling — phase-omnipresent), so its ctx
+							// needs the same job wiring as the teacher's.
 							jobStore: stores.jobStore,
 							spawn: (job, input) => void jobRunner.runJob(job.id, input),
 							searchAvailable,
+							libraryRoot: PATHS.okf,
+							libraryBeforeAccess: () => library.ensureFresh(),
+							// The questions' `concepts` tags validate against the whole graph.
+							graphNodes: () => stores.graphStore.readNodes(),
+							formats: enabledFormats(effective),
+							canvas,
+							drawingStore: stores.drawingStore,
+							...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
 						},
-						libraryRoot: PATHS.okf,
-						libraryBeforeAccess: () => library.ensureFresh(),
-						formats: enabledFormats(effective),
-						canvas,
-						drawingStore: stores.drawingStore,
-						// The learner's document library (PR I), behind agent.documentTools.
-						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
-					},
-					agentOpts,
-				)
-			: teaching
-			? createTeacherAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						jobStore: stores.jobStore,
-						spawn: (job, input) => void jobRunner.runJob(job.id, input),
-						// The registry drop's signal (2026-09-20): no live engine
-						// = no research tool in the teacher's registry.
-						searchAvailable,
-						libraryRoot: PATHS.okf,
-						libraryBeforeAccess: () => library.ensureFresh(),
-						// The questions' `concepts` tags validate against the whole graph.
-						graphNodes: () => stores.graphStore.readNodes(),
-						formats: enabledFormats(effective),
-						canvas,
-						drawingStore: stores.drawingStore,
-						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
-					},
-					agentOpts,
-				)
-			: createProberAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						deliver: (steer) => void deliverJobResult(steer),
-						// Fix wave (2026-09-20): the prober carries research
-						// dispatch (owner ruling — phase-omnipresent), so its ctx
-						// needs the same job wiring as the teacher's.
-						jobStore: stores.jobStore,
-						spawn: (job, input) => void jobRunner.runJob(job.id, input),
-						searchAvailable,
-						libraryRoot: PATHS.okf,
-						libraryBeforeAccess: () => library.ensureFresh(),
-						// The questions' `concepts` tags validate against the whole graph.
-						graphNodes: () => stores.graphStore.readNodes(),
-						formats: enabledFormats(effective),
-						canvas,
-						drawingStore: stores.drawingStore,
-						...(documentToolsEnabled(effective) ? { documents: docIndex } : {}),
-					},
-					agentOpts,
-				);
+						agentOpts,
+					);
 
-	// A test-injected agent gets no usage collector (tests assert the
-	// transcript, not the money channel); when it's ours, usage flows through
-	// the factory's subscription (wired above via onUsage).
-	try {
+		// A test-injected agent gets no usage collector (tests assert the
+		// transcript, not the money channel); when it's ours, usage flows through
+		// the factory's subscription (wired above via onUsage).
 		// THE TURN AS A BACKGROUND OBJECT (owner ruling, 2026-09-25):
 		// runPiTurn executes decoupled from this response — the POST stream
 		// is just the FIRST subscriber (a view). A client disconnect can no
