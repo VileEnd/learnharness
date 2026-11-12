@@ -9,6 +9,8 @@
 #   scripts/dev-fresh.sh --port 3006    # any port OUTSIDE 3000-3004
 #   scripts/dev-fresh.sh --keep         # don't wipe between runs
 #                                        (multi-session testing)
+#   scripts/dev-fresh.sh --host 0.0.0.0 # listen on the network (phone test);
+#                                        the default is localhost only
 #
 # WHY A SWITCH, NOT AN ENV SCRUB: a script cannot merely unset shell
 # *_API_KEY vars — Next injects .env.local (the dev secrets) into the
@@ -31,9 +33,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="3005"
 DATA_DIR="$ROOT/.fresh-data"
 KEEP=false
+HOST="localhost"
 
 usage() {
-	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -45,6 +48,15 @@ while [ $# -gt 0 ]; do
 		;;
 	--port=*)
 		PORT="${1#--port=}"
+		shift
+		;;
+	--host)
+		[ $# -ge 2 ] || { echo "error: --host needs a value" >&2; exit 1; }
+		HOST="$2"
+		shift 2
+		;;
+	--host=*)
+		HOST="${1#--host=}"
 		shift
 		;;
 	--keep)
@@ -90,10 +102,11 @@ export LH_IGNORE_ENV_KEYS=1
 export PORT
 
 echo "── fresh-user instance ─────────────────────────────────"
-echo "  URL      : http://localhost:$PORT"
+echo "  URL      : http://$HOST:$PORT"
 echo "  data dir : $DATA_DIR ($( [ "$KEEP" = "true" ] && echo 'kept across runs' || echo 'wiped next launch unless --keep' ))"
 echo "  keys     : env keys hidden (LH_IGNORE_ENV_KEYS=1), auth.json empty"
 echo "─────────────────────────────────────────────────────────"
 
 cd "$ROOT"
-exec npm run dev
+# A later -H wins over the one in the "dev" script, so --host overrides it.
+exec npm run dev -- -H "$HOST"
