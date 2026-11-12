@@ -13,7 +13,9 @@
 import assert from "node:assert/strict";
 import { parseHTML } from "linkedom";
 import { describe, it } from "node:test";
-import { buttonKeepsNativeEnter } from "../components/enter-submits.ts";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { buttonKeepsNativeEnter, useEnterSubmits } from "../components/enter-submits.ts";
 import { blurAfterPointerClick } from "../components/focus-hygiene.ts";
 
 const { document } = parseHTML("<html><body></body></html>");
@@ -78,5 +80,51 @@ describe("blurAfterPointerClick (focus hygiene)", () => {
 		};
 		blurAfterPointerClick({ detail: 0, currentTarget: b });
 		assert.equal(blurred, false);
+	});
+});
+
+/** The hook itself, on the probe card's <summary>: it follows the button rule
+ *  (keyboard-focused keeps native Enter and does not submit; pointer-focused
+ *  does not keep it, so Enter submits and the toggle does not fire). */
+describe("useEnterSubmits and a <summary> (the probe card's disclosure)", () => {
+	async function pressEnterOn(configure: (summary: HTMLElement) => void): Promise<{ submitted: number; prevented: boolean }> {
+		const dom = parseHTML("<html><body></body></html>");
+		const globals = { window: dom.window, document: dom.document, IS_REACT_ACT_ENVIRONMENT: true };
+		const previous = Object.getOwnPropertyDescriptors(globalThis);
+		Object.assign(globalThis, globals);
+		let submitted = 0;
+		function Probe() {
+			useEnterSubmits(() => { submitted++; });
+			return React.createElement("details", null, React.createElement("summary", { "data-testid": "s" }, "Probe assessment"), React.createElement("p", null, "body"));
+		}
+		const host = dom.document.createElement("div");
+		dom.document.body.append(host);
+		const root = createRoot(host);
+		try {
+			await act(async () => root.render(React.createElement(Probe)));
+			const summary = host.querySelector("summary") as HTMLElement;
+			configure(summary);
+			const event = Object.assign(new dom.window.Event("keydown", { bubbles: true, cancelable: true }), { key: "Enter", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false });
+			summary.dispatchEvent(event);
+			return { submitted, prevented: event.defaultPrevented };
+		} finally {
+			await act(async () => root.unmount());
+			for (const key of Object.keys(globals)) {
+				if (previous[key]) Object.defineProperty(globalThis, key, previous[key]);
+				else Reflect.deleteProperty(globalThis, key);
+			}
+		}
+	}
+
+	it("a keyboard-focused summary keeps its native Enter: no submit, no preventDefault", async () => {
+		const out = await pressEnterOn((s) => {
+			(s as unknown as { matches: (sel: string) => boolean }).matches = (sel) => sel === ":focus-visible";
+		});
+		assert.deepEqual(out, { submitted: 0, prevented: false });
+	});
+
+	it("a pointer-focused summary does not: Enter submits, exactly as for a button", async () => {
+		const out = await pressEnterOn(() => {});
+		assert.deepEqual(out, { submitted: 1, prevented: true });
 	});
 });
