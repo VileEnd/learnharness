@@ -546,6 +546,35 @@ describe("probe-done card", () => {
 		assert.match(html, /modal logic basics/);
 	});
 
+	it("renders math in the strand, assessment, and summary", () => {
+		const html = renderToStaticMarkup(
+			<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+				strands: [{ strand: "Compare $x$", assessment: "Understands $y$" }],
+				summary: "Review\n\n$$\nz=1\n$$",
+			} }, output: { ok: true } } as never} />,
+		);
+		assert.equal((html.match(/class="katex"/g) ?? []).length, 3);
+		assert.ok(html.includes("katex-display"), "display math in the summary renders as display math");
+		assert.match(html, /Compare/);
+		assert.match(html, /Understands/);
+		assert.match(html, /Review/);
+	});
+
+	it("renders Markdown through the shared sanitised path, keeps retry bookkeeping plain, never rewrites the input", () => {
+		const input = Object.freeze({ assessment: Object.freeze({
+			strands: Object.freeze([Object.freeze({ strand: "**Arrays** and `map`", assessment: "Understands *iteration* <script>alert(1)</script>." })]),
+			summary: "Use `reduce` with $n$ terms.",
+		}) });
+		const before = JSON.stringify(input);
+		const html = renderToStaticMarkup(<ProbeDoneCard part={{ state: "output-available", input, output: { ok: true } } as never} />);
+		assert.match(html, /<strong[^>]*>Arrays<\/strong>/);
+		assert.match(html, /<em[^>]*>iteration<\/em>/);
+		assert.ok(!html.includes("<script"));
+		assert.equal(JSON.stringify(input), before);
+		const refused = renderToStaticMarkup(<ProbeDoneCard part={{ output: { ok: false, error: "Retry `$x$` and **literal**" } } as never} />);
+		assert.ok(!refused.includes("katex") && !refused.includes("<strong") && refused.includes("`$x$`"));
+	});
+
 	it("a REJECTED assessment (the stringified live shape) renders the retry note, never the garbage", () => {
 		// The exact live crash: assessment arrived as a string, zod rejected
 		// the call, the model retried — this dead part must not explode.
