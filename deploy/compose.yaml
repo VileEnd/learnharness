@@ -4,12 +4,14 @@
 #                        └──────────────────────▶ learnharness (no auth of its own) ──▶ ocr (own network, token)
 #
 # Only Caddy publishes ports. Hostnames come from .env (see .env.example).
+# The four built images are tagged LH_IMAGE_TAG, `local` unless set: the NixOS
+# VM sets one tag per deploy (deploy/nixos/deploy.py) so the previous stays.
 name: learnharness
 
 services:
   learnharness:
     build: ..
-    image: learnharness:local
+    image: learnharness:${LH_IMAGE_TAG:-local}
     restart: unless-stopped
     # Hardening: this container holds every user's data and the provider keys, and
     # runs Chromium and PDF parsing. tini (init) reaps Chromium's leftovers; the
@@ -78,7 +80,7 @@ services:
     # over claude-bridge (internal, no internet) and api.anthropic.com over
     # claude-egress. The login lives in volumes/claude: never back it up.
     build: ./claude
-    image: learnharness-claude:local
+    image: learnharness-claude:${LH_IMAGE_TAG:-local}
     restart: unless-stopped
     user: node
     # tini as PID 1: reaps whatever the CLI leaves behind.
@@ -112,7 +114,7 @@ services:
     # only the app reaches it, with the OCR_TOKEN header. The OpenRouter key comes
     # per request from the app's settings; /data holds out/ (results) and cache/.
     build: ../services/ocr
-    image: learnharness-ocr:local
+    image: learnharness-ocr:${LH_IMAGE_TAG:-local}
     restart: unless-stopped
     # Hardened like the app: it parses user-uploaded PDFs and has internet egress.
     # The entrypoint starts as root only to chown /data and drop to uid 10001.
@@ -137,7 +139,7 @@ services:
   caddy:
     # caddy:2.11.7 + the Cloudflare DNS plugin (caddy/Dockerfile).
     build: ./caddy
-    image: learnharness-caddy:local
+    image: learnharness-caddy:${LH_IMAGE_TAG:-local}
     restart: unless-stopped
     ports:
       - "80:80"
