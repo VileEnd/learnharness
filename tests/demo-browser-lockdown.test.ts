@@ -14,7 +14,12 @@ import * as path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { outboundOverride } from "../src/agent/outbound.ts";
-import { demoRequestDecision, realHeadless } from "../src/agent/subagents/headless.ts";
+import {
+	createPageFetchLimits,
+	demoRequestDecision,
+	fulfilThroughGuard,
+	realHeadless,
+} from "../src/agent/subagents/headless.ts";
 
 const CHROME = process.env.CHROME_PATH;
 const skip = CHROME ? false : "CHROME_PATH is not set";
@@ -54,6 +59,62 @@ describe("demo request decision", () => {
 		assert.equal(demoRequestDecision("https://example.com/", doc, true), "abort");
 		assert.equal(demoRequestDecision("file:///etc/hostname", doc, true), "abort");
 		assert.equal(demoRequestDecision("data:text/html,x", doc, true), "abort");
+	});
+});
+
+describe("page fetch limits (bounded memory in the shared server)", () => {
+
+	/** A stand-in for an intercepted request: records how it was resolved. */
+	function fakeRequest(url: string) {
+		const req = {
+			outcome: "",
+			url: () => url,
+			method: () => "GET",
+			headers: () => ({}),
+			respond: async (r: { body?: string | Uint8Array }) => {
+				req.outcome = `respond ${r.body?.length ?? 0}`;
+			},
+			abort: async (code?: string) => {
+				req.outcome = `abort ${code}`;
+			},
+		};
+		return req;
+	}
+
+	it("runs at most a few guarded fetches at once and refuses the overflow", async () => {
+		let active = 0;
+		let peak = 0;
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		outboundOverride.current = {
+			lookup: async () => [{ address: "192.0.2.10", family: 4 }],
+			fetch: async () => {
+				peak = Math.max(peak, ++active);
+				await gate;
+				active--;
+				return new Response("x");
+			},
+		};
+		const limits = createPageFetchLimits({ maxConcurrent: 6, maxQueued: 20 });
+		const reqs = Array.from({ length: 40 }, (_, i) => fakeRequest(`https://cdn.example.com/${i}.js`));
+		const runs = reqs.map((r) => fulfilThroughGuard(r, new AbortController().signal, limits));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		open();
+		await Promise.all(runs);
+		assert.equal(peak, 6);
+		assert.equal(reqs.filter((r) => r.outcome === "respond 1").length, 26);
+		assert.equal(reqs.filter((r) => r.outcome === "abort blockedbyclient").length, 14);
+	});
+
+	it("stops serving once the run's byte budget is spent", async () => {
+		outboundOverride.current = {
+			lookup: async () => [{ address: "192.0.2.10", family: 4 }],
+			fetch: async () => new Response(new Uint8Array(600)),
+		};
+		const limits = createPageFetchLimits({ maxBytes: 1000 });
+		const reqs = [1, 2, 3].map((i) => fakeRequest(`https://cdn.example.com/big-${i}.bin`));
+		for (const r of reqs) await fulfilThroughGuard(r, new AbortController().signal, limits);
+		assert.deepEqual(reqs.map((r) => r.outcome), ["respond 600", "abort blockedbyclient", "abort blockedbyclient"]);
 	});
 });
 

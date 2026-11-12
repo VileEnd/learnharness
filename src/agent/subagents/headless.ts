@@ -151,11 +151,97 @@ const FORWARDED_REQUEST_HEADERS = ["accept", "accept-language", "user-agent", "o
 /** Response headers that describe the wire, not the (decoded) body. */
 const DROPPED_RESPONSE_HEADERS = new Set(["content-length", "content-encoding", "transfer-encoding", "connection", "set-cookie"]);
 
+/** These fetches run, and their bodies sit, in the shared server process
+ *  (Chromium used to stream them in its own processes), so one run is
+ *  bounded: a few fetches at once, a short queue behind them, and a byte
+ *  budget across all of its resources. Past any of these the request is
+ *  refused (blockedbyclient). */
+const MAX_CONCURRENT_PAGE_FETCHES = 6;
+const MAX_QUEUED_PAGE_FETCHES = 64;
+const MAX_PAGE_BYTES_PER_RUN = 128 * 1024 * 1024;
+
+class PageBudgetError extends Error {
+	constructor() {
+		super("the page's download budget for this run is spent");
+		this.name = "PageBudgetError";
+	}
+}
+
+export interface PageFetchLimits {
+	/** Wait for a fetch slot; false when the queue is full, the budget is
+	 *  spent or the page is closing. A true result must be released. */
+	acquire(signal: AbortSignal): Promise<boolean>;
+	release(): void;
+	/** Count bytes against the run's budget; throws once it is spent. */
+	charge(bytes: number): void;
+}
+
+export function createPageFetchLimits(
+	opts: { maxConcurrent?: number; maxQueued?: number; maxBytes?: number } = {},
+): PageFetchLimits {
+	const maxConcurrent = opts.maxConcurrent ?? MAX_CONCURRENT_PAGE_FETCHES;
+	const maxQueued = opts.maxQueued ?? MAX_QUEUED_PAGE_FETCHES;
+	const maxBytes = opts.maxBytes ?? MAX_PAGE_BYTES_PER_RUN;
+	let active = 0;
+	let spent = 0;
+	const waiting: Array<(granted: boolean) => void> = [];
+	const exhausted = () => spent > maxBytes;
+	return {
+		acquire(signal) {
+			if (exhausted() || signal.aborted) return Promise.resolve(false);
+			if (active < maxConcurrent) {
+				active++;
+				return Promise.resolve(true);
+			}
+			if (waiting.length >= maxQueued) return Promise.resolve(false);
+			return new Promise<boolean>((resolve) => {
+				const waiter = (granted: boolean) => {
+					signal.removeEventListener("abort", onAbort);
+					resolve(granted);
+				};
+				const onAbort = () => {
+					const i = waiting.indexOf(waiter);
+					if (i >= 0) waiting.splice(i, 1);
+					resolve(false);
+				};
+				signal.addEventListener("abort", onAbort, { once: true });
+				waiting.push(waiter);
+			});
+		},
+		release() {
+			active--;
+			while (waiting.length > 0 && active < maxConcurrent) {
+				const next = waiting.shift()!;
+				if (exhausted()) next(false);
+				else {
+					active++;
+					next(true);
+				}
+			}
+		},
+		charge(bytes) {
+			spent += bytes;
+			if (exhausted()) throw new PageBudgetError();
+		},
+	};
+}
+
+/** The parts of an intercepted request this module uses. */
+type InterceptedRequest = Pick<import("puppeteer-core").HTTPRequest, "url" | "method" | "headers" | "respond" | "abort">;
+
 /** Fetch one http(s) request through the outbound guard and hand the result
  *  to the page; a refused or failed fetch aborts the request. */
-async function fulfilThroughGuard(req: import("puppeteer-core").HTTPRequest, signal: AbortSignal): Promise<void> {
+export async function fulfilThroughGuard(
+	req: InterceptedRequest,
+	signal: AbortSignal,
+	limits: PageFetchLimits,
+): Promise<void> {
 	const method = req.method();
 	if (method !== "GET" && method !== "HEAD") {
+		await req.abort("blockedbyclient").catch(() => {});
+		return;
+	}
+	if (!(await limits.acquire(signal))) {
 		await req.abort("blockedbyclient").catch(() => {});
 		return;
 	}
@@ -171,14 +257,25 @@ async function fulfilThroughGuard(req: import("puppeteer-core").HTTPRequest, sig
 			headers,
 			signal: withTimeout(signal, PAGE_RESOURCE_TIMEOUT_MS),
 		});
-		const body = method === "HEAD" ? new Uint8Array(0) : await readCapped(response, MAX_PAGE_RESOURCE_BYTES);
+		const body =
+			method === "HEAD"
+				? new Uint8Array(0)
+				: await readCapped(response, MAX_PAGE_RESOURCE_BYTES, undefined, (bytes) => limits.charge(bytes));
 		const outHeaders: Record<string, string> = {};
 		response.headers.forEach((value, name) => {
 			if (!DROPPED_RESPONSE_HEADERS.has(name)) outHeaders[name] = value;
 		});
-		await req.respond({ status: response.status, headers: outHeaders, body: Buffer.from(body) });
+		// A view on the same bytes, not a copy.
+		await req.respond({
+			status: response.status,
+			headers: outHeaders,
+			body: Buffer.from(body.buffer, body.byteOffset, body.byteLength),
+		});
 	} catch (err) {
-		await req.abort(err instanceof OutboundRefusedError ? "blockedbyclient" : "failed").catch(() => {});
+		const refused = err instanceof OutboundRefusedError || err instanceof PageBudgetError;
+		await req.abort(refused ? "blockedbyclient" : "failed").catch(() => {});
+	} finally {
+		limits.release();
 	}
 }
 
@@ -207,8 +304,9 @@ async function withBrowserPage<T>(
 	// node user with HOME=/root, where Chromium cannot create its profile or
 	// crashpad database and dies at launch (seen on the VM, 2026-10-25).
 	const profile = tempDir("lh-chrome-");
-	// Ends every fetch still running for the page once it closes.
+	// Ends every fetch still running (or queued) for the page once it closes.
 	const pageLife = new AbortController();
+	const fetchLimits = createPageFetchLimits();
 	try {
 		const browser = await puppeteer.launch({
 			headless: true,
@@ -244,7 +342,7 @@ async function withBrowserPage<T>(
 				const decision = demoRequestDecision(req.url(), documentUrl, mainFrameNavigation);
 				if (decision === "continue") void req.continue().catch(() => {});
 				else if (decision === "abort") void req.abort("blockedbyclient").catch(() => {});
-				else void fulfilThroughGuard(req, pageLife.signal);
+				else void fulfilThroughGuard(req, pageLife.signal, fetchLimits);
 			});
 			return await fn(page);
 		} finally {

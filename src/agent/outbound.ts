@@ -384,11 +384,14 @@ export async function guardedFetch(
 }
 
 /** Read a body, refusing it as soon as more than maxBytes have arrived. A
- *  declared Content-Length over the cap fails before reading. */
+ *  declared Content-Length over the cap fails before reading. `charge` sees
+ *  every chunk as it arrives (a shared budget across bodies); a throw from it
+ *  stops the read and is rethrown. */
 export async function readCapped(
 	response: Response,
 	maxBytes: number,
 	tooLargeMessage = "Response too large",
+	charge?: (bytes: number) => void,
 ): Promise<Uint8Array> {
 	const declared = Number(response.headers.get("content-length") ?? Number.NaN);
 	if (Number.isFinite(declared) && declared > maxBytes) {
@@ -406,6 +409,12 @@ export async function readCapped(
 		if (total > maxBytes) {
 			await reader.cancel().catch(() => {});
 			throw new Error(tooLargeMessage);
+		}
+		try {
+			charge?.(value.byteLength);
+		} catch (err) {
+			await reader.cancel().catch(() => {});
+			throw err;
 		}
 		chunks.push(value);
 	}
