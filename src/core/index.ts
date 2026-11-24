@@ -58,6 +58,8 @@ export * from "./answer-presentation.ts";
 export * from "./prices.ts";
 export * from "./context-usage.ts";
 export * from "./fuzzy.ts";
+// Session folders (2026-11-24): the record, the name rule, the sidebar grouping. Pure.
+export * from "./session-folders.ts";
 // settings.ts + settings-resolution.ts (settings-storage wave, 2026-09-19):
 // the user-settings record's shape/sanitizer (pure) and its fully-resolved
 // view. Browser-safe — the Wave-4 panel imports these directly.

@@ -216,6 +216,16 @@ export function settingsFile(): string {
 }
 
 /**
+ * Session folders (owner design, 2026-11-24): the per-user folder list and
+ * chatId → folderId assignments, one small versioned JSON file at the user's
+ * data root (src/store/session-folders.ts). Deliberately not under graph/,
+ * and never a field on the chat records.
+ */
+export function sessionFoldersFile(): string {
+	return path.join(userDataRoot(), "session-folders.json");
+}
+
+/**
  * User prompt-override files (settings-storage wave, 2026-09-19): the
  * per-segment system-prompt overrides mirroring the SOURCE layout
  * (src/agent/prompts/) — the shared base as prompts/system-prompt.md,

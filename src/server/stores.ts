@@ -19,6 +19,7 @@ import { modelCatalogStore } from "../store/model-catalog.ts";
 import { okfBundleStore } from "../store/okf.ts";
 import { pushStore } from "../store/push.ts";
 import { requestLogStore } from "../store/request-log.ts";
+import { sessionFolderStore } from "../store/session-folders.ts";
 import { settingsStore } from "../store/settings.ts";
 import { wireGuardStore } from "../store/wireguard.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
@@ -43,6 +44,7 @@ export const stores = {
 	okfBundleStore,
 	pushStore,
 	requestLog: requestLogStore,
+	sessionFolderStore,
 	settingsStore,
 	wireGuardStore,
 };

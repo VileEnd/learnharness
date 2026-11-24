@@ -1,0 +1,19 @@
+{
+	"version": 1,
+	"folders": [
+		{
+			"id": "fld_97a0a1d4bc52a31b",
+			"name": "Computer architecture",
+			"createdAt": "2026-11-24T19:58:56.778Z"
+		},
+		{
+			"id": "fld_d2c037665cceffd0",
+			"name": "Practice drills",
+			"createdAt": "2026-11-24T19:58:57.103Z"
+		}
+	],
+	"assignments": {
+		"chat_mvr78knt_bfaafe31": "fld_97a0a1d4bc52a31b",
+		"chat_mvr17zp1_fb98d9b6": "fld_d2c037665cceffd0"
+	}
+}

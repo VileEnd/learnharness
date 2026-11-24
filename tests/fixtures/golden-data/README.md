@@ -72,6 +72,12 @@ core tool surface must appear in real data here.
   and the `PUT /api/settings/appearance` wrote `appearance.theme: "system"`. The v1
   read path (the background migration) is unit-tested in `tests/settings-store.test.ts`.
 
+- `session-folders.json` — the sidebar's session folders (production server on a scratch
+  copy of this dir, 2026-11-24, driven in headless Chromium): "Computer architecture" made
+  with the New folder button and the canvas cross-model chat moved in through its ⋯ menu,
+  then "Practice drills" made through the menu's "New folder…" with the canvas workspace
+  chat filed in it. Copied while both folders held one session. Stamped (`version: 1`).
+
 ## Regenerating / extending
 
 Run the app (`npm run dev`), exercise the feature against `data/`, then copy

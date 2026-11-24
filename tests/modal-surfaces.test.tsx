@@ -5,6 +5,7 @@ import { AbortTurnDialog } from "../components/abort-turn-dialog.tsx";
 import { DeleteSessionDialog } from "../components/delete-session-dialog.tsx";
 import { DeleteNodeDialog } from "../components/delete-node-dialog.tsx";
 import { DeleteDocumentDialog } from "../components/delete-document-dialog.tsx";
+import { DeleteFolderDialog } from "../components/delete-folder-dialog.tsx";
 import { AddDocumentsDialog } from "../components/add-documents-dialog.tsx";
 import { SettingsDialogProvider, useSettingsDialog } from "../components/settings/settings-dialog.tsx";
 import { SetupDialog } from "../components/setup-dialog.tsx";
@@ -122,6 +123,9 @@ describe("modal surfaces are wired to the shared behaviour", () => {
 			"delete-document-dialog",
 			"delete-document-cancel",
 		);
+	});
+	it("delete folder: lands on Cancel", async () => {
+		await checkSurface("portal", () => <DeleteFolderDialog folder={{ id: "fld_0000000000000001", name: "F", createdAt: "" }} sessionCount={2} onClose={noop} onDeleted={noop} />, "delete-folder-dialog", "delete-folder-cancel");
 	});
 	it("add documents: lands on Close", async () => {
 		await checkSurface("portal", () => <AddDocumentsDialog open onClose={noop} onImported={noop} />, "add-documents-dialog", "add-documents-close");
