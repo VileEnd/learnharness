@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* The bare .container utility is unused. Its viewport breakpoints still
+   trigger document-wide style/layout work on long transcripts. */
+@source not inline("container");
 
 /* The dark variant (Tailwind `dark:`, and the dual Shiki theme the markdown
    renderer ships) follows the THEME, not a class: Default always, Follow
