@@ -998,6 +998,31 @@ test("output after MCP admission fails continuation instead of silently replayin
 	await assertCleanedUp(getOnlyCall(calls));
 });
 
+test("a late MCP compatibility error after an abort cannot restore the killed continuation", { timeout: 8000 }, async (t) => {
+	const held: ToolUse = { id: "toolu_late_error", name: "read", arguments: { path: "a" } };
+	const retiring = createFakeRun(t, [JSON.stringify({ fake: "ignore-term" }), ...toToolUseMessage([held]),
+		JSON.stringify({ fake: "start-call", id: held.id, name: held.name, arguments: held.arguments }),
+		JSON.stringify({ fake: "wait-for-message" }),
+		JSON.stringify({ fake: "call", name: held.name, arguments: held.arguments })]); // Missing tool identity.
+	const fresh = createFakeRun(t, readFixtureLines("text.jsonl"));
+	const stream = createClaudeCodeStreamFunction((request, options) => (retiring.calls.length === 0 ? retiring : fresh).runClaude(request, options));
+	const controller = new AbortController();
+	const parked = await runTurn(stream, [HI], { signal: controller.signal });
+	const retired = getOnlyCall(retiring.calls);
+	let stderr = "";
+	retired.child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+	controller.abort();
+	assert.equal(retired.child.killed, true, "the abort has signalled the child");
+	retired.child.send("send the late incompatible call");
+	await assertCleanedUp(retired);
+	assert.match(stderr, /compatibility error: MCP calls must include a unique claudecode\/toolUseId/,
+		"the late request reached the bridge's error callback during shutdown");
+
+	const reply = await runTurn(stream, [HI, parked, toToolResult(held, "evidence")]);
+	assert.equal(getText(reply), "hello there", "a fresh replay, not the stale compatibility error");
+	await assertCleanedUp(getOnlyCall(fresh.calls));
+});
+
 test("normal completion escalates termination when the child ignores SIGTERM", async (t) => {
 	const { events, calls } = await runScenario(t, [JSON.stringify({ fake: "ignore-term" }), ...readFixtureLines("text.jsonl"), HOLD]);
 	assert.equal(getLastEvent(events).type, "done");

@@ -244,7 +244,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			// (anthropic, OpenRouter, Bedrock — same model, same text-after-tool
 			// conversion), as upstream 87b04cc gates it — not on the API
 			// transport — plus Claude Code, whose ids are bare aliases
-			// (opus/sonnet/haiku), as upstream dc4c398 gates it. Explicit test
+			// (opus/sonnet/haiku/fable), as upstream dc4c398 gates it. Explicit test
 			// registries remain caller-owned.
 			tools: [
 				// The library read processes images within THIS agent's model

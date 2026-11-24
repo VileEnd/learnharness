@@ -24,10 +24,10 @@ after(() => {
 
 const h = await import("./helpers/custom-provider.ts");
 const { discoverModels, mergeManualModels } = await import("../src/server/custom-provider.ts");
-const { normalizeBaseUrl, parseModelIds } = await import("../src/core/contracts/custom-provider.ts");
+const { normalizeBaseUrl, parseModelIds, resolveCustomModel } = await import("../src/core/contracts/custom-provider.ts");
 
 const configFile = path.join(dir, "global", "custom-provider.json");
-const stored = () => JSON.parse(fs.readFileSync(configFile, "utf8")) as { snapshot: { id: string }[]; models?: unknown; manualModels?: string[] };
+const stored = () => JSON.parse(fs.readFileSync(configFile, "utf8")) as { snapshot: { id: string }[]; models?: Record<string, { context?: number; maxOutput?: number }>; manualModels?: string[] };
 const answerWith = (status: number, body?: unknown) => {
 	globalThis.fetch = (async () => (body === undefined ? new Response("nope", { status }) : Response.json(body))) as typeof fetch;
 };
@@ -79,6 +79,25 @@ describe("POST /api/custom-provider — typed ids and a failed probe", () => {
 		assert.match(body.detail, /add model IDs manually/);
 	});
 
+	it("reconnecting stores rediscovered nested limits while the user's pins still win per field", async () => {
+		connected();
+		answerWith(200, { data: [
+			{ id: "disc-1", limit: { context: 1050000, input: 922000, output: 128000 } },
+			{ id: "disc-2", limit: { context: 65536, output: 16384 } },
+		] });
+		assert.equal((await connect({ manualModels: "disc-1, m1" })).status, 200);
+		const cp = stored();
+		assert.deepEqual(cp.snapshot, [
+			{ id: "disc-1", context: 1050000, maxOutput: 128000 },
+			{ id: "disc-2", context: 65536, maxOutput: 16384 },
+			{ id: "m1" },
+		]);
+		assert.deepEqual(cp.models, { "disc-1": { context: 200000 }, "disc-2": { maxOutput: 8192 } });
+		assert.deepEqual(cp.snapshot.map((m) => { const r = resolveCustomModel(m, cp.models?.[m.id]); return [r.id, r.contextWindow, r.maxOutput]; }), [
+			["disc-1", 200000, 128000], ["disc-2", 65536, 8192], ["m1", 8192, 4096],
+		]);
+	});
+
 	it("a working probe merges the typed ids, keeps discovered metadata and prunes pins to the offered ids", async () => {
 		connected();
 		answerWith(200, { data: [{ id: "disc-1", context_length: 65536 }] });
@@ -121,6 +140,42 @@ describe("discoverModels", () => {
 			{ id: "r", reasoning: true, context: 4096 },
 			{ id: "v", image: true, context: 32000, maxOutput: 1000 },
 		]);
+	});
+	it("reads nested token limits as independent fallbacks", async () => {
+		const limit = { context: 1050000, input: 922000, output: 128000 };
+		reply({
+			data: [
+				{ id: "nested", limit },
+				{ id: "flat", context_length: 32768, max_output_tokens: 4096, limit },
+				{ id: "mixed", meta: { n_ctx: 65536 }, limit },
+				{ id: "invalid", limit: { input: 922000, context: -1, output: "128000" } },
+			],
+		});
+		const found = await discoverModels(h.BASE);
+		assert.ok(found.ok);
+		assert.deepEqual(found.models, [
+			{ id: "flat", context: 32768, maxOutput: 4096 },
+			{ id: "invalid" },
+			{ id: "mixed", context: 65536, maxOutput: 128000 },
+			{ id: "nested", context: 1050000, maxOutput: 128000 },
+		]);
+	});
+	it("validates nested fields independently and skips invalid higher-priority metadata", async () => {
+		const cases: { row: Record<string, unknown>; limits: { context?: number; maxOutput?: number } }[] = [
+			{ row: { context_length: 0, meta: { n_ctx: -1 }, max_output_tokens: "4096", limit: { context: 65536, output: 8192 } }, limits: { context: 65536, maxOutput: 8192 } },
+			{ row: { max_output_tokens: 4096, limit: { context: 65536, output: 8192 } }, limits: { context: 65536, maxOutput: 4096 } },
+			{ row: { limit: { context: 1, output: 1 } }, limits: { context: 1, maxOutput: 1 } },
+			{ row: { limit: { input: 922000, output: 8192 } }, limits: { maxOutput: 8192 } },
+			...[-1, 0, 1.5, "65536", true, null, [], {}].map((value) => ({ row: { limit: { context: value, output: 8192 } }, limits: { maxOutput: 8192 } })),
+			...[-1, 0, 1.5, "8192", true, null, [], {}].map((value) => ({ row: { limit: { context: 65536, output: value } }, limits: { context: 65536 } })),
+			...[null, [], [{ context: 65536, output: 8192 }], "limits", 65536].map((limit) => ({ row: { limit }, limits: {} })),
+		];
+		for (const { row, limits } of cases) {
+			reply({ data: [{ id: "fixture", ...row }] });
+			const found = await discoverModels(h.BASE);
+			assert.ok(found.ok);
+			assert.deepEqual(found.models, [{ id: "fixture", ...limits }], JSON.stringify(row));
+		}
 	});
 	it("detects llama.cpp's runtime context from meta.n_ctx, not n_ctx_train", async () => {
 		reply({

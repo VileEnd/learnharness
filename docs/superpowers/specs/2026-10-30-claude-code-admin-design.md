@@ -43,7 +43,7 @@ I advised against this: Anthropic's Consumer Terms §2 and the Claude Code crede
     - It streams stdout as NDJSON and accepts more stdin lines (stream-json) over the same request.
     - It kills the process when the request is cancelled.
   - Values are validated:
-    - model ∈ {opus, sonnet, haiku};
+    - model ∈ {opus, sonnet, haiku, fable};
     - effort ∈ the known set;
     - allowedTools must match `^mcp__learnharness__[a-z_]+$`;
     - the MCP URL must point at the app on `claude-bridge`.
@@ -60,7 +60,7 @@ I advised against this: Anthropic's Consumer Terms §2 and the Claude Code crede
   - Upstream's per-call admission (`claudecode/toolUseId` must match the streamed intent) and its MCP cancellation are kept.
 - **Admin-only, global:**
   - The toggle `claudeCode.enabled` lives in the global admin config (admin-only API) and defaults to off.
-  - Models `claude-code:opus|sonnet|haiku` are listed only for admins.
+  - Models `claude-code:opus|sonnet|haiku|fable` are listed only for admins.
   - The model gate **hard-refuses** them for every non-admin, regardless of allow-lists, and for every background purpose (any role other than the conversation and teacher/prober/practice purposes).
   - They cannot be set as model slots. They can be picked as a chat's model by an admin only.
 - **Compaction:** a chat on a Claude Code model compacts on the admin's strong slot, never on the CLI.

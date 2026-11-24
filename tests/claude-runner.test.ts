@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 
 import { LIVE_PROCESS_IDLE_TIMEOUT_MS } from "../src/agent/claude-code/live-processes.ts";
-import { compareVersion, createRunner, toClaudeArgs } from "../deploy/claude/runner.mjs";
+import { CLAUDE_CODE_MODELS } from "../src/agent/claude-code/provider.ts";
+import { compareVersion, createRunner, toClaudeArgs, validateRun } from "../deploy/claude/runner.mjs";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/claude-code/", import.meta.url));
 const FAKE_CLAUDE = join(FIXTURES, "fake-claude.mjs");
@@ -164,6 +165,11 @@ test("refuses an MCP url on another host and a non-MCP tool", async (t) => {
 		await client.until(() => client.closed());
 		assert.equal(client.frames[0]?.error, "invalid");
 	}
+});
+
+test("accepts every model alias the app lists, and nothing else", () => {
+	for (const { id } of CLAUDE_CODE_MODELS) assert.equal(validateRun(validRun({ model: id }), APP_HOST).ok, true, id);
+	assert.equal(validateRun(validRun({ model: "claude-fable-5-2" }), APP_HOST).ok, false);
 });
 
 test("refuses unknown keys", async (t) => {
