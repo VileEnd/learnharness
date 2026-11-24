@@ -223,11 +223,15 @@ function extractModels(body: unknown): CustomModel[] | null {
 			const model: CustomModel = { id };
 			if (detectImage(row)) model.image = true;
 			if (detectReasoning(row)) model.reasoning = true;
+			// models.dev-style endpoints nest both limits under `limit`; each is
+			// an independent fallback behind the flat fields.
+			const limit = isRecord(row.limit) ? row.limit : {};
 			const context =
 				firstPositive(row, CONTEXT_KEYS) ??
-				(isRecord(row.meta) ? firstPositive(row.meta, META_CONTEXT_KEYS) : undefined);
+				(isRecord(row.meta) ? firstPositive(row.meta, META_CONTEXT_KEYS) : undefined) ??
+				firstPositive(limit, ["context"]);
 			if (context) model.context = clampCustomLimit("context", context);
-			const maxOutput = firstPositive(row, MAX_OUTPUT_KEYS);
+			const maxOutput = firstPositive(row, MAX_OUTPUT_KEYS) ?? firstPositive(limit, ["output"]);
 			if (maxOutput) model.maxOutput = clampCustomLimit("maxOutput", maxOutput);
 			byId.set(id, model);
 		}
