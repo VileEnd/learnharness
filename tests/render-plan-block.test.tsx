@@ -16,6 +16,7 @@ import {
 	type PopupMessage,
 } from "../components/plan-block.tsx";
 import type { PlanBlockData, PlanTree } from "../src/core/contracts.ts";
+import { AppearanceProvider } from "../components/settings/appearance.tsx";
 
 // Plan blocks: the pure layered layout, the frozen-snapshot rendering
 // (full = borderless + column-filling
@@ -155,9 +156,8 @@ describe("plan block render", () => {
 		// Borderless: the wrapper carries no border/rounded chrome.
 		assert.ok(!/data-testid="plan-block-full"[^>]*border/.test(html), "no wrapping chrome");
 		// Fills the column UP TO the chat-font cap: the svg is w-full +
-		// mx-auto with maxWidth = extent × TEXT_CAP_SCALE, so node text never
-		// renders past the 16px prose size (owner, plan-graph round 1; the
-		// snap 16.5→16 landed in typography round 4).
+		// mx-auto with maxWidth = extent × prose size / label size, so node
+		// text never renders past the prose size (owner, plan-graph round 1).
 		assert.match(html, /<svg[^>]*class="block h-auto w-full mx-auto"/);
 		// The reading font, not the mono UI font (owner, 2026-09-26) — via the
 		// runtime var (the font-prose utility would bake the @theme literal
@@ -166,7 +166,14 @@ describe("plan block render", () => {
 		// Lines + outlines at the app's standard 1px border weight (owner,
 		// 2026-09-26; was 1.5).
 		assert.match(html, /<rect[^>]*stroke-width="1"/);
-		assert.match(html, /max-width:143\.36px/); // (96+16) × 1.28 — boxes hug now
+		assert.match(html, /max-width:162\.91px/); // (96+16) × 16/11: 11px labels reach at most the 16px prose size
+		// The cap follows the reading size picked in Settings.
+		const big = renderToStaticMarkup(
+			<AppearanceProvider initialAppearance={{ proseFontSize: 20 }}>
+				<PlanBlock data={data} onOpen={() => {}} />
+			</AppearanceProvider>,
+		);
+		assert.match(big, /max-width:203\.64px/); // (96+16) × 20/11
 		// Centered text (owner, plan-hug round 2026-10-07): every title line
 		// anchors to its box's midline — the old x=12 left inset is gone.
 		assert.match(html, /<text[^>]*x="48"[^>]*text-anchor="middle"/); // 96/2
