@@ -122,7 +122,7 @@ describe("native app and conversation identity", { concurrency: false }, () => {
 		globalThis.fetch = async (input, init) => { const request = new Request(input, init); headers = request.headers; body = JSON.parse(await request.text()); return new Response("{}", { status: 400, headers: { "content-type": "application/json" } }); };
 		await createTeacherAgent(undefined, { engine, chatId: sessionId, tools: {} }).prompt("offline");
 		assert.equal(body.prompt_cache_key, Array.from(sessionId).slice(0, 64).join(""));
-		assert.equal(headers.get("session_id"), sessionId);
+		assert.equal(headers.get("session-id"), sessionId);
 	}));
 
 	it("native OpenAI cache-key clamp counts Unicode code points, not UTF-16 units", async () => closed(async () => {

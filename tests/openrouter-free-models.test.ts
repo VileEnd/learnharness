@@ -8,12 +8,12 @@ import { callCost } from "../src/server/pricing.ts";
 
 const specimens = [
 	{ id: "recursive/flint-v1.0:free", input: ["text"] },
-	{ id: "xingchen-agi/xing4.0-29b-a4b:free", input: ["text"] },
+	{ id: "nvidia/nemotron-3.5-lightning:free", input: ["text"] },
 	{ id: "nvidia/nemotron-3.5-super-vl:free", input: ["text", "image"] },
 	{ id: "openrouter/free", input: ["text", "image"] },
 ];
 
-describe("native 1.4 OpenRouter free catalog (offline, no live discovery)", { concurrency: false }, () => {
+describe("bundled OpenRouter free catalog (offline, no live discovery)", { concurrency: false }, () => {
 	for (const { id, input } of specimens) {
 		it(`${id}: shared listing, validation, tool-capable engine, native modality, and zero cost`, async () => {
 			const before = process.env;
@@ -52,7 +52,10 @@ describe("native 1.4 OpenRouter free catalog (offline, no live discovery)", { co
 		});
 	}
 	it("removed/unknown native models remain unpriced and unresolvable, never aliased to a paid fallback", () => {
-		assert.equal(callCost({ inputTokens: 1, outputTokens: 1 }, "openrouter:removed/no-such-model"), null);
-		assert.throws(() => piEngineForSpec({ provider: "openrouter", id: "removed/no-such-model" }), /catalog has no model/);
+		// xing4.0 left the bundled catalog in Pi 1.6.0.
+		for (const id of ["xingchen-agi/xing4.0-29b-a4b:free", "removed/no-such-model"]) {
+			assert.equal(callCost({ inputTokens: 1, outputTokens: 1 }, `openrouter:${id}`), null);
+			assert.throws(() => piEngineForSpec({ provider: "openrouter", id }), /catalog has no model/);
+		}
 	});
 });
