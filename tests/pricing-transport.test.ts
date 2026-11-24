@@ -29,5 +29,14 @@ test("chat GET supplies derived Pi costs without persisting dollars or changing 
 	assert.equal(body.pricing.cost, 0.037);
 	assert.equal(body.pricing.unpriced, 1);
 	assert.deepEqual(body.pricing.turnCosts, { api: 0.037, unknown: null });
+
+	const stats = await GET(new Request(`http://localhost/api/chats/${record.id}?view=stats`), { params: Promise.resolve({ id: record.id }) });
+	assert.equal(stats.status, 200);
+	assert.deepEqual(await stats.json(), { turns: body.turns, pricing: body.pricing }, "the stats view carries no transcript");
 	assert.equal(fs.readFileSync(file, "utf8"), before, "read-time estimates must never rewrite the usage log");
+});
+
+test("a stats-only read keeps the missing-session 404", async () => {
+	const response = await GET(new Request("http://localhost/api/chats/missing-session?view=stats"), { params: Promise.resolve({ id: "missing-session" }) });
+	assert.equal(response.status, 404);
 });

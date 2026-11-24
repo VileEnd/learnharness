@@ -1346,19 +1346,29 @@ export function Chat({
 	// guess so the static paint has a sane tail. The first layout effect
 	// replaces it with the measured truth before paint.
 	const [dockReserve, setDockReserve] = useState(208);
+	// The stats-only view (no transcript download); a newer refresh aborts
+	// the one still in flight so a late answer never overwrites fresher figures.
+	const statsRequest = useRef<AbortController | null>(null);
 	const syncTurns = useCallback(async () => {
+		statsRequest.current?.abort();
+		const request = new AbortController();
+		statsRequest.current = request;
 		try {
-			const res = await fetch(`/api/chats/${chatId}`);
+			const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}?view=stats`, { signal: request.signal });
 			if (!res.ok) return;
-			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing };
-			if (Array.isArray(record.turns)) setTurns(record.turns);
-			setPricing(record.pricing);
+			const stats = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing };
+			if (request.signal.aborted) return;
+			if (Array.isArray(stats.turns)) setTurns(stats.turns);
+			setPricing(stats.pricing);
 		} catch {
-			// transient blip: stats stay on the last known figures
+			// transient blip (or superseded): stats stay on the last known figures
+		} finally {
+			if (statsRequest.current === request) statsRequest.current = null;
 		}
 	}, [chatId]);
 	useEffect(() => {
 		void syncTurns();
+		return () => statsRequest.current?.abort();
 	}, [syncTurns]);
 	// After the learner's own turn ends the log has a fresh entry — and the
 	// Post-turn settle (the SLIMMED watch — push-architecture S3,

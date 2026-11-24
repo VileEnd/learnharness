@@ -1,9 +1,14 @@
 import { compactionInFlight, deleteChatSession, getChat, isTurnRunning, sessionCoverage, sessionCost, stores, turnFailure, type ChatDeleteMode, withTenant } from "@/src/server";
 
-export const GET = withTenant(async (_req: Request, { params }: { params: Promise<{ id: string }> }) => {
+export const GET = withTenant(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
 	const { id } = await params;
 	const chat = getChat(id);
 	if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+	// ?view=stats: the stats bar's refresh after each turn needs only the
+	// usage log and its read-time pricing, not the transcript or coverage.
+	if (new URL(req.url).searchParams.get("view") === "stats") {
+		return Response.json({ turns: chat.turns, pricing: sessionCost(chat) });
+	}
 	// turnInFlight lets a returning client re-attach to a running turn
 	// (chat-handler write-ahead + registry — see src/server/turn-liveness.ts).
 	// coverage (extraction-UX redesign, 2026-09-24): the chat view's ring
