@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBackDismiss } from "@/components/use-back-dismiss";
@@ -8,16 +9,15 @@ import { isTopModal, useModal } from "@/components/ui/use-modal";
 import { useCoarsePointer } from "@/components/use-coarse-pointer";
 import {
 	blockLayout,
+	chartMeasure,
 	edgePathD,
-	wrapTitle,
 	HEAD_H,
 	HEAD_W,
-	LINE_H,
-	NODE_H,
 	NODE_W_MIN,
-	PLAN_LABEL_PX,
 	STROKE_W,
+	type LabelMeasure,
 	type LayoutNode,
+	type PlanLayout,
 } from "@/components/plan-layout";
 import { fitGraphView, fitZoomFor, pinchView, zoomedGraphView, type Pt, type Viewport } from "@/components/pan-zoom";
 import type { PlanBlockData, PlanNodeStatus, PlanTree } from "@/src/core";
@@ -43,13 +43,215 @@ import { Hint } from "@/components/ui/hint";
  *   the popup is the live view (user decision, 2026-09).
  *
  * Hand-built SVG everywhere (user decision): placement runs on dagre
- * (mermaid's engine — deterministic, synchronous, DOM-free, so SSR and
- * render tests stay exact) in components/plan-layout.ts; the skin is ours —
- * no coupling to the graph
- * stream's internals. Pan/zoom in the popup
- * is harvested from the retired tree panel's graph (fit-floor semantics:
- * fully zoomed out IS the fit; panning locks at the floor).
+ * (mermaid's engine) in components/plan-layout.ts; the skin is ours — no
+ * coupling to the graph stream's internals. Box sizes come from the real
+ * label text measured in the real font (usePlanLayout below; owner
+ * approved 2026-11-24, replacing the "estimate, drift accepted" rule).
+ * Pan/zoom in the popup is harvested from the retired tree panel's graph
+ * (fit-floor semantics: fully zoomed out IS the fit; panning locks at the
+ * floor).
  */
+
+// ─── Measuring the labels (upstream issue 671) ────────────────────────────────────────────
+
+/** The label type every plan view draws its titles in. Width-relevant
+ *  classes only (size + weight) — the probe measures with exactly these.
+ *  font-medium is the HEAVIEST weight any status draws (the current node,
+ *  TEXT.current below), so every box fits its text at any status and the
+ *  layout never shifts when the current step moves (upstream issue 671 design). */
+const LABEL_TYPE = "text-xs";
+const PROBE_TYPE = `${LABEL_TYPE} font-medium`;
+/** A fixed sample for size/visibility changes. It cannot represent every
+ *  title's glyphs: font settings and completed font loads also invalidate
+ *  measurement, even when this sample keeps exactly the same dimensions. */
+const SENTINEL_TEXT = "Hamburgefonstiv 0123 漢字";
+
+/** The hidden probe a diagram carries in a fixed-size sibling SVG. It
+ *  inherits the same reading font (including subtree --font-prose overrides)
+ *  without inheriting the diagram's changing viewBox scale:
+ *  - sentinel: fixed text the ResizeObserver watches;
+ *  - measurer: SVG <text> whose width answers `width(line)`;
+ *  - breaker: HTML block where the browser's own line breaker lays out each
+ *    title, answering `lines(title)`. */
+interface PlanProbe {
+	sentinel: RefObject<SVGTextElement | null>;
+	measurer: RefObject<SVGTextElement | null>;
+	breaker: RefObject<HTMLDivElement | null>;
+}
+
+/** Keep this outside the drawing's viewBox and any pan/zoom transform.
+ * It shares the reading-font cascade and display:none ancestors. */
+export function PlanLayoutProbe({ probe }: { probe: PlanProbe }) {
+	return (
+		<svg aria-hidden="true" visibility="hidden" data-plan-probe="" width={1} height={1}
+			className="pointer-events-none absolute top-0 left-0 overflow-hidden"
+			style={{ fontFamily: "var(--font-prose)" }}
+		>
+			<text ref={probe.sentinel} className={PROBE_TYPE}>{SENTINEL_TEXT}</text>
+			<text ref={probe.measurer} className={PROBE_TYPE} />
+			<foreignObject width={1} height={1} overflow="visible">
+				<div
+					ref={probe.breaker}
+					className={PROBE_TYPE}
+					style={{ width: "max-content", whiteSpace: "normal", overflowWrap: "normal", wordBreak: "normal", hyphens: "none" }}
+				/>
+			</foreignObject>
+		</svg>
+	);
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const HANGUL = /\p{Script=Hangul}/u;
+
+/** The lines the browser itself broke `title` into, read back from where
+ *  each grapheme landed: a grapheme on a new row starts a new line. The
+ *  breaker never splits words or hyphenates (CSS on the element), so this
+ *  is the browser's word-level line breaking, every script's rules
+ *  included. */
+function browserLines(box: HTMLDivElement, title: string, maxWidth: number): string[] {
+	box.style.maxWidth = `${maxWidth}px`;
+	// Korean separates words with spaces, but browsers break Hangul between
+	// any two syllables by default; keep-all keeps its words whole. Chinese
+	// and Japanese have no spaces and break between characters by their own
+	// rules, so they keep the default.
+	box.style.wordBreak = HANGUL.test(title) ? "keep-all" : "normal";
+	box.textContent = title;
+	const text = box.firstChild;
+	if (!text) return [""];
+	const range = document.createRange();
+	const lines: string[] = [];
+	let line = "";
+	let top: number | null = null;
+	for (const { segment, index } of graphemes.segment(title)) {
+		range.setStart(text, index);
+		range.setEnd(text, index + segment.length);
+		const rect = [...range.getClientRects()].find((r) => r.width > 0);
+		if (rect && top !== null && Math.abs(rect.top - top) > rect.height / 2) {
+			lines.push(line.trim());
+			line = "";
+		}
+		if (rect) top = rect.top;
+		line += segment;
+	}
+	lines.push(line.trim());
+	const kept = lines.filter((l) => l !== "");
+	return kept.length > 0 ? kept : [""];
+}
+
+/** The real-font measure: the breaker answers line breaks, the SVG
+ *  measurer answers widths (PROBE_TYPE on both). Answers are cached per
+ *  measure — a new measure is made whenever the font may have changed. */
+function probeMeasure(el: SVGTextElement, box: HTMLDivElement): LabelMeasure {
+	const widths = new Map<string, number>();
+	const breaks = new Map<string, string[]>();
+	return {
+		fontSize: parseFloat(getComputedStyle(el).fontSize),
+		width(text) {
+			let w = widths.get(text);
+			if (w === undefined) {
+				el.textContent = text;
+				w = el.getComputedTextLength();
+				widths.set(text, w);
+			}
+			return w;
+		},
+		lines(title, maxWidth) {
+			const key = `${maxWidth}\n${title}`;
+			let lines = breaks.get(key);
+			if (lines === undefined) {
+				lines = browserLines(box, title, maxWidth);
+				breaks.set(key, lines);
+			}
+			return lines;
+		},
+	};
+}
+
+/** Stable empties for "no plan yet" (the layout keys on identity). */
+const NO_NODES: readonly LayoutNode[] = [];
+const NO_EDGES: ReadonlyArray<{ from: string; to: string }> = [];
+
+/**
+ * One plan's layout, measured in the real font (null plan = empty layout).
+ * Pass the result to the PlanDiagram that draws this plan.
+ *
+ * - Server render and the first client render lay out with `chartMeasure`
+ *   (the Source Sans estimate), so the server HTML and hydration agree.
+ * - Right after mount (layout effect, before paint) the real labels are
+ *   measured and the layout is replaced.
+ * - Reading-font and reading-size changes and completed font loads
+ *   invalidate measurement directly: a font can change a title without
+ *   changing the sentinel. The Appearance provider renders its variables
+ *   as a <style> in the same commit, so the layout effect already reads
+ *   the new font; the scheduled frame measures once more after paint.
+ * - A ResizeObserver covers changes to the sentinel's actual font metrics
+ *   and hidden-to-visible transitions. The sentinel is never rewritten and
+ *   its SVG is not scaled by the diagram's viewBox, so measuring and width
+ *   drags don't retrigger it.
+ *
+ * Does NOT measure while the diagram has no layout box (an ancestor with
+ * display:none reads 0 widths); the chart layout stays until it shows.
+ */
+export function usePlanLayout(plan: { nodes: readonly LayoutNode[]; edges: ReadonlyArray<{ from: string; to: string }> } | null) {
+	// Canonical reads can recreate the same plan, and status changes do not
+	// move its boxes. Key the chart and real-font probe on ordered geometry
+	// inputs, not the identities of the record's arrays or view objects.
+	const geometryKey = plan?.nodes.length ? JSON.stringify([
+		plan.nodes.map(({ id, title }) => ({ id, title })),
+		plan.edges.map(({ from, to }) => ({ from, to })),
+	]) : "";
+	const [nodes, edges] = useMemo((): readonly [readonly LayoutNode[], ReadonlyArray<{ from: string; to: string }>] => (
+		geometryKey ? JSON.parse(geometryKey) : [NO_NODES, NO_EDGES]
+	), [geometryKey]);
+	// The reading font and size: a font pick or a size change re-measures
+	// directly (the probe's font may change without its sample changing).
+	const { appearance: { fontFamily, proseFontSize } } = useAppearance();
+	const sentinel = useRef<SVGTextElement>(null);
+	const measurer = useRef<SVGTextElement>(null);
+	const breaker = useRef<HTMLDivElement>(null);
+	const chart = useMemo(() => blockLayout(nodes, edges, chartMeasure), [nodes, edges]);
+	const [measured, setMeasured] = useState<{ nodes: typeof nodes; edges: typeof edges; layout: PlanLayout } | null>(null);
+	useLayoutEffect(() => {
+		const watch = sentinel.current;
+		const el = measurer.current;
+		const box = breaker.current;
+		if (nodes.length === 0 || !watch || !el || !box || typeof el.getComputedTextLength !== "function") return;
+		const measure = () => {
+			if (watch.getComputedTextLength() === 0) return; // not rendered yet
+			setMeasured({ nodes, edges, layout: blockLayout(nodes, edges, probeMeasure(el, box)) });
+		};
+		measure();
+		const remeasure = () => flushSync(measure);
+		const frame = requestAnimationFrame(remeasure);
+		// A loaded subset may affect only glyphs absent from SENTINEL_TEXT.
+		// Do not gate these notifications on the sentinel's dimensions.
+		const fonts = document.fonts;
+		fonts?.addEventListener("loadingdone", remeasure);
+		let active = true;
+		void fonts?.ready.then(() => { if (active) remeasure(); });
+		let observer: ResizeObserver | undefined;
+		if (typeof ResizeObserver !== "undefined") {
+			let seen = watch.getBBox();
+			observer = new ResizeObserver(() => {
+				const now = watch.getBBox();
+				if (now.width === seen.width && now.height === seen.height) return;
+				seen = now;
+				remeasure();
+			});
+			observer.observe(watch);
+		}
+		return () => {
+			active = false;
+			cancelAnimationFrame(frame);
+			fonts?.removeEventListener("loadingdone", remeasure);
+			observer?.disconnect();
+		};
+	}, [nodes, edges, fontFamily, proseFontSize]);
+	const layout = measured && measured.nodes === nodes && measured.edges === edges ? measured.layout : chart;
+	const probe: PlanProbe = { sentinel, measurer, breaker };
+	return { layout, probe };
+}
+
 
 /** SVG-unit padding around the layout extent: strokes are centered on the
  *  geometry (half bleeds outside the extent) and the glow halo reaches −4 —
@@ -89,24 +291,28 @@ const BOX: Record<PlanNodeStatus, string> = {
 	// The grayed-out not-yet-visited look stays as-is (owner).
 	upcoming: "fill-card stroke-border",
 };
+// Every label's size + weight must stay within PROBE_TYPE (the probe
+// measures the heaviest of them), or boxes stop fitting their text.
 const TEXT: Record<PlanNodeStatus, string> = {
-	visited: "fill-line-strong text-xs",
-	current: "fill-line-strong text-xs font-medium",
-	upcoming: "fill-muted-foreground-80 text-xs",
+	visited: `fill-line-strong ${LABEL_TYPE}`,
+	current: `fill-line-strong ${LABEL_TYPE} font-medium`,
+	upcoming: `fill-muted-foreground-80 ${LABEL_TYPE}`,
 };
 // The in-chat block speaks the dock language now (owner, plan-hug
 // round 2026-10-07): boxes in the lighter background variant like
 // the composer/dock shells — but the outlines STAY the strong line ink,
 // white in Default (owner follow-up: the gray fill is good, white box edges).
 const MONO_BOX = "fill-card stroke-line-strong";
-const MONO_TEXT = "fill-foreground text-xs";
+const MONO_TEXT = `fill-foreground ${LABEL_TYPE}`;
 
-/** The diagram itself: positioned nodes + bezier edges. Pure-ish render —
- *  every input is data, so SSR render tests pin the whole thing. The root
- *  sets font-family var(--font-prose): node titles render in the READING
- *  font, not the mono UI font (owner, 2026-09-26) — and the runtime var
- *  rides the Appearance reading-font override. */
+/** The diagram itself: positioned nodes + bezier edges, drawn from the
+ *  layout usePlanLayout hands it — every input is data, so SSR render
+ *  tests pin the whole thing. The root sets font-family var(--font-prose):
+ *  node titles render in the READING font, not the mono UI font (owner,
+ *  2026-09-26) — and the runtime var rides the Appearance reading-font
+ *  override. Its hidden sibling probe uses the same token. */
 export function PlanDiagram({
+	layout,
 	nodes,
 	edges,
 	statusOf,
@@ -119,6 +325,8 @@ export function PlanDiagram({
 	monochrome,
 	fill,
 }: {
+	/** usePlanLayout's result for these same nodes + edges. */
+	layout: PlanLayout;
 	nodes: readonly LayoutNode[];
 	edges: ReadonlyArray<{ from: string; to: string }>;
 	statusOf: (id: string) => PlanNodeStatus;
@@ -146,7 +354,6 @@ export function PlanDiagram({
 	 *  flank's width and the band's height rather than run width-first. */
 	fill?: boolean;
 }) {
-	const layout = useMemo(() => blockLayout(nodes, edges), [nodes, edges]);
 	// Pad only the full-extent render — the plan window's override viewBox is
 	// a deliberate viewport crop, and the popup keeps its own fit margins.
 	const pad = viewBoxOverride ? 0 : (padUnits ?? 0);
@@ -168,7 +375,7 @@ export function PlanDiagram({
 				// consumed by font-prose, so Appearance changes reach SVG text.
 				fontFamily: "var(--font-prose)",
 				...(textCap
-					? { maxWidth: `${Math.round(((vbW * textCap) / PLAN_LABEL_PX) * 100) / 100}px` }
+					? { maxWidth: `${Math.round(((vbW * textCap) / layout.fontSize) * 100) / 100}px` }
 					: naturalSize
 						? { width: `${vbW}px` }
 						: {}),
@@ -224,7 +431,7 @@ export function PlanDiagram({
 				const ty = layout.y.get(e.to);
 				const target =
 					tx !== undefined && ty !== undefined
-						? { x: tx, y: ty, w: layout.nodeW.get(e.to) ?? NODE_W_MIN, h: layout.nodeH.get(e.to) ?? NODE_H }
+						? { x: tx, y: ty, w: layout.nodeW.get(e.to) ?? NODE_W_MIN, h: layout.nodeH.get(e.to) ?? 0 }
 						: undefined;
 				// An arrow is white only when BOTH its ends are white (owner,
 				// 2026-09-26): origin AND terminal covered — a gray box's outgoing
@@ -247,12 +454,14 @@ export function PlanDiagram({
 			{nodes.map((n) => {
 				const status = statusOf(n.id);
 				const glow = n.id === glowId && !monochrome;
-				const lines = wrapTitle(n.title);
-				// The box hugs its wrapped content; text centers in it —
-				// horizontally too now (text-first sizing round, 2026-10-07).
-				const h = layout.nodeH.get(n.id) ?? NODE_H;
+				const lines = layout.lines.get(n.id) ?? [n.title];
+				// The box hugs its measured, wrapped lines; text centers in it
+				// both ways — each line's middle sits on its own row's middle
+				// (dominant-baseline central), so no font-specific baseline
+				// offset is needed.
+				const h = layout.nodeH.get(n.id) ?? 0;
 				const w = layout.nodeW.get(n.id) ?? NODE_W_MIN;
-				const y0 = (h - lines.length * LINE_H) / 2 + 10;
+				const y0 = (h - lines.length * layout.lineH) / 2 + layout.lineH / 2;
 				return (
 					<g
 						key={n.id}
@@ -286,8 +495,9 @@ export function PlanDiagram({
 							<text
 								key={i}
 								x={w / 2}
-								y={y0 + i * LINE_H}
+								y={y0 + i * layout.lineH}
 								textAnchor="middle"
+								dominantBaseline="central"
 								className={monochrome ? MONO_TEXT : TEXT[status]}
 							>
 								{line}
@@ -313,6 +523,7 @@ export function PlanBlock({ data, onOpen }: { data: PlanBlockData; onOpen: () =>
 	const markerId = useId().replace(/[^a-zA-Z0-9-]/g, "");
 	const statusMap = useMemo(() => new Map(data.nodes.map((n) => [n.id, n.status] as const)), [data]);
 	const statusOf = (id: string): PlanNodeStatus => statusMap.get(id) ?? "upcoming";
+	const plan = usePlanLayout(data);
 	const { appearance } = useAppearance();
 	return (
 		<Hint label="Open the full plan" side="bottom">
@@ -327,6 +538,7 @@ export function PlanBlock({ data, onOpen }: { data: PlanBlockData; onOpen: () =>
 		    cap keeps node text at or below chat prose size while still filling
 		    the column when it can (owner, plan-graph refinement round 1). */}
 		<PlanDiagram
+			layout={plan.layout}
 			nodes={data.nodes}
 			edges={data.edges}
 			statusOf={statusOf}
@@ -335,6 +547,7 @@ export function PlanBlock({ data, onOpen }: { data: PlanBlockData; onOpen: () =>
 			textCap={appearance.proseFontSize}
 			monochrome
 		/>
+		<PlanLayoutProbe probe={plan.probe} />
 		</button>
 </Hint>
 	);
@@ -426,13 +639,16 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 		return () => ro.disconnect();
 	}, []);
 
-	const layout = useMemo(() => (tree ? blockLayout(tree.nodes, tree.edges) : null), [tree]);
+	// ONE layout for both the fit math and the drawing — measured once, so
+	// the zoom-to-fit frames exactly the boxes on screen.
+	const plan = usePlanLayout(tree);
+	const { layout } = plan;
 	// The fit box is the PADDED ink box — the diagram renders with POPUP_PAD
 	// (= the glow's reach) so the blurred glow never clips at the frame, and
 	// the fit must account for that padding.
 	const box = useMemo(
-		() => (layout ? { w: layout.width + 2 * POPUP_PAD, h: layout.height + 2 * POPUP_PAD } : { w: 0, h: 0 }),
-		[layout],
+		() => (tree ? { w: layout.width + 2 * POPUP_PAD, h: layout.height + 2 * POPUP_PAD } : { w: 0, h: 0 }),
+		[tree, layout],
 	);
 	const fitZoom = useMemo(() => fitZoomFor(box, size), [box, size]);
 
@@ -606,6 +822,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 							}}
 						>
 							<PlanDiagram
+								layout={layout}
 								nodes={tree.nodes}
 								edges={tree.edges}
 								statusOf={statusOf}
@@ -615,6 +832,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 								naturalSize
 							/>
 						</div>
+						<PlanLayoutProbe probe={plan.probe} />
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
 							<span className="text-xs text-muted-foreground-60">{coarse ? "Drag to pan · pinch to zoom" : "Drag to pan · scroll to zoom"}</span>
 							<div className="flex gap-1">
