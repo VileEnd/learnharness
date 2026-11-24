@@ -1,9 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { PlanBlock, PlanPopup, type PopupMessage } from "../components/plan-block.tsx";
 import {
-	PlanBlock,
-	PlanPopup,
 	blockLayout,
 	topoFor,
 	edgePathD,
@@ -13,8 +12,7 @@ import {
 	NODE_W_MIN,
 	nodeWidth,
 	estimateLineWidth,
-	type PopupMessage,
-} from "../components/plan-block.tsx";
+} from "../components/plan-layout.ts";
 import type { PlanBlockData, PlanTree } from "../src/core/contracts.ts";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
 
