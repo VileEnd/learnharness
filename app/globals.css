@@ -481,6 +481,14 @@ body {
 	height: auto !important;
 }
 
+/* Plan labels: keep glyph advances (including fallback emoji) consistent
+   between the scaled plan diagram and its unscaled label probe
+   (components/plan-block.tsx). Leave the HTML line breaker and other SVGs
+   alone. */
+:is(svg[aria-label="Plan diagram"], svg[data-plan-probe]) text {
+	text-rendering: geometricPrecision;
+}
+
 /* Display math: long equations scroll instead of overflowing the column. */
 .katex-display {
 	overflow-x: auto;

@@ -1,20 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { PlanBlock, PlanPopup, type PopupMessage } from "../components/plan-block.tsx";
 import {
-	PlanBlock,
-	PlanPopup,
 	blockLayout,
+	chartMeasure,
 	topoFor,
 	edgePathD,
-	wrapTitle,
 	GAP_X,
-	NODE_H,
 	NODE_W_MIN,
-	nodeWidth,
-	estimateLineWidth,
-	type PopupMessage,
-} from "../components/plan-block.tsx";
+	PAD_X,
+	type LabelMeasure,
+} from "../components/plan-layout.ts";
 import type { PlanBlockData, PlanTree } from "../src/core/contracts.ts";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
 
@@ -35,21 +32,42 @@ const CHAIN: PlanTree = {
 	version: 1,
 };
 
+/** One node laid out alone: its wrapped lines and box. */
+function single(title: string, measure: LabelMeasure = chartMeasure) {
+	const L = blockLayout([{ id: "n", title }], [], measure);
+	return { lines: L.lines.get("n")!, w: L.nodeW.get("n")!, h: L.nodeH.get("n")!, lineH: L.lineH };
+}
+
+/** A monospace stand-in at 11px (every character 6.6px, JetBrains Mono's
+ *  advance) that wraps at spaces like the browser's breaker would. */
+const monoWidth = (s: string) => [...s].length * 6.6;
+const mono: LabelMeasure = {
+	fontSize: 11,
+	width: monoWidth,
+	lines(title, maxWidth) {
+		const lines: string[] = [];
+		for (const word of title.trim().split(/\s+/)) {
+			const last = lines[lines.length - 1];
+			if (last !== undefined && monoWidth(`${last} ${word}`) <= maxWidth) lines[lines.length - 1] = `${last} ${word}`;
+			else lines.push(word);
+		}
+		return lines;
+	},
+};
+
 describe("plan block layout (pure)", () => {
 	it("layers a chain top-down, one node per depth row", () => {
 		const { order, depth } = topoFor(CHAIN.nodes, CHAIN.edges);
 		assert.deepEqual(order.map((n) => n.id), ["a", "b", "c"]);
 		assert.equal(depth.get("c"), 2);
-		const layout = blockLayout(CHAIN.nodes, CHAIN.edges);
+		const layout = blockLayout(CHAIN.nodes, CHAIN.edges, chartMeasure);
 		// Text-first sizing (owner, plan-hug round 2026-10-07): these short
 		// titles hug to the minimum — no more fixed 160px slabs.
-		const W = nodeWidth(wrapTitle("Alpha node"));
-		assert.equal(W, NODE_W_MIN); // est ≈ 50 → floored at the min
-		// All three short titles floor — the extent is the floor itself.
-		assert.equal(nodeWidth(wrapTitle("Gamma node")), NODE_W_MIN); // est ≈ 59.9
+		assert.equal(layout.nodeW.get("a"), NODE_W_MIN); // est ≈ 50 → floored at the min
+		assert.equal(layout.nodeW.get("c"), NODE_W_MIN); // est ≈ 59.9
 		assert.equal(layout.width, NODE_W_MIN);
-		assert.equal(layout.height, 3 * NODE_H + 2 * 48);
-		assert.equal(layout.nodeW.get("a"), W);
+		// 44 tall each: two 13px rows + 9px top/bottom, derived from 11px.
+		assert.equal(layout.height, 3 * 44 + 2 * 48);
 	});
 
 	it("centers same-depth nodes over the widest row; tolerates dangling edges", () => {
@@ -58,12 +76,16 @@ describe("plan block layout (pure)", () => {
 			{ id: "x", title: "Left" },
 			{ id: "y", title: "Right" },
 		];
-		const layout = blockLayout(nodes, [
-			{ from: "r", to: "x" },
-			{ from: "r", to: "y" },
-			{ from: "ghost", to: "r" }, // dangling: ignored defensively
-		]);
-		const W = nodeWidth(wrapTitle("Root"));
+		const layout = blockLayout(
+			nodes,
+			[
+				{ from: "r", to: "x" },
+				{ from: "r", to: "y" },
+				{ from: "ghost", to: "r" }, // dangling: ignored defensively
+			],
+			chartMeasure,
+		);
+		const W = NODE_W_MIN;
 		assert.equal(layout.width, 2 * W + GAP_X);
 		// Root centered over its two children: (2*W+GAP - W)/2
 		assert.equal(layout.x.get("r"), (2 * W + GAP_X - W) / 2);
@@ -112,30 +134,29 @@ describe("plan block layout (pure)", () => {
 		assert.ok(free.endsWith("L99.612,95.006"), "unclamped within the cone");
 	});
 
-	it("wrapTitle wraps greedily and NEVER drops content (boxes grow instead)", () => {
-		assert.deepEqual(wrapTitle("Chain rule intuition"), ["Chain rule intuition"]); // well under — one line
-		assert.deepEqual(wrapTitle("Chain rule intuition and fluency"), [
-			"Chain rule intuition and", // 24 — appending "fluency" would pass 28
-			"fluency",
-		]);
-		// Oversized word hard-chunked, nothing lost (owner, round 7).
-		assert.deepEqual(wrapTitle("supercalifragilisticexpialidocious word"), [
-			"supercalifragilisticexpialid", // the chunker cuts AT maxChars
-			"ocious word",
-		]);
-		assert.deepEqual(wrapTitle("supercalifragilistic"), ["supercalifragilistic"]); // exactly 20 — fits
+	it("takes its lines from the measure, capped at 12.75 em, and never drops content", () => {
+		assert.deepEqual(single("Chain rule intuition").lines, ["Chain rule intuition"]);
+		assert.deepEqual(single("Chain rule intuition and fluency").lines, ["Chain rule intuition and", "fluency"]);
+		// A word is never split: one wider than the cap gets its own line and
+		// widens its box (the old 28-character hard chunking is gone).
+		const s = single("supercalifragilisticexpialidocious word");
+		assert.deepEqual(s.lines, ["supercalifragilisticexpialidocious", "word"]);
+		assert.equal(s.w, Math.ceil(chartMeasure.width("supercalifragilisticexpialidocious")) + 2 * PAD_X);
+		assert.equal(single("Symmetry and orthogonal complements").w, 149); // 117 + 2×16
+		assert.equal(single("a").w, NODE_W_MIN);
 	});
 
-	it("nodeWidth hugs the wrapped text (the box grows WITH its lines)", () => {
-		// Short titles floor at the min; wide ones size to the widest line.
-		// Per-char-CLASS estimate (owner follow-up: the flat px/char rate
-		// overshot the rendered width — invisible slack beside the text).
-		assert.equal(nodeWidth(["supercalifragilistic"]), 117); // est ≈ 85 + 2×16
-		assert.equal(nodeWidth(wrapTitle("Symmetry and orthogonal complements")), 149);
-		// The hug is symmetric padding — 16 a side, the SAME as the vertical
-		// (44−12)/2 — and never below the floor.
-		assert.ok(nodeWidth(["a"]) === NODE_W_MIN);
-		assert.ok(Math.abs(estimateLineWidth("The normal-form ladder") - 106.3) < 0.5);
+	it("sizes every box from the MEASURED widths, not the Source Sans chart", () => {
+		// The browser's real font decides: in a monospace measure the same
+		// title wraps onto more lines and each box hugs its widest measured
+		// line plus 16px a side — every line fits inside its box.
+		const title = "Orthogonal diagonalisation and the spectral theorem in practice";
+		const m = single(title, mono);
+		const widest = Math.max(...m.lines.map(monoWidth));
+		assert.equal(m.w, Math.ceil(widest) + 2 * PAD_X);
+		for (const line of m.lines) assert.ok(monoWidth(line) + 2 * PAD_X <= m.w);
+		assert.ok(m.lines.length > single(title).lines.length, "the wider font wraps onto more lines");
+		assert.ok(m.lines.length * m.lineH <= m.h, "the box grows with its lines");
 	});
 });
 
@@ -178,6 +199,15 @@ describe("plan block render", () => {
 		// anchors to its box's midline — the old x=12 left inset is gone.
 		assert.match(html, /<text[^>]*x="48"[^>]*text-anchor="middle"/); // 96/2
 		assert.ok(!/x="12"/.test(html), "no left-inset text");
+		// Each line centers on its own row: no font-specific baseline offset.
+		assert.match(html, /<text[^>]*dominant-baseline="central"/);
+		// The label probe: a hidden, unscaled sibling svg in the same font
+		// cascade (the browser measures the labels there after hydration).
+		const probe = html.match(/<\/svg><svg ([^>]*data-plan-probe=""[^>]*)>/);
+		assert.ok(probe, "the measuring probe follows the diagram as a sibling");
+		assert.match(probe[1]!, /aria-hidden="true" visibility="hidden"/);
+		assert.match(probe[1]!, /font-family:var\(--font-prose\)/);
+		assert.doesNotMatch(probe[1]!, /viewBox=/);
 		// The in-chat block speaks the dock language (owner, 2026-10-07):
 		// lighter-background boxes like the composer shells — with WHITE
 		// outlines (owner follow-up: gray fill good, box edges stay white —

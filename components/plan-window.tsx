@@ -4,8 +4,10 @@ import { useId, useMemo } from "react";
 import { derivedNodeStatus, derivePlanStatuses } from "@/src/core";
 import {
 	PlanDiagram,
+	PlanLayoutProbe,
 	GRAPH_PAD,
 	latestTree,
+	usePlanLayout,
 	type PopupMessage,
 } from "@/components/plan-block";
 import { useAppearance } from "@/components/settings/appearance";
@@ -49,18 +51,23 @@ export function PlanMarginalia({ messages }: { messages: readonly PopupMessage[]
 		[tree, messages],
 	);
 	const { appearance } = useAppearance();
+	const plan = usePlanLayout(tree);
 	if (!tree || tree.nodes.length === 0) return null; // no plan yet: nothing in the margin
 	const statusOf = (id: string) => (statuses ? derivedNodeStatus(statuses, id) : "upcoming");
 	return (
-		<PlanDiagram
-			nodes={tree.nodes}
-			edges={tree.edges}
-			statusOf={statusOf}
-			glowId={statuses?.current ?? null}
-			markerId={markerId}
-			pad={MARGIN_PAD}
-			textCap={appearance.proseFontSize}
-			fill
-		/>
+		<>
+			<PlanDiagram
+				layout={plan.layout}
+				nodes={tree.nodes}
+				edges={tree.edges}
+				statusOf={statusOf}
+				glowId={statuses?.current ?? null}
+				markerId={markerId}
+				pad={MARGIN_PAD}
+				textCap={appearance.proseFontSize}
+				fill
+			/>
+			<PlanLayoutProbe probe={plan.probe} />
+		</>
 	);
 }
