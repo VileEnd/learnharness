@@ -278,6 +278,18 @@ export interface CustomProviderStore {
 }
 
 
+// ─── ModelCatalogStore — the refreshed model catalog (<global>/model-catalog.json) ─
+
+/** The saved pi.dev snapshot, shared by every user. Reads return the parsed
+ *  JSON or null (absent, unreadable, oversized or not JSON: the bundled
+ *  catalog still works, and the reader validates every row anyway). Writes
+ *  are atomic (temp + rename). */
+export interface ModelCatalogStore {
+	readSnapshot(): unknown;
+	writeSnapshot(text: string): void;
+}
+
+
 // ─── PushStore — Web Push subscriptions + VAPID keys (data/push) ────────────
 
 /** One device's push subscription (the browser's PushSubscription JSON plus

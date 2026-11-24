@@ -79,6 +79,23 @@ export interface ModelCatalogResponse {
 	providers: CatalogProvider[];
 }
 
+/** How a model-catalog refresh from pi.dev ended: new ids saved, nothing
+ *  new, or no keyed provider has a pi.dev catalog to ask for. */
+export type ModelCatalogRefreshOutcome = "updated" | "unchanged" | "no-providers";
+
+/** POST /api/models response (admin only). */
+export interface ModelCatalogRefreshResponse {
+	outcome: ModelCatalogRefreshOutcome;
+	catalog: ModelCatalogResponse;
+}
+
+/** GET/PUT /api/admin/model-catalog: the daily-refresh switch (absent = on)
+ *  and when the shared snapshot last checked pi.dev (null = never). */
+export interface ModelCatalogAdminView {
+	autoRefresh: boolean;
+	checkedAt: string | null;
+}
+
 /** One row of the providers surface. */
 export interface CatalogProvider {
 	id: string;

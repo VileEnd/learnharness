@@ -83,6 +83,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
 import { SettingsGroup, SettingsRow, Toggle, CommitInput } from "./controls.tsx";
+import { ModelCatalogSection } from "./model-catalog-section.tsx";
 import { isSlotPickable, isVisionPickable, ModelMenuList, ThinkingMenuList } from "./model-menu";
 
 /** One slot's display identity — the tier's roster as the row hint rides
@@ -817,6 +818,9 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})}
+				{/* Admin only: refresh the shared catalog from pi.dev (a fresh
+				    read of /api/models picks up the new ids). */}
+				<ModelCatalogSection isAdmin={isAdmin} onRefreshed={() => readModels()} />
 			</SettingsGroup>
 
 			<SettingsGroup label="Tools" testid="group-tools">

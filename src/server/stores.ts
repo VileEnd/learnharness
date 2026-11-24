@@ -15,6 +15,7 @@ import { drawingStore } from "../store/drawings.ts";
 import { graphStore } from "../store/graph.ts";
 import { jobStore } from "../store/jobs.ts";
 import { learnerStore } from "../store/learner.ts";
+import { modelCatalogStore } from "../store/model-catalog.ts";
 import { okfBundleStore } from "../store/okf.ts";
 import { pushStore } from "../store/push.ts";
 import { requestLogStore } from "../store/request-log.ts";
@@ -38,6 +39,7 @@ export const stores = {
 	graphStore,
 	jobStore,
 	learnerStore,
+	modelCatalogStore,
 	okfBundleStore,
 	pushStore,
 	requestLog: requestLogStore,

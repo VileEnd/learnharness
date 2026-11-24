@@ -37,6 +37,9 @@ export interface AdminPolicy {
 	 *  (teacher, prober, practice). Absent (or anything unrecognised) = pi-ai's
 	 *  default. Optional, so no version bump. */
 	cacheRetention?: { conversation?: CacheRetentionPref };
+	/** The daily model-catalog refresh from pi.dev. Absent (or anything but
+	 *  `autoRefresh: false`) = on. Optional, so no version bump. */
+	modelCatalog?: { autoRefresh?: boolean };
 }
 
 export const DEFAULT_MONTHLY_CAP_USD = 5;
