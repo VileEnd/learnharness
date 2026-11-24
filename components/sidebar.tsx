@@ -230,6 +230,15 @@ export function timeAgo(iso: string, now = new Date()): string {
  *  typography round 5): it informed no decision — clutter. messageCount
  *  still rides the API payload, so this is a one-line flip back if it's
  *  ever wanted. */
+/** The state the meta line names, without its time: what the compact
+ *  list (no meta line) shows as a status dot. null = nothing to flag. */
+function sessionAttention(chat: ChatListItem): string | null {
+	if (chat.compacting) return "Compacting context";
+	if (chat.pendingQuestion) return "Waiting for input";
+	if ((chat.kind ?? "teach") === "practice" && chat.pendingProblem) return "Problem waiting";
+	return null;
+}
+
 function sessionMeta(chat: ChatListItem): string {
 	if (chat.compacting) return `Compacting context · ${timeAgo(chat.updatedAt)}`;
 	if (chat.pendingQuestion) return `Waiting for input · ${timeAgo(chat.updatedAt)}`;
@@ -271,6 +280,7 @@ export function SessionRow({
 	 *  always visible on touch. */
 	onMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
+	const attention = sessionAttention(chat);
 	return (
 		<div className="group relative mb-0.5">
 		<button
@@ -292,11 +302,9 @@ export function SessionRow({
 				    same voice the words were typed in (every input is lh-prose);
 				    the meta line below stays JetBrains Mono (machine data). One
 				    rule, finally applied to the picker too (owner, typography
-				    round): mono = chrome, Source Sans = human words. The one
-				    exception is the opt-in compact list (upstream's compact
-				    styling): the small mono face keeps any reading size inside
-				    the short row. */}
-				<span className={cn("block truncate", sidebarNameFont(compact))}>{chat.title}</span>
+				    round): mono = chrome, Source Sans = human words. The
+				    compact list keeps the same face and size, on one line. */}
+				<span className="block truncate font-prose text-(length:--lh-prose-size)">{chat.title}</span>
 				{!compact && <span className="block text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
 			{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05) —
@@ -304,6 +312,17 @@ export function SessionRow({
 			    the teaching rows and reads cleaner. */}
 			{(chat.kind ?? "teach") === "practice" && (
 				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground-70" aria-label="Practice session" />
+			)}
+			{/* Compact rows have no meta line: the state it would name
+			    (waiting, problem, compacting) rides here as a dot. */}
+			{compact && attention && (
+				<span
+					data-testid="session-status-dot"
+					role="img"
+					title={attention}
+					aria-label={attention}
+					className="size-2 shrink-0 rounded-full bg-warning"
+				/>
 			)}
 		</button>
 		{onMenu && (
@@ -370,10 +389,7 @@ export function RenameRow({ chat, onCommit, onCancel, compact = false }: { chat:
 					}}
 					aria-label="Rename session"
 					data-testid="session-rename-input"
-					className={cn(
-						"w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none",
-						compact ? sidebarNameFont(true) : "lh-input",
-					)}
+					className="lh-input w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none"
 				/>
 				{!compact && <span className="block truncate text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
@@ -381,15 +397,11 @@ export function RenameRow({ chat, onCommit, onCancel, compact = false }: { chat:
 	);
 }
 
-/** The compact list's row (Appearance → Compact session list): one fixed
- *  short line, taller on touch so the actions button and the finger both
- *  fit. Exported for tests. */
-export const SIDEBAR_COMPACT_ROW = "h-8 pointer-coarse:h-10";
-/** The session name's type: the reading font at the reading size in the
- *  two-line list; the compact list uses the small chrome face (upstream's
- *  compact styling), so a large reading size cannot overflow the row. */
-export const sidebarNameFont = (compact: boolean) =>
-	compact ? "font-ui text-sm leading-5" : "font-prose text-(length:--lh-prose-size)";
+/** The compact list's row (Appearance → Compact session list): one short
+ *  line in the title's own font and size; a minimum height (taller on
+ *  touch so the actions button and the finger both fit) that a large
+ *  reading size may grow past. Exported for tests. */
+export const SIDEBAR_COMPACT_ROW = "min-h-8 py-1 pointer-coarse:min-h-10";
 
 /** The three-way kind filter (practice sessions, owner 2026-10-04):
  *  Teaching / All / Practice — a client-side filter over the same

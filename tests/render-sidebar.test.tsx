@@ -46,19 +46,27 @@ describe("SessionRow", () => {
 		assert.ok(!html.includes("border-phase-"), "phase rings are retired app-wide");
 	});
 
-	it("compact: one fixed short line, no meta, instant hover; off is today's two-line row", () => {
+	it("compact: one short line in the title's own font, no meta, instant hover; off is today's two-line row", () => {
 		const chat = item({ kind: "practice", pendingQuestion: true, busy: true });
 		const compact = renderToStaticMarkup(<SessionRow chat={chat} active={false} compact onOpen={() => {}} onMenu={() => {}} />);
-		assert.match(compact, /\bh-8\b/);
-		assert.match(compact, /\bfont-ui\b[^>]*>Test session/);
-		assert.doesNotMatch(compact, /Waiting for input|transition-/, "no meta line, no hover fade");
+		assert.match(compact, /\bmin-h-8\b/);
+		assert.match(compact, /font-prose text-\(length:--lh-prose-size\)[^>]*>Test session/);
+		assert.doesNotMatch(compact, /font-ui[^>]*>Test session/);
+		assert.doesNotMatch(compact, /transition-/, "no hover fade");
 		assert.match(compact, /braille-spinner/);
 		assert.match(compact, /aria-label="Practice session"/);
 		const full = renderToStaticMarkup(<SessionRow chat={chat} active={false} onOpen={() => {}} />);
 		assert.match(full, /\bpy-2\b[^"]*transition-colors/);
-		assert.match(full, /font-prose[^>]*>Test session/);
 		assert.match(full, /Waiting for input/);
-		assert.doesNotMatch(full, /\bh-8\b/);
+		assert.doesNotMatch(full, /min-h-8|session-status-dot/);
+	});
+
+	it("compact keeps the status: a waiting row shows a warning dot labelled with the state, an idle row none", () => {
+		const waiting = renderToStaticMarkup(<SessionRow chat={item({ pendingQuestion: true })} active={false} compact onOpen={() => {}} />);
+		assert.match(waiting, /data-testid="session-status-dot"[^>]*title="Waiting for input"[^>]*aria-label="Waiting for input"[^>]*bg-warning/);
+		assert.doesNotMatch(waiting, /Waiting for input · /, "the meta line stays hidden");
+		const idle = renderToStaticMarkup(<SessionRow chat={item({})} active={false} compact onOpen={() => {}} />);
+		assert.doesNotMatch(idle, /session-status-dot/);
 	});
 
 	it("idle session: NO indicator — absence is the state", () => {
