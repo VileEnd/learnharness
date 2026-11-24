@@ -206,7 +206,7 @@ test("catalog lists claude-code only for an enabled admin", () => {
 	policy.setClaudeCodeEnabled(true);
 	runAsTenant(ADMIN, () => {
 		const listed = claudeIds();
-		assert.deepEqual(listed.map((m) => m.id).sort(), ["haiku", "opus", "sonnet"]);
+		assert.deepEqual(listed.map((m) => m.id).sort(), ["fable", "haiku", "opus", "sonnet"]);
 		assert(listed.every((m) => m.cost === null && m.contextWindow === null && m.maxTokens === null));
 		assert(!catalogModels().some((m) => m.provider === "claude-code"));
 		assert(!catalogProviders().some((p) => p.id === "claude-code"));

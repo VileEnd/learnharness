@@ -161,7 +161,7 @@ The stack includes `claude`, a locked-down container (`deploy/claude`) that runs
 
 The claude container must not reach the app's port (the API trusts every caller): the app listens on the `internal` network only (`HOSTNAME=lh-app` in `compose.yaml`), and only the MCP bridge port is open on `claude-bridge`.
 
-Off by default: an admin turns it on with the toggle in Settings. Log in once, after the stack is up:
+Off by default: an admin turns it on with the toggle in Settings. The models are `opus`, `sonnet`, `haiku` and `fable`: CLI aliases for the newest model of each family, not pinned versions. Log in once, after the stack is up:
 
 ```bash
 ssh -t root@<vm-host> docker exec -it learnharness-claude-1 claude
