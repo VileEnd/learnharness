@@ -11,6 +11,7 @@ import { pinchView, zoomedGraphView } from "../pan-zoom.ts";
 import type { Viewport } from "../pan-zoom.ts";
 import { CANVAS_ZOOM_MIN, eraseAt, exportColor, hitTest, objectBox, quantizePoint, screenColor, screenToWorld, strokeOutline, touchRole, visibleObjects } from "./geometry.ts";
 import type { CanvasTool, Pt } from "./geometry.ts";
+import { watchRepaintTriggers } from "./repaint-triggers.ts";
 
 export type { CanvasTool } from "./geometry.ts";
 export type CanvasBrush = { color: string; size: number };
@@ -96,6 +97,22 @@ export class CanvasEngine {
 		on<WheelEvent>(root, "wheel", (e) => this.onWheel(e), { passive: false });
 		this.resizeObs = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.resize());
 		this.resizeObs?.observe(root);
+		// A restored context or a density-only change leaves the bitmap stale
+		// with the scene untouched; repaint without waiting for an edit.
+		this.cleanups.push(
+			watchRepaintTriggers(
+				[this.staticCanvas, this.liveCanvas],
+				{
+					dpr: () => (typeof devicePixelRatio === "number" ? devicePixelRatio : 1),
+					matchMedia: typeof matchMedia === "function" ? (q) => matchMedia(q) : undefined,
+				},
+				() => {
+					this.dirtyStatic = this.dirtyLive = true;
+					this.schedule();
+				},
+				() => this.resize(),
+			),
+		);
 		this.resize();
 	}
 
