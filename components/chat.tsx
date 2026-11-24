@@ -407,7 +407,10 @@ export const TranscriptRow = memo(function TranscriptRow({
 							sits INSIDE the rail, same mono-xs register and same 1ch
 							rail as the thinking rows — one quote geometry. */}
 						<div className="font-medium uppercase tracking-wide text-muted-foreground">You</div>
-						<div className="lh-prose whitespace-pre-wrap text-foreground">
+						{/* break-words: a long unbroken token (a file path, a URL) wraps
+							inside the band instead of widening the transcript sideways
+							on a phone (wide reading fonts like JetBrains Mono). */}
+						<div className="lh-prose whitespace-pre-wrap break-words text-foreground">
 							<UserMessageText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} actions={citationActions} />
 						</div>
 					</div>
