@@ -26,7 +26,7 @@ import type {
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, EXTRACTION_DIGEST_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { TURN_SPEND_CAP_MAX_USD, TURN_SPEND_CAP_MIN_USD, QUIZ_MECHANICS, BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, EMBEDDING_MODEL_PATTERN, EXTRACTION_CHUNK_TOKENS_FLOOR, EXTRACTION_DIGEST_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { INTERACTIVE_FORMATS } from "../core/exercise-core.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
@@ -266,7 +266,8 @@ export const STALE_APPEARANCE_ERROR =
 	"This page is out of date: reload it, then change the appearance again (colours are set per theme now).";
 
 /** appearance: { theme?, colors?: { <themeId>: { <colour>: hex|null } },
- *  fontFamily?, proseFontSize?, sessionNameSerif?, mdRendering? }. A v1
+ *  fontFamily?, proseFontSize?, sessionNameSerif?, compactSessionList?,
+ *  transcriptMaxWidth? (absent = Full), mdRendering? }. A v1
  *  key (`background`, `mode`, `mdRendering.boldColor/italicColor`) is a 400
  *  asking for a reload. A colour set for a theme id this build does not
  *  know (a newer build's) passes through untouched when it is an object. */
@@ -329,6 +330,21 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 			return { ok: false, error: "sessionNameSerif must be a boolean" };
 		}
 		settings.sessionNameSerif = raw.sessionNameSerif;
+	}
+	if (raw.compactSessionList !== undefined) {
+		if (typeof raw.compactSessionList !== "boolean") {
+			return { ok: false, error: "compactSessionList must be a boolean" };
+		}
+		settings.compactSessionList = raw.compactSessionList;
+	}
+	if (raw.transcriptMaxWidth !== undefined) {
+		if (!isTranscriptMaxWidth(raw.transcriptMaxWidth)) {
+			return {
+				ok: false,
+				error: `transcriptMaxWidth must be an even integer between ${TRANSCRIPT_WIDTH_MIN_REM} and ${TRANSCRIPT_WIDTH_MAX_REM} (rem); omit it for Full`,
+			};
+		}
+		settings.transcriptMaxWidth = raw.transcriptMaxWidth;
 	}
 	if (raw.mdRendering !== undefined) {
 		const md = asRecord(raw.mdRendering);

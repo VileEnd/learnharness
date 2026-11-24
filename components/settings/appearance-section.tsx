@@ -37,6 +37,9 @@ import {
 	EXTRACTION_DIGEST_TOKENS_FLOOR,
 	resolveSettings,
 	THEME_COLOR_KEYS,
+	TRANSCRIPT_WIDTH_MAX_REM,
+	TRANSCRIPT_WIDTH_MIN_REM,
+	TRANSCRIPT_WIDTH_STEP_REM,
 	type AppearanceSettings,
 	type GraphSettings,
 	type ThemeColorKey,
@@ -76,6 +79,64 @@ export const CURATED_FALLBACK_FONTS: readonly string[] = [
  *  the only field used; the API returns one FontData per FACE — the
  *  caller dedupes). */
 type LocalFontsApi = () => Promise<Array<{ family: string }>>;
+
+/** The transcript-width slider's last position, one step past the widest
+ *  cap: Full (no cap — the key absent). */
+const TRANSCRIPT_FULL_POSITION = TRANSCRIPT_WIDTH_MAX_REM + TRANSCRIPT_WIDTH_STEP_REM;
+
+/** The transcript width's label: px at the root's 16px rem, or Full.
+ *  Exported for tests. */
+export function transcriptWidthLabel(rem: number | null): string {
+	return rem === null ? "Full" : `${rem * 16}px`;
+}
+
+/**
+ * Transcript width (port of upstream's slider, owner 2026-11-24): a range
+ * whose last position is Full. The thumb moves a local draft while
+ * dragging; the section PUT happens once, on the native `change` (release
+ * or a keyboard step), never once per tick.
+ */
+function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCommit: (rem: number | null) => void }) {
+	const position = value ?? TRANSCRIPT_FULL_POSITION;
+	const [draft, setDraft] = useState(position);
+	const inputRef = useRef<HTMLInputElement>(null);
+	const commitRef = useRef(onCommit);
+	useEffect(() => {
+		commitRef.current = onCommit;
+	});
+	useEffect(() => setDraft(position), [position]);
+	useEffect(() => {
+		const input = inputRef.current;
+		if (!input) return;
+		const onChange = () => {
+			const next = Number(input.value);
+			commitRef.current(next >= TRANSCRIPT_FULL_POSITION ? null : next);
+		};
+		input.addEventListener("change", onChange);
+		return () => input.removeEventListener("change", onChange);
+	}, []);
+	const draftRem = draft >= TRANSCRIPT_FULL_POSITION ? null : draft;
+	return (
+		<span className="flex items-center gap-2">
+			<input
+				ref={inputRef}
+				type="range"
+				aria-label="Transcript width"
+				aria-valuetext={transcriptWidthLabel(draftRem)}
+				data-testid="input-transcript-width"
+				min={TRANSCRIPT_WIDTH_MIN_REM}
+				max={TRANSCRIPT_FULL_POSITION}
+				step={TRANSCRIPT_WIDTH_STEP_REM}
+				value={draft}
+				onChange={(e) => setDraft(Number(e.target.value))}
+				className="h-1.5 w-40 accent-primary pointer-coarse:h-6"
+			/>
+			<span data-testid="transcript-width-value" className="w-14 text-right font-ui text-xs tabular-nums text-muted-foreground">
+				{transcriptWidthLabel(draftRem)}
+			</span>
+		</span>
+	);
+}
 
 /** The Local Font Access seam — read lazily (SSR has no window, and
  *  render-time access would evaluate the API on the server). */
@@ -431,6 +492,21 @@ export function AppearanceSection({
 							mdRendering: { ...md, headingWeight: Math.min(900, Math.max(100, Math.round(n))) },
 						});
 					}}
+				/>
+			</SettingsRow>
+			<p className="mt-5 mb-2 text-xs uppercase tracking-widest text-muted-foreground">Layout</p>
+			<SettingsRow label="Compact session list" hint="One line per session in the sidebar" testid="row-compact-session-list">
+				<Toggle
+					checked={resolved.compactSessionList}
+					label="compact session list"
+					onChange={(on) => onSectionChange({ ...appearance, compactSessionList: on })}
+				/>
+			</SettingsRow>
+			<SettingsRow label="Transcript width" hint="Caps the session transcript on a wide screen" testid="row-transcript-width">
+				<TranscriptWidthSlider
+					value={resolved.transcriptMaxWidth}
+					// Full = absence (the unset representation for numbers), never 0.
+					onCommit={(rem) => onSectionChange({ ...appearance, transcriptMaxWidth: rem ?? undefined })}
 				/>
 			</SettingsRow>
 		</>

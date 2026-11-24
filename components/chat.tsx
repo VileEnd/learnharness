@@ -103,8 +103,15 @@ import { useSettingsSaved } from "@/components/settings-signal";
  * full session width with a thin px-6 margin; the composer/question DOCK is
  * deliberately narrower (~46rem centered) per the reference. Same ELEMENT,
  * same place — width polish only.
+ *
+ * Transcript width (Appearance, owner 2026-11-24): an optional cap on the
+ * whole transcript, centred (app/globals.css .lh-transcript-column, fed by
+ * --lh-transcript-max). Full (unset) is exactly the full-width column. The
+ * cap's floor is the dock's width (TRANSCRIPT_WIDTH_MIN_REM = 46), so the
+ * dock never outgrows the transcript, and at the floor their text edges
+ * line up. The plan marginalia lives inside the same capped box.
  */
-const COLUMN = "mx-auto w-full max-w-none px-6";
+const COLUMN = "lh-transcript-column mx-auto w-full px-6";
 const DOCK = "mx-auto w-full max-w-[46rem] px-4";
 // The DOCK container's fixed width (46rem) and the plan marginalia's
 // geometry (owner, plan-placement round): the bare diagram sits in the
@@ -2456,20 +2463,32 @@ function DockOverlay({
 	// stamping that self-mutes the at-bottom re-expand — the box got stuck
 	// collapsed (resize round).
 	const geometryAtRef = useRef(0);
+	// The plan's box (transcript width, owner 2026-11-24): the block's width,
+	// or less when the transcript is capped — the marginalia never runs past
+	// the transcript's edge. Its flank is measured here; the block's own
+	// width changes keep stamping the resize mute exactly as before.
+	const planAreaRef = useRef<HTMLDivElement>(null);
+	const blockWRef = useRef(0);
 	useIsoLayoutEffect(() => {
 		const block = blockRef.current;
 		if (!block) return;
+		const area = planAreaRef.current;
 		const measure = () => {
-			const next = Math.round(block.offsetWidth / 2 - DOCK_W / 2 - 2 * MARGIN_GAP);
+			const blockW = block.offsetWidth;
+			if (Math.abs(blockW - blockWRef.current) > 1) {
+				blockWRef.current = blockW;
+				geometryAtRef.current = Date.now();
+			}
+			const next = Math.round((area?.offsetWidth ?? blockW) / 2 - DOCK_W / 2 - 2 * MARGIN_GAP);
 			if (Math.abs(next - flankWRef.current) > 1) {
 				flankWRef.current = next;
 				setFlankW(next);
-				geometryAtRef.current = Date.now();
 			}
 		};
 		measure();
 		const ro = new ResizeObserver(measure);
 		ro.observe(block);
+		if (area) ro.observe(area);
 		return () => ro.disconnect();
 	}, []);
 
@@ -2851,6 +2870,10 @@ function DockOverlay({
 				    the flank; below MARGIN_MIN_W it FADES (never pops away — no
 				    mid-question unmount), and widening past the floor fades it
 				    back in. */}
+				{/* The plan's box: the transcript's (capped) width, centred like
+				    the dock, always mounted so its width is measured. Full = the
+				    whole block, today's geometry. */}
+				<div ref={planAreaRef} data-testid="plan-area" className="lh-transcript-column pointer-events-none absolute inset-0 mx-auto">
 				{pending && plan && (
 					<Hint label="Open the full plan" side="bottom">
 <button
@@ -2868,6 +2891,7 @@ function DockOverlay({
 					</button>
 </Hint>
 				)}
+				</div>
 			</div>
 		</div>
 	);

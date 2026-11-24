@@ -35,6 +35,8 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 		fontFamily: delta?.fontFamily ?? f.fontFamily,
 		proseFontSize: delta?.proseFontSize ?? f.proseFontSize,
 		sessionNameSerif: delta?.sessionNameSerif ?? f.sessionNameSerif,
+		compactSessionList: delta?.compactSessionList ?? f.compactSessionList,
+		transcriptMaxWidth: delta?.transcriptMaxWidth ?? f.transcriptMaxWidth,
 		mdRendering: {
 			headingWeight: delta?.mdRendering?.headingWeight ?? f.mdRendering.headingWeight,
 		},
@@ -70,6 +72,10 @@ export function appearanceTypeVars(a: ReturnType<typeof resolveAppearance>): Rec
 	// to the prose family (the .font-title utility reads it).
 	if (!a.sessionNameSerif) vars["--font-title"] = "var(--font-prose)";
 	vars["--lh-heading-weight"] = String(a.mdRendering.headingWeight);
+	// The transcript cap (rem; globals.css .lh-transcript-column). Full =
+	// no variable, so the column's max-width falls back to none: today's
+	// full-width transcript, byte-identical CSS for an unset record.
+	if (a.transcriptMaxWidth !== null) vars["--lh-transcript-max"] = `${a.transcriptMaxWidth}rem`;
 	return vars;
 }
 
