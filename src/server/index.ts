@@ -80,6 +80,8 @@ export { claudeCodeAdminPut, claudeCodeAdminView } from "./claude-code.ts";
 export { claudeCodeEnabled, conversationCacheRetention } from "./policy.ts";
 // Admin-global prompt-cache retention for conversation turns.
 export { cacheRetentionAdminPut, cacheRetentionAdminView } from "./cache-retention.ts";
+// The model catalog refresh from pi.dev (admin only).
+export { modelCatalogAdminPut, modelCatalogAdminView, modelCatalogRefreshPost } from "./model-catalog-admin.ts";
 // The admin-managed custom endpoint (upstream port 6): the route handlers only; the key-bearing runtime view stays server-internal.
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
 export * from "./pwa.ts";

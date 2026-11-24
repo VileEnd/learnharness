@@ -196,6 +196,15 @@ Each non-admin user runs under a policy: which models they may use, which model 
 - **When it is checked.** Before every turn and every paid background job (extraction, document import, embeddings). A user at or over the cap is refused with "You've reached this month's spending limit", and no chat is created or saved. A running turn is also clamped to what is left of the month, so a user at $4.99 of $5 cannot start a turn that spends $20.
 - **Where it lives.** The policy is `data/global/admin.json` (under the data directory, mode 0600, back it up with the rest of `data/`). If the file is damaged, restricted users are refused (their account shows "Your account settings can't be read right now. Ask your admin.") and Settings → Users refuses every change until the file is fixed or removed. Nothing overwrites a damaged file.
 
+## New models between updates
+
+Each LearnHarness release ships Pi's model list as it was at build time. An admin can add models that came out since, without an update: **Settings → Agent → Models → Refresh models** asks pi.dev for new models of every provider that has a key here. With **Refresh models daily** on (the default), the server does the same once a day.
+
+- **Only new models are added.** A model the release already knows is never changed, and a new one must use exactly the same API and address as a model the release already has for that provider. Anything malformed makes the whole refresh fail, and the current list stays.
+- **Your rules still apply.** Added models go through the same per-user allow-lists and caps as any other model (they are not in anyone's defaults until you add them), and their pi.dev prices count toward the caps like any other price.
+- **What is sent.** Only the provider names (for example `openai`). No keys, no user names.
+- **Where it lives.** `data/global/model-catalog.json` (`data/model-catalog.json` on a single-user install), shared by all users. Starting the server only reads this file; it never contacts pi.dev at startup. Delete the file and restart the server to go back to the release's list.
+
 ## Custom model provider
 
 The admin can add one OpenAI-compatible endpoint (a local Ollama or LM Studio, vLLM, a hosted gateway) in Settings → Providers. It is global: one URL for the whole install, stored in `data/global/custom-provider.json` (mode 0600), and only admins can change it. Its models are probed from `GET <base URL>/models` and appear in the model pickers as `custom:<model id>`; each user sees them only if their allow-list (Settings → Users) includes them. Admins are unrestricted. An optional key is bound to the URL it was entered for; change the URL and the key must be entered again.

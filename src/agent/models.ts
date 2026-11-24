@@ -7,6 +7,7 @@ import {
 	type Model,
 	type Models,
 	type MutableModels,
+	type Provider,
 	type StreamFunction,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -47,6 +48,34 @@ export interface PiEngine {
 }
 
 export type { ThinkingLevel };
+
+// The admin's refreshed model catalog (src/server/remote-model-catalog.ts):
+// validated NEW ids per builtin provider, overlaid on the bundled catalog.
+// On globalThis because Next can load this module once per bundle; every
+// collection reads the same overlay at call time.
+const CATALOG_KEY = Symbol.for("lh.model-catalog-overlay");
+const catalogGlobal = globalThis as typeof globalThis & { [CATALOG_KEY]?: ReadonlyMap<string, readonly Model<Api>[]> };
+
+/** Publish the overlay (the server's snapshot owner is the only caller). */
+export function setModelCatalogOverlay(models: ReadonlyMap<string, readonly Model<Api>[]>): void {
+	catalogGlobal[CATALOG_KEY] = models;
+}
+
+function withCatalogOverlay(provider: Provider): Provider {
+	const extra = () => catalogGlobal[CATALOG_KEY]?.get(provider.id);
+	return {
+		...provider,
+		getModels: () => {
+			const more = extra();
+			return more?.length ? [...provider.getModels(), ...more] : provider.getModels();
+		},
+		getAllModels: () => {
+			const base = provider.getAllModels?.() ?? provider.getModels();
+			const more = extra();
+			return more?.length ? [...base, ...more] : base;
+		},
+	};
+}
 
 let collection: ReturnType<typeof createModels> | undefined;
 
@@ -96,7 +125,7 @@ const isCustomProvider = (providerId: string): boolean => providerSources.some((
 export function piModels() {
 	if (!collection) {
 		collection = createModels({ identity: APP_IDENTITY });
-		for (const provider of builtinProviders()) collection.setProvider(provider);
+		for (const provider of builtinProviders()) collection.setProvider(withCatalogOverlay(provider));
 	}
 	for (const source of providerSources) source.sync(collection);
 	return collection;

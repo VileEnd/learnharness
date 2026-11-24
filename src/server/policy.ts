@@ -115,6 +115,23 @@ export function setConversationCacheRetention(v: CacheRetentionPref): void {
 	stores.adminPolicyStore.writePolicy({ ...stored(), cacheRetention: { conversation: v } });
 }
 
+/** The daily model-catalog refresh switch, read fresh on every call. On unless
+ *  the file says `autoRefresh: false`; OFF when the policy file is corrupt (a
+ *  background fetch must not run on a policy nobody can read). */
+export function modelCatalogAutoRefresh(): boolean {
+	try {
+		return stored().modelCatalog?.autoRefresh !== false;
+	} catch (e) {
+		if (!(e instanceof AdminPolicyCorrupt)) throw e;
+		return false;
+	}
+}
+
+/** Refuses (throws AdminPolicyCorrupt) on a corrupt file. */
+export function setModelCatalogAutoRefresh(on: boolean): void {
+	stores.adminPolicyStore.writePolicy({ ...stored(), modelCatalog: { autoRefresh: on } });
+}
+
 export type PolicyValidation = { ok: true; policy: UserPolicy } | { ok: false; error: string };
 
 const isModel = (v: unknown): v is PolicyModel =>

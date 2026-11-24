@@ -409,7 +409,7 @@ describe("every route", () => {
 
 	it("answers 403 admin_only to a plain user on every admin handler", async () => {
 		const admin = await handlers((rel) => rel.startsWith("admin"));
-		assert.equal(admin.length, 14);
+		assert.equal(admin.length, 16);
 		for (const [rel, method, handler] of admin) {
 			const res = await handler(
 				new Request("http://example.com/x", {
