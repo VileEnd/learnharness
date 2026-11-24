@@ -14,7 +14,8 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { settingsFile } from "../config.ts";
 import { readSettings, writeSettings } from "../src/store/settings.ts";
-import { DEFAULT_THEME, IVORY_THEME, themeVars } from "../src/core";
+import { DEFAULT_THEME, IVORY_THEME, resolveSettings, themeVars } from "../src/core";
+import { parseAppearanceSettingsBody } from "../src/server/settings-body.ts";
 
 afterEach(() => {
 	fs.rmSync(settingsFile(), { force: true });
@@ -50,6 +51,22 @@ describe("the settings store", () => {
 		assert.ok(out);
 		assert.equal("chat" in out, false, "the chat section never surfaces");
 		assert.deepEqual(out.graph, { enabled: true }); // siblings survive
+	});
+
+	it("compact session list and transcript width: absent = the default, chosen values round-trip, bad PUTs refused", () => {
+		const defaults = resolveSettings(readSettings()).appearance;
+		assert.equal(defaults.compactSessionList, false);
+		assert.equal(defaults.transcriptMaxWidth, null, "absent = Full, never 0");
+		const parsed = parseAppearanceSettingsBody({ compactSessionList: true, transcriptMaxWidth: 60 });
+		assert.ok(parsed.ok);
+		writeSettings({ version: 2, appearance: parsed.settings });
+		assert.deepEqual(readSettings()?.appearance, { compactSessionList: true, transcriptMaxWidth: 60 });
+		const chosen = resolveSettings(readSettings()).appearance;
+		assert.equal(chosen.compactSessionList, true);
+		assert.equal(chosen.transcriptMaxWidth, 60);
+		for (const bad of [{ compactSessionList: "yes" }, { transcriptMaxWidth: 0 }, { transcriptMaxWidth: 47 }, { transcriptMaxWidth: 122 }]) {
+			assert.equal(parseAppearanceSettingsBody(bad).ok, false, JSON.stringify(bad));
+		}
 	});
 
 	it("corrupt settings.json → null (first-boot semantics), never throws", () => {

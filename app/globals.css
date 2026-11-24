@@ -332,6 +332,20 @@ body {
 	line-height: var(--lh-prose-leading);
 }
 
+/* Transcript width (Appearance → Transcript width; the session page).
+   --lh-transcript-max (rem, set on <html> by core/appearance-css.ts) is
+   measured like the question dock's container: at X the transcript's text
+   column lines up with the edges of a card in a dock X wide (both have
+   1rem less padding on each side than their box: the column's px-6 vs the
+   dock's px-4), so the column's box is X + 1rem. Unset = Full: the calc is
+   invalid at computed-value time and max-width falls back to none, exactly
+   the full-width column. The plan beside the dock is bounded by the same
+   box (components/chat.tsx). Phones are narrower than the 46rem floor, so
+   they never see a cap. */
+.lh-transcript-column {
+	max-width: calc(var(--lh-transcript-max) + 1rem);
+}
+
 /* Session-name weight (owner, fix wave round 3): with the serif toggle
    OFF, --font-title resolves to the prose font — Source Sans 3 is loaded
    as a VARIABLE font, and without an explicit weight the titles render at

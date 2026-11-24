@@ -29,6 +29,7 @@ import { useServerEvent, useServerResync } from "@/components/server-events";
 import type { ChatListItem } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
+import { useAppearance } from "@/components/settings/appearance";
 
 /**
  * Toggleable sidebar — NOT a modal: no focus theft. From `md` up it sits
@@ -251,9 +252,14 @@ export function SessionRow({
 	kbdSelected = false,
 	onContextMenu,
 	onMenu,
+	compact = false,
 }: {
 	chat: ChatListItem;
 	active: boolean;
+	/** Compact session list (Appearance, owner 2026-11-24): one line per
+	 *  session (no meta line), a fixed short row, and hover without a fade.
+	 *  Off = today's two-line rows. */
+	compact?: boolean;
 	onOpen: () => void;
 	/** Keyboard-cycle highlight (shortcut wave A: Alt+↑/↓ + Alt+Enter) —
 	 *  visually distinct from the active session, which stays filled. */
@@ -273,7 +279,8 @@ export function SessionRow({
 			onContextMenu={onContextMenu}
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			className={cn(
-				"relative flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
+				"relative flex w-full items-center gap-2 rounded-lg px-3 text-left hover:bg-accent",
+				compact ? SIDEBAR_COMPACT_ROW : "py-2 transition-colors",
 				onMenu && "pointer-coarse:pr-11",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-border",
@@ -286,8 +293,8 @@ export function SessionRow({
 				    the meta line below stays JetBrains Mono (machine data). One
 				    rule, finally applied to the picker too (owner, typography
 				    round): mono = chrome, Source Sans = human words. */}
-				<span className="block truncate font-prose text-(length:--lh-prose-size)">{chat.title}</span>
-				<span className="block text-xs text-muted-foreground">{sessionMeta(chat)}</span>
+				<span className={cn("block truncate", sidebarNameFont(compact))}>{chat.title}</span>
+				{!compact && <span className="block text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
 			{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05) —
 			    was left of the name; right-aligned keeps the titles flush with
@@ -302,7 +309,12 @@ export function SessionRow({
 				aria-label="Session actions"
 				data-testid="session-row-menu"
 				onClick={onMenu}
-				className="absolute right-1 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:bg-accent group-hover:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
+				className={cn(
+					"absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:bg-accent group-hover:opacity-100 pointer-coarse:opacity-100",
+					// Compact: the button fits inside the short row (never over a
+					// neighbour) and appears without a fade, like the row's hover.
+					compact ? "size-7 pointer-coarse:size-9" : "size-8 transition-opacity pointer-coarse:size-10",
+				)}
 			>
 				<MoreHorizontalIcon className="size-4" />
 			</button>
@@ -314,8 +326,10 @@ export function SessionRow({
 /** The inline-rename row (wave 6): same geometry as SessionRow, but the
  *  title line becomes a text input — select-all on entry (the click means
  *  "replace", the header rename's rule), Enter/blur commits, Esc discards.
- *  The meta line stays so the row never changes height mid-edit. */
-export function RenameRow({ chat, onCommit, onCancel }: { chat: ChatListItem; onCommit: (next: string) => void; onCancel: () => void }) {
+ *  The row keeps the list's density mid-edit: the meta line stays in the
+ *  two-line list and is absent in the compact one, so the height never
+ *  changes. */
+export function RenameRow({ chat, onCommit, onCancel, compact = false }: { chat: ChatListItem; onCommit: (next: string) => void; onCancel: () => void; compact?: boolean }) {
 	const [draft, setDraft] = useState(chat.title);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	useEffect(() => {
@@ -328,7 +342,7 @@ export function RenameRow({ chat, onCommit, onCancel }: { chat: ChatListItem; on
 	return (
 		<div
 			data-testid="session-rename-row"
-			className="relative mb-0.5 flex w-full items-center rounded-lg bg-accent px-3 py-2"
+			className={cn("relative mb-0.5 flex w-full items-center rounded-lg bg-accent px-3", compact ? SIDEBAR_COMPACT_ROW : "py-2")}
 		>
 			{/* NOTHING MOVES (owner, polish round): an idle row renders no
 			    status spacer (SessionStatus is null when not busy), so the
@@ -353,13 +367,26 @@ export function RenameRow({ chat, onCommit, onCancel }: { chat: ChatListItem; on
 					}}
 					aria-label="Rename session"
 					data-testid="session-rename-input"
-					className="lh-input w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none"
+					className={cn(
+						"w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none",
+						compact ? sidebarNameFont(true) : "lh-input",
+					)}
 				/>
-				<span className="block truncate text-xs text-muted-foreground">{sessionMeta(chat)}</span>
+				{!compact && <span className="block truncate text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
 		</div>
 	);
 }
+
+/** The compact list's row (Appearance → Compact session list): one fixed
+ *  short line, taller on touch so the actions button and the finger both
+ *  fit. Exported for tests. */
+export const SIDEBAR_COMPACT_ROW = "h-8 pointer-coarse:h-10";
+/** The session name's type: the reading font at the reading size in the
+ *  two-line list; the compact list uses the small chrome face (upstream's
+ *  compact styling), so a large reading size cannot overflow the row. */
+export const sidebarNameFont = (compact: boolean) =>
+	compact ? "font-ui text-sm leading-5" : "font-prose text-(length:--lh-prose-size)";
 
 /** The three-way kind filter (practice sessions, owner 2026-10-04):
  *  Teaching / All / Practice — a client-side filter over the same
@@ -368,6 +395,7 @@ export type SessionKindFilter = "teach" | "all" | "practice";
 const KIND_FILTER_KEY = "lh:session-kind-filter";
 
 function SessionsSidebar() {
+	const { appearance: { compactSessionList } } = useAppearance();
 	const { open, toggle, narrow, setOpen } = useSidebar();
 	const backdropDismiss = useBackdropDismiss(() => setOpen(false));
 	// Phone drawer only: the back gesture closes it instead of leaving the page.
@@ -814,6 +842,7 @@ function SessionsSidebar() {
 								<RenameRow
 									key={c.id}
 									chat={c}
+									compact={compactSessionList}
 									onCommit={(next) => void commitRename(c.id, next)}
 									onCancel={() => setRenamingId(null)}
 								/>
@@ -821,6 +850,7 @@ function SessionsSidebar() {
 								<SessionRow
 									key={c.id}
 									chat={c}
+									compact={compactSessionList}
 									active={pathname === `/chat/${c.id}`}
 									kbdSelected={i === kbdIndex}
 									onOpen={() => {

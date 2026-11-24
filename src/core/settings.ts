@@ -425,7 +425,35 @@ export interface AppearanceSettings {
 	proseFontSize?: number;
 	/** Session names in CMU Serif (default true — today's look). */
 	sessionNameSerif?: boolean;
+	/** One line per session in the sidebar (no meta line), so more sessions
+	 *  fit; row hover responds without a fade. Absent = false (today's
+	 *  two-line rows). */
+	compactSessionList?: boolean;
+	/** The session transcript's maximum width in rem (TRANSCRIPT_WIDTH_MIN_REM
+	 *  to TRANSCRIPT_WIDTH_MAX_REM, even steps), centred. Absent = Full (no
+	 *  cap, today's full-width column) — never 0. The floor is the question
+	 *  dock's own width, so the dock always fits inside the cap. */
+	transcriptMaxWidth?: number;
 	mdRendering?: MdRenderingSettings;
+}
+
+/** Transcript width bounds (rem). The minimum is the question dock's width
+ *  (46rem, components/chat.tsx DOCK); the maximum is the slider's last step
+ *  before Full. */
+export const TRANSCRIPT_WIDTH_MIN_REM = 46;
+export const TRANSCRIPT_WIDTH_MAX_REM = 120;
+export const TRANSCRIPT_WIDTH_STEP_REM = 2;
+
+/** The nearest valid transcript width for a finite number: rounded to a
+ *  step and clamped into the bounds. */
+export function clampTranscriptWidth(rem: number): number {
+	const stepped = TRANSCRIPT_WIDTH_MIN_REM + Math.round((rem - TRANSCRIPT_WIDTH_MIN_REM) / TRANSCRIPT_WIDTH_STEP_REM) * TRANSCRIPT_WIDTH_STEP_REM;
+	return Math.min(Math.max(stepped, TRANSCRIPT_WIDTH_MIN_REM), TRANSCRIPT_WIDTH_MAX_REM);
+}
+
+/** A valid stored transcript width: an even-step integer rem inside the bounds. */
+export function isTranscriptMaxWidth(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && clampTranscriptWidth(value) === value;
 }
 
 /** Knowledge-graph settings — a strict dependency ladder (owner decision
@@ -556,6 +584,9 @@ export interface FactorySettings {
 		fontFamily: string | null;
 		proseFontSize: number;
 		sessionNameSerif: boolean;
+		compactSessionList: boolean;
+		/** null = Full (no transcript cap). */
+		transcriptMaxWidth: number | null;
 		mdRendering: {
 			headingWeight: number;
 		};
@@ -575,6 +606,8 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		fontFamily: null, // Source Sans 3
 		proseFontSize: 16,
 		sessionNameSerif: true,
+		compactSessionList: false,
+		transcriptMaxWidth: null, // Full
 		mdRendering: { headingWeight: 900 },
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096, extractionDigestTokens: 8000 },
@@ -772,6 +805,13 @@ function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	}
 	const sessionNameSerif = boolOrDrop(raw.sessionNameSerif);
 	if (sessionNameSerif !== undefined) out.sessionNameSerif = sessionNameSerif;
+	const compactSessionList = boolOrDrop(raw.compactSessionList);
+	if (compactSessionList !== undefined) out.compactSessionList = compactSessionList;
+	// Out-of-range or off-step widths clamp to the nearest step (like the
+	// font size); a wrong type drops (= Full). The PUT parser rejects both.
+	if (typeof raw.transcriptMaxWidth === "number" && Number.isFinite(raw.transcriptMaxWidth)) {
+		out.transcriptMaxWidth = clampTranscriptWidth(raw.transcriptMaxWidth);
+	}
 	if (raw.mdRendering !== undefined) out.mdRendering = sanitizeMdRendering(raw.mdRendering);
 	return out;
 }

@@ -227,6 +227,8 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			fontFamily: appearance.fontFamily ?? factoryAppearance.fontFamily,
 			proseFontSize: appearance.proseFontSize ?? factoryAppearance.proseFontSize,
 			sessionNameSerif: appearance.sessionNameSerif ?? factoryAppearance.sessionNameSerif,
+			compactSessionList: appearance.compactSessionList ?? factoryAppearance.compactSessionList,
+			transcriptMaxWidth: appearance.transcriptMaxWidth ?? factoryAppearance.transcriptMaxWidth,
 			mdRendering: {
 				headingWeight: md.headingWeight ?? factoryMd.headingWeight,
 			},

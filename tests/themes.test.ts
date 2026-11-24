@@ -8,6 +8,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { describe, it } from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
 	appearanceCss,
 	BUILTIN_THEMES,
@@ -24,6 +26,7 @@ import {
 	themeVars,
 } from "../src/core";
 import { clearColorOverrides, composeColorOverride } from "../components/settings/appearance-section.tsx";
+import { AppearanceProvider } from "../components/settings/appearance.tsx";
 
 /** The pre-theme palette, as app/globals.css carried it on :root (and .dark)
  *  before themes: every variable that existed then must keep its value. */
@@ -318,5 +321,17 @@ describe("appearanceCss — the provider's <style>", () => {
 			css.includes(String.raw`--font-prose:"Evil\"};\3c /style>\3c script>x()\3c /script>", var(--font-sans3)`),
 			"the whole name stays inside one CSS string",
 		);
+	});
+});
+
+describe("transcript width: the cap reaches the first HTML", () => {
+	const firstHtml = (transcriptMaxWidth?: number) =>
+		renderToStaticMarkup(createElement(AppearanceProvider, { initialAppearance: transcriptMaxWidth === undefined ? {} : { transcriptMaxWidth }, children: null }));
+
+	it("a chosen width is the --lh-transcript-max the column reads; Full renders no variable (max-width: none)", () => {
+		assert.match(firstHtml(60), /html:root\{[^}]*--lh-transcript-max:60rem;/);
+		assert.doesNotMatch(firstHtml(), /--lh-transcript-max/);
+		assert.equal(appearanceCss({}), appearanceCss(undefined), "an unset width changes nothing");
+		assert.match(GLOBALS, /\.lh-transcript-column \{\s*max-width: calc\(var\(--lh-transcript-max\) \+ 1rem\);/);
 	});
 });

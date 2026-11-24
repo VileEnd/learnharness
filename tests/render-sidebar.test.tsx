@@ -46,6 +46,21 @@ describe("SessionRow", () => {
 		assert.ok(!html.includes("border-phase-"), "phase rings are retired app-wide");
 	});
 
+	it("compact: one fixed short line, no meta, instant hover; off is today's two-line row", () => {
+		const chat = item({ kind: "practice", pendingQuestion: true, busy: true });
+		const compact = renderToStaticMarkup(<SessionRow chat={chat} active={false} compact onOpen={() => {}} onMenu={() => {}} />);
+		assert.match(compact, /\bh-8\b/);
+		assert.match(compact, /\bfont-ui\b[^>]*>Test session/);
+		assert.doesNotMatch(compact, /Waiting for input|transition-/, "no meta line, no hover fade");
+		assert.match(compact, /braille-spinner/);
+		assert.match(compact, /aria-label="Practice session"/);
+		const full = renderToStaticMarkup(<SessionRow chat={chat} active={false} onOpen={() => {}} />);
+		assert.match(full, /\bpy-2\b[^"]*transition-colors/);
+		assert.match(full, /font-prose[^>]*>Test session/);
+		assert.match(full, /Waiting for input/);
+		assert.doesNotMatch(full, /\bh-8\b/);
+	});
+
 	it("idle session: NO indicator — absence is the state", () => {
 		for (const phase of ["probe", "plan", "teach"] as const) {
 			const html = render(item({ phase }));
