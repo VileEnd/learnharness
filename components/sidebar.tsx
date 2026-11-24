@@ -292,7 +292,10 @@ export function SessionRow({
 				    same voice the words were typed in (every input is lh-prose);
 				    the meta line below stays JetBrains Mono (machine data). One
 				    rule, finally applied to the picker too (owner, typography
-				    round): mono = chrome, Source Sans = human words. */}
+				    round): mono = chrome, Source Sans = human words. The one
+				    exception is the opt-in compact list (upstream's compact
+				    styling): the small mono face keeps any reading size inside
+				    the short row. */}
 				<span className={cn("block truncate", sidebarNameFont(compact))}>{chat.title}</span>
 				{!compact && <span className="block text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
