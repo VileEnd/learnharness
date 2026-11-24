@@ -226,7 +226,7 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 		streamFn: (requestModel, context, options) => {
 			if (!custom) {
 				return observeStream(
-					models.streamSimple(requestModel, context, {
+					models.streamSimple(withoutMessageThreads(requestModel), context, {
 						...options,
 						reasoning: level === "off" ? undefined : level,
 						...(opts.cacheRetention && spec.provider !== CLAUDE_CODE_PROVIDER && { cacheRetention: opts.cacheRetention }),
@@ -244,11 +244,22 @@ export function piEngineForSpec(requested: ResolvedModelSpec, opts: EngineOption
 			const currentLevel = levelFor(currentModel);
 			const priced = providerSources.some((s) => s.isPriced(spec.provider, spec.id));
 			return observeStream(
-				current.streamSimple(permitImages(currentModel), context, { ...options, reasoning: currentLevel === "off" ? undefined : currentLevel }),
+				current.streamSimple(withoutMessageThreads(permitImages(currentModel)), context, { ...options, reasoning: currentLevel === "off" ? undefined : currentLevel }),
 				{ ...meta(currentModel.id), ...(priced && { priceFromUsage: true }) },
 			);
 		},
 	};
+}
+
+/** Keep full replay on Anthropic's Messages API: Pi's server-side message
+ *  threads (on by default for api.anthropic.com since Pi 1.5.1/1.6.0) are
+ *  fingerprinted without the API key, but keys are resolved per request
+ *  from the editable key store, so a rotated key must not continue a thread
+ *  opened under another. Prompt caching is unaffected. A clone, never the
+ *  registered model. */
+function withoutMessageThreads(model: Model<Api>): Model<Api> {
+	if (model.api !== "anthropic-messages") return model;
+	return { ...model, compat: { ...model.compat, supportsMessageThreads: false } } as Model<Api>;
 }
 
 /** A custom endpoint's owner authorizes image attempts regardless of sparse

@@ -66,9 +66,9 @@ describe("the model catalog projection", () => {
 		assert.ok(glm, "glm-5.3-flash in catalog");
 		assert.deepEqual(glm!.supportedLevels, ["low", "high", "max"]);
 		assert.deepEqual(glm!.input, ["text", "image"]);
-		// pi's current glm price (pi-ai 1.5.0 catalog refresh: was
-		// 0.15/0.5/0.03 at 1.4.0)
-		assert.deepEqual(glm!.cost, { input: 0.0285, output: 0.0923, cacheRead: 0.0285, cacheWrite: 0 });
+		// pi's current glm price (pi-ai 1.6.0 catalog refresh: was
+		// 0.0285/0.0923/0.0285 at 1.5.0)
+		assert.deepEqual(glm!.cost, { input: 0.0399, output: 0.0784, cacheRead: 0.03, cacheWrite: 0 });
 		// model slots wave: the providers surface + the resolved slot pins
 		const openrouter = providers.find((p) => p.id === "openrouter");
 		assert.ok(openrouter && openrouter.keyPresent, "openrouter federated (key pinned above)");
@@ -181,6 +181,16 @@ describe("the model slots surface (model slots wave, 2026-09-20)", () => {
 		} finally {
 			if (saved === undefined) delete process.env.ZAI_API_KEY;
 			else process.env.ZAI_API_KEY = saved;
+		}
+	});
+	it("a Qwen Token Plan key under the shared pre-1.6 var still counts, as pi still reads it", () => {
+		const present = () => catalogProviders().find((p) => p.id === "qwen-token-plan-individual")?.keyPresent;
+		assert.equal(present(), false);
+		process.env.QWEN_TOKEN_PLAN_API_KEY = "test-qwen-key-1234567890";
+		try {
+			assert.equal(present(), true);
+		} finally {
+			delete process.env.QWEN_TOKEN_PLAN_API_KEY;
 		}
 	});
 });

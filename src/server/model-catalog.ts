@@ -28,7 +28,7 @@ import { multiUser, requireTenant } from "../core/tenant-context.ts";
 import { settingsStore } from "../store/settings.ts";
 import { effectiveSettings } from "./stores.ts";
 import { allowedModelsOnly } from "./model-gate.ts";
-import { keyValue, providerKeyPresent } from "./keys.ts";
+import { providerKeyPresent } from "./keys.ts";
 import type { ChatSettings } from "../core/contracts/chat.ts";
 import type {
 	CatalogDefaults,
@@ -131,7 +131,7 @@ export function catalogProviders(): CatalogProvider[] {
 	return AUTH_PROVIDER_KEYS.map((p) => ({
 		id: p.id,
 		envVar: p.envVar,
-		keyPresent: keyValue(p.envVar) !== undefined,
+		keyPresent: providerKeyPresent(p.id),
 	}))
 		// Claude Code has no key row: it is no BYOK provider (modelCatalog adds its models for the admin).
 		.filter((p) => p.id !== CLAUDE_CODE_PROVIDER)

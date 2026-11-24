@@ -76,8 +76,8 @@ describe("activity dock pure layer", () => {
 		});
 		const blob = toBlobs({ jobs: [priced], extractions: [] })[0]!;
 		// Pi-normalized fresh input is priced directly, never reduced by reads.
-		// glm-5.3-flash at pi-ai 1.5.0 prices (0.0285 in/cache-read, 0.0923 out per 1M).
-		assert.equal(blob.cost, 0.0005198);
+		// glm-5.3-flash at pi-ai 1.6.0 prices (0.0399 in, 0.03 cache-read, 0.0784 out per 1M).
+		assert.equal(blob.cost, 0.0006274);
 		const missingProjection = toBlobs({ jobs: [{ ...priced, costUsd: undefined }], extractions: [] })[0]!;
 		assert.equal(missingProjection.cost, null, "the browser must not invent a fallback price");
 		const absent = toBlobs({ jobs: [job()], extractions: [] })[0]!;
@@ -250,9 +250,9 @@ describe("activity section render", () => {
 				}}
 			/>,
 		);
-		// two identical priced jobs → 2 × $0.0003773 = $0.0008 total (pi-ai 1.5.0
+		// two identical priced jobs → 2 × $0.0004774 = $0.0010 total (pi-ai 1.6.0
 		// prices for glm-5.3-flash)
-		assert.match(html, /activity-total-cost[^>]*>\$0\.0008</);
+		assert.match(html, /activity-total-cost[^>]*>\$0\.0010</);
 	});
 
 	it("expanded card: Stop stays on the face row, the title isn't repeated", async () => {
