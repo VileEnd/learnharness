@@ -10,6 +10,7 @@
  */
 
 import type { LhMessage } from "./native-messages.ts";
+import type { SessionFoldersRecord } from "./session-folders.ts";
 import type {
 	ChatRecord,
 	ChatSettings,
@@ -210,6 +211,21 @@ export interface SettingsStore {
 	readSettings(): UserSettings | null;
 	/** Persist the record (replace-whole). Callers pass a SANITIZED record. */
 	writeSettings(settings: UserSettings): void;
+}
+
+// ─── SessionFolderStore — sidebar session folders (2026-11-24) ──────────────
+
+/**
+ * The per-user session-folders record (core/session-folders.ts): one small
+ * file, replace-whole. Reads never write. A file stamped with a newer
+ * version throws SessionFoldersTooNew on read, so every read-modify-write
+ * refuses too and the file is never overwritten by an older build.
+ */
+export interface SessionFolderStore {
+	/** The record; the empty record when no file exists or it is unreadable. */
+	readFolders(): SessionFoldersRecord;
+	/** Persist the record (replace-whole, crash-safe), stamped current. */
+	writeFolders(record: SessionFoldersRecord): void;
 }
 
 // ─── PromptOverrideStore — per-segment system-prompt overrides (2026-09-19) ──

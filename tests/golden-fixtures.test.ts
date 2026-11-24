@@ -41,6 +41,8 @@ const { graphStore } = await import("../src/store/graph.ts");
 const { jobStore } = await import("../src/store/jobs.ts");
 const { settingsStore } = await import("../src/store/settings.ts");
 const { readRenderSettings } = await import("../src/store/render-settings.ts");
+const { sessionFolderStore } = await import("../src/store/session-folders.ts");
+const { sessionFoldersView } = await import("../src/core/session-folders.ts");
 const { getGraph, deriveView } = await import("../src/core/graph.ts");
 const { sanitizeRenderSettings } = await import("../src/core/render-settings.ts");
 const { toLlmMessages } = await import("../src/core/native-messages.ts");
@@ -342,6 +344,14 @@ test("settings: the stamped record parses", () => {
 	assert.ok(s!.models && typeof s!.models === "object", "model slots present");
 	assert.equal(resolveQuizMechanic(s!.agent), "mixed", "the sanitizer keeps agent.quizMechanic");
 	assert.equal(s!.agent?.turnSpendCapUsd, 1, "the sanitizer keeps agent.turnSpendCapUsd (written by PUT /api/settings/agent)");
+});
+
+test("session folders: the record reads and every assignment derives against a real chat", () => {
+	const record = sessionFolderStore.readFolders();
+	assert.equal(record.version, 1);
+	assert.equal(record.folders.length, 2);
+	const view = sessionFoldersView(record, new Set(chatStore.listChats().map((c) => c.id)));
+	assert.equal(Object.keys(view.assignments).length, 2, "both assignments point at a golden chat and a live folder");
 });
 
 // ── read-only: readers never write ──────────────────────────────────────────

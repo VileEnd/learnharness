@@ -8,6 +8,8 @@ export * from "./chat-handler.ts";
 export * from "./events-stream.ts";
 export * from "./tenant.ts";
 export * from "./chats.ts";
+// Session folders (2026-11-24): the per-user folder list behind /api/session-folders.
+export { readSessionFolders, sessionFolders, folderResponse } from "./session-folders.ts";
 export * from "./graph.ts";
 export { NotesImportError } from "../agent/subagents/extraction.ts";
 export * from "./commit-positions.ts";
