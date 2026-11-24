@@ -80,10 +80,13 @@ interface PlanProbe {
 }
 
 /** Keep this outside the drawing's viewBox and any pan/zoom transform.
- * It shares the reading-font cascade and display:none ancestors. */
+ * It shares the reading-font cascade and display:none ancestors. Zero
+ * size: an empty box adds no scrollable overflow, so a probe whose
+ * diagram sits off screen (the dock marginalia on a phone, left of the
+ * dock's far edge) never lets its scroller pan sideways. */
 export function PlanLayoutProbe({ probe }: { probe: PlanProbe }) {
 	return (
-		<svg aria-hidden="true" visibility="hidden" data-plan-probe="" width={1} height={1}
+		<svg aria-hidden="true" visibility="hidden" data-plan-probe="" width={0} height={0}
 			className="pointer-events-none absolute top-0 left-0 overflow-hidden"
 			style={{ fontFamily: "var(--font-prose)" }}
 		>
