@@ -207,11 +207,34 @@ function check(label, rows, size = null) {
 	console.log(`${bad.length ? "FAIL" : "ok  "} ${label}: ${rows.length} label lines${bad.length ? `, ${bad.length} problems, e.g. ${JSON.stringify(bad[0])}` : ""}`);
 }
 
-function noSidewaysScroll(label, [scrollWidth, clientWidth]) {
-	const ok = scrollWidth <= clientWidth;
-	results.push({ label: `${label}: no sideways scroll`, scrollWidth, clientWidth, passed: ok });
-	if (!ok) failures.push({ label, bad: [`page scrolls sideways: ${scrollWidth} > ${clientWidth}`] });
-	console.log(`${ok ? "ok  " : "FAIL"} ${label}: page width ${scrollWidth} / ${clientWidth}`);
+/** The probes sit absolute beside their diagrams: they must add no
+ *  sideways scroll to the page or to any scroller around them. Compares
+ *  each scroller's width with the probes shown and hidden, so overflow
+ *  the app has anyway (wide math in the transcript) is reported, not
+ *  blamed on the probes. */
+async function noSidewaysScroll(page, label) {
+	const { added, already } = await page.evaluate(() => {
+		const probes = [...document.querySelectorAll("svg[data-plan-probe]")];
+		const scrollers = new Set([document.documentElement]);
+		for (const probe of probes) {
+			for (let el = probe.parentElement; el; el = el.parentElement) {
+				if (/(auto|scroll)/.test(getComputedStyle(el).overflowX)) scrollers.add(el);
+			}
+		}
+		const list = [...scrollers];
+		const shown = list.map((el) => el.scrollWidth);
+		for (const probe of probes) probe.style.display = "none";
+		const hidden = list.map((el) => el.scrollWidth);
+		for (const probe of probes) probe.style.display = "";
+		const name = (el) => `${el.tagName.toLowerCase()}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}`;
+		return {
+			added: list.flatMap((el, i) => (shown[i] > hidden[i] && shown[i] > el.clientWidth ? [`${name(el)} ${hidden[i]} → ${shown[i]} > ${el.clientWidth}`] : [])),
+			already: list.flatMap((el, i) => (hidden[i] > el.clientWidth ? [`${name(el)} ${hidden[i]} > ${el.clientWidth}`] : [])),
+		};
+	});
+	results.push({ label: `${label}: probes add no sideways scroll`, added, alreadyWide: already, passed: added.length === 0 });
+	if (added.length) failures.push({ label, bad: added });
+	console.log(`${added.length ? "FAIL" : "ok  "} ${label}: probes add no sideways scroll${added.length ? `: ${added.join("; ")}` : ""}${already.length ? ` (already wide without them: ${already.join("; ")})` : ""}`);
 }
 
 /** Line breaks the browser chose, per node: no text lost or reordered, no
@@ -450,6 +473,9 @@ async function main() {
 		// The app's service worker would serve font requests out of the
 		// page's sight, and the delayed-font regression intercepts one.
 		await page.setBypassServiceWorker(true);
+		// The fixture follows the system theme: a dark device shows Default.
+		// Step 2c switches to Ivory explicitly.
+		await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
 		page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
 		page.on("pageerror", (e) => consoleErrors.push(e.message));
 		page.on("response", (r) => { if (r.status() >= 400) consoleErrors.push(`${r.status()} ${r.url()}`); });
@@ -512,7 +538,7 @@ async function main() {
 		for (const [name, stack] of [["default", null], ["JetBrains Mono", FONTS[1][1]]]) {
 			await setFont(page, stack, null);
 			check(`phone · block · hard titles · ${name}`, await measureLabels(page, "[data-testid=plan-block-full]"));
-			noSidewaysScroll(`phone · block · ${name}`, await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]));
+			await noSidewaysScroll(page, `phone · block · ${name}`);
 		}
 		// Phones hide the plan chip: the in-chat block opens the popup.
 		await page.$eval("[data-testid=plan-block-full]", (el) => el.scrollIntoView({ block: "center" }));
@@ -520,8 +546,19 @@ async function main() {
 		await page.waitForSelector("[data-testid=plan-popup] svg[aria-label='Plan diagram']");
 		await setFont(page, FONTS[1][1], null);
 		check("phone · popup sheet · hard titles · JetBrains Mono", await measureLabels(page, "[data-testid=plan-popup]"));
-		noSidewaysScroll("phone · popup sheet", await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]));
+		await noSidewaysScroll(page, "phone · popup sheet");
 		await (await page.$("[data-testid=plan-popup]")).screenshot({ path: path.join(out, "phone-popup-mono.png") });
+		await setFont(page, null, null);
+		// A pending question on a phone: the dock marginalia stays mounted
+		// (faded, outside the narrow flank) with its probe beside it.
+		await openChat(page, origin, PENDING_CHAT);
+		await page.waitForSelector("[data-testid=plan-marginalia] svg[data-plan-probe]", { timeout: 30_000 });
+		for (const [name, stack] of [["default", null], ["JetBrains Mono", FONTS[1][1]]]) {
+			await setFont(page, stack, null);
+			check(`phone · pending question · block · ${name}`, await measureLabels(page, "[data-testid=plan-block-full]"));
+			await noSidewaysScroll(page, `phone · pending question · ${name}`);
+		}
+		await page.screenshot({ path: path.join(out, "phone-pending-mono.png") });
 		await setFont(page, null, null);
 		await page.setViewport({ width: 1600, height: 2400 });
 
