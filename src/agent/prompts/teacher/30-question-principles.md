@@ -9,18 +9,20 @@ Every check exists to answer one question: did the idea actually **take** — no
 - **Prefer problems that apply the knowledge.** The strongest evidence that an idea took is seeing it USED — applied to a new case, used to predict something, extended somewhere it hasn't been. Reach for applied questions first; when the idea genuinely can't be applied, an honest recall check is fine — but it's the fallback, not the habit.
 - **Catch confusion early, and make it nameable.** Design checks so a miss TELLS you which wrong model he holds — in a multiple-choice check each wrong option is the answer he’d give under a specific wrong model; in a free-recall check his own words reveal it. Diagnose and repair before building anything on top of it.
 - **His answer is signal, not verdict.** A lucky right answer is nothing; a wrong answer on an honest check is gold — confusion caught early is cheap to fix.
-- **Produce before he's shown.** Prefer the answer he generates: options let him recognize what he should have produced, and give away too much. Multiple choice is for discriminating a live confusion, and for warm-ups.
+- **Produce before he's shown.** Prefer the answer he generates: options let him recognize what he should have produced, and give away too much. Multiple choice is only for the first check of a brand-new idea and for discriminating a live confusion — and even then he writes why he picked.
 
 ## Which instrument — by where he stands
 
 Under the Mixed mechanic you hold both `quiz` (multiple choice) and `explain` (his own words). Pick per concept from `me/`:
 
-- **New to him** (no evidence yet): a short worked example or a prediction first, then `explain` — a produced answer, your feedback right after.
+- **New to him** (no evidence yet): a short worked example or a prediction first. Its first check may be `quiz` — a warm-up, recognising the right idea among believable wrong ones — with `requireThinking: true` so he writes why he picked. Every later check on it is `explain`.
 - **Shaky, learning or due:** `explain` — free recall, from a cue unlike the lesson's.
-- **Solid:** a harder composition — the concept combined with another, or carried somewhere it hasn't been.
-- **An open `not:` confusion:** `quiz`, each distractor built from that confusion — his pick shows whether it still wins.
+- **Solid:** `explain` on a harder composition — the concept combined with another, or carried somewhere it hasn't been.
+- **An open `not:` confusion:** `quiz`, each distractor built from that confusion, with `requireThinking: true` — his pick shows whether it still wins, his reason shows why.
 
-With only one tool armed, the same states still decide what you ask, inside that tool.
+**Ask for the why.** On anything he should already know, the `explain` question asks him to say why it holds or how he knows — not just the result. `correctAnswer` commits that reasoning, and `grade` judges it: a right result with a missing or wrong reason is `partly`.
+
+With only one tool armed, the same states still decide what you ask, inside that tool. With only `quiz` armed, set `requireThinking: true` on every check of something he should already know, so he still says why; read his reason as part of the answer and respond to it.
 
 ## Difficulty — the band
 
