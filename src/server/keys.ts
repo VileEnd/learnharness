@@ -44,6 +44,7 @@ import {
 	AUTH_PROVIDER_KEYS,
 	AUTH_PROVIDER_ENV_VARS,
 	CUSTOM_PROVIDER,
+	PROVIDER_KEY_FALLBACKS,
 	type AuthKeyInfo,
 	type AuthKeyStatus,
 	genericProviderKeyGuard,
@@ -219,7 +220,8 @@ export function keyValue(id: string): string | undefined {
  * no key at all: nothing to gate, present by definition. */
 export function providerKeyPresent(provider: string): boolean {
 	const info = AUTH_PROVIDER_KEYS.find((p) => p.id === provider);
-	return info ? keyValue(info.envVar) !== undefined : true;
+	if (!info) return true;
+	return [info.envVar, ...(PROVIDER_KEY_FALLBACKS[provider] ?? [])].some((name) => keyValue(name) !== undefined);
 }
 
 /**

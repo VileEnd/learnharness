@@ -183,6 +183,16 @@ describe("the model slots surface (model slots wave, 2026-09-20)", () => {
 			else process.env.ZAI_API_KEY = saved;
 		}
 	});
+	it("a Qwen Token Plan key under the shared pre-1.6 var still counts, as pi still reads it", () => {
+		const present = () => catalogProviders().find((p) => p.id === "qwen-token-plan-individual")?.keyPresent;
+		assert.equal(present(), false);
+		process.env.QWEN_TOKEN_PLAN_API_KEY = "test-qwen-key-1234567890";
+		try {
+			assert.equal(present(), true);
+		} finally {
+			delete process.env.QWEN_TOKEN_PLAN_API_KEY;
+		}
+	});
 });
 
 describe("the models-section validation gate", () => {

@@ -144,6 +144,17 @@ export const CUSTOM_PROVIDER = {
 	label: "Custom endpoint",
 } as const;
 
+/** Older env vars pi still reads for a provider after its row's envVar
+ *  (findEnvKeys order). Pi 1.6.0 moved the Qwen Token Plan rows to per-plan
+ *  vars; a key saved under the shared var before that keeps counting as
+ *  present, exactly as pi would still resolve it at request time. */
+export const PROVIDER_KEY_FALLBACKS: Readonly<Record<string, readonly string[]>> = {
+	"qwen-token-plan": ["QWEN_TOKEN_PLAN_API_KEY"],
+	"qwen-token-plan-cn": ["QWEN_TOKEN_PLAN_CN_API_KEY"],
+	"qwen-token-plan-individual": ["QWEN_TOKEN_PLAN_API_KEY"],
+	"qwen-token-plan-individual-cn": ["QWEN_TOKEN_PLAN_CN_API_KEY"],
+};
+
 /** Every distinct env var a model-provider key rides in (the write side's
  *  writability check — see isProviderEnvVar below; also drives which
  *  PRESENT provider vars surface as status rows). */
