@@ -11,6 +11,11 @@
  * offline mid-task loses nothing. Submit exports the PNG, POSTs it to /drawings and hands the returned
  * drawingId to onSubmit; an empty scene submits text only. Hint sends the same snapshot (and the "Your
  * thinking" draft, kept in the field) with the request and stays open, so the tutor's marks land in view.
+ *
+ * THE FREE MODE (the drawing pad): the same workspace with no task. Opened from the composer's Draw action or a
+ * thinking field's, it has no question, hints, ink or thinking field; "Attach drawing" uploads the drawing (the same
+ * /drawings submission) and hands its id to the caller, which attaches it as a card (components/attachments.tsx).
+ * Its draft lives under the call id FREE_DRAWING_CALL_ID, so a closed pad loses nothing; attaching clears it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +44,8 @@ import { HintStrip, HintsButton } from "./hints";
 import { pickDraft, readLocalDraft, writeLocalDraft } from "./draft";
 
 export const AUTOSAVE_MS = 2000;
+/** The drawing pad's draft key (drafts/<callId>.json): one per chat, emptied when a drawing is attached. */
+export const FREE_DRAWING_CALL_ID = "free-drawing";
 export const EMPTY_SCENE: DrawingScene = { version: 1, objects: [] };
 const SIZES = [2, 4, 8] as const;
 
@@ -81,6 +88,8 @@ export interface CanvasWorkspaceProps {
 	messages?: readonly unknown[];
 	/** A turn is running: a hint request without a reply yet is then "pending" (Getting a hint…), else it is just empty. */
 	turnBusy?: boolean;
+	/** "free": the drawing pad (no task; Submit attaches the drawing). Default "task". */
+	mode?: "task" | "free";
 }
 
 /** Pure: may Submit fire? Something to send, and the required thinking present. */
@@ -103,7 +112,8 @@ function nextZ(scene: DrawingScene): number {
 	return z;
 }
 
-export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false, messages = [], turnBusy = false }: CanvasWorkspaceProps) {
+export function CanvasWorkspace({ chatId, callId, question, details, requireThinking = false, onSubmit, onHint, onMinimize, compactionRunning = false, messages = [], turnBusy = false, mode = "task" }: CanvasWorkspaceProps) {
+	const free = mode === "free";
 	const rootRef = useRef<HTMLDivElement>(null);
 	const engineRef = useRef<CanvasEngine | null>(null);
 	// The mode on screen comes from the appearance provider (Follow system
@@ -180,7 +190,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			thinkingRef.current = v;
 			setThinking(v);
 		}, []),
-		true,
+		!free,
 	);
 
 	// ── draft save (server, revisioned) ──
@@ -350,7 +360,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 
 	// ── submit and hint ──
 	const objectCount = scene.objects.length;
-	const canSubmit = loaded && !compactionRunning && canSubmitWork({ text: thinking, objectCount, requireThinking, busy });
+	const canSubmit = free ? loaded && !busy && objectCount > 0 : loaded && !compactionRunning && canSubmitWork({ text: thinking, objectCount, requireThinking, busy });
 	// The canvas as it is now: PNG + scene POSTed to /drawings; undefined for an empty scene (nothing is sent).
 	const uploadSnapshot = async (): Promise<string | undefined> => {
 		const engine = engineRef.current;
@@ -371,6 +381,11 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 		try {
 			const text = thinkingRef.current.trim();
 			const drawingId = await uploadSnapshot();
+			if (free) {
+				// Attached: the pad starts blank next time.
+				engineRef.current?.setScene(EMPTY_SCENE);
+				onSceneChange(EMPTY_SCENE);
+			}
 			await saveNowRef.current();
 			thinkingRef.current = "";
 			setThinking("");
@@ -435,15 +450,19 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			data-testid="canvas-workspace"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Canvas"
+			aria-label={free ? "Drawing pad" : "Canvas"}
 			className="absolute inset-0 z-40 flex flex-col overflow-y-auto bg-background/95 p-3 backdrop-blur-sm"
 		>
 			{/* The question strip */}
 			<div data-testid="canvas-question" className="mb-2 max-h-[min(7rem,18dvh)] shrink-0 overflow-y-auto rounded-lg border bg-card px-3 py-2">
-				<div className="lh-prose text-sm">
-					<ToolContentResponse>{question}</ToolContentResponse>
-					{details ? <ToolContentResponse>{details}</ToolContentResponse> : null}
-				</div>
+				{free ? (
+					<p className="text-sm text-muted-foreground">{question}</p>
+				) : (
+					<div className="lh-prose text-sm">
+						<ToolContentResponse>{question}</ToolContentResponse>
+						{details ? <ToolContentResponse>{details}</ToolContentResponse> : null}
+					</div>
+				)}
 			</div>
 
 			{/* The toolbar */}
@@ -484,7 +503,7 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					</button>
 				)}
 				<span className="ml-auto" />
-				<HintsButton hints={hints} open={hintsOpen} onToggle={() => setHintsOpen((v) => !v)} />
+				{!free && <HintsButton hints={hints} open={hintsOpen} onToggle={() => setHintsOpen((v) => !v)} />}
 				<button type="button" title="Minimise (Esc)" aria-label="Minimise" data-testid="canvas-minimize" onClick={onMinimize} className="rounded-md p-1.5 pointer-coarse:p-2.5 text-muted-foreground hover:bg-accent hover:text-foreground">
 					<Minimize2Icon className="size-4" />
 				</button>
@@ -518,10 +537,11 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 			</div>
 
 			{/* The newest hint, above the thinking box (capped, collapsible) */}
-			<HintStrip hints={hints} turnBusy={hintTurnBusy} />
+			{!free && <HintStrip hints={hints} turnBusy={hintTurnBusy} />}
 
 			{/* The bottom bar: Your thinking + Hint + Submit */}
 			<div data-testid="canvas-bottom" className="mt-2 shrink-0 rounded-[10px] border border-border/70 bg-card transition-colors focus-within:border-primary/50">
+				{!free && (<>
 				<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					Your thinking{requireThinking ? " (required)" : ""}
 				</div>
@@ -544,18 +564,19 @@ export function CanvasWorkspace({ chatId, callId, question, details, requireThin
 					rows={2}
 					className="field-sizing-content lh-input max-h-[min(10rem,22dvh)] min-h-12 w-full resize-none bg-transparent px-2.5 pb-1 outline-none placeholder:text-muted-foreground"
 				/>
+				</>)}
 				<div className="flex items-center justify-between gap-2 p-1">
 					<span className="pl-1.5 text-xs text-destructive" role={error ? "alert" : undefined} data-testid="canvas-error">
 						{error ?? ""}
 					</span>
 					<div className="ml-auto flex items-center gap-1.5">
-						{onHint && (
+						{onHint && !free && (
 							<Button type="button" variant="outline" data-testid="canvas-hint" disabled={!canRequestHint({ loaded, compactionRunning, busy, turnBusy })} onClick={() => void hint()} className="h-9 rounded-[6px] px-3 text-sm">
 								<LightbulbIcon className="size-4" /> Hint
 							</Button>
 						)}
 						<Button type="button" data-testid="canvas-submit" disabled={!canSubmit} onClick={() => void submit()} className="h-9 rounded-[6px] px-3.5 text-sm font-medium">
-							{busy ? "Submitting…" : "Submit"}
+							{free ? (busy ? "Attaching…" : "Attach drawing") : busy ? "Submitting…" : "Submit"}
 						</Button>
 					</div>
 				</div>

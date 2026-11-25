@@ -116,3 +116,75 @@ describe("enterAction", () => {
 		assert.equal(enterAction({ busy: true, canSend: true, nextProblem: true }), "send");
 	});
 });
+
+// ─── attachments (components/attachments.tsx) ───────────────────────────────
+
+import { AttachmentEnvContext, admitFiles, imageFilesOf, TOO_MANY_TEXT, UNSUPPORTED_IMAGE_TEXT, type AttachmentDraft } from "../components/attachments.tsx";
+import { composerCanSend, composerHold } from "../components/composer.tsx";
+
+function draft(items: AttachmentDraft["items"] = []): AttachmentDraft {
+	return {
+		chatId: "chat_x",
+		items,
+		refs: items.filter((i) => i.status === "ready").map((i) => ({ kind: i.kind, id: i.id! })),
+		pending: items.some((i) => i.status !== "ready"),
+		full: items.length >= 4,
+		error: null,
+		addFiles: () => {},
+		addDrawing: () => {},
+		remove: () => {},
+		clear: () => {},
+	};
+}
+
+function renderWith(d: AttachmentDraft, canDraw: boolean, busy = false) {
+	return renderToStaticMarkup(
+		<AttachmentEnvContext.Provider value={{ chatId: "chat_x", canDraw, openDrawPad: () => {} }}>
+			<Composer busy={busy} value="" onChange={() => {}} onSend={() => {}} onStop={() => {}} canSend attachments={d} />
+		</AttachmentEnvContext.Provider>,
+	);
+}
+
+describe("Composer attachments", () => {
+	it("Add image is always offered; Draw only on a device that can draw", () => {
+		const phone = renderWith(draft(), false);
+		assert.ok(phone.includes('data-testid="attach-image"'));
+		assert.ok(!phone.includes('data-testid="attach-drawing"'));
+		assert.ok(renderWith(draft(), true).includes('data-testid="attach-drawing"'));
+	});
+
+	it("the cards sit in a strip above the textarea, each removable", () => {
+		const html = renderWith(draft([
+			{ key: "a", kind: "image", status: "ready", id: "img_0000000000000001", previewUrl: "blob:x" },
+			{ key: "b", kind: "drawing", status: "ready", id: "drw_000000000001" },
+		]), true);
+		assert.ok(html.indexOf('data-testid="attachment-strip"') < html.indexOf("<textarea"), "the strip comes first");
+		assert.equal(html.match(/data-testid="attachment-card"/g)?.length, 2);
+		assert.equal(html.match(/data-testid="attachment-remove"/g)?.length, 2);
+		assert.ok(html.includes("/api/chats/chat_x/drawings/drw_000000000001?format=png"), "a drawing shows its exported PNG");
+		assert.ok(!renderWith(draft(), true).includes('data-testid="attachment-strip"'), "no strip without attachments");
+	});
+
+	it("four attachments fill the field: the buttons switch off", () => {
+		const four = draft([1, 2, 3, 4].map((n) => ({ key: `k${n}`, kind: "image" as const, status: "ready" as const, id: `img_000000000000000${n}` })));
+		const html = renderWith(four, true);
+		assert.match(html, /data-testid="attach-image"[^>]*disabled=""/);
+	});
+
+	it("images alone can be sent, but not while one uploads, and not as a steer", () => {
+		assert.equal(composerCanSend({ sendAllowed: true, busy: false, text: "", dictationActive: false, readyAttachments: 1 }), true);
+		assert.equal(composerCanSend({ sendAllowed: true, busy: true, text: "", dictationActive: false, readyAttachments: 1 }), false, "busy and empty stays Stop");
+		assert.equal(composerHold({ busy: false, canSend: true, attachmentCount: 1, attachmentsPending: true }), true);
+		assert.equal(composerHold({ busy: true, canSend: true, attachmentCount: 1, attachmentsPending: false }), true, "text plus images mid-turn waits");
+		assert.equal(composerHold({ busy: true, canSend: true, attachmentCount: 0, attachmentsPending: false }), false, "text alone still steers");
+		assert.equal(enterAction({ busy: true, canSend: true, hold: true }), "none", "a held send never stops the turn");
+	});
+
+	it("the client mirrors the limits: accepted types only, at most four", () => {
+		const f = (type: string) => ({ type });
+		assert.deepEqual(admitFiles([f("image/png"), f("image/webp")], 3), { accepted: [f("image/png")], error: TOO_MANY_TEXT });
+		assert.deepEqual(admitFiles([f("image/svg+xml"), f("image/gif")], 0), { accepted: [f("image/gif")], error: UNSUPPORTED_IMAGE_TEXT });
+		const files = [new File(["x"], "a.png", { type: "image/png" }), new File(["x"], "a.txt", { type: "text/plain" })];
+		assert.deepEqual(imageFilesOf({ files: files as unknown as FileList }).map((x) => x.name), ["a.png"], "a text paste is left alone");
+	});
+});

@@ -25,6 +25,7 @@ import { attachmentStore } from "../src/store/attachments.ts";
 import { createDrawingTranscriber, DESCRIBE_IMAGE_PROMPT } from "../src/agent/subagents/drawing-transcriber.ts";
 import { currentAttachments, prepareAttachmentContext } from "../src/server/attachment-context.ts";
 import { drawingIdsOfRecord } from "../src/agent/tools/annotate.ts";
+import { projectView } from "../src/core/view.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import { call, chat, prose, result } from "./learner-helpers.ts";
 
@@ -59,6 +60,12 @@ describe("attachment references and bytes", () => {
 		assert.deepEqual(checkImageDimensions(JPEG, "image/jpeg"), { ok: true, width: 3, height: 2 });
 		const huge = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x88, 0x13, 1, 0]); // GIF 5000x1
 		assert.equal(checkImageDimensions(huge, "image/gif").ok, false);
+	});
+
+	it("a sent message keeps its attachments in the transcript view, also with no text", () => {
+		const [view] = projectView([newUserMessage("", [img(1), DRAWING])]);
+		assert.deepEqual(view?.attachments, [img(1), DRAWING]);
+		assert.ok(view?.parts.every((p) => !p.type.startsWith("data-")), "never a marker-only message");
 	});
 
 	it("each carrier reads its own field", () => {

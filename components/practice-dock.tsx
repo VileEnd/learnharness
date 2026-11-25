@@ -8,11 +8,12 @@ import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { PhotoControl, usePhotoAttachment } from "@/components/canvas/photo-attachment";
+import { ThinkingAttachments, useAttachmentDraft, useAttachmentDrop } from "@/components/attachments";
 import { cn } from "@/lib/utils";
 import { ExerciseWidget } from "@/components/exercise/exercise-widget";
 import { UnreadableNotice } from "@/components/exercise/widget-shared";
 import { emptyResponse, hasAnyText } from "@/components/exercise/attempt-state";
-import { gradeExercise, parseExerciseInput, stripExpected, unreadableItems, type ExerciseVerdict, type ThinkingAttempt } from "@/src/core";
+import { gradeExercise, parseExerciseInput, stripExpected, unreadableItems, type AttachmentRef, type ExerciseVerdict, type ThinkingAttempt } from "@/src/core";
 
 /** The thinking sent with a Check that carries no words of its own. */
 const CHECK_TEXT = "Here is my attempt.";
@@ -47,7 +48,7 @@ export interface PracticeDockProps {
 	expanded: boolean;
 	onExpand: () => void;
 	/** text — POST {type:"thinking"} (one lane; the register is read from the text). A drawingId is a photo sent from a phone. */
-	onSubmit: (text: string, attempt?: ThinkingAttempt, drawingId?: string) => void;
+	onSubmit: (text: string, attempt?: ThinkingAttempt, drawingId?: string, attachments?: readonly AttachmentRef[]) => void;
 	/** The chat, for a phone photo of a canvas problem (no canvas there). Absent: no photo control. */
 	chatId?: string;
 	/** Escape in the thinking field stops dictation (threaded from the page). */
@@ -104,15 +105,20 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	const photo = usePhotoAttachment(chatId ?? "");
 	const photoOffered = input.canvas === true && !canvasCapable && chatId !== undefined;
 	const photoReady = photoOffered && photo.ready;
+	// Images and drawings added to the thinking (any problem, not only a canvas one).
+	const attachments = useAttachmentDraft(chatId);
+	const { dragging, handlers: drop } = useAttachmentDrop(chatId !== undefined ? attachments : undefined);
+	const attached = attachments.refs;
 
 	const submit = () => {
-		if (compactionRunning || !active || photo.busy) return;
+		if (compactionRunning || !active || photo.busy || attachments.pending) return;
 		const text = thinkingRef.current.trim();
-		if (text.length === 0 && !photoReady) return;
+		if (text.length === 0 && !photoReady && attached.length === 0) return;
 		if (!photoReady) {
 			thinkingRef.current = "";
 			setThinking("");
-			onSubmit(text);
+			attachments.clear();
+			onSubmit(text, undefined, undefined, attached);
 			return;
 		}
 		void photo.send().then((drawingId) => {
@@ -122,7 +128,8 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 				setThinking("");
 			}
 			photo.clear();
-			onSubmit(text.length > 0 ? text : "Here is my drawing.", undefined, drawingId);
+			attachments.clear();
+			onSubmit(text.length > 0 ? text : "Here is my drawing.", undefined, drawingId, attached);
 		});
 	};
 
@@ -220,13 +227,17 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 			    Shift+Enter makes a newline — less to decide about. */}
 			<div
 				data-testid="practice-thinking-field"
-				className="m-1.5 rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
+				className={cn("m-1.5 rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50", dragging && "ring-2 ring-primary/40")}
+				onDragOver={drop.onDragOver}
+				onDragLeave={drop.onDragLeave}
+				onDrop={drop.onDrop}
 			>
 				<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					YOUR THINKING
 				</div>
 				<textarea
 					ref={fieldRef}
+					onPaste={drop.onPaste}
 					value={thinking}
 					onChange={(e) => {
 						thinkingRef.current = e.target.value;
@@ -255,6 +266,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 						"field-sizing-content lh-input max-h-64 min-h-16 w-full resize-none bg-transparent px-2.5 pb-2 outline-none placeholder:text-muted-foreground",
 					)}
 				/>
+				{chatId !== undefined && <ThinkingAttachments draft={attachments} disabled={compactionRunning} />}
 				{/* The submit row (owner round 4, 2026-10-05): IDENTICAL to the
 				    question dock's — hint left, the SAME Button (h-9, px-3.5),
 				    one p-1 row. Corner radii concentric: shell 16 − m-1.5 (6) =
@@ -290,7 +302,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 						<Button
 							type="button"
 							data-testid="practice-send"
-							disabled={(thinking.trim().length === 0 && !photoReady) || compactionRunning || photo.busy}
+							disabled={(thinking.trim().length === 0 && !photoReady && attached.length === 0) || compactionRunning || photo.busy || attachments.pending}
 							onClick={() => submit()}
 							className="h-9 rounded-[6px] px-3.5 text-sm font-medium"
 						>

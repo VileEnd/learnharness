@@ -4,6 +4,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { enterSends } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
+import { ThinkingAttachments, useAttachmentDrop, type AttachmentDraft } from "@/components/attachments";
 
 /**
  * The reading-thinking field (owner design 2026-10-03, "two questions per
@@ -27,6 +28,7 @@ export function ReadingThinkingField({
 	onEscape,
 	onOpen,
 	claim,
+	attachments,
 }: {
 	value: string;
 	/** Bumped by the parent to force-resync the local draft to `value`. */
@@ -41,6 +43,8 @@ export function ReadingThinkingField({
 	onOpen?: () => void;
 	/** Primary dictation claim — true while the check is behind its reveal. */
 	claim: boolean;
+	/** Images and drawings added to this thinking (they ride the check answer as `readingAttachments`). */
+	attachments?: AttachmentDraft;
 }) {
 	const coarse = useCoarsePointer();
 	const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -56,6 +60,7 @@ export function ReadingThinkingField({
 		onChange(next);
 	}, [onChange]);
 	useAutoGrow(fieldRef, draft);
+	const { dragging, handlers: drop } = useAttachmentDrop(attachments);
 	useDictationTarget(
 		useCallback((t: string) => applyDraft(joinDictation(draftRef.current, t)), [applyDraft]),
 		claim,
@@ -63,13 +68,17 @@ export function ReadingThinkingField({
 	return (
 		<div
 			data-testid="reading-thinking-field"
-			className="pointer-events-auto mb-2 rounded-2xl border bg-card/60 px-3 py-2 transition-colors focus-within:border-primary/50"
+			className={`pointer-events-auto mb-2 rounded-2xl border bg-card/60 px-3 py-2 transition-colors focus-within:border-primary/50${dragging ? " ring-2 ring-primary/40" : ""}`}
+			onDragOver={drop.onDragOver}
+			onDragLeave={drop.onDragLeave}
+			onDrop={drop.onDrop}
 		>
 			<div className="pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Thinking while reading
 			</div>
 			<textarea
 				ref={fieldRef}
+				onPaste={drop.onPaste}
 				value={draft}
 				onChange={(e) => applyDraft(e.target.value)}
 				/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source
@@ -114,6 +123,7 @@ export function ReadingThinkingField({
 				rows={1}
 				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground-70"
 			/>
+			{attachments && <ThinkingAttachments draft={attachments} className="-mx-1.5 px-0" />}
 		</div>
 	);
 }

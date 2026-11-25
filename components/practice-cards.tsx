@@ -1,8 +1,9 @@
 "use client";
 
+import { SentAttachments } from "@/components/attachments";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
-import { gradeExercise, parseExerciseInput, type ArtifactPartProps, type ThinkingAttempt } from "@/src/core";
+import { gradeExercise, parseExerciseInput, readAttachmentRefs, type ArtifactPartProps, type ThinkingAttempt } from "@/src/core";
 import { ExerciseWidget } from "@/components/exercise/exercise-widget";
 import { keyResponse } from "@/components/exercise/attempt-state";
 
@@ -61,6 +62,8 @@ export interface PracticeThinkingData {
 	attempt?: ThinkingAttempt;
 	/** A canvas problem's drawing submitted with the thinking. */
 	drawingId?: string;
+	/** Images and drawings added to the thinking (core/attachments.ts). */
+	attachments?: unknown;
 }
 
 export function ProblemCard({ part }: ArtifactPartProps) {
@@ -309,7 +312,8 @@ export function ThinkingCard({ data, chatId }: { data: PracticeThinkingData; cha
 	return (
 		<>
 			{chatId && <DrawingThumb chatId={chatId} drawingId={data.drawingId} />}
-			<ThinkingBlock testId="thinking-card" label="YOUR THINKING" text={data.text} defaultOpen />
+			{data.text.trim() !== "" && <ThinkingBlock testId="thinking-card" label="YOUR THINKING" text={data.text} defaultOpen />}
+			{chatId && <SentAttachments chatId={chatId} refs={readAttachmentRefs(data.attachments)} className="mb-1" />}
 			{data.attempt && (
 				<div data-testid="thinking-attempt" className="mb-1 px-1 text-xs text-muted-foreground">
 					Check: {data.attempt.verdict.summary}

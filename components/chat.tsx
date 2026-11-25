@@ -63,13 +63,14 @@ import { SessionMessageNavigation } from "@/components/session-navigation";
 import { UserMessageText, useCitationActions, type CitationActions } from "@/components/citation-quote";
 import { PracticeDock } from "@/components/practice-dock";
 import { WorkDock } from "@/components/work-dock";
-import { CanvasWorkspace } from "@/components/canvas/canvas-workspace";
+import { CanvasWorkspace, FREE_DRAWING_CALL_ID } from "@/components/canvas/canvas-workspace";
+import { AttachmentEnvContext, SentAttachments, useAttachmentDraft, type AttachmentDraft, type AttachmentEnv } from "@/components/attachments";
 import { SessionMessagesContext, WorkDismissedLine, WorkSubmissionCard, type WorkSubmissionData } from "@/components/work-cards";
 import { useCanvasCapable } from "@/components/use-canvas-capable";
 import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-cards";
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
 import { TopBar } from "@/components/top-bar";
-import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, ThinkingAttempt, TurnUsage, SessionPricing } from "@/src/core";
+import type { ArtifactPartProps, AttachmentRef, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, ThinkingAttempt, TurnUsage, SessionPricing } from "@/src/core";
 import type { LhViewMessage } from "@/src/core";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
 import {
@@ -413,6 +414,7 @@ export const TranscriptRow = memo(function TranscriptRow({
 						<div className="lh-prose whitespace-pre-wrap break-words text-foreground">
 							<UserMessageText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} actions={citationActions} />
 						</div>
+						{m.attachments && m.attachments.length > 0 && <SentAttachments refs={m.attachments} />}
 					</div>
 				) : (
 					<Message from="assistant" className="max-w-full">
@@ -850,10 +852,17 @@ export function Chat({
 	// the dock stays mounted (the problem is still active until the agent
 	// concludes).
 	const submitThinking = useCallback(
-		(text: string, attempt?: ThinkingAttempt, drawingId?: string) => {
+		(text: string, attempt?: ThinkingAttempt, drawingId?: string, attachments?: readonly AttachmentRef[]) => {
 			const problem = activeProblemRef.current;
 			if (!problem) return;
-			void send({ type: "thinking", problemCallId: problem.toolCallId, text, ...(attempt ? { attempt } : {}), ...(drawingId ? { drawingId } : {}) });
+			void send({
+				type: "thinking",
+				problemCallId: problem.toolCallId,
+				text,
+				...(attempt ? { attempt } : {}),
+				...(drawingId ? { drawingId } : {}),
+				...(attachments && attachments.length > 0 ? { attachments: [...attachments] } : {}),
+			});
 		},
 		[send],
 	);
@@ -886,6 +895,16 @@ export function Chat({
 	 * separate `readingThinking` field. Reset per pending question. */
 	const [readingThinkingSeed, setReadingThinkingSeed] = useState({ questionId: null as string | null, value: "", revision: 0 });
 	const readingThinkingRef = useRef("");
+	// ATTACHMENTS (components/attachments.tsx): the composer's strip and the reading field's (which, like its text,
+	// rides the check answer from here). The other thinking fields own theirs. The drawing pad is one overlay
+	// for all of them: whoever opens it receives the finished drawing.
+	const composerAttachments = useAttachmentDraft(chatId);
+	const readingAttachments = useAttachmentDraft(chatId);
+	const [drawPad, setDrawPad] = useState<{ onAttach: (drawingId: string) => void } | null>(null);
+	const attachmentEnv = useMemo<AttachmentEnv>(
+		() => ({ chatId, canDraw: canvasCapable, openDrawPad: (onAttach) => setDrawPad({ onAttach }) }),
+		[chatId, canvasCapable],
+	);
 
 	// ⌘T (toggle-user-thinking, owner round 2026-10-07): set EVERY user
 	// thinking row to one state — transcript rows default open, so the
@@ -903,6 +922,11 @@ export function Chat({
 		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
 	}, []);
 	const pendingQuestionId = pending?.key ?? null;
+	// The reading field's attachments belong to one question: a new one (or none) starts empty.
+	const clearReadingAttachments = readingAttachments.clear;
+	useEffect(() => {
+		clearReadingAttachments();
+	}, [pendingQuestionId, clearReadingAttachments]);
 	useIsoLayoutEffect(() => {
 		// Different calls never share a draft; a failed submission of THIS
 		// call restores the reading channel alongside the form's snapshot.
@@ -1657,7 +1681,17 @@ export function Chat({
 	const doSend = () => {
 		if (busy || pending || compacting) return;
 		const t = textRef.current.trim();
-		if (!t) return;
+		const attachments = composerAttachments.refs;
+		if (composerAttachments.pending) return;
+		if (!t && attachments.length === 0) return;
+		if (attachments.length > 0) {
+			// A message with images or drawings: a plain send (the opening-prompt handover is text-only).
+			draftRef.current = t;
+			applyText("");
+			composerAttachments.clear();
+			void send({ type: "text", text: t, attachments: [...attachments] });
+			return;
+		}
 		if (openingDraftRef.current !== null) {
 			// Still the opening message (recovered or refused): same handover.
 			deliverOpeningPrompt(t);
@@ -1680,8 +1714,10 @@ export function Chat({
 	const doSteerOrSend = () => {
 		if (pending || compacting) return;
 		const t = textRef.current.trim();
-		if (!t) return;
+		if (!t && composerAttachments.refs.length === 0) return;
 		if (busy) {
+			// A steer carries text only: with attachments in the strip the message waits (the composer holds it).
+			if (!t || composerAttachments.items.length > 0) return;
 			applyText("");
 			void steer(t);
 			return;
@@ -1706,6 +1742,7 @@ export function Chat({
 
 	return (
 		<ChatActionsContext.Provider value={chatActions}>
+		<AttachmentEnvContext.Provider value={attachmentEnv}>
 		<SessionMessagesContext.Provider value={nativeMessages}>
 		<SessionMermaidContext.Provider value={mermaidActions}>
 		<JobsContext.Provider value={jobs}>
@@ -1924,6 +1961,7 @@ export function Chat({
 					onDiscardQuestion={() => setAbortAsk("question")}
 					compactionRunning={compacting}
 					onSubmitThinking={submitThinking}
+					readingAttachments={readingAttachments}
 					chatId={chatId}
 					plan={hasPlan ? <PlanMarginalia messages={messages} /> : undefined}
 					onOpenPlan={() => setPlanOpen(true)}
@@ -1978,6 +2016,7 @@ export function Chat({
 							// applies.
 							nextProblem={nextReady}
 							onNext={sendNext}
+							attachments={composerAttachments}
 							placeholder={
 								nextReady
 									? coarse
@@ -1999,6 +2038,8 @@ export function Chat({
 						// check answer is its only carrier.
 						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current });
 						const reading = readingThinkingRef.current.trim() || undefined;
+						const readingRefs = readingAttachments.refs;
+						if (readingRefs.length > 0 && !output.dismissed) output = { ...output, readingAttachments: [...readingRefs] };
 						// The pending-id effect clears this only when the question
 						// actually leaves. An offline preflight keeps the draft visible.
 						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
@@ -2043,6 +2084,20 @@ export function Chat({
 						onMinimize={() => setCanvasOpen(false)}
 					/>
 				)}
+				{/* The drawing pad: the same workspace with no task, for the composer's and the thinking fields' Draw. */}
+				{drawPad !== null && canvasCapable && (
+					<CanvasWorkspace
+						key={FREE_DRAWING_CALL_ID}
+						mode="free"
+						chatId={chatId}
+						callId={FREE_DRAWING_CALL_ID}
+						question="Draw anything. Attach drawing adds it to what you are writing."
+						onSubmit={(_text, drawingId) => {
+							if (drawingId) drawPad.onAttach(drawingId);
+						}}
+						onMinimize={() => setDrawPad(null)}
+					/>
+				)}
 				<AbortTurnDialog mode={abortAsk} onClose={() => setAbortAsk(null)} onConfirm={confirmAbort} busy={busy} />
 				</div>
 			</div>
@@ -2050,6 +2105,7 @@ export function Chat({
 		</JobsContext.Provider>
 		</SessionMermaidContext.Provider>
 		</SessionMessagesContext.Provider>
+		</AttachmentEnvContext.Provider>
 		{/* The BYOK setup flow (owner, 2026-09-22): one mount serves the
 		    persistent CTA, the refused-send interception, and the job cards'
 		    deep-link. Save keeps the draft in the composer — it never sends
@@ -2250,6 +2306,7 @@ function DockOverlay({
 	readingThinking,
 	readingThinkingRevision,
 	onReadingThinking,
+	readingAttachments,
 	phase,
 	turns,
 	contextTokens,
@@ -2291,7 +2348,9 @@ function DockOverlay({
 	onDiscardQuestion: () => void;
 	/** The practice dock's send: the thinking, plus the graded attempt when an
 	 *  interactive problem's Check carries one. */
-	onSubmitThinking: (text: string, attempt?: ThinkingAttempt, drawingId?: string) => void;
+	onSubmitThinking: (text: string, attempt?: ThinkingAttempt, drawingId?: string, attachments?: readonly AttachmentRef[]) => void;
+	/** The reading-thinking field's attachments (owned by ChatView, which merges them into the check answer). */
+	readingAttachments: AttachmentDraft;
 	/** Teach-phase pending question: arrives collapsed behind the reveal button (W5). */
 	requiresReveal: boolean;
 	/** The reading-thinking draft (owner 2026-10-03) — owned by ChatView so
@@ -2758,6 +2817,7 @@ function DockOverlay({
 					    (the dock reclaims then). Rides the check answer on submit. */}
 					{pending && requiresReveal && (
 						<ReadingThinkingField
+							attachments={readingAttachments}
 							value={readingThinking}
 							revision={readingThinkingRevision}
 							onChange={onReadingThinking}
