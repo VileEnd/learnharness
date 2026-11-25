@@ -201,7 +201,7 @@ function quizDescription(delta: { name: "quiz" | "probe"; nodeId: boolean; types
 			: "") +
 		"ONE question per turn: call a single " +
 		delta.name +
-		", then end your turn — his answer determines the next.";
+		" — his answer determines the next.";
 	// Phase-correct shape: the teach example LEADS with the required pair
 	// (type, nodeId — the 2026-10-09 drop-order ruling); the probe example
 	// carries no phase metadata at all, exactly like the probe schema.
@@ -232,7 +232,7 @@ function explainDescription(name: "explain" | "recall", nodeId: boolean): string
 		(nodeId
 			? "Set `nodeId` (required) to the plan node this question is about — validated at call time against the session's plan map. "
 			: "") +
-		"ONE question per turn: call a single " + name + ", then end your turn — his answer determines the next."
+		"ONE question per turn: call a single " + name + " — his answer determines the next."
 	);
 }
 
@@ -352,7 +352,7 @@ function exerciseDescription(name: "exercise" | "assess", formats: readonly Inte
 		"Set `requireThinking` to true to require the learner's written thinking before they can submit. " +
 		"ONE exercise per turn: call a single " +
 		name +
-		", then end your turn. The `format` field takes one of: " +
+		". The `format` field takes one of: " +
 		formats.join(", ") +
 		". The `spec` fields by format: " +
 		formatSpecDocs(formats)

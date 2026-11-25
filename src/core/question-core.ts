@@ -181,7 +181,7 @@ const requireThinkingField = Type.Optional(
 export const quizInputBase = Type.Object({
 	question: Type.String({
 		description:
-			"The single quiz question to ask. ONE question per turn: ask, then end your turn — the answer determines the next question.",
+			"The single quiz question to ask. ONE question per turn — the answer determines the next question.",
 	}),
 	options: Type.Array(Type.Object(quizOptionProps), {
 		minItems: 2,
@@ -329,7 +329,7 @@ export const quizDisplayInputSchema = Type.Object({
 export const explainInputBase = Type.Object({
 	question: Type.String({
 		description:
-			"The single question to ask. ONE question per turn: ask, then end your turn — the answer determines the next.",
+			"The single question to ask. ONE question per turn — the answer determines the next.",
 	}),
 	correctAnswer: Type.String({
 		description:
@@ -400,7 +400,7 @@ export function explainInputProblems(input: { correctAnswer: string }): string[]
 export const exerciseInputBase = Type.Object({
 	question: Type.String({
 		description:
-			"The single exercise prompt shown above the widget. ONE exercise per turn: pose it, then end your turn.",
+			"The single exercise prompt shown above the widget. ONE exercise per turn.",
 	}),
 	format: Type.String({
 		description: "REQUIRED — which interactive format the learner works in (bare word, no quotes).",
@@ -464,7 +464,7 @@ export type ExerciseToolInput = Omit<Static<typeof exerciseInputObject>, "nodeId
 
 export const workInputBase = Type.Object({
 	question: Type.String({
-		description: "The canvas task as the learner sees it. ONE canvas task at a time: pose it, then end your turn.",
+		description: "The canvas task as the learner sees it. ONE canvas task at a time.",
 	}),
 	correctAnswer: Type.String({
 		description:
@@ -522,7 +522,7 @@ export const askInputSchema = Type.Object({
 	// knob for the model to misuse.
 	question: Type.String({
 		description:
-			"The single question to ask the learner. ONE question per turn: ask, then end your turn — the answer determines the next question.",
+			"The single question to ask the learner. ONE question per turn — the answer determines the next question.",
 	}),
 	details: Type.Optional(
 		Type.String({ description: "Optional extra context or instructions shown under the question." }),

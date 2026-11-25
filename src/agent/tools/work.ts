@@ -63,7 +63,7 @@ function description(name: "work" | "sketch", teach: boolean): string {
 		"ONE canvas task at a time: this call is refused while one is open. " +
 		"Call a single " +
 		name +
-		", then end your turn."
+		"."
 	);
 }
 
