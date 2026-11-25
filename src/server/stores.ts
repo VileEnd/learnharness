@@ -7,6 +7,7 @@
  */
 
 import { adminPolicyStore } from "../store/admin-policy.ts";
+import { attachmentStore } from "../store/attachments.ts";
 import { chatStore } from "../store/chats.ts";
 import { conceptVectorStore } from "../store/concept-vectors.ts";
 import { customProviderStore } from "../store/custom-provider.ts";
@@ -32,6 +33,7 @@ import { installClaudeCodeSource } from "./claude-code-engine.ts";
 /** The wired adapters. Satisfies core/graph.ts's GraphDeps structurally. */
 export const stores = {
 	adminPolicyStore,
+	attachmentStore,
 	chatStore,
 	conceptVectorStore,
 	customProviderStore,

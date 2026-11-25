@@ -43,7 +43,7 @@ const PROMPTS_DIR = path.join(PATHS.root, "src", "agent", "prompts");
  *  practice/00-base.md sends the agent there to read a drawing: only
  *  24-drawings.md (reading and marking), never 24-canvas-tools.md
  *  (posing and closing with `grade`, which practice does not hold). */
-const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-model.md", "24-drawings.md", "40-formatting.md"];
+const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-model.md", "24-drawings.md", "26-attachments.md", "40-formatting.md"];
 
 /** Absolute path for an override file (unchecked — validate first). */
 function overrideFileFor(segmentPath: string): string {
