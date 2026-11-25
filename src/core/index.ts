@@ -101,6 +101,8 @@ export * from "./exercise-core.ts";
 export * from "./canvas-core.ts";
 // photo.ts: a phone photo submitted as an image-only drawing (EXIF orientation, size caps, the one-image scene) - pure, browser-safe.
 export * from "./photo.ts";
+// attachments.ts: images and free drawings attached to messages and thinking (references, limits, type sniffing) - pure, browser-safe.
+export * from "./attachments.ts";
 export * from "./grade-heal.ts";
 export * from "./usage.ts";
 export * from "./recommended-models.ts";

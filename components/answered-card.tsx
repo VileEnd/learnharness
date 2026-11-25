@@ -1,5 +1,6 @@
 "use client";
 
+import { SentAttachments } from "@/components/attachments";
 import { useState } from "react";
 import { ConfidenceRail } from "@/components/confidence-rail";
 import { GlyphMark } from "@/components/ui/glyph-mark";
@@ -9,7 +10,7 @@ import { ToolContentResponse } from "@/components/ai-elements/message";
 import type { QuestionAnswerData } from "@/src/core";
 import { ExerciseWidget } from "@/components/exercise/exercise-widget";
 import { emptyResponse } from "@/components/exercise/attempt-state";
-import { answerForPresentation, parseAskInput, parseExerciseInput, parseQuizInput } from "@/src/core";
+import { answerForPresentation, parseAskInput, parseExerciseInput, parseQuizInput, readAttachmentRefs } from "@/src/core";
 
 /**
  * Static rendering of an answered question (tool part in `output-available`).
@@ -73,6 +74,7 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 		{answer.readingThinking && (
 			<ThinkingBlock testId="reading-thinking-block" label="YOUR THINKING" text={answer.readingThinking} defaultOpen />
 		)}
+		<SentAttachments refs={readAttachmentRefs(answer.readingAttachments)} className="mb-1" />
 		{/* [&>*:last-child]:mb-0 (owner round, 2026-10-07): on ask cards the
 		    thinking row is the last child — its my-3 stacked with the card's
 		    p-4 into a 28px void below (12px above); the card's own padding is
@@ -258,6 +260,7 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 					inCard
 				/>
 			)}
+			<SentAttachments refs={readAttachmentRefs(answer.attachments)} className="mb-2" />
 
 			{/* px-3→removed: card p-4 + box px-3 double-inset sat the "Why" label deeper
 			    than the option box edges (owner, round 3). Sides flush with everything

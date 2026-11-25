@@ -83,6 +83,10 @@ export const PATHS = {
 	get drawings() {
 		return path.join(userDataRoot(), "drawings");
 	},
+	/** Images attached to messages per chat: data/attachments/<chatId>/{<img>.<ext>,<img>.transcript.json} (src/store/attachments.ts). */
+	get attachments() {
+		return path.join(userDataRoot(), "attachments");
+	},
 	/** The OKF library bundle the agents' read/ls/find/grep tools are rooted at.
 	 *  Never created by the tools; absent = "the library is being built".
 	 *  Multi-user: LH_LIBRARY_DIR is a parent holding one bundle per user id. */

@@ -32,6 +32,7 @@
  * Pure and deterministic: client-safe (no node deps), same input → same view.
  */
 
+import { attachmentsOf, type AttachmentRef } from "./attachments.ts";
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import { stripInternalLabels } from "./internal-labels.ts";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
@@ -68,6 +69,8 @@ export interface LhViewMessage {
 	id: string;
 	role: "user" | "assistant";
 	parts: LhViewPart[];
+	/** A user message's attached images and drawings (core/attachments.ts). */
+	attachments?: AttachmentRef[];
 	/** The subagentResult meta the steer cards read (marker details). */
 	metadata?: unknown;
 }
@@ -244,7 +247,10 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				typeof content === "string"
 					? [content]
 					: content.filter((c) => c.type === "text").map((c) => (c as { text: string }).text);
-			out.push({ id: m.id, role: "user", parts: texts.map(textPart) });
+			// Attached images and drawings ride the message (never a lone data part: a user message whose parts are
+			// all data-* renders as a marker card).
+			const attachments = attachmentsOf(m);
+			out.push({ id: m.id, role: "user", parts: texts.map(textPart), ...(attachments.length > 0 ? { attachments } : {}) });
 			continue;
 		}
 

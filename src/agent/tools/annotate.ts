@@ -10,6 +10,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Static } from "typebox";
 import { annotateInputSchema, annotationMarkProblems, healAnnotateArguments, sceneBoundingBox } from "../../core/canvas-core.ts";
 import type { DrawingStore } from "../../core/ports.ts";
+import { attachmentsOf } from "../../core/attachments.ts";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
 
 /** The input schema lives in core (canvas-core), so the record folds parse with exactly what the model faced. */
@@ -31,12 +32,14 @@ export const ANNOTATE_DESCRIPTION =
 	"an arrow takes `from` and `to` instead of `target`. `label` is an optional short caption. " +
 	"`drawingId` is the id the submission names (`[drawing drw_...]`). The marks appear on his drawing; this call does not end your turn.";
 
-/** Drawing ids the chat's submissions name, newest last. */
+/** Drawing ids the chat's submissions name, and the free drawings attached to messages and thinking
+ *  (core/attachments.ts), newest last. */
 export function drawingIdsOfRecord(messages: readonly unknown[]): string[] {
 	const ids: string[] = [];
 	for (const m of messages) {
 		const d = (m as { role?: string; details?: { drawingId?: unknown } }).details;
 		if ((m as { role?: string }).role === "custom" && typeof d?.drawingId === "string" && !ids.includes(d.drawingId)) ids.push(d.drawingId);
+		for (const ref of attachmentsOf(m)) if (ref.kind === "drawing" && !ids.includes(ref.id)) ids.push(ref.id);
 	}
 	return ids;
 }

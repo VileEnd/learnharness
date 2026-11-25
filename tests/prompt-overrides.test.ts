@@ -188,6 +188,7 @@ describe("the source-derived segment list", () => {
 				"shared/24-canvas-tools.md",
 				"shared/24-drawings.md",
 				"shared/25-confidence.md",
+				"shared/26-attachments.md",
 				"shared/30-library.md",
 				"shared/35-documents.md",
 				"shared/40-formatting.md",
@@ -462,7 +463,7 @@ describe("GET /api/settings/prompts: Practice rides along with Teacher and Probe
 		const practice = view.practice.map((s: { path: string }) => s.path);
 		assert.deepEqual(practice, [
 			"practice/00-base.md", "practice/10-doctrine.md",
-			"shared/10-voice.md", "shared/15-accuracy.md", "shared/16-mental-model.md", "shared/24-drawings.md", "shared/40-formatting.md",
+			"shared/10-voice.md", "shared/15-accuracy.md", "shared/16-mental-model.md", "shared/24-drawings.md", "shared/26-attachments.md", "shared/40-formatting.md",
 		]);
 		assert.ok(!practice.includes("system-prompt.md"));
 	});

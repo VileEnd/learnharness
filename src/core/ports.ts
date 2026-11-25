@@ -30,6 +30,7 @@ import type {
 	RequestLogLine,
 } from "./contracts.ts";
 import type { DrawingScene } from "./canvas-core.ts";
+import type { AttachmentImageType } from "./attachments.ts";
 import type { DocumentMeta, DocumentVectors, PendingBatch } from "./contracts/documents.ts";
 import type { OkfFile } from "./contracts/okf.ts";
 import type { AttributionRow } from "./contracts/learner.ts";
@@ -421,6 +422,26 @@ export interface DrawingStore {
 	readTranscript(chatId: string, drawingId: string): { model: string; text: string } | null;
 	writeTranscript(chatId: string, drawingId: string, t: { model: string; text: string }): void;
 	/** Remove the chat's whole drawings folder. */
+	deleteForChat(chatId: string): void;
+}
+
+// ─── AttachmentStore — images attached to messages, per chat (data/attachments) ──
+
+/**
+ * Images the learner attached to a message or a thinking field (core/attachments.ts), under
+ * data/attachments/<chatId>/: the bytes as `<img_id>.<ext>` (content-addressed: the same bytes are the same id) and
+ * the vision reader's cached description as `<img_id>.transcript.json`. Free drawings are not here: they are
+ * DrawingStore submissions. The record holds the references and stays the truth. Reads never throw: unknown or
+ * path-shaped ids read as absent. Writes are atomic.
+ */
+export interface AttachmentStore {
+	/** Id = img_ + sha256(bytes)[0..16) (computed here); an existing file is not rewritten. The caller has checked
+	 *  the type by content and the size. */
+	saveImage(chatId: string, bytes: Uint8Array, mimeType: AttachmentImageType): { id: string };
+	getImage(chatId: string, id: string): { bytes: Uint8Array; mimeType: AttachmentImageType } | null;
+	readTranscript(chatId: string, id: string): { model: string; text: string } | null;
+	writeTranscript(chatId: string, id: string, t: { model: string; text: string }): void;
+	/** Remove the chat's whole attachments folder. */
 	deleteForChat(chatId: string): void;
 }
 

@@ -37,6 +37,8 @@ process.env.LH_DATA_DIR = TMP;
 
 const { chatStore } = await import("../src/store/chats.ts");
 const { drawingStore } = await import("../src/store/drawings.ts");
+const { attachmentStore } = await import("../src/store/attachments.ts");
+const { attachmentsOf } = await import("../src/core/attachments.ts");
 const { graphStore } = await import("../src/store/graph.ts");
 const { jobStore } = await import("../src/store/jobs.ts");
 const { settingsStore } = await import("../src/store/settings.ts");
@@ -55,6 +57,7 @@ const EXERCISES = "chat_mvqwyk18_da3a4b82";
 const PRACTICE = "chat_mv293wv5_10656952";
 const CANVAS = "chat_mvr17zp1_fb98d9b6";
 const MATRIX = "chat_mvr78knt_bfaafe31";
+const ATTACH = "chat_mwvgz1ng_6a749221";
 
 function snapshotTree(dir: string): Map<string, Buffer> {
 	const out = new Map<string, Buffer>();
@@ -81,7 +84,7 @@ test("chats: both fixture records parse through the production read path", () =>
 	assert.ok(ids.has(PRACTICE), "the practice lifecycle record lists");
 	assert.ok(ids.has(MATRIX), "the cross-model canvas record lists");
 
-	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS, ATTACH]) {
 		const r = chatStore.getChat(id);
 		assert.ok(r, `${id} reads`);
 		assert.ok(Array.isArray(r!.messages) && r!.messages.length > 0);
@@ -97,6 +100,27 @@ test("drawings: the canvas chat's submitted drawing reads through the DrawingSto
 	assert.ok(marker, "a submission carries a drawingId");
 	assert.ok(drawingStore.getScene(CANVAS, marker.details.drawingId), "the scene reads");
 	assert.ok(drawingStore.getPng(CANVAS, marker.details.drawingId), "the snapshot reads");
+});
+
+test("attachments: every image and drawing a record names reads through its store", () => {
+	const ms = chatStore.getChat(ATTACH)!.messages;
+	const refs = ms.flatMap((m) => attachmentsOf(m));
+	const kinds = new Set(ms.filter((m) => attachmentsOf(m).length > 0).map((m) => m.role));
+	assert.deepEqual([...kinds].sort(), ["toolResult", "user"], "a message and an answer's thinking carry attachments");
+	assert.ok(refs.some((r) => r.kind === "image") && refs.some((r) => r.kind === "drawing"));
+	for (const ref of refs) {
+		if (ref.kind === "image") {
+			assert.ok(attachmentStore.getImage(ATTACH, ref.id), `${ref.id} reads`);
+			assert.ok(attachmentStore.readTranscript(ATTACH, ref.id), `${ref.id} has its cached description`);
+		} else {
+			assert.ok(drawingStore.getPng(ATTACH, ref.id), `${ref.id} reads`);
+			assert.ok(drawingStore.readTranscript(ATTACH, ref.id), `${ref.id} has its cached transcript`);
+		}
+	}
+	// No attachment context (any caller but a turn): notes, never an empty text block.
+	const wire = toLlmMessages(ms as never);
+	assert.ok(JSON.stringify(wire).includes("[Image attached; description unavailable]"));
+	assert.ok(wire.every((m) => !("attachments" in m)), "the user message's record field never reaches the wire");
 });
 
 test("canvas chat: refused probe_done calls conclude nothing; the clean one hands off", async () => {
@@ -186,7 +210,7 @@ test("cross-model canvas chat: numbered hint request, refused grade, stroke-dige
 });
 
 test("chats: the LLM wire flattening turns each full record into a legal provider message list", () => {
-	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS, MATRIX]) {
+	for (const id of [TEACH, PRACTICE, EXERCISES, CANVAS, MATRIX, ATTACH]) {
 		const r = chatStore.getChat(id)!;
 		const wire = toLlmMessages(r.messages as never);
 		assert.ok(wire.length > 0);

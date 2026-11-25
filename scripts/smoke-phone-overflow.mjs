@@ -14,6 +14,9 @@
  *   their own box (.katex-display, the table wrapper).
  * - Checks that screen readers still get the math: the KaTeX MathML copy is
  *   in the accessibility tree.
+ * - Adds, to the disposable copy only, one learner message with attachments
+ *   (a very wide image, a tall one, and a drawing copied from the canvas
+ *   fixture chat) and checks the thumbnails load and stay inside the column.
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -21,7 +24,9 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import puppeteer from "puppeteer-core";
+import { createCanvas } from "@napi-rs/canvas";
 
 const root = path.resolve(import.meta.dirname, "..");
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "lh-phone-overflow-"));
@@ -47,6 +52,7 @@ async function startServer() {
 	if (!fs.existsSync(path.join(root, ".next", "BUILD_ID"))) throw new Error("No production build: run `npm run build` first.");
 	const data = path.join(home, "data");
 	fs.cpSync(path.join(root, "tests/fixtures/golden-data"), data, { recursive: true });
+	addAttachmentMessage(data);
 	const port = await freePort();
 	const env = { ...process.env, NODE_ENV: "production", LH_DATA_DIR: data, LH_AUTH_FILE: path.join(home, "auth.json"), LH_IGNORE_ENV_KEYS: "1", NEXT_TELEMETRY_DISABLED: "1" };
 	let logs = "";
@@ -63,6 +69,40 @@ async function startServer() {
 		if (Date.now() > deadline) throw new Error(`Server never answered: ${logs}`);
 		await new Promise((r) => setTimeout(r, 500));
 	}
+}
+
+/** A learner message with attachments, written into the disposable copy the way the app stores one: the images
+ *  under data/attachments/<chat>/ (content-addressed), the drawing as a DrawingStore submission of the chat. */
+function addAttachmentMessage(data) {
+	const image = (w, h) => {
+		const canvas = createCanvas(w, h);
+		const ctx = canvas.getContext("2d");
+		ctx.fillStyle = "#3b82f6";
+		ctx.fillRect(0, 0, w, h);
+		ctx.fillStyle = "#ffffff";
+		ctx.fillRect(w / 4, h / 4, w / 2, h / 2);
+		const bytes = canvas.toBuffer("image/png");
+		const id = `img_${crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16)}`;
+		const dir = path.join(data, "attachments", CHAT);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, `${id}.png`), bytes);
+		return { kind: "image", id };
+	};
+	const drawing = "drw_c769b8693d77";
+	const from = path.join(data, "drawings", "chat_mvr17zp1_fb98d9b6");
+	const to = path.join(data, "drawings", CHAT);
+	fs.mkdirSync(to, { recursive: true });
+	for (const ext of ["json", "png"]) fs.copyFileSync(path.join(from, `${drawing}.${ext}`), path.join(to, `${drawing}.${ext}`));
+	const file = path.join(data, "chats", `${CHAT}.json`);
+	const record = JSON.parse(fs.readFileSync(file, "utf-8"));
+	record.messages.push({
+		id: "msg_smoke_attachments",
+		role: "user",
+		content: "Here are my sketches.",
+		attachments: [image(2400, 300), image(300, 1600), { kind: "drawing", id: drawing }],
+		timestamp: Date.now(),
+	});
+	fs.writeFileSync(file, JSON.stringify(record));
 }
 
 async function stopServer() {
@@ -91,6 +131,11 @@ async function main() {
 			return el && Object.keys(document.querySelector(".lh-transcript-column")).some((k) => k.startsWith("__reactFiber"));
 		}, { timeout: 60_000 });
 		await new Promise((r) => setTimeout(r, 1500));
+		// Lazy attachment thumbnails load once in view: load them before measuring, so their real sizes count.
+		await page.evaluate(() => document.querySelector(".lh-transcript-column [data-testid=sent-attachments]")?.scrollIntoView({ block: "center" }));
+		await page
+			.waitForFunction(() => [...document.querySelectorAll(".lh-transcript-column [data-testid=sent-attachments] img")].every((img) => img.complete && img.naturalWidth > 0), { timeout: 15_000 })
+			.catch(() => {});
 		for (const theme of ["default", "ivory"]) {
 			for (const [name, stack] of FONTS) {
 				const wide = await page.evaluate(
@@ -117,6 +162,14 @@ async function main() {
 				console.log(`${wide.length ? "FAIL" : "ok  "} ${label}: transcript does not scroll sideways${wide.length ? `: ${wide.join("; ")}` : ""}`);
 			}
 		}
+		// The learner's attachments: thumbnails that loaded, inside the column.
+		const thumbs = await page.$$eval(".lh-transcript-column [data-testid=sent-attachments] img", (imgs) => {
+			const column = document.querySelector(".lh-transcript-column").getBoundingClientRect();
+			return imgs.map((img) => ({ loaded: img.complete && img.naturalWidth > 0, inside: img.getBoundingClientRect().right <= column.right + 1 }));
+		});
+		const thumbsOk = thumbs.length >= 3 && thumbs.every((t) => t.loaded && t.inside);
+		console.log(`${thumbsOk ? "ok  " : "FAIL"} attachment thumbnails load and stay inside the column: ${JSON.stringify(thumbs)}`);
+		if (!thumbsOk) failures.push(`attachment thumbnails: ${JSON.stringify(thumbs)}`);
 		// Long display math scrolls inside its own box, not the page.
 		const ownBox = await page.$$eval(".lh-transcript-column .katex-display", (els) => els.some((el) => el.scrollWidth > el.clientWidth && /(auto|scroll)/.test(getComputedStyle(el).overflowX)));
 		console.log(`${ownBox ? "ok  " : "FAIL"} wide display math scrolls inside .katex-display`);

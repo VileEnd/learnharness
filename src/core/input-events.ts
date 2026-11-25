@@ -49,10 +49,24 @@ import {
 	pendingProblemDismissalOf,
 } from "./native-messages.ts";
 import { QUESTION_TOOLS, toolQuestionKind } from "./pending.ts";
+import { parseAttachmentRefs, type AttachmentRef } from "./attachments.ts";
+
+/** The optional `attachments` field of an input or answer: absent, or a valid list (at most MAX_ATTACHMENTS
+ *  well-formed references). An empty list reads as absent. */
+function parseOptionalAttachments(v: unknown, where: string): AttachmentRef[] | undefined {
+	if (v === undefined) return undefined;
+	try {
+		const refs = parseAttachmentRefs(v, where);
+		return refs.length > 0 ? refs : undefined;
+	} catch (err) {
+		throw new ChatInputError((err as Error).message);
+	}
+}
 
 /** One client-originated input event (the POST body's `input`). */
 export type ChatInput =
-	| { type: "text"; text: string }
+	/** Text may be empty when images or drawings ride along (core/attachments.ts). */
+	| { type: "text"; text: string; attachments?: AttachmentRef[] }
 	| { type: "answer"; toolCallId: string; answer: QuestionAnswerData }
 	| { type: "continue" }
 	/** The failed-turn retry (upstream issue #110): the banner's Retry button. */
@@ -61,7 +75,7 @@ export type ChatInput =
 	 *  thinking on the ACTIVE problem — one lane (owner 2026-10-05):
 	 *  whether it claims an answer is read from the text. One
 	 *  problem may carry many submissions; each is its own turn. */
-	| { type: "thinking"; problemCallId: string; text: string; attempt?: ThinkingAttempt; drawingId?: string }
+	| { type: "thinking"; problemCallId: string; text: string; attempt?: ThinkingAttempt; drawingId?: string; attachments?: AttachmentRef[] }
 	/** The practice move-on signal (owner round 16): the learner's
 	 *  explicit go-ahead during the between-problems pause — the Next
 	 *  chip or Enter on an empty composer. Practice sessions only, and
@@ -242,6 +256,12 @@ function checkAnswer(answer: unknown, tool: string, where: string): QuestionAnsw
 		throw bad("format", "a known format");
 	}
 	if (a.verdict !== undefined) checkVerdict(a.verdict, `${where}'s answer`);
+	// Attachment references are normalised in place: only {kind, id} entries are stored.
+	for (const f of ["attachments", "readingAttachments"]) {
+		const refs = parseOptionalAttachments(a[f], `${where}'s answer ${f}`);
+		if (refs) a[f] = refs;
+		else delete a[f];
+	}
 	if (a.firstAttempt !== undefined) {
 		if (!isRecord(a.firstAttempt)) throw bad("firstAttempt", "an object");
 		checkVerdict(a.firstAttempt.verdict, `${where}'s answer firstAttempt`);
@@ -254,11 +274,13 @@ export function parseChatInput(input: unknown): ChatInput {
 	if (typeof input !== "object" || input === null) throw new ChatInputError("input must be an object");
 	const i = input as Record<string, unknown>;
 	switch (i.type) {
-		case "text":
-			if (typeof i.text !== "string" || (i.text as string).trim().length === 0) {
-				throw new ChatInputError("text input requires non-empty text");
+		case "text": {
+			const attachments = parseOptionalAttachments(i.attachments, "text input attachments");
+			if (typeof i.text !== "string" || (i.text.trim().length === 0 && !attachments)) {
+				throw new ChatInputError("text input requires non-empty text or an attachment");
 			}
-			return { type: "text", text: i.text };
+			return { type: "text", text: i.text, ...(attachments ? { attachments } : {}) };
+		}
 		case "answer":
 			if (typeof i.toolCallId !== "string" || i.toolCallId.length === 0) {
 				throw new ChatInputError("answer input requires toolCallId");
@@ -271,11 +293,12 @@ export function parseChatInput(input: unknown): ChatInput {
 			return { type: "continue" };
 		case "retry":
 			return { type: "retry" };
-		case "thinking":
+		case "thinking": {
 			if (typeof i.problemCallId !== "string" || i.problemCallId.length === 0) {
 				throw new ChatInputError("thinking input requires problemCallId");
 			}
-			if (typeof i.text !== "string" || i.text.trim().length === 0) {
+			const attachments = parseOptionalAttachments(i.attachments, "thinking input attachments");
+			if (typeof i.text !== "string" || (i.text.trim().length === 0 && !attachments)) {
 				throw new ChatInputError("thinking input requires non-empty text");
 			}
 			return {
@@ -284,7 +307,9 @@ export function parseChatInput(input: unknown): ChatInput {
 				text: i.text,
 				...(i.attempt !== undefined ? { attempt: parseThinkingAttempt(i.attempt) } : {}),
 				...(i.drawingId !== undefined ? { drawingId: parseDrawingId(i.drawingId) } : {}),
+				...(attachments ? { attachments } : {}),
 			};
+		}
 		case "next":
 			return { type: "next" };
 		case "work-submit":
@@ -363,6 +388,16 @@ export interface InputDeps {
 	/** Does a drawing submission with this id exist for the chat? Absent =
 	 *  the reference is not checked (tests, bare callers). */
 	drawingExists?: (chatId: string, drawingId: string) => boolean;
+	/** Does this attachment (an uploaded image, or a drawing submission) exist for the chat? Absent = not checked. */
+	attachmentExists?: (chatId: string, ref: AttachmentRef) => boolean;
+}
+
+/** Refuse a reference to an attachment the chat does not hold (the server never trusts the client's ids). */
+function checkAttachmentsExist(record: { id?: string }, refs: readonly AttachmentRef[] | undefined, deps: InputDeps, where: string): void {
+	if (!refs || !deps.attachmentExists) return;
+	for (const ref of refs) {
+		if (!deps.attachmentExists(record.id ?? "", ref)) throw new ChatInputError(`${where} names an unknown ${ref.kind}: ${ref.id}`);
+	}
 }
 
 /**
@@ -381,13 +416,17 @@ export function inputAppends(
 ): LhMessage[] {
 	switch (input.type) {
 		case "text":
-			return [...dismissalConclusion(record), newUserMessage(input.text)];
+			checkAttachmentsExist(record, input.attachments, deps, "text input");
+			return [...dismissalConclusion(record), newUserMessage(input.text, input.attachments)];
 		case "answer": {
 			const pending = danglingQuestionOf(record.messages);
 			if (!pending || pending.toolCallId !== input.toolCallId) {
 				throw new ChatInputError("answer input targets no pending question call");
 			}
-			return [newAnswerResult(input.toolCallId, pending.tool, checkAnswer(input.answer, pending.tool, "answer input"))];
+			const answer = checkAnswer(input.answer, pending.tool, "answer input");
+			checkAttachmentsExist(record, answer.attachments, deps, "answer input");
+			checkAttachmentsExist(record, answer.readingAttachments, deps, "answer input");
+			return [newAnswerResult(input.toolCallId, pending.tool, answer)];
 		}
 		case "continue":
 			return dismissalConclusion(record);
@@ -404,11 +443,13 @@ export function inputAppends(
 			if (input.drawingId !== undefined && deps.drawingExists && !deps.drawingExists(record.id ?? "", input.drawingId)) {
 				throw new ChatInputError(`thinking input names an unknown drawing: ${input.drawingId}`);
 			}
+			checkAttachmentsExist(record, input.attachments, deps, "thinking input");
 			return [
 				...dismissalConclusion(record),
 				newThinkingMessage(input.problemCallId, input.text, {
 					...(attempt ? { attempt } : {}),
 					...(input.drawingId !== undefined ? { drawingId: input.drawingId } : {}),
+					...(input.attachments ? { attachments: input.attachments } : {}),
 				}),
 			];
 		}

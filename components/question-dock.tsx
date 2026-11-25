@@ -9,6 +9,7 @@ import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { QuestionPreview } from "@/components/question-preview";
 import { cn } from "@/lib/utils";
+import { ThinkingAttachments, useAttachmentDraft, useAttachmentDrop } from "@/components/attachments";
 import {
 	buildAnswer,
 	buildExerciseAnswer,
@@ -374,6 +375,18 @@ function QuestionDockForm({
 	 * in time — submit reads these, kept current at every write site. */
 	const thinkingTextRef = useRef(initialDraft?.thinking ?? "");
 	const answerTextRef = useRef(initialDraft?.text ?? "");
+	// Images and drawings added to "Your thinking" (or to the text answer): they ride the answer as `attachments`.
+	const attachments = useAttachmentDraft();
+	const { dragging, handlers: drop } = useAttachmentDrop(attachments);
+	const withAttachments = (answer: QuestionAnswerData): QuestionAnswerData =>
+		attachments.refs.length > 0 ? { ...answer, attachments: [...attachments.refs] } : answer;
+	// A refused submission remounts the dock from its snapshot: the stored attachments come back with it.
+	const restoreAttachments = attachments.restore;
+	const restoredFrom = useRef(initialDraft?.attachments);
+	useEffect(() => {
+		if (restoredFrom.current?.length) restoreAttachments(restoredFrom.current);
+		restoredFrom.current = undefined;
+	}, [restoreAttachments]);
 	// Confidence (owner, 2026-10-01): an index into CONFIDENCE_STOPS,
 	// resting at 50 — a real coin flip by definition, untouched or
 	// deliberate (the same number, the same meaning). The dock unmounts
@@ -426,9 +439,10 @@ function QuestionDockForm({
 
 	const canSubmit =
 		kind === "exercise"
-			? sel.dontKnow || thinkingOk
-			: (qd.mode === "text"
-					? text.trim().length > 0
+			? (sel.dontKnow || thinkingOk) && !attachments.pending
+			: !attachments.pending &&
+				(qd.mode === "text"
+					? text.trim().length > 0 || attachments.refs.length > 0
 					: sel.dontKnow || (sel.otherSelected && other.trim().length > 0) || sel.selected.size > 0) &&
 				(sel.dontKnow || thinkingOk);
 
@@ -478,8 +492,9 @@ function QuestionDockForm({
 				other,
 				text: answerTextRef.current,
 				confidenceIndex: confIdx,
+				attachments: [...attachments.refs],
 			});
-			onSubmit(
+			onSubmit(withAttachments(
 				buildExerciseAnswer(
 					exInput,
 					attempt.response,
@@ -495,7 +510,7 @@ function QuestionDockForm({
 					toolName,
 					toolCallId,
 				),
-			);
+			));
 			return;
 		}
 		const req: AnswerRequest = {
@@ -516,8 +531,9 @@ function QuestionDockForm({
 			other,
 			text: answerTextRef.current,
 			confidenceIndex: confIdx,
+			attachments: [...attachments.refs],
 		});
-		onSubmit(buildAnswer(qd, req, toolName));
+		onSubmit(withAttachments(buildAnswer(qd, req, toolName)));
 	};
 
 	// The loop closed (correct Check, Submit, Show answer): send the answer
@@ -1036,7 +1052,10 @@ function QuestionDockForm({
 			>
 				<div
 					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
-					className="rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
+					className={cn("rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50", dragging && "ring-2 ring-primary/40")}
+					onDragOver={drop.onDragOver}
+					onDragLeave={drop.onDragLeave}
+					onDrop={drop.onDrop}
 				>
 					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
@@ -1044,6 +1063,7 @@ function QuestionDockForm({
 					{qd.mode === "text" ? (
 						<textarea
 							ref={answerRef}
+							onPaste={drop.onPaste}
 							value={text}
 							onChange={(e) => {
 								answerTextRef.current = e.target.value;
@@ -1074,6 +1094,7 @@ function QuestionDockForm({
 					) : (
 						<textarea
 							ref={thinkingRef}
+							onPaste={drop.onPaste}
 							value={thinking}
 							onChange={(e) => {
 								thinkingTextRef.current = e.target.value;
@@ -1108,6 +1129,7 @@ function QuestionDockForm({
 							)}
 						/>
 					)}
+					<ThinkingAttachments draft={attachments} disabled={attempt.submitting} />
 					{exInput && !sel.dontKnow ? (
 						<div className="flex flex-wrap items-center justify-between gap-2 p-1">
 							<div className="flex flex-wrap items-center gap-1.5">

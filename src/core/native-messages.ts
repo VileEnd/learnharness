@@ -48,6 +48,7 @@ import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 import { isHintScopedInput, stripInternalLabels } from "./internal-labels.ts";
 import { drawingRefOf, parseAnnotateInput, submittedDrawingIds, succeededCallIds, type AnnotationMark } from "./canvas-core.ts";
 import { citationCheck, expandCitationsForModel, type CitationCheck, type CitationSourceLookup } from "./citations.ts";
+import { attachmentsOf, attachmentTextNote, type AttachmentRef } from "./attachments.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -98,7 +99,12 @@ declare module "@earendil-works/pi-agent-core" {
 }
 
 /** A record message: a native pi message (or our marker) plus the record id. */
-export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | LhMarkerMessage) & { id: string };
+export type LhMessage = (LhUserMessage | AssistantMessage | ToolResultMessage | LhMarkerMessage) & { id: string };
+
+/** A learner's user message: pi's native shape plus, when the learner attached images or drawings, their
+ *  references (core/attachments.ts). Like `id`, the field never reaches the wire as-is: toLlmMessages turns it into
+ *  the model's view of the attachments. */
+export type LhUserMessage = UserMessage & { attachments?: AttachmentRef[] };
 
 /** A record message list is assignable to the agent's context — that IS
  *  the replay (ui-stream/chat-handler assign it to initialState.messages). */
@@ -308,11 +314,12 @@ export function newMessageId(): string {
 //     core/input-events.ts; steers in core/contracts/jobs.ts) ─────────────────
 
 /** A learner-authored user message (text input, verdict note). */
-export function newUserMessage(text: string): LhMessage & UserMessage {
+export function newUserMessage(text: string, attachments: readonly AttachmentRef[] = []): LhMessage & LhUserMessage {
 	return {
 		id: newMessageId(),
 		role: "user",
 		content: text,
+		...(attachments.length > 0 ? { attachments: attachments.map((r) => ({ kind: r.kind, id: r.id })) } : {}),
 		timestamp: Date.now(),
 	};
 }
@@ -445,16 +452,23 @@ export function newGraphContextMessage(picks: readonly GraphContextPick[], chain
 export function newThinkingMessage(
 	problemCallId: string,
 	text: string,
-	extra: { attempt?: ThinkingAttempt; drawingId?: string } = {},
+	extra: { attempt?: ThinkingAttempt; drawingId?: string; attachments?: readonly AttachmentRef[] } = {},
 ): LhMarkerMessage {
 	const { attempt, drawingId } = extra;
+	const attachments = (extra.attachments ?? []).map((r) => ({ kind: r.kind, id: r.id }));
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "practice-thinking",
 		content: `${THINKING_LABEL}:\n${text}${drawingId ? `\n[drawing ${drawingId}]` : ""}${attempt ? `\n\n${attemptMarks(attempt.verdict)}` : ""}`,
 		display: true,
-		details: { problemCallId, text, ...(attempt ? { attempt } : {}), ...(drawingId ? { drawingId } : {}) },
+		details: {
+			problemCallId,
+			text,
+			...(attempt ? { attempt } : {}),
+			...(drawingId ? { drawingId } : {}),
+			...(attachments.length > 0 ? { attachments } : {}),
+		},
 		timestamp: Date.now(),
 	};
 }
@@ -1003,6 +1017,68 @@ export interface DrawingContext {
 	} | null;
 }
 
+// ─── attachments in the model context ────────────────────────────────────────
+
+/** What the model sees of one attached image or drawing. Supplied by the server per turn
+ *  (server/attachment-context.ts); core stays free of stores. */
+export interface AttachmentContext {
+	resolve(ref: AttachmentRef): {
+		/** The image as processed for the session model: only for the CURRENT turn's input on a multimodal model. */
+		image?: { data: string; mimeType: string };
+		/** The image processor's resize hints, or its "[Image omitted: …]" line. */
+		imageNote?: string;
+		/** The vision reader's cached description. */
+		transcript?: string;
+		/** A drawing's structured text (typed objects, stroke digest): current turn only. */
+		structured?: string;
+	} | null;
+}
+
+type WireBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+/** The blocks that carry a message's attachments to the model, in order. With an image (the current turn on a
+ *  multimodal model): a label naming it, the drawing grid note, its description, then the image. Otherwise the
+ *  short text note (core/attachments.ts attachmentTextNote), so older attachments cost a description, not an image.
+ *  Never throws: a resolver failure or no context at all reads as "description unavailable". */
+function attachmentBlocks(refs: readonly AttachmentRef[], ctx: AttachmentContext | undefined): WireBlock[] {
+	const out: WireBlock[] = [];
+	refs.forEach((ref, i) => {
+		let r: ReturnType<AttachmentContext["resolve"]> = null;
+		try {
+			r = ctx?.resolve(ref) ?? null;
+		} catch {
+			r = null;
+		}
+		const structured = r?.structured ? `\n${r.structured}` : "";
+		if (r?.image) {
+			const label = ref.kind === "drawing" ? `[Attachment ${i + 1}: drawing ${ref.id}]\n${GRID_NOTE}` : `[Attachment ${i + 1}: image]`;
+			const note = r.imageNote ? `\n${r.imageNote}` : "";
+			const described = r.transcript ? `\nDescription (another model's reading; the image wins):\n${r.transcript}` : "";
+			out.push({ type: "text", text: `${label}${note}${described}${structured}` });
+			out.push({ type: "image", data: r.image.data, mimeType: r.image.mimeType });
+			return;
+		}
+		const note = r?.imageNote && !r.transcript ? `\n${r.imageNote}` : "";
+		out.push({ type: "text", text: `${attachmentTextNote(ref, r?.transcript)}${note}${structured}` });
+	});
+	return out;
+}
+
+/** A wire message with its record message's attachments appended (the same message when it has none). User text
+ *  and marker text stay first; an empty learner text (an image-only message) is dropped so no empty text block is
+ *  ever sent. */
+function withAttachments(message: Message, record: unknown, ctx: AttachmentContext | undefined): Message {
+	const refs = attachmentsOf(record);
+	if (refs.length === 0) return message;
+	const blocks = attachmentBlocks(refs, ctx);
+	if (message.role === "toolResult") return { ...message, content: [...message.content, ...blocks] };
+	if (message.role !== "user") return message;
+	const head: WireBlock[] = typeof message.content === "string"
+		? message.content.trim() ? [{ type: "text", text: message.content }] : []
+		: (message.content as WireBlock[]).filter((b) => b.type !== "text" || b.text.trim() !== "");
+	return { ...message, content: [...head, ...blocks] } as Message;
+}
+
 /** Explains the grid and object ids the image and the structured text share. */
 export const GRID_NOTE =
 	"The attached image shows the learner's drawing on a labelled grid: columns A-H left to right, rows numbered from 1 at the top. Typed objects carry ids (o1, o2, ...) that match the structured text below; refer to a place by its cell (C4) or span (B2-D3).";
@@ -1083,7 +1159,10 @@ function expandUserCitations(message: UserMessage, check: CitationCheck): UserMe
  * Contract (pi-agent-core): never throws — an unknown shape passes
  * through untouched rather than killing the loop.
  */
-export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing?: DrawingContext; chatId?: string } = {}): Message[] {
+export function toLlmMessages(
+	messages: readonly AgentMessage[],
+	opts: { drawing?: DrawingContext; attachments?: AttachmentContext; chatId?: string } = {},
+): Message[] {
 	// THE COMPACTION CUT (owner round 14, 2026-10-05): the ACTIVE marker
 	// (the newest — chained compactions rule last) names the first kept
 	// message; everything before it is replaced by the marker's content
@@ -1150,16 +1229,20 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 			if (marker.customType === "compaction") continue;
 			const drawn = drawingPlan ? drawingMessage(marker, i, drawingPlan, opts.drawing!) : null;
 			out.push(
-				drawn ?? {
-					role: "user",
-					content: [{ type: "text", text: marker.content }],
-					timestamp: marker.timestamp,
-				},
+				withAttachments(
+					drawn ?? {
+						role: "user",
+						content: [{ type: "text", text: marker.content }],
+						timestamp: marker.timestamp,
+					},
+					marker,
+					opts.attachments,
+				),
 			);
 			continue;
 		}
-		// Strip the record id: the wire carries the native shape only.
-		const { id: _id, ...native } = m as LhMessage;
+		// Strip the record id (and a user message's attachment references): the wire carries the native shape only.
+		const { id: _id, attachments: _attachments, ...native } = m as LhMessage & { attachments?: unknown };
 		// Assistant prose is stripped of internal rung labels on the way back
 		// to the model (the record keeps them raw), so a leaked label is not
 		// copied forward by example; the mid-text rule only in a hint or
@@ -1177,8 +1260,9 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: { drawing
 		} else if (role === "user") {
 			// The one model-facing rewrite of learner text: citations expand to
 			// their quoted passage (core/citations.ts); text without one is untouched.
-			out.push(expandUserCitations(native as UserMessage, checkCitation));
-		} else out.push(native as Message);
+			out.push(withAttachments(expandUserCitations(native as UserMessage, checkCitation), m, opts.attachments));
+		} else if (role === "toolResult") out.push(withAttachments(native as Message, m, opts.attachments));
+		else out.push(native as Message);
 		// Dangling-call synthesis: an assistant message whose toolCalls have
 		// no results in the remaining tail (abort mid-question) — the
 		// provider rejects unanswered calls outright. Only for completed

@@ -56,6 +56,8 @@ const routes = {
 	activity: await load("activity"),
 	asset: await load("chats/[id]/drawings/assets/[assetId]"),
 	assets: await load("chats/[id]/drawings/assets"),
+	attachment: await load("chats/[id]/attachments/[attachmentId]"),
+	attachments: await load("chats/[id]/attachments"),
 	chats: await load("chats"),
 	describe: await load("documents/[id]/describe"),
 	reindex: await load("documents/reindex"),
@@ -175,6 +177,42 @@ describe("drawing assets", () => {
 				const res = await call(routes.asset, "GET", { params: { id: chatId, assetId } });
 				assert.equal(res.headers.get("content-type"), "image/png");
 				assert.equal(res.headers.get("cache-control"), "private, max-age=31536000, immutable");
+				return res;
+			},
+			status: 200,
+		},
+	]);
+});
+
+describe("message attachments", () => {
+	let chatId = "";
+	let imageId = "";
+	const upload = (bytes: Uint8Array, user?: string) => {
+		const form = new FormData();
+		form.append("file", new File([bytes as BlobPart], "photo.png", { type: "image/png" }));
+		return call(routes.attachments, "POST", { raw: form, params: { id: chatId }, ...(user ? { user } : {}) });
+	};
+	it("setup: a chat and an uploaded image", async () => {
+		chatId = (await json(await call(routes.chats, "POST", { body: { title: "attachments" } }))).id;
+		const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 2, 0, 1, 0, 0, 0, 0]);
+		const res = await upload(gif);
+		assert.equal(res.status, 200);
+		imageId = (await json(res)).id;
+		assert.match(imageId, /^img_[0-9a-f]{16}$/);
+	});
+	table([
+		{ name: "bytes that are no accepted image are 400, whatever the name says", run: () => upload(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])), status: 400 },
+		{ name: "a header declaring more than 4096 px per side is 413", run: () => upload(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x10, 0x27, 1, 0])), status: 413 },
+		{ name: "an upload to an unknown chat is 404", run: () => call(routes.attachments, "POST", { raw: new FormData(), params: { id: "chat_nope" } }), status: 404 },
+		{ name: "an unknown image of a real chat is 404", run: () => call(routes.attachment, "GET", { params: { id: chatId, attachmentId: "img_0000000000000000" } }), status: 404 },
+		{ name: "another user cannot read it (their own data dir has no such chat)", run: () => call(routes.attachment, "GET", { user: OTHER, params: { id: chatId, attachmentId: imageId } }), status: 404 },
+		{
+			name: "the image is served with its stored type, immutable and never sniffed",
+			run: async () => {
+				const res = await call(routes.attachment, "GET", { params: { id: chatId, attachmentId: imageId } });
+				assert.equal(res.headers.get("content-type"), "image/gif");
+				assert.equal(res.headers.get("cache-control"), "private, max-age=31536000, immutable");
+				assert.equal(res.headers.get("x-content-type-options"), "nosniff");
 				return res;
 			},
 			status: 200,

@@ -99,6 +99,7 @@ const COLOUR_MATCHES: { file: string; match: string; count: number; why: string 
 	{ file: "components/artifacts/visual-card.tsx", match: "bg-white", count: 3, why: "figures sit on white paper (the learner's invert toggle flips it)" },
 	{ file: "components/session-overlay.tsx", match: "bg-white", count: 1, why: "figures sit on white paper in the overlay too" },
 	{ file: "components/work-cards.tsx", match: "bg-white", count: 2, why: "drawing thumbnails are exported light" },
+	{ file: "components/attachments.tsx", match: "bg-white", count: 2, why: "attached images are re-encoded on white and drawings are exported light, like the drawing thumbnails" },
 	{ file: "components/settings/users-section.tsx", match: "bg-white", count: 1, why: "a QR code needs a white quiet zone" },
 	{ file: "components/composer.tsx", match: "text-white", count: 1, why: "white on the filled success button, both themes" },
 	{ file: "components/ui/button.tsx", match: "text-white", count: 1, why: "white on the filled destructive button, both themes" },

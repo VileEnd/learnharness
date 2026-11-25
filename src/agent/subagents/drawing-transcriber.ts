@@ -26,6 +26,17 @@ Transcribe EVERYTHING drawn, faithfully, in the drawing's own language:
 - Tag EVERY region with its grid location, in square brackets before it: [C4] for one cell, [B2-D3] for a span.
 Do not invent content, do not correct the learner's mistakes, and mark unreadable parts as [unreadable]. Output only the transcription.`;
 
+/** The reader's rules for an image the learner attached to a message or to his thinking (a photo, a screenshot, a
+ *  scan): the drawing rules without the grid, since an attached image has none. */
+export const DESCRIBE_IMAGE_PROMPT = `You are reading an image a learner attached to a message for a tutor (who may or may not also see the image).
+Transcribe and describe EVERYTHING in it, faithfully, in the image's own language:
+- Text, handwriting and printed words as plain text; math as LaTeX ($...$ inline, $$...$$ display); tables as markdown tables.
+- Diagrams (flowcharts, graphs, trees, circuits, block diagrams): a \`\`\`mermaid block, quoting every node label (A["label"]) and edge label (A -- "label" --> B), whenever the structure can be reproduced faithfully; otherwise describe it as *[Diagram: ...]*, naming every label and arrow.
+- Plots, axes and curves: a short description of axes, labels, intercepts and the shape drawn.
+- A photo or screenshot with little text: one or two sentences on what it shows and anything a tutor would need to discuss it.
+- Crossed-out content: keep it, wrapped in ~~strikethrough~~.
+Do not invent content, do not correct the learner's mistakes, and mark unreadable parts as [unreadable]. Output only the transcription.`;
+
 export interface DrawingTranscriberDeps {
 	/** The reader's engine. It is asked for at the LOWEST thinking level its
 	 *  model supports: a transcription needs no reasoning, and a reasoning
@@ -46,40 +57,49 @@ export interface TranscribeOptions {
 
 export interface DrawingTranscriber {
 	transcribe(png: Uint8Array, structured: string, opts?: TranscribeOptions): Promise<{ model: string; text: string }>;
+	/** An attached image (any accepted type) read with DESCRIBE_IMAGE_PROMPT: same reader, same money channel. */
+	describeImage(bytes: Uint8Array, mimeType: string, opts?: TranscribeOptions): Promise<{ model: string; text: string }>;
 }
 
 export function createDrawingTranscriber(deps: DrawingTranscriberDeps): DrawingTranscriber {
+	/** One reader call: the image processed for the reader's model, the intro text, the given rules. */
+	async function read(bytes: Uint8Array, mimeType: string, intro: string, systemPrompt: string, opts: TranscribeOptions): Promise<{ model: string; text: string }> {
+		const engine = deps.engineFor("transcriber", { thinking: "lowest" });
+		if (!engine) throw new Error("no transcriber model configured");
+		const model = `${engine.model.provider}:${engine.model.id}`;
+		const { onUsage } = opts;
+		const image = await processImage(bytes, mimeType, { resizeOptions: engine.model.inputLimits?.images?.resize });
+		opts.signal?.throwIfAborted();
+		if (!image.ok) throw new Error(image.message);
+		const message: AgentMessage = {
+			role: "user",
+			content: [
+				{ type: "text", text: [intro, ...image.hints].join("\n") },
+				{ type: "image", data: image.data, mimeType: image.mimeType },
+			],
+			timestamp: Date.now(),
+		};
+		const { text } = await runSubagent([], {
+			role: "transcriber",
+			engine,
+			systemPrompt,
+			messages: [message],
+			maxTurns: 1,
+			...(onUsage ? { onUsage: (usage: Usage) => onUsage(usage, model) } : {}),
+			...(opts.signal ? { abortSignal: opts.signal } : {}),
+			...(opts.chatId ? { chatId: opts.chatId } : {}),
+		});
+		const out = text.trim();
+		if (!out) throw new Error("the transcriber returned nothing");
+		return { model, text: out };
+	}
 	return {
-		async transcribe(png, structured, opts = {}) {
-			const engine = deps.engineFor("transcriber", { thinking: "lowest" });
-			if (!engine) throw new Error("no transcriber model configured");
-			const model = `${engine.model.provider}:${engine.model.id}`;
-			const { onUsage } = opts;
-			const image = await processImage(png, "image/png", { resizeOptions: engine.model.inputLimits?.images?.resize });
-			opts.signal?.throwIfAborted();
-			if (!image.ok) throw new Error(image.message);
+		transcribe(png, structured, opts = {}) {
 			const intro = structured ? `Structured text (typed objects, then a code-computed stroke digest, one line per freehand stroke):\n${structured}` : "No typed objects or strokes.";
-			const message: AgentMessage = {
-				role: "user",
-				content: [
-					{ type: "text", text: [intro, ...image.hints].join("\n") },
-					{ type: "image", data: image.data, mimeType: image.mimeType },
-				],
-				timestamp: Date.now(),
-			};
-			const { text } = await runSubagent([], {
-				role: "transcriber",
-				engine,
-				systemPrompt: TRANSCRIBE_PROMPT,
-				messages: [message],
-				maxTurns: 1,
-				...(onUsage ? { onUsage: (usage: Usage) => onUsage(usage, model) } : {}),
-				...(opts.signal ? { abortSignal: opts.signal } : {}),
-				...(opts.chatId ? { chatId: opts.chatId } : {}),
-			});
-			const out = text.trim();
-			if (!out) throw new Error("the transcriber returned nothing");
-			return { model, text: out };
+			return read(png, "image/png", intro, TRANSCRIBE_PROMPT, opts);
+		},
+		describeImage(bytes, mimeType, opts = {}) {
+			return read(bytes, mimeType, "The learner attached this image.", DESCRIBE_IMAGE_PROMPT, opts);
 		},
 	};
 }

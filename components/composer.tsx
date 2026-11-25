@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Hint } from "@/components/ui/hint";
 import { enterSends } from "@/components/enter-submits";
 import { useAutoGrow, useCoarsePointer } from "@/components/use-coarse-pointer";
+import { AttachmentButtons, AttachmentStrip, useAttachmentDrop, type AttachmentDraft } from "@/components/attachments";
 
 /**
  * The chat composer — content row ONLY (the persistent rounded shell lives in
@@ -28,15 +29,33 @@ export function enterAction(state: {
 	/** The between-problems pause is live: practice session, nothing
 	 *  active, no turn/compaction in flight (the caller's fold). */
 	nextProblem?: boolean;
+	/** The send waits (composerHold). */
+	hold?: boolean;
 }): "stop" | "send" | "next" | "none" {
 	// Composer steering (owner arc 2026-10-03): while a turn runs, typed
 	// text makes Enter a STEER (the queue-and-redirect send); Enter with
 	// an empty composer stays the stop shortcut. The button itself keeps
 	// the square — Stop stays one click away at all times.
+	// Attachments still uploading, or attachments while a turn runs (a steer
+	// carries text only): Enter waits instead of stopping the turn.
+	if (state.hold) return "none";
 	if (state.busy) return state.canSend ? "send" : "stop";
 	if (state.canSend) return "send";
 	if (state.nextProblem) return "next";
 	return "none";
+}
+
+/** Does a send wait for the attachments? While an image is still being prepared or uploaded, and while a turn runs
+ *  with attachments in the strip and something to send: that send would be a steer, which carries text only, so
+ *  the message waits (with its attachments) until the reply ends. With nothing typed the button stays Stop. Pure. */
+export function composerHold(s: { busy: boolean; canSend: boolean; attachmentCount: number; attachmentsPending: boolean }): boolean {
+	return s.attachmentsPending || (s.busy && s.canSend && s.attachmentCount > 0);
+}
+
+/** May the composer send? Allowed, and something to send: text, a live dictation, or (when no turn runs) a ready
+ *  attachment. Pure. */
+export function composerCanSend(s: { sendAllowed: boolean; busy: boolean; text: string; dictationActive: boolean; readyAttachments: number }): boolean {
+	return s.sendAllowed && (s.text.trim().length > 0 || s.dictationActive || (!s.busy && s.readyAttachments > 0));
 }
 
 /**
@@ -58,7 +77,7 @@ export function ChatSessionComposer({
 }) {
 	const [draft, setDraft] = useState(value);
 	useLayoutEffect(() => { setDraft(value); }, [revision, value]);
-	const canSend = sendAllowed && (draft.trim().length > 0 || dictationActive);
+	const canSend = composerCanSend({ sendAllowed, busy: rest.busy, text: draft, dictationActive, readyAttachments: rest.attachments?.refs.length ?? 0 });
 	const applyDraft = useCallback((next: string) => {
 		setDraft(next);
 		onChange(next);
@@ -79,6 +98,7 @@ export function Composer({
 	placeholder = "Ask, answer, or steer the lesson…",
 	nextProblem = false,
 	onNext,
+	attachments,
 }: {
 	busy: boolean;
 	value: string;
@@ -104,13 +124,18 @@ export function Composer({
 	/** The signal's dispatcher (send({type:"next"})) — the chip and the
 	 *  empty-Enter share it. */
 	onNext?: () => void;
+	/** Images and drawings for this message (components/attachments.tsx): the strip above the textarea, the attach
+	 *  and Draw buttons, paste and drop. Absent = a text-only composer (the new-session page's opening prompt). */
+	attachments?: AttachmentDraft;
 }) {
 	const coarse = useCoarsePointer();
 	const ownRef = useRef<HTMLTextAreaElement>(null);
 	const taRef = inputRef ?? ownRef;
 	useAutoGrow(taRef, value);
+	const hold = attachments ? composerHold({ busy, canSend, attachmentCount: attachments.items.length, attachmentsPending: attachments.pending }) : false;
+	const { dragging, handlers: dropHandlers } = useAttachmentDrop(attachments);
 	const act = () => {
-		const action = enterAction({ busy, canSend, nextProblem });
+		const action = enterAction({ busy, canSend, nextProblem, hold });
 		if (action === "stop") onStop();
 		else if (action === "send") onSend();
 		else if (action === "next") onNext?.();
@@ -118,13 +143,26 @@ export function Composer({
 	return (
 		<form
 			data-testid="composer"
-			className="flex items-end gap-1.5 p-1.5"
+			className={cn("flex flex-col gap-1.5 rounded-2xl p-1.5", dragging && "bg-accent/60 ring-2 ring-primary/40")}
 			onSubmit={(e) => {
 				e.preventDefault();
 				act();
 			}}
+			onDragOver={dropHandlers.onDragOver}
+			onDragLeave={dropHandlers.onDragLeave}
+			onDrop={dropHandlers.onDrop}
 		>
+			{attachments && (
+				<AttachmentStrip
+					draft={attachments}
+					className="px-1 pt-0.5"
+					note={busy && attachments.items.length > 0 ? "These send with your next message, once the reply ends." : undefined}
+				/>
+			)}
+			<div className="flex min-w-0 items-end gap-1.5">
+			{attachments && <AttachmentButtons draft={attachments} variant="icon" />}
 			<textarea
+				onPaste={dropHandlers.onPaste}
 				ref={taRef}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
@@ -152,7 +190,7 @@ export function Composer({
 				enterKeyHint={coarse ? "enter" : "send"}
 				autoFocus={autoFocus}
 				rows={1}
-				className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+				className="field-sizing-content lh-input max-h-48 min-h-10 min-w-0 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
 			/>
 			{/* The button follows the text (owner report 2026-10-03): while
 				 a turn runs WITH text typed it stays the SEND affordance
@@ -181,18 +219,19 @@ export function Composer({
 				) : (
 					<button
 						type="submit"
-						aria-label={busy && !canSend ? "Stop" : "Send"}
-						disabled={!busy && !canSend}
+						aria-label={busy && !canSend && !hold ? "Stop" : "Send"}
+						disabled={hold || (!busy && !canSend)}
 						className={cn(
 							"flex size-10 shrink-0 items-center justify-center rounded-[10px] transition-colors",
-							busy && !canSend
+							busy && !canSend && !hold
 								? "bg-secondary text-foreground hover:bg-accent"
 								: "bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40",
 						)}
 					>
-						{busy && !canSend ? <SquareIcon className="size-4" /> : <CornerDownLeftIcon className="size-5" />}
+						{busy && !canSend && !hold ? <SquareIcon className="size-4" /> : <CornerDownLeftIcon className="size-5" />}
 					</button>
 				)}
+			</div>
 		</form>
 	);
 }

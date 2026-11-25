@@ -175,8 +175,12 @@ export function absorbed(m: LhMessage, record: readonly LhMessage[]): boolean {
 	const role = (m as { role?: string }).role;
 	if (role === "user") {
 		const content = (m as { content?: unknown }).content;
+		const attached = JSON.stringify((m as { attachments?: unknown }).attachments ?? []);
 		return record.some(
-			(r) => (r as { role?: string }).role === "user" && (r as { content?: unknown }).content === content,
+			(r) =>
+				(r as { role?: string }).role === "user" &&
+				(r as { content?: unknown }).content === content &&
+				JSON.stringify((r as { attachments?: unknown }).attachments ?? []) === attached,
 		);
 	}
 	if (role === "toolResult") {
@@ -813,13 +817,16 @@ export class SessionModel {
 		// write-ahead will persist (inputAppends), with LOCAL ids so
 		// adoption can tell them from the record's absorbed copies.
 		const optimistic: LhMessage[] = [];
-		if (input.type === "text") optimistic.push({ ...newUserMessage(input.text), id: localId() });
+		if (input.type === "text") optimistic.push({ ...newUserMessage(input.text, input.attachments), id: localId() });
 		else if (input.type === "thinking") {
 			// The practice submissions (2026-10-04): the marker lands
 			// optimistically — the card renders from its details the
 			// moment the button fires.
 			optimistic.push({
-				...newThinkingMessage(input.problemCallId, input.text, input.drawingId ? { drawingId: input.drawingId } : {}),
+				...newThinkingMessage(input.problemCallId, input.text, {
+					...(input.drawingId ? { drawingId: input.drawingId } : {}),
+					...(input.attachments ? { attachments: input.attachments } : {}),
+				}),
 				id: localId(),
 			});
 		} else if (input.type === "work-submit") {

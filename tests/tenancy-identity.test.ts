@@ -111,7 +111,7 @@ test("every app/api route except health wraps each exported HTTP method in withT
 		for (const m of methods) assert.ok(m[2]!.startsWith("withTenant("), `${f}: ${m[1]} not wrapped`);
 		checked++;
 	}
-	assert.equal(checked, 68);
+	assert.equal(checked, 70);
 });
 
 test("every app/api/admin handler calls requireAdmin()", () => {

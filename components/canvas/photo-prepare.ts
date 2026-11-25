@@ -7,6 +7,7 @@
  * work as for a drawn submission. The pure decisions (orientation, caps, ladder, scene) live in src/core/photo.ts.
  */
 import {
+	ATTACHMENT_IMAGE_MAX_BYTES,
 	EXIF_PROBE_JPEG_BASE64,
 	PHOTO_ASSET_BUDGET_BYTES,
 	PHOTO_MAX_SIDE,
@@ -19,7 +20,7 @@ import {
 	readExifOrientation,
 	sceneBoundingBox,
 } from "@/src/core";
-import type { ExifOrientation } from "@/src/core";
+import type { AttachmentRef, ExifOrientation } from "@/src/core";
 import { paintRegionGrid } from "./canvas-engine.ts";
 import { uploadAsset } from "./canvas-objects";
 
@@ -87,9 +88,8 @@ async function renderPng(photo: HTMLCanvasElement): Promise<Blob> {
 	return png;
 }
 
-/** Upright, at most 2048 on the long side, both files within the routes' limits (a smaller size is tried when the
- *  PNG of a detailed photo is over budget). Throws a message fit for the learner. */
-export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
+/** The decoded photo and the orientation to draw it with (EXIF applied by the browser, or read here). */
+async function decodeUpright(file: Blob): Promise<{ img: HTMLImageElement; orientation: ExifOrientation; upright: { w: number; h: number } }> {
 	const url = URL.createObjectURL(file);
 	let img: HTMLImageElement;
 	try {
@@ -99,7 +99,48 @@ export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
 	}
 	const orientation: ExifOrientation = (await browserAppliesExif()) ? 1 : readExifOrientation(new Uint8Array(await file.slice(0, 128 * 1024).arrayBuffer()));
 	const upright = orientedSize(img.naturalWidth, img.naturalHeight, orientation);
-	if (upright.w < 1 || upright.h < 1) throw new Error("This photo could not be read.");
+	if (upright.w < 1 || upright.h < 1) throw new Error("This image could not be read.");
+	return { img, orientation, upright };
+}
+
+export type PreparedImage = { w: number; h: number; jpeg: Blob };
+
+/** An image attached to a message or to thinking (png, jpeg, webp or gif; a gif is its first frame): the photo path
+ *  without the drawing PNG. Upright, at most PHOTO_MAX_SIDE on the long side, RE-ENCODED as a JPEG on white, which
+ *  drops every byte of the original file, so EXIF and GPS metadata never leave the device. A smaller size is tried
+ *  while the JPEG is over budget. Throws a message fit for the learner. */
+export async function prepareAttachmentImage(file: Blob): Promise<PreparedImage> {
+	const { img, orientation, upright } = await decodeUpright(file);
+	for (const side of photoSideLadder(upright.w, upright.h)) {
+		const to = fitLongSide(upright.w, upright.h, side);
+		const canvas = drawUpright(img, orientation, to);
+		try {
+			const jpeg = await toBlob(canvas, "image/jpeg", 0.9);
+			if (jpeg.size > Math.min(PHOTO_ASSET_BUDGET_BYTES, ATTACHMENT_IMAGE_MAX_BYTES)) continue;
+			return { ...to, jpeg };
+		} finally {
+			canvas.width = 0;
+		}
+	}
+	throw new Error("This image is too large to send. Try a smaller one.");
+}
+
+/** Uploads a prepared image to the chat's attachment store; resolves to its reference. */
+export async function uploadAttachmentImage(chatId: string, jpeg: Blob, fetchLike: typeof fetch = fetch): Promise<AttachmentRef> {
+	const form = new FormData();
+	form.set("file", jpeg, "image.jpg");
+	const res = await fetchLike(`/api/chats/${encodeURIComponent(chatId)}/attachments`, { method: "POST", body: form });
+	if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `The image upload failed (${res.status}).`);
+	const { id } = (await res.json()) as { id: string };
+	return { kind: "image", id };
+}
+
+/** Upright, at most 2048 on the long side, both files within the routes' limits (a smaller size is tried when the
+ *  PNG of a detailed photo is over budget). Throws a message fit for the learner. */
+export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
+	const { img, orientation, upright } = await decodeUpright(file).catch(() => {
+		throw new Error("This photo could not be read.");
+	});
 	for (const side of photoSideLadder(upright.w, upright.h)) {
 		const to = fitLongSide(upright.w, upright.h, side);
 		const canvas = drawUpright(img, orientation, to);

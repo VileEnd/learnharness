@@ -40,7 +40,7 @@ export const READER_TIMEOUT_MS = 45_000;
 export interface DrawingContextDeps {
 	drawingStore: DrawingStore;
 	/** Absent when no transcriber model is configured. */
-	transcriber?: DrawingTranscriber;
+	transcriber?: Pick<DrawingTranscriber, "transcribe">;
 	/** Money channel: the transcription is vision-slot spend, stamped with
 	 *  the reader's model (never the session model's rates). */
 	onUsage?: (usage: Usage, model: string) => void;
@@ -66,7 +66,7 @@ function activeDrawingIds(messages: readonly LhMessage[]): string[] {
 
 /** Race the reader against the clock; on timeout abort it and throw (the
  *  caller's catch treats it like any reader failure). */
-async function withReaderTimeout<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+export async function withReaderTimeout<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
 	const controller = new AbortController();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeout = new Promise<never>((_, reject) => {

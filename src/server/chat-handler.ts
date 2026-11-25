@@ -16,6 +16,7 @@ import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
 import { createTopicist } from "../agent/subagents/topics.ts";
 import { createDrawingTranscriber } from "../agent/subagents/drawing-transcriber.ts";
 import { prepareDrawingContext } from "./drawing-context.ts";
+import { prepareAttachmentContext } from "./attachment-context.ts";
 import { createAttributor } from "../agent/subagents/attribution.ts";
 import { createAttributionService } from "./attribution.ts";
 import { PATHS, type ModelRole } from "../../config.ts";
@@ -423,6 +424,8 @@ export async function handleChatInput(
 				? input.steers.filter((s) => !steerDelivered(record.messages, s.id))
 				: inputAppends(record, input, {
 						drawingExists: (id, drawingId) => stores.drawingStore.getScene(id, drawingId) !== null,
+						attachmentExists: (id, ref) =>
+							ref.kind === "image" ? stores.attachmentStore.getImage(id, ref.id) !== null : stores.drawingStore.getScene(id, ref.id) !== null,
 					});
 	} catch (err) {
 		if (err instanceof ChatInputError) {
@@ -565,23 +568,34 @@ export async function handleChatInput(
 		// DRAWINGS (PR 2, Task 10): the active task's drawing as the model reads
 		// it (the image for a vision model, plus the vision-slot reader's
 		// transcript, cached per drawing). Time-bounded; never fails the turn.
-		let drawing: Awaited<ReturnType<typeof prepareDrawingContext>> | undefined;
-		try {
-			drawing = await prepareDrawingContext(
-				{ id: chatId, messages: agentMessages },
-				engine,
-				{
-					drawingStore: stores.drawingStore,
-					transcriber: createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, { ...opts, chatId, chatKind }) }),
-					onUsage: (usage, model) => {
-						reader.model = model;
-						reader.steps.push(callUsageOf(usage));
-					},
-				},
-			);
-		} catch (err) {
-			console.error(`[chat ${chatId}] drawing context failed:`, err);
-		}
+		// ATTACHMENTS (images and free drawings on messages and thinking): the same reader and money channel; the
+		// current input's attachments are read (and shown to a vision model), older ones ride as their cached
+		// description (server/attachment-context.ts). Both contexts are prepared together, so their time bounds
+		// overlap instead of adding up.
+		const transcriber = createDrawingTranscriber({ engineFor: (role, opts) => resolveEngine(role, { ...opts, chatId, chatKind }) });
+		const onReaderUsage = (usage: Usage, model: string) => {
+			reader.model = model;
+			reader.steps.push(callUsageOf(usage));
+		};
+		const [drawing, attachments] = await Promise.all([
+			prepareDrawingContext({ id: chatId, messages: agentMessages }, engine, {
+				drawingStore: stores.drawingStore,
+				transcriber,
+				onUsage: onReaderUsage,
+			}).catch((err: unknown) => {
+				console.error(`[chat ${chatId}] drawing context failed:`, err);
+				return undefined;
+			}),
+			prepareAttachmentContext({ id: chatId, messages: agentMessages }, engine, {
+				attachmentStore: stores.attachmentStore,
+				drawingStore: stores.drawingStore,
+				transcriber,
+				onUsage: onReaderUsage,
+			}).catch((err: unknown) => {
+				console.error(`[chat ${chatId}] attachment context failed:`, err);
+				return undefined;
+			}),
+		]);
 		// One uniquifier per turn, shared by the wire (runPiTurn) and the tools,
 		// so a tool keys on the id the record will hold (see call-ids.ts).
 		const callIds = new ToolCallIdUniquifier(collectToolCallIds(merged));
@@ -589,6 +603,7 @@ export async function handleChatInput(
 			resolveCallId: (id) => callIds.resolve(id),
 			engine,
 			drawing,
+			attachments,
 			messages: asAgentMessages(agentMessages),
 			onUsage: collectUsage,
 			// The runaway-turn spend cap (turn-guard.ts): the same price

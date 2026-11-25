@@ -24,7 +24,7 @@ import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import type { QuizMechanic } from "../core/settings.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
 import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
-import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type DrawingContext, type LhMessage } from "../core/native-messages.ts";
+import { SEND_TO_USER_TOOL, toLlmMessages, WORK_TOOLS, type AttachmentContext, type DrawingContext, type LhMessage } from "../core/native-messages.ts";
 
 /**
  * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
@@ -134,6 +134,8 @@ export interface AgentBuildOptions {
 	chatId?: string;
 	/** The active task's drawings as the model sees them (server/drawing-context.ts). */
 	drawing?: DrawingContext;
+	/** Images and drawings attached to messages and thinking as the model sees them (server/attachment-context.ts). */
+	attachments?: AttachmentContext;
 	/** Per-turn spend ceiling in USD (turn-guard.ts); absent = no cap. */
 	spendCapUsd?: number;
 	/** Cost of one assistant step (the handler binds the money channel's
@@ -292,7 +294,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		// UI-only markers (plan-block) drop, the app's id fields strip, and
 		// an abort's dangling question call gets its INTERRUPTED result. It
 		// must never throw (pi's convertToLlm contract).
-		convertToLlm: (m) => toLlmMessages(m, { drawing: opts.drawing, chatId: opts.chatId }),
+		convertToLlm: (m) => toLlmMessages(m, { drawing: opts.drawing, attachments: opts.attachments, chatId: opts.chatId }),
 	});
 	agent.subscribe((event: AgentEvent) => {
 		if (event.type === "message_end" && event.message.role === "assistant" && "usage" in event.message) {

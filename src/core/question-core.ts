@@ -17,6 +17,7 @@
  * exited and resumed mid-question for free.
  */
 
+import type { AttachmentRef } from "./attachments.ts";
 import { Type, type Static } from "typebox";
 import { stripModelValueDebris } from "./value-debris.ts";
 import { gradeExercise, stripExpected, type ExerciseVerdict, type InteractiveFormat } from "./exercise-core.ts";
@@ -614,6 +615,11 @@ export interface QuestionAnswerData {
 	 *  2026-10-03) — a separate channel from `thinking`, captured by the
 	 *  reading field and riding the check answer. Absent when empty. */
 	readingThinking?: string;
+	/** Images and drawings added to "Your thinking" (or the text answer): references only (core/attachments.ts).
+	 *  Absent when none. */
+	attachments?: AttachmentRef[];
+	/** Images and drawings added to the reading-thinking field. Absent when none. */
+	readingAttachments?: AttachmentRef[];
 	confidence?: number; // quiz only: the learner's stated probability (0-100, raw) that his selected answer is correct — never sent on "I don't know" (owner, 2026-10-01)
 	correct?: boolean; // quiz only
 	correctIndices?: number[]; // quiz only (rendering)
@@ -685,11 +691,14 @@ export interface QuestionFormDraft {
 	other: string;
 	text: string;
 	confidenceIndex: number;
+	/** The thinking's attachments (already stored; only their references). */
+	attachments?: AttachmentRef[];
 }
 
 export interface QuestionDraft {
 	form?: QuestionFormDraft;
 	readingThinking?: string;
+	readingAttachments?: AttachmentRef[];
 }
 
 /**
