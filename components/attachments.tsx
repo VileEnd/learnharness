@@ -350,7 +350,7 @@ export function SentAttachments({ chatId: chatIdArg, refs, className }: { chatId
 		<div data-testid="sent-attachments" className={cn("mt-1 flex min-w-0 max-w-full flex-wrap items-start gap-1.5", className)}>
 			{refs.map((ref, i) =>
 				ref.kind === "drawing" ? (
-					<div key={`${ref.kind}:${ref.id}`} className="min-w-0 max-w-full" data-testid="sent-attachment" data-kind="drawing">
+					<div key={`${ref.kind}:${ref.id}`} className="w-60 min-w-0 max-w-full" data-testid="sent-attachment" data-kind="drawing">
 						<DrawingThumb chatId={chatId} drawingId={ref.id} />
 					</div>
 				) : (
