@@ -25,4 +25,4 @@ Asks a single question and waits. He can always pick "Other" and type. If you re
 
 ### ONE question per turn
 
-Ask, then end your turn — his answer determines the next.
+One question at a time — his answer determines the next.
