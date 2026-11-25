@@ -26,7 +26,7 @@ browser ──HTTPS──▶ Caddy ──forward_auth──▶ oauth2-proxy ─�
 
 ## 1. Create the VM (OpenTofu + NixOS)
 
-The VM is declared in code. `deploy/proxmox/` is OpenTofu, which creates VM 104 `learnharness` on the home Proxmox. `deploy/nixos/` is a NixOS flake that declares the machine: Docker, the firewall, SSH (key only), and `learnharness-stack.service`, which checks out this repo and runs the compose stack. Nothing needs installing besides Nix; OpenTofu runs through `nix run`.
+The VM is declared in code. **Since 2026-11-24 VM 104 `learnharness` itself is owned by the VileEnd/hetzner repo** (`tofu/home/vms.tf`), which manages the whole home Proxmox — change its CPU, RAM or disk there. `deploy/proxmox/` here still holds the boot image and the DNS records, and removes the VM from its own state (a `removed` block, never destroying it). Originally `deploy/proxmox/` created VM 104 `learnharness` on the home Proxmox. `deploy/nixos/` is a NixOS flake that declares the machine: Docker, the firewall, SSH (key only), and `learnharness-stack.service`, which checks out this repo and runs the compose stack. Nothing needs installing besides Nix; OpenTofu runs through `nix run`.
 
 **One-time setup on the workstation (WSL):**
 - `~/.config/learnharness/proxmox.env` (mode 600, never committed):

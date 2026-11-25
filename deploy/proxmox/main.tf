@@ -20,58 +20,17 @@ resource "proxmox_virtual_environment_file" "nixos_image" {
   }
 }
 
-resource "proxmox_virtual_environment_vm" "learnharness" {
-  node_name   = var.node
-  vm_id       = var.vm_id
-  name        = "learnharness"
-  description = "LearnHarness (Docker stack on NixOS). Managed by OpenTofu: deploy/proxmox in VileEnd/learnharness."
-  tags        = ["learnharness", "nixos", "opentofu"]
-
-  on_boot         = true
-  started         = true
-  stop_on_destroy = true
-  machine         = "q35"
-  bios            = "seabios"
-
-  operating_system {
-    type = "l26"
-  }
-
-  # The image runs qemu-guest-agent; the provider reads the IP from it.
-  agent {
-    enabled = true
-  }
-
-  cpu {
-    cores = 2
-    type  = "host"
-  }
-
-  memory {
-    dedicated = 12288
-    # The balloon device at the full size: Proxmox never takes memory away,
-    # but it can read the guest's real usage (without it, the page cache
-    # shows as ~100% "used").
-    floating = 12288
-  }
-
-  disk {
-    datastore_id = "local-lvm"
-    interface    = "virtio0"
-    import_from  = proxmox_virtual_environment_file.nixos_image.id
-    size         = 64
-    discard      = "on"
-    iothread     = true
-  }
-
-  network_device {
-    bridge = "vmbr0"
-    model  = "virtio"
-  }
+# VM 104 itself moved to VileEnd/hetzner (tofu/home/vms.tf, resource
+# proxmox_virtual_environment_vm.learnharness) on 2026-11-24, together with every other
+# guest on the home Proxmox, so one repo owns the whole host (backups, monitoring, the
+# home-as-code rules). This block makes the next apply here FORGET the VM — state only;
+# `destroy = false` means the VM and its data are untouched. Change the VM's hardware in
+# the hetzner repo from now on. The NixOS config still deploys from this repo
+# (deploy/nixos/rebuild.sh), and the image file and DNS records below stay here.
+removed {
+  from = proxmox_virtual_environment_vm.learnharness
 
   lifecycle {
-    # The VM holds the app data, Keycloak's database and the Caddy CA.
-    prevent_destroy = true
-    ignore_changes  = [disk[0].import_from]
+    destroy = false
   }
 }
