@@ -55,6 +55,17 @@ core tool surface must appear in real data here.
   2026-10-10): graph-context (the bracketed preamble), problem ×2,
   practice-thinking ×2, conclude ×2, practice-next, problem-dismissed — the
   full marker cycle of a practice session, including the dismissal.
+- `chats/chat_mwvgz1ng_6a749221.json` + `attachments/chat_mwvgz1ng_6a749221/` +
+  `drawings/chat_mwvgz1ng_6a749221/` — message attachments (production server on a scratch
+  data dir, 2026-11-25, driven in headless Chromium; every model slot on a loopback stub
+  OpenAI-compatible endpoint connected as the custom provider, so replies and descriptions
+  are canned while every record, file and id was written by the app): a user message with
+  four attachments (an image pasted, a JPEG picked, a WebP dropped, all re-encoded on the
+  device and stored as `img_<sha16>.jpg` with `.transcript.json` descriptions, plus a free
+  drawing from the drawing pad, a DrawingStore submission with its transcript, its
+  `drafts/free-drawing.json` emptied on attach), a text-only follow-up, and a `probe`
+  answered with an image in "Your thinking" (`details.attachments`). One more image file is
+  an upload the learner removed before sending (no record names it). Stamped (`version: 1`).
 - `graph/` — the real ledgers: nodes (282 lines), chains (160), sessions (8),
   coverage (93), sources (4), render-settings, positions.
 - `jobs/` — five legacy records covering kind × status: research done +
