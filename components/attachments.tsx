@@ -73,6 +73,8 @@ export interface AttachmentDraft {
 	error: string | null;
 	addFiles: (files: readonly File[]) => void;
 	addDrawing: (drawingId: string) => void;
+	/** Put back already-stored attachments (a refused send). */
+	restore: (refs: readonly AttachmentRef[]) => void;
 	remove: (key: string) => void;
 	clear: () => void;
 }
@@ -80,36 +82,43 @@ export interface AttachmentDraft {
 let seq = 0;
 const nextKey = () => `att_${++seq}`;
 
-/** The attachments of one field. `chatId` defaults to the page's (AttachmentEnvContext). */
+/** The attachments of one field. `chatId` defaults to the page's (AttachmentEnvContext).
+ *  The ref is the single source of the list: every change computes from it and commits ref then state together, so
+ *  an add that lands between an upload's progress updates can never overwrite them with a stale list. */
 export function useAttachmentDraft(chatIdArg?: string): AttachmentDraft {
 	const env = useAttachmentEnv();
 	const chatId = chatIdArg ?? env?.chatId ?? "";
 	const [items, setItems] = useState<DraftItem[]>([]);
 	const [error, setError] = useState<string | null>(null);
-	const itemsRef = useRef(items);
-	itemsRef.current = items;
+	const itemsRef = useRef<DraftItem[]>([]);
 	const live = useRef(true);
 	useEffect(() => {
 		live.current = true;
 		return () => {
 			live.current = false;
-			for (const it of itemsRef.current) if (it.kind === "image" && it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+			for (const it of itemsRef.current) if (it.kind === "image" && it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
 		};
 	}, []);
 
-	const patch = useCallback((key: string, next: Partial<DraftItem> | null) => {
-		if (!live.current) return;
-		setItems((cur) => {
+	const commit = useCallback((next: DraftItem[]) => {
+		itemsRef.current = next;
+		if (live.current) setItems(next);
+	}, []);
+
+	/** Update one item (null removes it, revoking its local preview). A removed item stays removed. */
+	const patch = useCallback(
+		(key: string, next: Partial<DraftItem> | null) => {
 			const out: DraftItem[] = [];
-			for (const it of cur) {
+			for (const it of itemsRef.current) {
 				if (it.key !== key) out.push(it);
 				else if (next === null) {
-					if (it.kind === "image" && it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+					if (it.kind === "image" && it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
 				} else out.push({ ...it, ...next } as DraftItem);
 			}
-			return out;
-		});
-	}, []);
+			commit(out);
+		},
+		[commit],
+	);
 
 	const addFiles = useCallback(
 		(files: readonly File[]) => {
@@ -117,55 +126,66 @@ export function useAttachmentDraft(chatIdArg?: string): AttachmentDraft {
 			setError(refused);
 			if (accepted.length === 0) return;
 			const added = accepted.map((file) => ({ file, item: { key: nextKey(), kind: "image" as const, status: "preparing" as const } }));
-			itemsRef.current = [...itemsRef.current, ...added.map((a) => a.item)];
-			setItems(itemsRef.current);
+			commit([...itemsRef.current, ...added.map((a) => a.item)]);
 			for (const { file, item } of added) {
 				void (async () => {
+					const present = () => live.current && itemsRef.current.some((it) => it.key === item.key);
 					try {
 						const prepared = await prepareAttachmentImage(file);
-						const previewUrl = URL.createObjectURL(prepared.jpeg);
-						if (!live.current || !itemsRef.current.some((it) => it.key === item.key)) {
-							URL.revokeObjectURL(previewUrl);
-							return;
-						}
-						patch(item.key, { status: "uploading", previewUrl });
+						if (!present()) return;
+						patch(item.key, { status: "uploading", previewUrl: URL.createObjectURL(prepared.jpeg) });
 						const ref = await uploadAttachmentImage(chatId, prepared.jpeg);
-						patch(item.key, { status: "ready", id: ref.id });
+						if (present()) patch(item.key, { status: "ready", id: ref.id });
 					} catch (e) {
+						if (!present()) return;
 						patch(item.key, null);
-						if (live.current) setError(e instanceof Error ? e.message : "This image could not be added.");
+						setError(e instanceof Error ? e.message : "This image could not be added.");
 					}
 				})();
 			}
 		},
-		[chatId, patch],
+		[chatId, commit, patch],
 	);
 
-	const addDrawing = useCallback((drawingId: string) => {
-		if (itemsRef.current.length >= MAX_ATTACHMENTS) {
-			setError(TOO_MANY_TEXT);
-			return;
-		}
-		setError(null);
-		itemsRef.current = [...itemsRef.current, { key: nextKey(), kind: "drawing", status: "ready", id: drawingId }];
-		setItems(itemsRef.current);
-	}, []);
+	const addDrawing = useCallback(
+		(drawingId: string) => {
+			if (itemsRef.current.length >= MAX_ATTACHMENTS) {
+				setError(TOO_MANY_TEXT);
+				return;
+			}
+			setError(null);
+			commit([...itemsRef.current, { key: nextKey(), kind: "drawing", status: "ready", id: drawingId }]);
+		},
+		[commit],
+	);
+
+	/** Put back attachments that are already stored (a refused send): ready cards, previewed from the server. */
+	const restore = useCallback(
+		(refs: readonly AttachmentRef[]) => {
+			const room = MAX_ATTACHMENTS - itemsRef.current.length;
+			const back: DraftItem[] = refs.slice(0, Math.max(0, room)).map((ref) =>
+				ref.kind === "drawing"
+					? { key: nextKey(), kind: "drawing", status: "ready", id: ref.id }
+					: { key: nextKey(), kind: "image", status: "ready", id: ref.id, previewUrl: attachmentImageUrl(chatId, ref) },
+			);
+			if (back.length > 0) commit([...itemsRef.current, ...back]);
+		},
+		[chatId, commit],
+	);
 
 	const remove = useCallback(
 		(key: string) => {
 			setError(null);
-			itemsRef.current = itemsRef.current.filter((it) => it.key !== key);
 			patch(key, null);
 		},
 		[patch],
 	);
 
 	const clear = useCallback(() => {
-		for (const it of itemsRef.current) if (it.kind === "image" && it.previewUrl) URL.revokeObjectURL(it.previewUrl);
-		itemsRef.current = [];
-		setItems([]);
+		for (const it of itemsRef.current) if (it.kind === "image" && it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
+		commit([]);
 		setError(null);
-	}, []);
+	}, [commit]);
 
 	return useMemo(() => {
 		const refs: AttachmentRef[] = [];
@@ -179,10 +199,11 @@ export function useAttachmentDraft(chatIdArg?: string): AttachmentDraft {
 			error,
 			addFiles,
 			addDrawing,
+			restore,
 			remove,
 			clear,
 		};
-	}, [chatId, items, error, addFiles, addDrawing, remove, clear]);
+	}, [chatId, items, error, addFiles, addDrawing, restore, remove, clear]);
 }
 
 /** Paste and drag-and-drop onto a field: image files join the draft; anything else (plain text) is left alone. */

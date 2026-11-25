@@ -691,11 +691,14 @@ export interface QuestionFormDraft {
 	other: string;
 	text: string;
 	confidenceIndex: number;
+	/** The thinking's attachments (already stored; only their references). */
+	attachments?: AttachmentRef[];
 }
 
 export interface QuestionDraft {
 	form?: QuestionFormDraft;
 	readingThinking?: string;
+	readingAttachments?: AttachmentRef[];
 }
 
 /**

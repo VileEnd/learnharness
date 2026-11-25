@@ -132,6 +132,7 @@ function draft(items: AttachmentDraft["items"] = []): AttachmentDraft {
 		error: null,
 		addFiles: () => {},
 		addDrawing: () => {},
+		restore: () => {},
 		remove: () => {},
 		clear: () => {},
 	};

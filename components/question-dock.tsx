@@ -380,6 +380,13 @@ function QuestionDockForm({
 	const { dragging, handlers: drop } = useAttachmentDrop(attachments);
 	const withAttachments = (answer: QuestionAnswerData): QuestionAnswerData =>
 		attachments.refs.length > 0 ? { ...answer, attachments: [...attachments.refs] } : answer;
+	// A refused submission remounts the dock from its snapshot: the stored attachments come back with it.
+	const restoreAttachments = attachments.restore;
+	const restoredFrom = useRef(initialDraft?.attachments);
+	useEffect(() => {
+		if (restoredFrom.current?.length) restoreAttachments(restoredFrom.current);
+		restoredFrom.current = undefined;
+	}, [restoreAttachments]);
 	// Confidence (owner, 2026-10-01): an index into CONFIDENCE_STOPS,
 	// resting at 50 — a real coin flip by definition, untouched or
 	// deliberate (the same number, the same meaning). The dock unmounts
@@ -485,6 +492,7 @@ function QuestionDockForm({
 				other,
 				text: answerTextRef.current,
 				confidenceIndex: confIdx,
+				attachments: [...attachments.refs],
 			});
 			onSubmit(withAttachments(
 				buildExerciseAnswer(
@@ -523,6 +531,7 @@ function QuestionDockForm({
 			other,
 			text: answerTextRef.current,
 			confidenceIndex: confIdx,
+			attachments: [...attachments.refs],
 		});
 		onSubmit(withAttachments(buildAnswer(qd, req, toolName)));
 	};

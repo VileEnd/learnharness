@@ -922,11 +922,15 @@ export function Chat({
 		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
 	}, []);
 	const pendingQuestionId = pending?.key ?? null;
-	// The reading field's attachments belong to one question: a new one (or none) starts empty.
+	// The reading field's attachments belong to one question: a new one (or none) starts empty, and a question that
+	// comes back (a refused answer) gets its snapshot back, like the reading text.
 	const clearReadingAttachments = readingAttachments.clear;
+	const restoreReadingAttachments = readingAttachments.restore;
 	useEffect(() => {
 		clearReadingAttachments();
-	}, [pendingQuestionId, clearReadingAttachments]);
+		const back = pendingQuestionId ? questionDraft(pendingQuestionId)?.readingAttachments : undefined;
+		if (back?.length) restoreReadingAttachments(back);
+	}, [pendingQuestionId, clearReadingAttachments, restoreReadingAttachments, questionDraft]);
 	useIsoLayoutEffect(() => {
 		// Different calls never share a draft; a failed submission of THIS
 		// call restores the reading channel alongside the form's snapshot.
@@ -1689,7 +1693,10 @@ export function Chat({
 			draftRef.current = t;
 			applyText("");
 			composerAttachments.clear();
-			void send({ type: "text", text: t, attachments: [...attachments] });
+			// A refused send (no models, a missing key, the cap) puts them back, as the text comes back.
+			void send({ type: "text", text: t, attachments: [...attachments] }).then((accepted) => {
+				if (!accepted) composerAttachments.restore(attachments);
+			});
 			return;
 		}
 		if (openingDraftRef.current !== null) {
@@ -2036,7 +2043,7 @@ export function Chat({
 						// ride the same callback (QuestionAnswerData.dismissed). The
 						// reading-thinking draft rides along (owner 2026-10-03) — the
 						// check answer is its only carrier.
-						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current });
+						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current, readingAttachments: [...readingAttachments.refs] });
 						const reading = readingThinkingRef.current.trim() || undefined;
 						const readingRefs = readingAttachments.refs;
 						if (readingRefs.length > 0 && !output.dismissed) output = { ...output, readingAttachments: [...readingRefs] };
